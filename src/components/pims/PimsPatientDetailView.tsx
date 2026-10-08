@@ -24,7 +24,10 @@ import {
   Pencil,
   Upload,
   X,
+  Sparkles,
 } from 'lucide-react';
+import RecordDocumentsReview from '../records/RecordDocumentsReview';
+import ChartRecordsSendBar from './ChartRecordsSendBar';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { PetThumb, patientPhotoSrc } from './PetThumb';
 import {
@@ -416,6 +419,12 @@ function chartRowHasBody(r: ChartRow): boolean {
   );
 }
 
+/** Chart documents with a file can be read by the outside-records summary. */
+function summarizableDocId(r: ChartRow): number | null {
+  if (r.source !== 'document' || r.removed || !r.filePatientId || !r.fileDocumentId) return null;
+  return r.fileDocumentId;
+}
+
 function ChartDocumentOpenButton({
   row,
   label = 'Open PDF',
@@ -486,10 +495,13 @@ function ChartLabRowActions({
 function ChartRowExpandBody({
   row,
   onRemove,
+  onSummarize,
   onLabResultSaved,
 }: {
   row: ChartRow;
   onRemove?: (row: ChartRow) => void;
+  /** Opens the records summary and reminder review for this one document. */
+  onSummarize?: (documentId: number) => void;
   /** In-house lab forms are run right here in the timeline. */
   onLabResultSaved?: (saved: LabResult) => void;
 }) {
@@ -530,6 +542,20 @@ function ChartRowExpandBody({
         Remove from chart
       </button>
     ) : null;
+  const summarizeId = onSummarize ? summarizableDocId(row) : null;
+  const summarizeBtn =
+    summarizeId != null ? (
+      <button
+        type="button"
+        className="pims-patient-detail__pdf-btn pims-patient-detail__summarize-doc-btn"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSummarize?.(summarizeId);
+        }}
+      >
+        <Sparkles size={13} aria-hidden /> Summarize &amp; find reminders
+      </button>
+    ) : null;
 
   const text = (row.detailText || '').trim();
   let body: ReactNode = null;
@@ -559,9 +585,10 @@ function ChartRowExpandBody({
   return (
     <div className="pims-patient-detail__expand-stack">
       {body}
-      {fileBtn || removeBtn ? (
+      {fileBtn || removeBtn || summarizeBtn ? (
         <div className="pims-patient-detail__expand-actions">
           {fileBtn}
+          {summarizeBtn}
           {removeBtn}
         </div>
       ) : null}
@@ -1158,6 +1185,18 @@ export default function PimsPatientDetailView({
   const [dateStart, setDateStart] = useState('2000-01-01');
   const [dateEnd, setDateEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
+  /** Checked timeline rows, by row id — documents are summarized; any row can be emailed or printed. */
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
+  /** Documents open in the summarize & reminders review, or null when closed. */
+  const [summarizeDocIds, setSummarizeDocIds] = useState<number[] | null>(null);
+  const toggleSelectedRow = useCallback((id: string) => {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
   const [highlightedChartRowIds, setHighlightedChartRowIds] = useState<string[]>([]);
   const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const [selectedExam, setSelectedExam] = useState<Record<string, unknown> | null>(null);
@@ -1493,6 +1532,16 @@ export default function PimsPatientDetailView({
     if (!dateRangeMs.valid) return chartRows;
     return filterRowsByDateRange(chartRows, dateRangeMs.start, dateRangeMs.end);
   }, [chartRows, dateRangeMs]);
+
+  const selectedDocIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const r of chartRows) {
+      if (!selectedRowIds.has(r.id)) continue;
+      const docId = summarizableDocId(r);
+      if (docId != null && !ids.includes(docId)) ids.push(docId);
+    }
+    return ids;
+  }, [chartRows, selectedRowIds]);
 
   const groupedByDate = useMemo(
     () => groupChartRowsByLocalDate(filteredChartRows),
@@ -3006,6 +3055,44 @@ export default function PimsPatientDetailView({
             <button type="button" onClick={() => reloadChartData()}>
               Refresh
             </button>
+            {mrTab === 'byDate' ? (
+              <ChartRecordsSendBar
+                patientId={Number(patientId)}
+                patientName={pname}
+                clientId={client?.id != null ? Number(client.id) : null}
+                clientLabel={client ? formatClientDisplayName(client) : 'Client'}
+                clientEmail={clientEmail ?? null}
+                rows={chartRows}
+                filteredRows={filteredChartRows}
+                selectedIds={selectedRowIds}
+                dateStart={dateStart}
+                dateEnd={dateEnd}
+              />
+            ) : null}
+            {mrTab === 'byDate' ? (
+              <>
+                <button
+                  type="button"
+                  className="pims-patient-detail__summarize-selected"
+                  disabled={selectedDocIds.length === 0}
+                  title={
+                    selectedDocIds.length
+                      ? 'Summarize these documents and review reminders to enter'
+                      : 'Check the documents you want to summarize'
+                  }
+                  onClick={() => setSummarizeDocIds(selectedDocIds)}
+                >
+                  <Sparkles size={13} aria-hidden />
+                  Summarize selected records
+                  {selectedDocIds.length ? ` (${selectedDocIds.length})` : ''}
+                </button>
+                {selectedRowIds.size ? (
+                  <button type="button" onClick={() => setSelectedRowIds(new Set())}>
+                    Clear
+                  </button>
+                ) : null}
+              </>
+            ) : null}
           </div>
         )}
 
@@ -3073,6 +3160,21 @@ export default function PimsPatientDetailView({
                             </td>
                             <td>
                               <span className="pims-patient-detail__type-inner">
+                                {!r.removed ? (
+                                  <input
+                                    type="checkbox"
+                                    className="pims-patient-detail__doc-select"
+                                    checked={selectedRowIds.has(r.id)}
+                                    aria-label={`Select ${r.description || r.typeLabel}`}
+                                    title={
+                                      summarizableDocId(r) != null
+                                        ? 'Select to summarize, email, or print'
+                                        : 'Select to email or print'
+                                    }
+                                    onClick={(event) => event.stopPropagation()}
+                                    onChange={() => toggleSelectedRow(r.id)}
+                                  />
+                                ) : null}
                                 <Check
                                   size={13}
                                   className="pims-patient-detail__row-icon pims-patient-detail__check"
@@ -3115,6 +3217,7 @@ export default function PimsPatientDetailView({
                                 <ChartRowExpandBody
                                   row={r}
                                   onLabResultSaved={onChartLabResultSaved}
+                                  onSummarize={(id) => setSummarizeDocIds([id])}
                                   onRemove={(next) => {
                                     setRemoveChartError(null);
                                     setPendingRemoveRow(next);
@@ -3132,6 +3235,57 @@ export default function PimsPatientDetailView({
             </div>
           </>
         )}
+
+        {summarizeDocIds && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="pims-chart-pick"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="pims-summarize-docs-title"
+              >
+                <button
+                  type="button"
+                  className="pims-chart-pick__backdrop"
+                  aria-label="Close"
+                  onClick={() => setSummarizeDocIds(null)}
+                />
+                <div
+                  className="pims-chart-pick__card"
+                  style={{ width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
+                >
+                  <div className="pims-chart-pick__head">
+                    <h3 id="pims-summarize-docs-title">Summarize records · {pname}</h3>
+                    <button
+                      type="button"
+                      className="pims-chart-pick__close"
+                      onClick={() => setSummarizeDocIds(null)}
+                      aria-label="Close"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <RecordDocumentsReview
+                    patientId={patientId}
+                    patientName={pname}
+                    clientId={clientId}
+                    documentIds={summarizeDocIds}
+                    hideHeading
+                    autoSummarize
+                    onAccepted={(result) => {
+                      setSummarizeDocIds(null);
+                      setSelectedRowIds(new Set());
+                      void (async () => {
+                        await reloadChartData();
+                        revealAcceptedChartRows(result);
+                      })();
+                    }}
+                  />
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
 
         {mrTab === 'byDateDetail' && (
           <>

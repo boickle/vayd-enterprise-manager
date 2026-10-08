@@ -44,7 +44,10 @@ async function renderPdfPage(page: {
   return dataUrlToImage(canvas.toDataURL('image/jpeg', 0.72));
 }
 
-export async function extractTextFromUpload(file: File): Promise<ExtractedUpload> {
+export async function extractTextFromUpload(
+  file: File,
+  opts: { maxPages?: number } = {}
+): Promise<ExtractedUpload> {
   if (file.type.startsWith('image/')) {
     const dataUrl = await readAsDataUrl(file);
     const image = dataUrlToImage(dataUrl);
@@ -56,7 +59,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedUpload
     const data = await file.arrayBuffer();
     const pdf = await getDocument({ data }).promise;
     const pages: string[] = [];
-    const maxPages = Math.min(pdf.numPages, 40);
+    const maxPages = Math.min(pdf.numPages, opts.maxPages ?? 40);
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();

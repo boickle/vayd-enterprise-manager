@@ -9,6 +9,7 @@ import {
   parseMailShippingTypes,
   type MailShippingType,
 } from '../../utils/mailShippingTypes';
+import MailShipAddressPicker, { type MailShipChoice } from './MailShipAddressPicker';
 import './MailOrderPrompt.css';
 
 export type MailOrderPromptResult = {
@@ -20,6 +21,8 @@ export type MailOrderPromptResult = {
   mailQty: number;
   sendWithoutPayment: boolean;
   payAfterApproval: boolean;
+  /** Null for office pickup. */
+  ship: MailShipChoice | null;
 };
 
 type PaymentPlan = 'now' | 'after_approval' | 'without_payment';
@@ -44,6 +47,7 @@ const PAYMENT_PLANS: Array<{ id: PaymentPlan; label: string; hint: string }> = [
 
 type Props = {
   practiceId: number;
+  clientId?: number | null;
   itemName: string;
   maxQty?: number;
   /** Invoice already paid — there is no payment to arrange. */
@@ -56,6 +60,7 @@ type Props = {
 
 export default function MailOrderPrompt({
   practiceId,
+  clientId,
   itemName,
   maxQty = 1,
   paid = false,
@@ -69,6 +74,7 @@ export default function MailOrderPrompt({
   const [mailQty, setMailQty] = useState(String(qtyCap));
   const [plan, setPlan] = useState<PaymentPlan>('now');
   const [loading, setLoading] = useState(true);
+  const [ship, setShip] = useState<MailShipChoice | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -76,7 +82,7 @@ export default function MailOrderPrompt({
       .then((settings) => {
         const next = parseMailShippingTypes(settings[MAIL_SHIPPING_TYPES_KEY]);
         setTypes(next);
-        setTypeId(next[0]?.id || '');
+        setTypeId('');
       })
       .catch(() => {
         setTypes([]);
@@ -85,8 +91,9 @@ export default function MailOrderPrompt({
       .finally(() => setLoading(false));
   }, [practiceId]);
 
-  const selected = types.find((t) => t.id === typeId) ?? types[0] ?? null;
+  const selected = types.find((t) => t.id === typeId) ?? null;
   const amount = selected ? mailShippingAmountForType(selected) : 0;
+  const pickup = selected ? mailOriginForType(selected) === 'office_pickup' : false;
   const parsedQty = Number(mailQty);
   const qty =
     Number.isFinite(parsedQty) && parsedQty >= 1
@@ -129,6 +136,9 @@ export default function MailOrderPrompt({
             <label>
               Shipping / pick-up type
               <select value={selected?.id || ''} onChange={(e) => setTypeId(e.target.value)}>
+                <option value="" disabled>
+                  Choose shipping or pickup…
+                </option>
                 {types.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.label}
@@ -146,6 +156,9 @@ export default function MailOrderPrompt({
                   }.`
                 : ''}
             </p>
+            {selected && !pickup ? (
+              <MailShipAddressPicker clientId={clientId} onChange={setShip} />
+            ) : null}
             {approvalNote ? (
               <p className="mail-order-prompt__notice" role="status">
                 {approvalNote}
@@ -179,9 +192,16 @@ export default function MailOrderPrompt({
           <button
             type="button"
             className="btn primary"
-            disabled={!selected || qty < 1}
+            disabled={!selected || qty < 1 || (!pickup && !ship)}
+            title={
+              !selected
+                ? 'Choose shipping or pickup first'
+                : !pickup && !ship
+                  ? 'Choose where this ships first'
+                  : undefined
+            }
             onClick={() => {
-              if (!selected) return;
+              if (!selected || (!pickup && !ship)) return;
               onConfirm({
                 origin: mailOriginForType(selected),
                 shippingPaymentStatus: mailShippingPaymentForType(selected, false),
@@ -191,6 +211,7 @@ export default function MailOrderPrompt({
                 mailQty: qty,
                 sendWithoutPayment: !paid && plan === 'without_payment',
                 payAfterApproval: !paid && plan === 'after_approval',
+                ship: pickup ? null : ship,
               });
             }}
           >

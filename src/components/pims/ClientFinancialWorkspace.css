@@ -1331,10 +1331,17 @@
 .client-fin__hits {
   list-style: none;
   margin: 0 0 12px;
-  padding: 0;
+  padding: 0 4px 0 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.client-fin__hits > li {
+  flex: 0 0 auto;
 }
 
 .client-fin__hits button {

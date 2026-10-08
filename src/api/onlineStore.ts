@@ -189,6 +189,9 @@ export type MailOrderLine = {
   lineStatus: 'ok_to_mail' | 'awaiting_doctor_approval' | 'rejected' | 'send_back';
   approvalDecision?: 'approved' | 'rejected' | 'send_back' | null;
   approvalTaskId?: number | null;
+  approvalTaskAssigneeName?: string | null;
+  approvalTaskWatcherNames?: string[];
+  approvalTaskOpen?: boolean;
   refillNote?: string | null;
   /** Refills the approving doctor wants the filler to put on this Rx. */
   authorizedRefills?: number | null;
@@ -657,6 +660,7 @@ export async function createStaffMailOrder(
     ship?: {
       name?: string;
       line1?: string;
+      line2?: string;
       city?: string;
       state?: string;
       postal?: string;
@@ -866,6 +870,8 @@ export async function pharmacyMailAction(
     lineId?: number;
     scriptText?: string;
     recordContact?: boolean;
+    /** Label for the client communications log entry. */
+    typeLabel?: string;
     patientId?: number | null;
     lineIds?: number[];
     lineLots?: Array<{

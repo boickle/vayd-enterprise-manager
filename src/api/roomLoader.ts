@@ -728,6 +728,29 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
+export type ReminderTextMatch = {
+  description: string;
+  itemType: 'lab' | 'procedure' | 'inventory' | null;
+  itemId: number | null;
+  itemName: string | null;
+  confidence: number;
+  /** catalog = reminder definition link, learned = staff-confirmed, fuzzy = name similarity. */
+  source: 'catalog' | 'learned' | 'fuzzy' | null;
+};
+
+/** Room loader matching for reminder text that isn't saved as a reminder yet. */
+export async function matchReminderText(
+  descriptions: string[],
+  patientId?: number
+): Promise<ReminderTextMatch[]> {
+  if (!descriptions.length) return [];
+  const { data } = await http.post<ReminderTextMatch[]>('/room-loader/reminder-matches/match', {
+    descriptions,
+    ...(patientId ? { patientId } : {}),
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 /** Learned matches for this reminder text (global and patient-specific). */
 export async function listReminderMappings(
   reminderText: string,

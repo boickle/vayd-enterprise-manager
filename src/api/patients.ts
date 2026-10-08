@@ -410,6 +410,37 @@ export async function uploadPatientChartDocument(
   return data;
 }
 
+export type PatientChartDocumentRow = {
+  id: number;
+  name: string;
+  description?: string | null;
+  contentType: string;
+  extension: string;
+  hasFile?: boolean;
+  removedAt?: string | null;
+};
+
+export async function fetchPatientChartDocuments(
+  patientId: number,
+): Promise<PatientChartDocumentRow[]> {
+  const { data } = await http.get<PatientChartDocumentRow[]>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function renamePatientChartDocument(
+  patientId: number,
+  documentId: number,
+  body: { name?: string; description?: string | null },
+): Promise<PatientChartDocumentRow> {
+  const { data } = await http.patch<PatientChartDocumentRow>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}`,
+    body,
+  );
+  return data;
+}
+
 export async function removePatientChartDocumentFromChart(
   patientId: number,
   documentId: number,

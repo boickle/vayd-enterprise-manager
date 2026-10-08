@@ -3,7 +3,7 @@ import { fetchUnscheduledReminders } from '../api/careOutreach';
 import { fetchForwardBookings } from '../api/forwardBooking';
 import { fetchSlotOffers } from '../api/slotOffers';
 import { fetchWaitlist } from '../api/waitlist';
-import { listRecordsRequests } from '../api/recordsRequests';
+import { listRecordsRequests, recordsRequestNeedsReview } from '../api/recordsRequests';
 import { isRecordsRequestUrgent } from '../utils/recordsRequestUrgency';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
@@ -53,6 +53,8 @@ export type SchedulingToolsNavCounts = {
   scheduleOptimizeQueued: number;
   recordsPending: number;
   recordsUrgent: number;
+  /** Received but not yet summarized and closed out. */
+  recordsToReview: number;
 };
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
@@ -68,6 +70,7 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   scheduleOptimizeQueued: 0,
   recordsPending: 0,
   recordsUrgent: 0,
+  recordsToReview: 0,
 };
 
 export function useSchedulingToolsNavCounts(enabled = true) {
@@ -87,6 +90,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         toConfirmOffers,
         waitlistWaiting,
         pendingRecords,
+        receivedRecords,
       ] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
         fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
@@ -100,7 +104,11 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'to_confirm' }).catch(() => []),
         fetchWaitlist({ practiceId: PRACTICE_ID, status: 'waiting', limit: 2000 }).catch(() => []),
         listRecordsRequests({ status: 'pending' }).catch(() => []),
+        listRecordsRequests({ status: 'received' }).catch(() => []),
       ]);
+      const recordsToReview = receivedRecords.filter((row) =>
+        recordsRequestNeedsReview(row),
+      ).length;
 
       const recordsUrgent = pendingRecords.filter((row) =>
         isRecordsRequestUrgent(row),
@@ -162,6 +170,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         scheduleOptimizeQueued: countQueuedScheduleOptimizeItems(PRACTICE_ID),
         recordsPending: pendingRecords.length,
         recordsUrgent,
+        recordsToReview,
       });
     } catch {
       setCounts({

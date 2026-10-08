@@ -24,7 +24,7 @@ import {
   type MailPharmacyStage,
 } from '../api/onlineStore';
 import { sendClientSms } from '../api/clientSms';
-import { createClientPayLink } from '../api/visitWorkflow';
+import { createClientPayLink, getInvoice } from '../api/visitWorkflow';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   extractPatientListFromSearchResponse,
@@ -38,6 +38,11 @@ import { formatAutoshipFrequency } from './store/storeCartState';
 import MailOrderFillLabels from '../components/soap/MailOrderFillLabels';
 import EditAutoshipModal from '../components/soap/EditAutoshipModal';
 import MailOrderClientCommsPanel from '../components/soap/MailOrderClientCommsPanel';
+import MailShipAddressPicker, {
+  saveMailingAddressOnFile,
+  shipBodyFromFields,
+  type MailShipChoice,
+} from '../components/soap/MailShipAddressPicker';
 import {
   listInventoryBranchLocations,
   listPracticeBranches,
@@ -58,6 +63,8 @@ import {
   patientDisplayName,
 } from '../utils/briefDisplay';
 import { appPrompt } from '../utils/appDialog';
+import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { useCan } from '../permissions/PermissionContext';
 import './Settings.css';
 import './MailOrders.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
@@ -346,6 +353,134 @@ function firstName(name?: string | null): string {
   return (name || '').trim().split(/\s+/)[0] || 'there';
 }
 
+type LinkedInvoiceAmount = { total: number; due: number };
+
+/** Orders sent from an invoice carry no prices of their own; the invoice holds what's owed. */
+function linkedInvoiceId(order: MailOrder): string | null {
+  return order.notes?.match(/(?:^|\s)invoice:([0-9a-f-]{36})/i)?.[1] ?? null;
+}
+
+function orderAmount(order: MailOrder, linked?: LinkedInvoiceAmount | null): number {
+  if (Number(order.total) > 0.009 || !linked) return Number(order.total) || 0;
+  return linked.total;
+}
+
+/** Catalog names carry staff notes in caps ("- ADD REBATE FOR 2, 3, OR 4 DOSES"); clients shouldn't see those. */
+function clientItemName(name: string): string {
+  return name
+    .split(/\s+-\s+/)
+    .filter((part, i) => i === 0 || /[a-z]/.test(part))
+    .join(' - ')
+    .replace(/,\s*\(/g, ' (')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] || '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Pets on the order, e.g. "Roux" or "Roux and Milo". */
+function orderPetNames(order: MailOrder): string {
+  const names = [
+    ...new Set(
+      [...(order.lines || []).map((line) => line.patientName), order.patientName]
+        .flatMap((name) => (name || '').split(/\s*&\s*/))
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return joinList(names);
+}
+
+/** What's in the order by pet, e.g. "Roux's Bravecto Feline Medium, 6.2 -13.8 lb (3-month dose)". */
+function orderContents(order: MailOrder): string {
+  const byPet = new Map<string, string[]>();
+  for (const line of order.lines || []) {
+    const pet = (line.patientName || '').trim();
+    const item = clientItemName(line.name || '');
+    if (!item) continue;
+    byPet.set(pet, [...(byPet.get(pet) || []), item]);
+  }
+  const parts = [...byPet.entries()].map(([pet, items]) =>
+    pet ? `${pet}’s ${joinList(items)}` : joinList(items),
+  );
+  return joinList(parts) || `order #${order.id}`;
+}
+
+function orderSubjectFor(order: MailOrder): string {
+  const pets = orderPetNames(order);
+  return pets ? `${pets}’s order #${order.id}` : `Your order #${order.id}`;
+}
+
+function payMessageFor(order: MailOrder, linked?: LinkedInvoiceAmount | null): string {
+  const amount = linked && !(Number(order.total) > 0.009) ? linked.due : Number(order.total) || 0;
+  return `Hi ${firstName(order.customerName)}, we have ${orderContents(order)} ready to send (order #${order.id}). The total is ${money(amount)} — once it’s paid we’ll get it on its way.`;
+}
+
+function notifySubjectFor(order: MailOrder, pickup: boolean): string {
+  return pickup
+    ? `${orderSubjectFor(order)} is ready for pickup`
+    : `${orderSubjectFor(order)} has shipped`;
+}
+
+function carrierName(carrier?: string | null): string {
+  const c = (carrier || '').trim();
+  if (/^usps$/i.test(c)) return 'USPS';
+  if (/^ups$/i.test(c)) return 'UPS';
+  if (/fedex/i.test(c)) return 'FedEx';
+  if (/dhl/i.test(c)) return 'DHL';
+  return c;
+}
+
+function trackingUrl(carrier?: string | null, code?: string | null): string | null {
+  const tracking = (code || '').trim();
+  if (!tracking) return null;
+  const q = encodeURIComponent(tracking);
+  switch (carrierName(carrier)) {
+    case 'USPS':
+      return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${q}`;
+    case 'UPS':
+      return `https://www.ups.com/track?tracknum=${q}`;
+    case 'FedEx':
+      return `https://www.fedex.com/fedextrack/?trknbr=${q}`;
+    case 'DHL':
+      return `https://www.dhl.com/us-en/home/tracking.html?tracking-id=${q}`;
+    default:
+      return null;
+  }
+}
+
+function TrackingLink({ order }: { order: MailOrder }) {
+  if (!order.trackingCode) return null;
+  const url = trackingUrl(order.carrier, order.trackingCode);
+  const label = `${carrierName(order.carrier) || 'Tracking'} ${order.trackingCode}`;
+  return url ? (
+    <a href={url} target="_blank" rel="noreferrer">
+      {label}
+    </a>
+  ) : (
+    <>{label}</>
+  );
+}
+
+function notifyMessageFor(order: MailOrder, pickup: boolean): string {
+  const hi = `Hi ${firstName(order.customerName)}, `;
+  const what = orderContents(order);
+  if (pickup) {
+    return `${hi}${what} is ready for pickup${order.shippingChargeName ? ` at ${order.shippingChargeName}` : ''} (order #${order.id}).`;
+  }
+  const carrier = carrierName(order.carrier);
+  const url = trackingUrl(order.carrier, order.trackingCode);
+  const tracking = url
+    ? ` It’s on its way with ${carrier} — track it here: ${url}`
+    : order.trackingCode
+      ? ` ${carrier ? `${carrier} tracking` : 'Tracking'} number: ${order.trackingCode}.`
+      : '';
+  return `${hi}${what} has shipped (order #${order.id}).${tracking}`;
+}
+
 function money(value?: number | null): string {
   return `$${Number(value || 0).toFixed(2)}`;
 }
@@ -500,6 +635,55 @@ export default function MailOrdersPage() {
   }, [rows, filter, search]);
   const cancelRequestCount = useMemo(() => rows.filter(mailCancelPending).length, [rows]);
 
+  const [linkedAmounts, setLinkedAmounts] = useState<Record<string, LinkedInvoiceAmount>>({});
+  const linkedKey = useMemo(
+    () =>
+      [
+        ...new Set(
+          visible
+            .filter((row) => !(Number(row.total) > 0.009))
+            .map((row) => {
+              const id = linkedInvoiceId(row);
+              return id ? `${id}:${row.paymentStatus ?? ''}` : null;
+            })
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ]
+        .sort()
+        .join(','),
+    [visible],
+  );
+  useEffect(() => {
+    if (!linkedKey) return;
+    let cancelled = false;
+    const ids = [...new Set(linkedKey.split(',').map((part) => part.split(':')[0]))];
+    void Promise.all(
+      ids.map((id) =>
+        getInvoice(id)
+          .then((invoice) => {
+            const total = Number(invoice.total) || 0;
+            const due = Math.max(0, total - (Number(invoice.amountPaid) || 0));
+            return [id, { total, due }] as const;
+          })
+          .catch(() => null),
+      ),
+    ).then((pairs) => {
+      if (cancelled) return;
+      setLinkedAmounts((prev) => {
+        const next = { ...prev };
+        for (const pair of pairs) if (pair) next[pair[0]] = pair[1];
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [linkedKey]);
+  const linkedAmountFor = (row: MailOrder): LinkedInvoiceAmount | null => {
+    const id = linkedInvoiceId(row);
+    return id ? linkedAmounts[id] ?? null : null;
+  };
+
   const applyFilter = (next: QueueFilter) => {
     setFilter(next);
     const open = rows.find((row) => row.id === openId);
@@ -555,8 +739,12 @@ export default function MailOrdersPage() {
             Approval decisions live on the assigned task, not here.
           </p>
         </div>
-        <button type="button" className="btn secondary" onClick={() => setStaffOpen(true)}>
-          + New Mail Order
+        <button
+          type="button"
+          className="mail-queue__btn is-primary mail-queue__new"
+          onClick={() => setStaffOpen(true)}
+        >
+          + New mail order
         </button>
       </div>
 
@@ -571,7 +759,7 @@ export default function MailOrdersPage() {
         />
       </label>
 
-      <div className="mail-queue__filters">
+      <div className="mail-queue__filters" role="tablist" aria-label="Queue stage">
         {(
           [
             ['open', 'Open'],
@@ -591,7 +779,9 @@ export default function MailOrdersPage() {
           <button
             key={key}
             type="button"
-            className={filter === key ? 'btn primary' : 'btn secondary'}
+            role="tab"
+            aria-selected={filter === key}
+            className={`mail-queue__filter${filter === key ? ' is-active' : ''}`}
             onClick={() => applyFilter(key)}
           >
             {label}
@@ -703,7 +893,7 @@ export default function MailOrdersPage() {
                   {ship ? <span className={badgeClass('wait')}>{ship}</span> : null}
                 </div>
                 <div className="mail-queue__total">
-                  <div>{money(row.total)}</div>
+                  <div>{money(orderAmount(row, linkedAmountFor(row)))}</div>
                   {Number(row.otherBalanceDue) > 0.009 ? (
                     <span className="mail-queue__owed" title="Account balance due (not this order)">
                       Acct {money(row.otherBalanceDue)}
@@ -723,6 +913,7 @@ export default function MailOrdersPage() {
                   practiceId={practiceId}
                   rxLinePhone={rxLinePhone}
                   onRememberScroll={() => rememberMailScroll(row.id)}
+                  linkedAmount={linkedAmountFor(row)}
                   onOrderUpdated={(next) => {
                     setRows((prev) => {
                       const exists = prev.some((r) => r.id === next.id);
@@ -898,7 +1089,9 @@ function OrderDetail({
   rxLinePhone,
   onRememberScroll,
   onOrderUpdated,
+  linkedAmount,
 }: {
+  linkedAmount?: LinkedInvoiceAmount | null;
   open: MailOrder;
   employeeId: string | null;
   weight: string;
@@ -933,6 +1126,9 @@ function OrderDetail({
     return next;
   });
   const [savingScriptId, setSavingScriptId] = useState<number | null>(null);
+  const [resendOpen, setResendOpen] = useState<Record<number, boolean>>({});
+  const [fillError, setFillError] = useState<string | null>(null);
+  const canSelfCheck = useCan('mail_order.check.self_override');
   const [editAutoshipLine, setEditAutoshipLine] = useState<MailOrderLine | null>(null);
   const [autoshipNote, setAutoshipNote] = useState<string | null>(null);
   const [inventoryDetail, setInventoryDetail] = useState<{
@@ -954,23 +1150,30 @@ function OrderDetail({
     lineIds: number[];
     label: string;
   } | null>(null);
-  const [paySubject, setPaySubject] = useState(`Payment for Vet At Your Door order #${open.id}`);
-  const [payMessage, setPayMessage] = useState(
-    `Hi ${firstName(open.customerName)}, your order #${open.id} totaling ${money(open.total)} still needs payment.`,
-  );
-  const [notifySubject, setNotifySubject] = useState(
-    pickup
-      ? `Your order #${open.id} is ready for pickup`
-      : `Your order #${open.id} has shipped`,
-  );
-  const [notifyMessage, setNotifyMessage] = useState(
-    pickup
-      ? `Hi ${firstName(open.customerName)}, order #${open.id} is ready for pickup${open.shippingChargeName ? ` at ${open.shippingChargeName}` : ''}.`
-      : `Hi ${firstName(open.customerName)}, order #${open.id} has shipped${open.trackingCode ? ` — tracking ${open.trackingCode}` : ''}.`,
-  );
+  const [paySubject, setPaySubject] = useState(`Payment for ${orderSubjectFor(open)}`);
+  const [payMessage, setPayMessage] = useState(() => payMessageFor(open, linkedAmount));
+  const [payMessageSeed, setPayMessageSeed] = useState(() => payMessageFor(open, linkedAmount));
+  useEffect(() => {
+    const next = payMessageFor(open, linkedAmount);
+    if (next === payMessageSeed) return;
+    setPayMessage((current) => (current === payMessageSeed ? next : current));
+    setPayMessageSeed(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedAmount?.due, linkedAmount?.total, open.total]);
+  const [notifySubject, setNotifySubject] = useState(notifySubjectFor(open, pickup));
+  const [notifyMessage, setNotifyMessage] = useState(() => notifyMessageFor(open, pickup));
+  const [notifyMessageSeed, setNotifyMessageSeed] = useState(() => notifyMessageFor(open, pickup));
+  useEffect(() => {
+    const next = notifyMessageFor(open, pickup);
+    if (next === notifyMessageSeed) return;
+    setNotifyMessage((current) => (current === notifyMessageSeed ? next : current));
+    setNotifyMessageSeed(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open.trackingCode, open.carrier, pickup]);
   const [rejectSubject, setRejectSubject] = useState(
     `Update on your Vet At Your Door order #${open.id}`,
   );
+  const [paySent, setPaySent] = useState<string | null>(null);
   const orderPaid = (open.paymentStatus || 'awaiting_payment') === 'paid';
   const [rejectMessage, setRejectMessage] = useState(() =>
     orderPaid
@@ -998,7 +1201,14 @@ function OrderDetail({
   const [parcelWidth, setParcelWidth] = useState('');
   const [parcelHeight, setParcelHeight] = useState('');
   const [quoting, setQuoting] = useState(false);
+  const [buyingLabel, setBuyingLabel] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
   const [sendingThanks, setSendingThanks] = useState(false);
+  const shipBlocked = !mailFillDone(open) || !open.fillBranchId
+    ? 'Mark this filled before buying a label.'
+    : !(Number(weight) > 0)
+      ? 'Enter the package weight in ounces to get rates or print a label.'
+      : null;
 
   const parcel = () => ({
     type: parcelType,
@@ -1353,8 +1563,9 @@ function OrderDetail({
                   type="button"
                   className="btn primary"
                   disabled={!open.clientId}
-                  onClick={() =>
-                    void onRun(async () => {
+                  onClick={async () => {
+                    setPaySent(null);
+                    const ok = await onRun(async () => {
                       let message = payMessage.trim();
                       try {
                         const link = await createClientPayLink(open.clientId!);
@@ -1369,9 +1580,11 @@ function OrderDetail({
                         action: 'notify',
                         subject: paySubject.trim() || undefined,
                         message,
+                        typeLabel: 'Mail order payment email',
                       });
-                    })
-                  }
+                    });
+                    setPaySent(ok ? 'Invoice email sent.' : 'Email not sent — see the error at the top of the page.');
+                  }}
                 >
                   Email invoice
                 </button>
@@ -1379,8 +1592,9 @@ function OrderDetail({
                   type="button"
                   className="btn secondary"
                   disabled={!open.clientId}
-                  onClick={() =>
-                    void onRun(async () => {
+                  onClick={async () => {
+                    setPaySent(null);
+                    const ok = await onRun(async () => {
                       let message = payMessage.trim();
                       try {
                         const link = await createClientPayLink(open.clientId!);
@@ -1393,8 +1607,9 @@ function OrderDetail({
                       }
                       await sendClientText(message, 'Mail order payment text');
                       return addMailApprovalNote(practiceId, open.id, 'Pay-link text sent');
-                    })
-                  }
+                    });
+                    setPaySent(ok ? 'Pay-link text sent.' : 'Text not sent — see the error at the top of the page.');
+                  }}
                 >
                   Text to pay
                 </button>
@@ -1410,6 +1625,14 @@ function OrderDetail({
                   Mark paid
                 </button>
               </div>
+              {paySent && (
+                <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+                  {paySent}
+                  {smsAllowsProductionOverride() &&
+                    paySent.includes('sent.') &&
+                    ' Test environment: email goes to the test inbox and texts to the test number, not the client.'}
+                </p>
+              )}
             </>
           )}
 
@@ -1473,76 +1696,9 @@ function OrderDetail({
                 </label>
               </div>
               {(open.lines || []).some((line) => line.trackLots) ? (
-                <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
-                  {(open.lines || [])
-                    .filter((line) => line.trackLots)
-                    .map((line) => {
-                      const stockItemId =
-                        line.stockInventoryItemId ?? line.inventoryItemId ?? null;
-                      return (
-                        <div key={`${line.id}:${fillBranchId}:${fillLocationId}`}>
-                          {stockItemId != null ? (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                alignItems: 'baseline',
-                                gap: 8,
-                                marginBottom: 4,
-                              }}
-                            >
-                              <button
-                                type="button"
-                                style={{
-                                  padding: 0,
-                                  border: 'none',
-                                  background: 'none',
-                                  color: 'var(--primary, #1b5e20)',
-                                  fontWeight: 600,
-                                  textAlign: 'left',
-                                  cursor: 'pointer',
-                                  textDecoration: 'underline',
-                                  textUnderlineOffset: 2,
-                                  font: 'inherit',
-                                }}
-                                title="Open inventory item"
-                                onClick={() =>
-                                  setInventoryDetail({
-                                    inventoryItemId: stockItemId,
-                                    name: line.name,
-                                    lineId: line.id,
-                                  })
-                                }
-                              >
-                                {line.name}
-                              </button>
-                            </div>
-                          ) : (
-                            <div style={{ fontWeight: 600, marginBottom: 4 }}>{line.name}</div>
-                          )}
-                          <StockLotPicker
-                            practiceId={practiceId}
-                            inventoryItemId={stockItemId}
-                            branchId={fillBranchId === '' ? null : Number(fillBranchId)}
-                            locationId={
-                              fillLocationId === '' ? null : Number(fillLocationId)
-                            }
-                            required
-                            selectedLotId={fillLots[line.id]?.lotId ?? null}
-                            lotNumber={fillLots[line.id]?.lotNumber ?? ''}
-                            label="Lot / expiration"
-                            refreshKey={lotRefreshByLine[line.id] ?? 0}
-                            onChange={(pick) =>
-                              setFillLots((prev) => ({
-                                ...prev,
-                                [line.id]: { lotId: pick.lotId, lotNumber: pick.lotNumber },
-                              }))
-                            }
-                          />
-                        </div>
-                      );
-                    })}
-                </div>
+                <p className="settings-muted" style={{ margin: '0 0 12px' }}>
+                  Pick the lot on each item below.
+                </p>
               ) : null}
               <label className="settings-label mail-queue__field">
                 Notes for the checker
@@ -1578,7 +1734,8 @@ function OrderDetail({
                       className="btn primary"
                       disabled={Boolean(fillBlocked)}
                       title={fillBlocked ?? undefined}
-                      onClick={() =>
+                      onClick={() => {
+                        setFillError(null);
                         void onRun(() =>
                           pharmacyMailAction(practiceId, open.id, {
                             action: 'fill',
@@ -1590,12 +1747,20 @@ function OrderDetail({
                               inventoryLotBalanceId: fillLots[line.id]?.lotId ?? null,
                               lotNumber: fillLots[line.id]?.lotNumber || null,
                             })),
+                          }).catch((e) => {
+                            setFillError(apiErrorMessage(e));
+                            throw e;
                           }),
-                        )
-                      }
+                        );
+                      }}
                     >
                       Mark filled
                     </button>
+                    {fillError ? (
+                      <p className="settings-muted" role="alert" style={{ margin: 0, color: '#b91c1c' }}>
+                        {fillError}
+                      </p>
+                    ) : null}
                   </div>
                 );
               })()}
@@ -1625,7 +1790,12 @@ function OrderDetail({
                       Open shipping label
                     </a>
                   ) : null}
-                  {open.trackingCode ? ` · ${open.carrier || 'EasyPost'} ${open.trackingCode}` : ''}
+                  {open.trackingCode ? (
+                    <>
+                      {' · '}
+                      <TrackingLink order={open} />
+                    </>
+                  ) : null}
                 </p>
               ) : pickup ? (
                 <p className="settings-muted">Office pickup — no shipping label.</p>
@@ -1695,8 +1865,16 @@ function OrderDetail({
                   <p className="mail-queue__same-check-title">You filled this order</p>
                   <p>
                     A second person should check {sameCheckConfirm.label}. If no one else is
-                    available, you can check it yourself — that is recorded on the order.
+                    available and you are a licensed veterinarian or veterinary technician, you
+                    can override and check it yourself. The override is recorded on the order
+                    under your name.
                   </p>
+                  {!canSelfCheck ? (
+                    <p style={{ color: '#b45309' }}>
+                      Your account isn’t set up as a licensed veterinarian or technician, so
+                      someone else needs to check this.
+                    </p>
+                  ) : null}
                   <div className="mail-queue__actions">
                     <button
                       type="button"
@@ -1708,12 +1886,12 @@ function OrderDetail({
                     <button
                       type="button"
                       className="mail-queue__btn is-primary"
-                      disabled={!employeeId || !mailFillDone(open)}
+                      disabled={!employeeId || !mailFillDone(open) || !canSelfCheck}
                       onClick={() =>
                         void onRun(async () => {
                           const order = await pharmacyMailAction(practiceId, open.id, {
                             action: 'check_override',
-                            notes: `Checked by the person who filled this order (${sameCheckConfirm.label}).`,
+                            notes: `Self-check override: the person who filled this order also checked ${sameCheckConfirm.label} (no second person available).`,
                             patientId: sameCheckConfirm.patientId ?? undefined,
                             lineIds:
                               sameCheckConfirm.patientId == null
@@ -1726,7 +1904,7 @@ function OrderDetail({
                         })
                       }
                     >
-                      Check {sameCheckConfirm.label}
+                      Override and check {sameCheckConfirm.label}
                     </button>
                   </div>
                 </div>
@@ -1783,7 +1961,12 @@ function OrderDetail({
                   <p>
                     {open.carrier || 'EasyPost'}
                     {open.service ? ` ${open.service}` : ''}
-                    {open.trackingCode ? ` · ${open.trackingCode}` : ''}
+                    {open.trackingCode ? (
+                      <>
+                        {' · '}
+                        <TrackingLink order={open} />
+                      </>
+                    ) : null}
                   </p>
                   {open.labelUrl ? (
                     <p>
@@ -1871,11 +2054,14 @@ function OrderDetail({
                     <button
                       type="button"
                       className="btn secondary"
-                      disabled={!mailFillDone(open) || !open.fillBranchId || quoting}
+                      disabled={Boolean(shipBlocked) || quoting}
+                      title={shipBlocked ?? undefined}
                       onClick={() => {
+                        setShipError(null);
                         setQuoting(true);
                         void fetchMailRates(practiceId, open.id, parcel())
                           .then(onRates)
+                          .catch((e) => setShipError(apiErrorMessage(e)))
                           .finally(() => setQuoting(false));
                       }}
                     >
@@ -1884,18 +2070,39 @@ function OrderDetail({
                     <button
                       type="button"
                       className="btn primary"
-                      disabled={!mailFillDone(open) || !open.fillBranchId}
-                      onClick={() =>
+                      disabled={Boolean(shipBlocked) || buyingLabel}
+                      title={shipBlocked ?? undefined}
+                      onClick={() => {
+                        setShipError(null);
+                        setBuyingLabel(true);
+                        // Open the tab during the click so the browser doesn't block it as a popup.
+                        const labelTab = window.open('', '_blank');
                         void onRun(async () => {
-                          const order = await buyMailLabel(practiceId, open.id, parcel());
-                          if (order.labelUrl) window.open(order.labelUrl, '_blank');
-                          return order;
-                        })
-                      }
+                          try {
+                            const order = await buyMailLabel(practiceId, open.id, parcel());
+                            if (order.labelUrl && labelTab) labelTab.location.href = order.labelUrl;
+                            else labelTab?.close();
+                            return order;
+                          } catch (e) {
+                            labelTab?.close();
+                            setShipError(apiErrorMessage(e));
+                            throw e;
+                          }
+                        }).finally(() => setBuyingLabel(false));
+                      }}
                     >
-                      Print cheapest label
+                      {buyingLabel ? 'Buying label…' : 'Print cheapest label'}
                     </button>
                   </div>
+                  {shipBlocked || shipError ? (
+                    <p
+                      className="settings-muted"
+                      role={shipError ? 'alert' : undefined}
+                      style={{ margin: '8px 0 0', color: shipError ? '#b91c1c' : '#b45309' }}
+                    >
+                      {shipError || shipBlocked}
+                    </p>
+                  ) : null}
                   {rates.shipFrom?.zip ? (
                     <p className="settings-muted">
                       Quoted from {rates.shipFrom.name || rates.shipFrom.city}{' '}
@@ -2123,7 +2330,12 @@ function OrderDetail({
               {stage === 'done' ? (
                 <p className="settings-muted">
                   {pickup ? 'Ready for pickup / completed.' : 'Shipped.'}
-                  {open.trackingCode ? ` Tracking ${open.trackingCode}.` : ''}
+                  {open.trackingCode ? (
+                    <>
+                      {' Tracking: '}
+                      <TrackingLink order={open} />.
+                    </>
+                  ) : null}
                 </p>
               ) : null}
             </>
@@ -2139,46 +2351,6 @@ function OrderDetail({
           {!employeeId && (viewStep === 'fill' || viewStep === 'check') && (
             <p className="settings-muted">Sign in as staff so your name is recorded.</p>
           )}
-        </div>
-
-        <div
-          className="mail-queue__side-card"
-          style={{ margin: '0 0 12px', padding: 12 }}
-        >
-          <h3 style={{ marginTop: 0 }}>Split / approvals</h3>
-          <p className="settings-muted" style={{ margin: '0 0 8px', fontSize: 12 }}>
-            Check items to move onto a separate shipment, or send each item to a different doctor.
-          </p>
-          <label className="settings-label">
-            Shared task note
-            <input
-              className="settings-input"
-              value={taskNote}
-              onChange={(e) => setTaskNote(e.target.value)}
-              placeholder="Optional note on the doctor task"
-            />
-          </label>
-          <div className="mail-queue__actions" style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="mail-queue__btn is-primary"
-              disabled={
-                splitIds.length < 1 || splitIds.length >= (open.lines || []).length
-              }
-              onClick={() =>
-                void onRun(async () => {
-                  const result = await splitMailOrder(practiceId, open.id, splitIds);
-                  setSplitIds([]);
-                  onOrderUpdated(result.original);
-                  onOrderUpdated(result.split);
-                  return result.original;
-                })
-              }
-            >
-              Split selected
-              {splitIds.length ? ` (${splitIds.length})` : ''}
-            </button>
-          </div>
         </div>
 
         {groupedLines.map((group) => {
@@ -2225,7 +2397,14 @@ function OrderDetail({
                 line.lineStatus === 'ok_to_mail'
                   ? { label: 'Ready', className: 'is-go' }
                   : line.lineStatus === 'awaiting_doctor_approval'
-                    ? { label: 'Awaiting doctor', className: 'is-wait' }
+                    ? line.approvalTaskOpen
+                      ? {
+                          label: line.approvalTaskAssigneeName
+                            ? `Task with ${line.approvalTaskAssigneeName}`
+                            : 'Approval task sent',
+                          className: 'is-wait',
+                        }
+                      : { label: 'Needs approval task', className: 'is-warn' }
                     : line.lineStatus === 'rejected'
                       ? { label: 'Rejected', className: 'is-stop' }
                       : line.lineStatus === 'send_back'
@@ -2233,11 +2412,38 @@ function OrderDetail({
                         : null;
               const currentScript = scriptsByLine[line.id] ?? line.scriptText ?? '';
               const scriptDirty = currentScript.trim() !== (line.scriptText || '').trim();
+              const stockItemId = line.stockInventoryItemId ?? line.inventoryItemId ?? null;
               return (
               <div key={line.id} className="mail-queue__line">
                 <div className="mail-queue__line-head">
                   <h4>
-                    {line.name} × {Number(line.quantity)}
+                    {stockItemId != null ? (
+                      <button
+                        type="button"
+                        className="mail-queue__pet-link"
+                        style={{
+                          background: 'none',
+                          border: 0,
+                          padding: 0,
+                          cursor: 'pointer',
+                          font: 'inherit',
+                          textAlign: 'left',
+                        }}
+                        title="Open inventory item"
+                        onClick={() =>
+                          setInventoryDetail({
+                            inventoryItemId: stockItemId,
+                            name: line.name,
+                            lineId: line.id,
+                          })
+                        }
+                      >
+                        {line.name}
+                      </button>
+                    ) : (
+                      line.name
+                    )}{' '}
+                    <span className="mail-queue__qty">× {Number(line.quantity)}</span>
                   </h4>
                   {lineBadge ? (
                     <span className={`mail-queue__badge ${lineBadge.className}`}>
@@ -2245,25 +2451,57 @@ function OrderDetail({
                     </span>
                   ) : null}
                 </div>
-                <label className="mail-queue__check">
-                  <input
-                    type="checkbox"
-                    checked={splitIds.includes(line.id)}
-                    onChange={(e) =>
-                      setSplitIds((prev) =>
-                        e.target.checked
-                          ? [...prev, line.id]
-                          : prev.filter((id) => id !== line.id),
-                      )
-                    }
-                  />
-                  Split to new shipment
-                </label>
+                <ul className="mail-queue__line-facts">
+                  <li>
+                    {line.autoshipFrequency
+                      ? `Auto-ship ${formatAutoshipFrequency(line.autoshipFrequency)}${
+                          line.renewalDate ? ` · next ${line.renewalDate}` : ''
+                        }${line.subscriptionPaused ? ' · paused' : ''}`
+                      : 'One-time fill'}
+                    {line.autoshipFrequency ? (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          className="mail-queue__pet-link"
+                          style={{
+                            background: 'none',
+                            border: 0,
+                            padding: 0,
+                            cursor: 'pointer',
+                            font: 'inherit',
+                          }}
+                          onClick={() => setEditAutoshipLine(line)}
+                        >
+                          Edit
+                        </button>
+                      </>
+                    ) : null}
+                  </li>
+                  <li>{line.primaryProviderName || open.doctorName || 'No primary provider'}</li>
+                  {line.authorizedRefills != null ? (
+                    <li className="mail-queue__refills">
+                      {line.authorizedRefills} refill{line.authorizedRefills === 1 ? '' : 's'}
+                      {line.authorizedRefillExpiration
+                        ? `, expire ${line.authorizedRefillExpiration}`
+                        : ''}
+                    </li>
+                  ) : null}
+                  <li>
+                    {line.refillsRemaining != null
+                      ? `${line.refillsRemaining} left on prior Rx`
+                      : line.refillNote || 'Prior refill count not on file'}
+                    {line.refillExpiresAt
+                      ? `, expires ${new Date(line.refillExpiresAt).toLocaleDateString()}`
+                      : ''}
+                  </li>
+                </ul>
 
                 <div className="mail-queue__section">
                   <p className="mail-queue__section-label">Approval</p>
                   {lineIsApproved(line) ? (
-                    <div className="mail-queue__row">
+                    <>
+                    <div className="mail-queue__row mail-queue__row--center">
                       <span className="mail-queue__badge is-go">✓ Approved</span>
                       {line.approvalTaskId ? (
                         <Link
@@ -2273,6 +2511,19 @@ function OrderDetail({
                           Open task
                         </Link>
                       ) : null}
+                      <button
+                        type="button"
+                        className="mail-queue__btn mail-queue__btn--quiet"
+                        aria-expanded={Boolean(resendOpen[line.id])}
+                        onClick={() =>
+                          setResendOpen((prev) => ({ ...prev, [line.id]: !prev[line.id] }))
+                        }
+                      >
+                        {resendOpen[line.id] ? 'Cancel re-send' : 'Re-send…'}
+                      </button>
+                    </div>
+                    {resendOpen[line.id] ? (
+                    <div className="mail-queue__row" style={{ marginTop: 8 }}>
                       <label className="settings-label">
                         Doctor
                         <select
@@ -2314,11 +2565,28 @@ function OrderDetail({
                         Re-send approval
                       </button>
                     </div>
+                    ) : null}
+                    </>
                   ) : (
                     <>
+                      {line.lineStatus === 'awaiting_doctor_approval' ? (
+                        <p className="mail-queue__task-status">
+                          {line.approvalTaskOpen && line.approvalTaskAssigneeName ? (
+                            <>
+                              Approval task sent to <strong>{line.approvalTaskAssigneeName}</strong>
+                              {line.approvalTaskWatcherNames?.length
+                                ? ` · ${line.approvalTaskWatcherNames.join(', ')} watching`
+                                : ''}
+                              . Nothing to do here unless it needs to go to someone else.
+                            </>
+                          ) : (
+                            <>No approval task has been sent yet. Choose who should get it.</>
+                          )}
+                        </p>
+                      ) : null}
                       <div className="mail-queue__row">
                         <label className="settings-label">
-                          Doctor
+                          {line.approvalTaskOpen ? 'Reassign to' : 'Send to'}
                           <select
                             className="settings-input"
                             value={assigneeByLine[line.id] || ''}
@@ -2339,7 +2607,7 @@ function OrderDetail({
                         </label>
                         <button
                           type="button"
-                          className="mail-queue__btn is-primary"
+                          className={`mail-queue__btn${line.approvalTaskOpen ? '' : ' is-primary'}`}
                           disabled={!assigneeByLine[line.id]}
                           onClick={() =>
                             void onRun(() =>
@@ -2355,7 +2623,7 @@ function OrderDetail({
                             )
                           }
                         >
-                          Send to doctor
+                          {line.approvalTaskOpen ? 'Reassign task' : 'Send task'}
                         </button>
                         {line.approvalTaskId ? (
                           <Link
@@ -2406,68 +2674,17 @@ function OrderDetail({
                   )}
                 </div>
 
-                <p className="mail-queue__meta-line">
-                  {line.autoshipFrequency
-                    ? `Auto-ship ${formatAutoshipFrequency(line.autoshipFrequency)}${
-                        line.renewalDate ? ` · next ${line.renewalDate}` : ''
-                      }${line.subscriptionPaused ? ' · paused' : ''}`
-                    : 'One-time fill'}
-                  {' · '}
-                  {line.primaryProviderName || open.doctorName || 'No primary provider'}
-                  {line.autoshipFrequency ? (
-                    <>
-                      {' · '}
-                      <button
-                        type="button"
-                        className="mail-queue__pet-link"
-                        style={{
-                          background: 'none',
-                          border: 0,
-                          padding: 0,
-                          cursor: 'pointer',
-                          font: 'inherit',
-                        }}
-                        onClick={() => setEditAutoshipLine(line)}
-                      >
-                        Edit
-                      </button>
-                    </>
-                  ) : null}
-                  {line.authorizedRefills != null ? (
-                    <>
-                      {' · '}
-                      <span className="mail-queue__refills" style={{ display: 'inline' }}>
-                        Add {line.authorizedRefills} refill
-                        {line.authorizedRefills === 1 ? '' : 's'}
-                        {line.authorizedRefillExpiration
-                          ? ` · expire ${line.authorizedRefillExpiration}`
-                          : ''}
-                      </span>
-                    </>
-                  ) : null}
-                  {' · '}
-                  {line.refillsRemaining != null
-                    ? `${line.refillsRemaining} remaining on prior Rx`
-                    : line.refillNote || 'Prior refill count not on file'}
-                  {line.refillExpiresAt
-                    ? ` · expires ${new Date(line.refillExpiresAt).toLocaleDateString()}`
-                    : ''}
-                </p>
-
                 <div className="mail-queue__section">
-                  <div className="mail-queue__row" style={{ alignItems: 'flex-start' }}>
-                    <label className="settings-label mail-queue__grow" style={{ flex: '1 1 100%' }}>
-                      Directions
-                      <textarea
-                        className="settings-input mail-queue__script"
-                        rows={2}
-                        value={currentScript}
-                        onChange={(e) =>
-                          setScriptsByLine((prev) => ({ ...prev, [line.id]: e.target.value }))
-                        }
-                      />
-                    </label>
-                  </div>
+                  <p className="mail-queue__section-label">Directions</p>
+                  <textarea
+                    className="settings-input mail-queue__script"
+                    aria-label={`Directions for ${line.name}`}
+                    rows={4}
+                    value={currentScript}
+                    onChange={(e) =>
+                      setScriptsByLine((prev) => ({ ...prev, [line.id]: e.target.value }))
+                    }
+                  />
                   <div className="mail-queue__actions">
                     <button
                       type="button"
@@ -2503,12 +2720,94 @@ function OrderDetail({
                     />
                   </div>
                 </div>
+
+                {viewStep === 'fill' && line.trackLots ? (
+                  <div
+                    key={`${fillBranchId}:${fillLocationId}`}
+                    className="mail-queue__section mail-queue__lot"
+                  >
+                    <StockLotPicker
+                      practiceId={practiceId}
+                      inventoryItemId={stockItemId}
+                      branchId={fillBranchId === '' ? null : Number(fillBranchId)}
+                      locationId={fillLocationId === '' ? null : Number(fillLocationId)}
+                      required
+                      selectedLotId={fillLots[line.id]?.lotId ?? null}
+                      lotNumber={fillLots[line.id]?.lotNumber ?? ''}
+                      label="Lot / expiration"
+                      refreshKey={lotRefreshByLine[line.id] ?? 0}
+                      onChange={(pick) =>
+                        setFillLots((prev) => ({
+                          ...prev,
+                          [line.id]: { lotId: pick.lotId, lotNumber: pick.lotNumber },
+                        }))
+                      }
+                    />
+                  </div>
+                ) : null}
+
+                <div className="mail-queue__line-foot">
+                  <label className="mail-queue__check">
+                    <input
+                      type="checkbox"
+                      checked={splitIds.includes(line.id)}
+                      onChange={(e) =>
+                        setSplitIds((prev) =>
+                          e.target.checked
+                            ? [...prev, line.id]
+                            : prev.filter((id) => id !== line.id),
+                        )
+                      }
+                    />
+                    Split to new shipment
+                  </label>
+                </div>
               </div>
               );
             })}
           </div>
           );
         })}
+
+        <div
+          className="mail-queue__side-card"
+          style={{ margin: '12px 0 0', padding: 12 }}
+        >
+          <h3 style={{ marginTop: 0 }}>Split / approvals</h3>
+          <p className="settings-muted" style={{ margin: '0 0 8px', fontSize: 12 }}>
+            Check items to move onto a separate shipment, or send each item to a different doctor.
+          </p>
+          <label className="settings-label">
+            Shared task note
+            <input
+              className="settings-input"
+              value={taskNote}
+              onChange={(e) => setTaskNote(e.target.value)}
+              placeholder="Optional note on the doctor task"
+            />
+          </label>
+          <div className="mail-queue__actions" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="mail-queue__btn is-primary"
+              disabled={
+                splitIds.length < 1 || splitIds.length >= (open.lines || []).length
+              }
+              onClick={() =>
+                void onRun(async () => {
+                  const result = await splitMailOrder(practiceId, open.id, splitIds);
+                  setSplitIds([]);
+                  onOrderUpdated(result.original);
+                  onOrderUpdated(result.split);
+                  return result.original;
+                })
+              }
+            >
+              Split selected
+              {splitIds.length ? ` (${splitIds.length})` : ''}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="mail-queue__side">
@@ -2537,11 +2836,20 @@ function OrderDetail({
               open.customerName
             )}
           </p>
-          <p className="settings-muted" style={{ margin: '0 0 6px' }}>
-            {open.shipLine1 || 'No address yet'}
-            {open.shipLine2 ? `, ${open.shipLine2}` : ''}
-            {open.shipCity ? `, ${open.shipCity}` : ''} {open.shipState} {open.shipPostal}
-          </p>
+          {pickup ? (
+            <p className="settings-muted" style={{ margin: '0 0 6px' }}>
+              {open.shipLine1 || 'Office pickup'}
+              {open.shipCity ? `, ${open.shipCity}` : ''} {open.shipState} {open.shipPostal}
+            </p>
+          ) : (
+            <ShipToAddress
+              key={open.id}
+              order={open}
+              practiceId={practiceId}
+              locked={Boolean(open.labelUrl || open.trackingCode)}
+              onRun={onRun}
+            />
+          )}
           <p className="settings-muted" style={{ margin: 0 }}>
             Doctor {open.doctorName || '—'}
             <br />
@@ -2559,7 +2867,12 @@ function OrderDetail({
                     Open label
                   </a>
                 ) : null}
-                {open.trackingCode ? ` · ${open.trackingCode}` : ''}
+                {open.trackingCode ? (
+                  <>
+                    {' · '}
+                    <TrackingLink order={open} />
+                  </>
+                ) : null}
               </p>
               {voidLabelButton(true)}
             </>
@@ -2770,6 +3083,120 @@ function OrderDetail({
         />
       ) : null}
     </div>
+  );
+}
+
+function ShipToAddress({
+  order,
+  practiceId,
+  locked,
+  onRun,
+}: {
+  order: MailOrder;
+  practiceId: number;
+  locked: boolean;
+  onRun: (fn: () => Promise<MailOrder>) => Promise<boolean>;
+}) {
+  const hasAddress = Boolean(order.shipLine1?.trim());
+  const [editing, setEditing] = useState(false);
+  const [choice, setChoice] = useState<MailShipChoice | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!choice) return;
+    setSaving(true);
+    setSaveError(null);
+    const ship = shipBodyFromFields(choice.fields);
+    const ok = await onRun(() =>
+      patchMailOrder(practiceId, order.id, {
+        shipName: order.shipName || order.customerName,
+        shipLine1: ship.line1,
+        shipLine2: ship.line2 ?? null,
+        shipCity: ship.city,
+        shipState: ship.state,
+        shipPostal: ship.postal,
+      }),
+    );
+    if (ok && choice.saveAsMailing && order.clientId) {
+      await saveMailingAddressOnFile(order.clientId, choice.fields).catch(() =>
+        setSaveError('Address saved on the order, but not on the client as their mailing address.'),
+      );
+    }
+    setSaving(false);
+    if (ok) setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="mail-queue__ship-edit">
+        <MailShipAddressPicker
+          clientId={order.clientId}
+          onChange={setChoice}
+          current={
+            hasAddress
+              ? {
+                  line1: order.shipLine1 || '',
+                  line2: order.shipLine2 || undefined,
+                  city: order.shipCity || '',
+                  state: order.shipState || '',
+                  zip: order.shipPostal || '',
+                  country: 'US',
+                }
+              : null
+          }
+        />
+        <div className="mail-queue__actions" style={{ marginTop: 6 }}>
+          <button
+            type="button"
+            className="mail-queue__btn is-primary"
+            disabled={!choice || saving}
+            onClick={() => void save()}
+          >
+            {saving ? 'Saving…' : 'Save address'}
+          </button>
+          <button
+            type="button"
+            className="mail-queue__btn"
+            disabled={saving}
+            onClick={() => setEditing(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {hasAddress ? (
+        <p className="settings-muted" style={{ margin: '0 0 6px' }}>
+          {order.shipLine1}
+          {order.shipLine2 ? `, ${order.shipLine2}` : ''}
+          {order.shipCity ? `, ${order.shipCity}` : ''} {order.shipState} {order.shipPostal}
+        </p>
+      ) : (
+        <p className="mail-queue__ship-missing" role="status">
+          No shipping address yet. Add one before buying a label.
+        </p>
+      )}
+      {saveError ? <p className="settings-error-message">{saveError}</p> : null}
+      {!locked ? (
+        <div className="mail-queue__actions" style={{ margin: '0 0 8px' }}>
+          <button
+            type="button"
+            className={`mail-queue__btn${hasAddress ? '' : ' is-primary'}`}
+            onClick={() => {
+              setChoice(null);
+              setEditing(true);
+            }}
+          >
+            {hasAddress ? 'Change address' : 'Add address'}
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 

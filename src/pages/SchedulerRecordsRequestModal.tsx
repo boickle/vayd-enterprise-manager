@@ -52,14 +52,15 @@ export function SchedulerRecordsRequestModal({
   patientId,
   patientName,
   clientId,
-  accentColor,
+  accentColor = '#1e4d8c',
   onClose,
 }: {
-  appt: Appointment;
+  /** Links the request to a visit when opened from the schedule; the chart has none. */
+  appt?: Appointment | null;
   patientId: number;
   patientName: string;
   clientId?: number | null;
-  accentColor: string;
+  accentColor?: string;
   onClose: () => void;
 }) {
   const [hospitals, setHospitals] = useState<OutsideHospital[]>([]);
@@ -76,7 +77,7 @@ export function SchedulerRecordsRequestModal({
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
-  const appointmentId = Number(appt.id);
+  const appointmentId = Number(appt?.id);
 
   useEffect(() => {
     let cancelled = false;

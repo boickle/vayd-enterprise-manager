@@ -9,6 +9,12 @@ import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiv
 import { communicationBodyForDisplay } from './clientCommunicationDisplay';
 import { looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
 import { chartRemoveReasonLabel } from './chartRemove';
+import {
+  idexxAbnormalLines,
+  idexxReportHtml,
+  idexxReportText,
+  parseIdexxReport,
+} from './idexxLabResults';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -37,6 +43,7 @@ const EMR_SOURCES = new Set<ChartRowSource>([
   'history',
   'chartNote',
   'exam',
+  'lab',
   'document',
   'communication',
   'treatment',
@@ -151,6 +158,10 @@ export type ChartRow = {
   detailText: string;
   /** Sanitized HTML body for communication rows when the source payload is HTML email. */
   detailHtml?: string;
+  /** Plain-text version of `detailHtml` for printing, when stripping the HTML would lose its layout. */
+  printText?: string;
+  /** Outside-lab result header, so the row can be titled with the lab that was ordered. */
+  labReport?: { status: string; orderedBy: string; panels: string };
   hasResult?: boolean;
   /** Membership-covered visit charge — show a heart next to the description. */
   isCovered?: boolean;
@@ -998,6 +1009,39 @@ export function buildChartRowsFromMedicalRecord(
     const notes = pickStr(order.notes);
     const rpt = result ? pickStr(result.reportDate) : null;
     const rComments = result ? pickStr(result.comments) : null;
+    const report = result ? parseIdexxReport(pickStr(result.externalData)) : null;
+    if (report) {
+      const abnormal = idexxAbnormalLines(report);
+      // eVet files the result on the order's date, next to the Lab line that ordered it.
+      const when = submitted ?? rpt;
+      out.push({
+        id: `lab:${oid}`,
+        source: 'lab',
+        typeLabel: /idexx/i.test(typeName) ? 'IDEXX VetConnect Result' : `${typeName} (result)`,
+        description: [report.status, report.orderedBy, report.title || notes]
+          .filter(Boolean)
+          .join(' - '),
+        provider: report.orderedBy || '—',
+        serviceDateIso: when,
+        sortTime: parseSortTime(when),
+        detailText: [
+          abnormal.length
+            ? `Out of range: ${abnormal.join('; ')}`
+            : 'All values within reference range.',
+          rpt && `Reported ${new Date(rpt).toLocaleString()}`,
+          rComments && `Comments: ${rComments}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        detailHtml: idexxReportHtml(report),
+        printText: [rComments && `Comments: ${rComments}`, idexxReportText(report)]
+          .filter(Boolean)
+          .join('\n\n'),
+        hasResult: report.status === 'Final',
+        labReport: { status: report.status, orderedBy: report.orderedBy, panels: report.title },
+      });
+      continue;
+    }
     const descParts = [notes, ext ? `Ref: ${ext}` : null, rComments].filter(Boolean);
     out.push({
       id: `lab:${oid}`,
@@ -1226,7 +1270,65 @@ export function buildChartRowsFromMedicalRecord(
     });
   }
 
+  linkLabOrdersToResults(out);
   return finish(out);
+}
+
+function localDay(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA');
+}
+
+/** The ordered "Lab" line points at the result filed that day, so its row is not just a name. */
+function linkLabOrdersToResults(rows: ChartRow[]) {
+  const resultsByDay = new Map<string, ChartRow[]>();
+  for (const r of rows) {
+    if (r.source !== 'lab' || !r.detailHtml) continue;
+    const day = localDay(r.serviceDateIso);
+    if (!day) continue;
+    resultsByDay.set(day, [...(resultsByDay.get(day) ?? []), r]);
+  }
+  if (!resultsByDay.size) return;
+  const orderedByDay = new Map<string, ChartRow[]>();
+  for (const r of rows) {
+    const ordered =
+      (r.source === 'treatment' || r.source === 'visitCharge') &&
+      r.typeLabel === 'Lab' &&
+      !r.isDeclined;
+    if (!ordered) continue;
+    const day = localDay(r.serviceDateIso);
+    if (!resultsByDay.has(day)) continue;
+    orderedByDay.set(day, [...(orderedByDay.get(day) ?? []), r]);
+  }
+  for (const [day, ordered] of orderedByDay) {
+    const results = resultsByDay.get(day)!;
+    // One result that day: it is the lab that was ordered, so it carries that name.
+    // With several, the IDEXX panel names are the only safe title.
+    if (results.length === 1) {
+      const res = results[0]!;
+      const names = [...new Set(ordered.map((o) => o.description.trim()))].join('; ');
+      if (res.labReport && names) {
+        res.description = [res.labReport.status, res.labReport.orderedBy, names]
+          .filter(Boolean)
+          .join(' - ');
+        if (res.labReport.panels) {
+          res.detailText = [`IDEXX panels: ${res.labReport.panels}`, res.detailText]
+            .filter(Boolean)
+            .join('\n');
+        }
+      }
+    }
+    for (const o of ordered) {
+      const lines = results.map((res) => {
+        const outOfRange =
+          res.detailText.split('\n').find((l) => /^(Out of range|All values)/.test(l)) ?? '';
+        return `Result: ${res.typeLabel} (${res.labReport?.status ?? 'see result'}) — ${outOfRange}`;
+      });
+      o.detailText = [o.detailText, ...lines].filter(Boolean).join('\n\n');
+      o.hasResult = true;
+    }
+  }
 }
 
 /** Group already-filtered rows by calendar day in the browser locale. */

@@ -59,8 +59,10 @@ import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from './SendRxLabelButton';
 import MailInvoiceLineCheckbox, {
+  approveMailOrderFromInvoice,
   cancelMailOrdersForInvoiceLines,
   isMailOrderShipped,
+  mailOrderWaitsForQueueApproval,
   matchingMailOrderForLine,
   shippedMailMessage,
   shippingLineFromNotes,
@@ -226,8 +228,8 @@ function checkoutRxMissingFields(args: {
     }
   }
   if (args.acuity !== 'acute' && args.acuity !== 'chronic') missing.push('acuity');
-  if (!args.discardAfter || dateIsTodayOrBefore(args.discardAfter)) missing.push('discardAfter');
   if (!args.mailed) {
+    if (!args.discardAfter || dateIsTodayOrBefore(args.discardAfter)) missing.push('discardAfter');
     if (args.invoice.inventoryBranchId == null) missing.push('branch');
     if (args.invoice.inventoryLocationId == null) missing.push('location');
     if (args.trackLots && args.lotId == null) missing.push('lot');
@@ -265,6 +267,7 @@ function CheckoutInvoiceRxFields({
   approveTried,
   approvedByName,
   mailed,
+  mailOrder,
   hideLotPicker,
   dymoSource,
   patientId,
@@ -273,6 +276,7 @@ function CheckoutInvoiceRxFields({
   onPrescriptionSaved,
   onError,
   onApproved,
+  onMailOrderApproved,
   onSavedAndCollapse,
   onApproveTried,
 }: {
@@ -289,6 +293,7 @@ function CheckoutInvoiceRxFields({
   approveTried?: boolean;
   approvedByName?: string | null;
   mailed: boolean;
+  mailOrder?: MailOrder | null;
   hideLotPicker: boolean;
   dymoSource: Omit<
     SendRxLabelSource,
@@ -306,6 +311,8 @@ function CheckoutInvoiceRxFields({
   onError: (message: string) => void;
   /** Called after Rx is saved + approved — e.g. set provider on the line. */
   onApproved: () => void;
+  /** The mail order's doctor approval was completed from this invoice. */
+  onMailOrderApproved?: () => void;
   /** After a successful Save Rx — collapse the line. */
   onSavedAndCollapse?: () => void;
   onApproveTried?: () => void;
@@ -340,6 +347,7 @@ function CheckoutInvoiceRxFields({
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const canWriteRx = Boolean(encounterId && orderId);
+  const mailDoctorApproves = mailed && mailOrderWaitsForQueueApproval(mailOrder);
 
   // Re-hydrate when the saved Rx row arrives (navigate away + back). The recorded
   // row is the only source of truth here: if it has no expiration/acuity, these
@@ -436,6 +444,18 @@ function CheckoutInvoiceRxFields({
       };
       if (opts?.approve) invoicePatch.rxApproved = true;
       onSaved(await updateCounterInvoiceLine(invoice.id, line.id, invoicePatch));
+      if (opts?.approve && mailOrder) {
+        try {
+          const changed = await approveMailOrderFromInvoice(mailOrder, line, {
+            refills: refillCount,
+            refillExpiration,
+            instructions: nextInstructions,
+          });
+          if (changed) onMailOrderApproved?.();
+        } catch (e) {
+          onError(`Script approved, but the mail order still shows waiting on doctor: ${apiErrorMessage(e)}`);
+        }
+      }
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 1600);
       return true;
@@ -490,11 +510,13 @@ function CheckoutInvoiceRxFields({
               Entered by {line.instructionsEnteredByName}
             </span>
           ) : null}
-          {!disabled && !scriptApproved && (mailed || !canApprove) ? (
+          {!disabled && !scriptApproved && (mailDoctorApproves || !canApprove) ? (
             <span className="client-fin__entered client-fin__needs-approver">
-              {mailed
+              {mailDoctorApproves
                 ? 'The doctor approves this from the mail queue'
-                : 'A doctor or technician must approve — or switch to Mail order'}
+                : mailed
+                  ? 'A doctor or technician approves here, or the doctor approves from the mail queue'
+                  : 'A doctor or technician must approve — or switch to Mail order'}
             </span>
           ) : !disabled && !scriptApproved ? (
             <button
@@ -626,13 +648,17 @@ function CheckoutInvoiceRxFields({
               }}
             />
           </div>
-        ) : mailed ? (
+        ) : mailDoctorApproves ? (
           <p className="client-fin__fulfill-note">
             Mail order: the mail team picks the lot and fill location, and the doctor sets refills
             when approving.
           </p>
+        ) : mailed ? (
+          <p className="client-fin__fulfill-note">
+            Mail order: the mail team picks the lot and fill location.
+          </p>
         ) : null}
-        {mailed ? null : (
+        {mailDoctorApproves ? null : (
         <>
         <label className={`client-fin__rx-field client-fin__refill${highlight('refillCount') ? ' is-missing' : ''}`}>
           <span>
@@ -726,6 +752,7 @@ function CheckoutInvoiceRxFields({
             <option value="chronic">Chronic</option>
           </select>
         </label>
+        {mailed ? null : (
         <label className={`client-fin__rx-field${highlight('discardAfter') ? ' is-missing' : ''}`}>
           <span>Discard after *</span>
           <input
@@ -744,6 +771,7 @@ function CheckoutInvoiceRxFields({
             onBlur={() => void persistExtrasIfReady()}
           />
         </label>
+        )}
         {!disabled ? (
           <div className="client-fin__rx-save-row">
             <button
@@ -2469,6 +2497,12 @@ export default function VisitCheckoutPanel({
                               l.rxApprovedByName ? shortProviderName(l.rxApprovedByName) : null
                             }
                             mailed={Boolean(mailed)}
+                            mailOrder={mailed}
+                            onMailOrderApproved={() => {
+                              void listMailOrders(VISIT_WORKFLOW_PRACTICE_ID)
+                                .then(setMailOrders)
+                                .catch(() => undefined);
+                            }}
                             hideLotPicker={isVaccineLine || stock.linked}
                             patientId={l.patientId ?? invoice.patientId ?? rxLabel?.patientId}
                             patientName={rxLabel?.patientName}

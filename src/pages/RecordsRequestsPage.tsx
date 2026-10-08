@@ -1,16 +1,19 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Mail, Paperclip, Phone, RefreshCw, Search, Send, Upload } from 'lucide-react';
+import { CheckCircle2, FileText, Mail, Paperclip, Phone, RefreshCw, Search, Send, Upload } from 'lucide-react';
 import {
   listRecordsRequests,
   notifyRecordsRequestStatusChanged,
   resendRecordsRequest,
+  recordsRequestDocumentIds,
+  recordsRequestNeedsReview,
   updateRecordsRequest,
-  uploadRecordsRequestFile,
+  uploadRecordsRequestFiles,
   type RecordsRequestRow,
   type RecordsRequestStatus,
 } from '../api/recordsRequests';
 import { apiErrorMessage } from '../api/http';
+import { appConfirm } from '../utils/appDialog';
 import {
   SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
   notifySchedulingToolsNavCountsRefresh,
@@ -21,6 +24,7 @@ import {
   visitCountdownLabel,
 } from '../utils/recordsRequestUrgency';
 import RecordsEmailLookup from '../components/records/RecordsEmailLookup';
+import RecordDocumentsReview from '../components/records/RecordDocumentsReview';
 import './RecordsRequestsPage.css';
 
 type Filter = 'urgent' | 'open' | 'received' | 'closed' | 'all';
@@ -44,8 +48,20 @@ function matchesFilter(row: RecordsRequestRow, filter: Filter): boolean {
   if (filter === 'all') return true;
   if (filter === 'urgent') return isRecordsRequestUrgent(row);
   if (filter === 'open') return row.status === 'pending';
-  if (filter === 'received') return row.status === 'received';
-  return row.status === 'declined' || row.status === 'cancelled';
+  if (filter === 'received') return recordsRequestNeedsReview(row);
+  return row.status === 'declined' || row.status === 'cancelled' || Boolean(row.closedOutAt);
+}
+
+function statusLabel(row: RecordsRequestRow): string {
+  if (row.status === 'received' && row.closedOutAt) return 'Closed out';
+  if (row.status === 'received' && row.summaryNoteId) return 'Summarized';
+  return STATUS_LABEL[row.status];
+}
+
+function statusPillClass(row: RecordsRequestRow): string {
+  if (row.status === 'received' && row.closedOutAt) return 'is-closed-out';
+  if (row.status === 'received' && !row.summaryNoteId) return 'is-to-review';
+  return `is-${row.status}`;
 }
 
 function formatDate(iso: string | null): string {
@@ -74,6 +90,7 @@ export default function RecordsRequestsPage() {
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [lookupId, setLookupId] = useState<number | null>(null);
+  const [reviewId, setReviewId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,6 +131,7 @@ export default function RecordsRequestsPage() {
     () => ({
       open: rows.filter((r) => r.status === 'pending').length,
       urgent: rows.filter((r) => isRecordsRequestUrgent(r)).length,
+      toReview: rows.filter((r) => recordsRequestNeedsReview(r)).length,
     }),
     [rows],
   );
@@ -137,6 +155,57 @@ export default function RecordsRequestsPage() {
     }
   };
 
+  const markSummarized = async (row: RecordsRequestRow, summaryNoteId: string) => {
+    setError(null);
+    try {
+      await updateRecordsRequest(row.id, { summaryNoteId });
+      afterChange(
+        rows.map((r) =>
+          r.id === row.id
+            ? { ...r, summaryNoteId, summarizedAt: new Date().toISOString() }
+            : r,
+        ),
+      );
+      setFlash(
+        `Summary added to ${row.patientName ?? 'the patient'}'s medical record. Enter any reminders from these records, then close out.`,
+      );
+    } catch (err) {
+      setError(apiErrorMessage(err) || 'The summary was added, but the request did not update.');
+    }
+  };
+
+  const closeOut = async (row: RecordsRequestRow, closedOut: boolean) => {
+    if (closedOut) {
+      const ok = await appConfirm({
+        title: 'Close out these records?',
+        message: `Confirm the summary is on ${row.patientName ?? 'the patient'}'s record and every reminder from these records (vaccines, tests, recheck dates) has been entered.`,
+        confirmLabel: 'Reminders entered · Close out',
+      });
+      if (!ok) return;
+    }
+    setBusyId(row.id);
+    setError(null);
+    setFlash(null);
+    try {
+      await updateRecordsRequest(row.id, { closedOut });
+      afterChange(
+        rows.map((r) =>
+          r.id === row.id
+            ? { ...r, closedOutAt: closedOut ? new Date().toISOString() : null }
+            : r,
+        ),
+      );
+      if (closedOut) {
+        if (reviewId === row.id) setReviewId(null);
+        setFlash(`${row.patientName ?? 'Records'} closed out.`);
+      }
+    } catch (err) {
+      setError(apiErrorMessage(err) || 'Could not close out that request.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const resend = async (row: RecordsRequestRow) => {
     setBusyId(row.id);
     setError(null);
@@ -155,17 +224,30 @@ export default function RecordsRequestsPage() {
   };
 
   /** Records that arrived by fax or post still need a home on the chart. */
-  const uploadForRow = async (row: RecordsRequestRow, file: File) => {
+  const uploadForRow = async (row: RecordsRequestRow, files: File[]) => {
     setBusyId(row.id);
     setError(null);
     setFlash(null);
     try {
-      await uploadRecordsRequestFile(row.id, file);
+      const result = await uploadRecordsRequestFiles(row.id, files);
+      const filed = Array.isArray(result?.chartDocumentIds) ? result.chartDocumentIds : [];
       afterChange(
-        rows.map((r) => (r.id === row.id ? { ...r, status: 'received' as const } : r)),
+        rows.map((r) =>
+          r.id === row.id
+            ? {
+                ...r,
+                status: 'received' as const,
+                chartDocumentIds: [...recordsRequestDocumentIds(r), ...filed],
+                chartDocumentId: r.chartDocumentId ?? filed[0] ?? null,
+                summaryNoteId: null,
+                summarizedAt: null,
+                closedOutAt: null,
+              }
+            : r,
+        ),
       );
       setFlash(
-        `Filed ${file.name} on ${row.patientName ?? 'the patient'}'s chart. The summary lands on the timeline shortly.`,
+        `Filed ${files.length === 1 ? files[0]!.name : `${files.length} documents`} on ${row.patientName ?? 'the patient'}'s chart. Open Received → Review & summarize to name them and add a summary.`,
       );
     } catch (err) {
       setError(apiErrorMessage(err) || 'Could not file that document.');
@@ -191,6 +273,14 @@ export default function RecordsRequestsPage() {
               ) : null}
               {f.id === 'urgent' && counts.urgent > 0 ? (
                 <span className="records-page__filter-count is-urgent">{counts.urgent}</span>
+              ) : null}
+              {f.id === 'received' && counts.toReview > 0 ? (
+                <span
+                  className="records-page__filter-count is-review"
+                  title={`${counts.toReview} received ${counts.toReview === 1 ? 'record needs' : 'records need'} review`}
+                >
+                  {counts.toReview}
+                </span>
               ) : null}
             </button>
           ))}
@@ -292,12 +382,21 @@ export default function RecordsRequestsPage() {
                     ) : null}
                   </td>
                   <td>
-                    <span className={`records-page__pill is-${row.status}`}>
-                      {STATUS_LABEL[row.status]}
+                    <span className={`records-page__pill ${statusPillClass(row)}`}>
+                      {statusLabel(row)}
                     </span>
-                    {row.chartDocumentId ? (
+                    {row.closedOutAt ? (
                       <span className="records-page__sub">
-                        <Paperclip size={11} aria-hidden /> on chart
+                        {formatDate(row.closedOutAt)}
+                        {row.closedOutByName ? ` by ${row.closedOutByName}` : ''}
+                      </span>
+                    ) : null}
+                    {recordsRequestDocumentIds(row).length ? (
+                      <span className="records-page__sub">
+                        <Paperclip size={11} aria-hidden />{' '}
+                        {recordsRequestDocumentIds(row).length > 1
+                          ? `${recordsRequestDocumentIds(row).length} documents on chart`
+                          : 'on chart'}
                       </span>
                     ) : null}
                   </td>
@@ -309,12 +408,13 @@ export default function RecordsRequestsPage() {
                           <input
                             type="file"
                             hidden
+                            multiple
                             disabled={busy}
                             accept="application/pdf,image/*,text/plain,.doc,.docx"
                             onChange={(e) => {
-                              const file = e.currentTarget.files?.[0];
+                              const files = Array.from(e.currentTarget.files ?? []);
                               e.currentTarget.value = '';
-                              if (file) void uploadForRow(row, file);
+                              if (files.length) void uploadForRow(row, files);
                             }}
                           />
                         </label>
@@ -354,7 +454,62 @@ export default function RecordsRequestsPage() {
                       >
                         Reopen
                       </button>
-                    ) : null}
+                    ) : row.closedOutAt ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title="Put this back on the Received list"
+                        onClick={() => void closeOut(row, false)}
+                      >
+                        Reopen review
+                      </button>
+                    ) : (
+                      <>
+                        <label
+                          className="records-page__upload"
+                          title="Add more documents to this request"
+                        >
+                          <Upload size={13} aria-hidden />
+                          <input
+                            type="file"
+                            hidden
+                            multiple
+                            disabled={busy}
+                            accept="application/pdf,image/*,text/plain,.doc,.docx"
+                            onChange={(e) => {
+                              const files = Array.from(e.currentTarget.files ?? []);
+                              e.currentTarget.value = '';
+                              if (files.length) void uploadForRow(row, files);
+                            }}
+                          />
+                        </label>
+                        {recordsRequestDocumentIds(row).length ? (
+                          <button
+                            type="button"
+                            className={reviewId === row.id ? 'is-active' : undefined}
+                            onClick={() =>
+                              setReviewId((prev) => (prev === row.id ? null : row.id))
+                            }
+                          >
+                            <FileText size={12} aria-hidden />{' '}
+                            {reviewId === row.id ? 'Hide review' : 'Review & summarize'}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="records-page__close-out"
+                          disabled={busy || !row.summaryNoteId}
+                          title={
+                            row.summaryNoteId
+                              ? 'Summary is on the chart — confirm reminders are entered and close out'
+                              : 'Add a summary with Review & summarize first'
+                          }
+                          onClick={() => void closeOut(row, true)}
+                        >
+                          <CheckCircle2 size={12} aria-hidden /> Close out
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
 
@@ -392,6 +547,23 @@ export default function RecordsRequestsPage() {
                           </span>
                         )}
                       </div>
+                    </td>
+                  </tr>
+                ) : null}
+
+                {reviewId === row.id ? (
+                  <tr className="records-page__review-row">
+                    <td colSpan={7}>
+                      <RecordDocumentsReview
+                        patientId={row.patientId}
+                        patientName={row.patientName}
+                        clientId={row.clientId}
+                        hospitalName={row.hospitalName}
+                        documentIds={recordsRequestDocumentIds(row)}
+                        onAccepted={(result) => {
+                          if (result?.scoutNoteId) void markSummarized(row, result.scoutNoteId);
+                        }}
+                      />
                     </td>
                   </tr>
                 ) : null}

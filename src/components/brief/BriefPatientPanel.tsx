@@ -14,7 +14,7 @@ import {
   patientDisplayName,
   pickStr,
 } from '../../utils/briefDisplay';
-import BriefRecordReview from './BriefRecordReview';
+import RecordDocumentsReview from '../records/RecordDocumentsReview';
 import BriefCaseHistoryPanel from './BriefCaseHistoryPanel';
 import BriefMergePanel from './BriefMergePanel';
 import { useCan } from '../../permissions/PermissionContext';
@@ -241,7 +241,7 @@ export default function BriefPatientPanel({
       ) : null}
 
       {tab === 'review' ? (
-        <BriefRecordReview
+        <RecordDocumentsReview
           patientId={patientId}
           patientName={name}
           clientId={clientId != null ? String(clientId) : null}

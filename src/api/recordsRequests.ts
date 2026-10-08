@@ -49,6 +49,13 @@ export type RecordsRequestRow = {
   sentToEmail: string | null;
   receivedAt: string | null;
   chartDocumentId: number | null;
+  /** Every document filed against this request; older rows may only have `chartDocumentId`. */
+  chartDocumentIds?: number[] | null;
+  summaryNoteId?: string | null;
+  summarizedAt?: string | null;
+  /** Set once the CL summarized the records and entered reminders. */
+  closedOutAt?: string | null;
+  closedOutByName?: string | null;
   notes: string | null;
   authorizationAttestedByName: string | null;
   outsideHospitalId: number | null;
@@ -138,9 +145,19 @@ export async function createRecordsRequests(body: {
   };
 }
 
+/** Received but not yet summarized and closed out — the CL still owes work on it. */
+export function recordsRequestNeedsReview(row: RecordsRequestRow): boolean {
+  return row.status === 'received' && !row.closedOutAt;
+}
+
 export async function updateRecordsRequest(
   id: number,
-  body: { status?: RecordsRequestStatus; notes?: string },
+  body: {
+    status?: RecordsRequestStatus;
+    notes?: string;
+    summaryNoteId?: string;
+    closedOut?: boolean;
+  },
 ): Promise<RecordsRequest> {
   const { data } = await http.patch<RecordsRequest>(
     `/records-requests/${encodeURIComponent(id)}`,
@@ -160,13 +177,19 @@ export async function resendRecordsRequest(
   return data;
 }
 
-/** Files a faxed or posted record against a request — same chart write and auto-summary as the emailed link. */
-export async function uploadRecordsRequestFile(
+export function recordsRequestDocumentIds(row: RecordsRequestRow): number[] {
+  const ids = Array.isArray(row.chartDocumentIds) ? row.chartDocumentIds : [];
+  if (ids.length) return ids.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+  return row.chartDocumentId ? [row.chartDocumentId] : [];
+}
+
+/** Files faxed or posted records against a request — same chart write as the emailed link. */
+export async function uploadRecordsRequestFiles(
   id: number,
-  file: File,
-): Promise<{ ok: boolean; chartDocumentId: number }> {
+  files: File[],
+): Promise<{ ok: boolean; chartDocumentIds: number[] }> {
   const form = new FormData();
-  form.append('file', file);
+  for (const file of files) form.append('files', file);
   form.append('practiceId', String(PRACTICE_ID));
   const { data } = await http.post(
     `/records-requests/${encodeURIComponent(id)}/upload`,
@@ -209,11 +232,11 @@ export async function getPublicRecordsRequestForm(
 
 export async function submitPublicRecordsUpload(opts: {
   token: string;
-  file: File;
+  files: File[];
   note?: string;
 }): Promise<{ ok: boolean }> {
   const form = new FormData();
-  form.append('file', opts.file);
+  for (const file of opts.files) form.append('files', file);
   form.append('token', opts.token);
   if (opts.note?.trim()) form.append('note', opts.note.trim());
   const { data } = await publicRecordsClient.post('/public/records-request/upload', form);

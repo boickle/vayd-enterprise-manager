@@ -42,7 +42,7 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   home: 'Home',
   clients: 'Clients',
   patients: 'Patients',
-  snapshots: 'Pet Snapshots',
+  snapshots: 'Snapshots',
   scheduling: 'Scheduling',
   catalog: 'Catalog',
   inventory: 'Pharmacy',
@@ -543,7 +543,7 @@ export default function NavbarScheduleHorizontalNav() {
             to="/schedule/patient-snapshots"
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
-            Pet Snapshots
+            Snapshots
           </NavLink>
         );
       case 'catalog':
@@ -754,7 +754,7 @@ export default function NavbarScheduleHorizontalNav() {
                           closeMoreMenu();
                         }}
                       >
-                        Pet Snapshots
+                        Snapshots
                       </NavLink>
                     );
                   case 'catalog':

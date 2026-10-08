@@ -10,6 +10,12 @@ import './EuthanasiaConsentForm.css';
 import './RecordsUploadPage.css';
 
 const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_FILES = 20;
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 function axiosMessage(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
@@ -41,7 +47,7 @@ export default function RecordsUploadPage() {
   const [form, setForm] = useState<PublicRecordsRequestForm | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [note, setNote] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -71,22 +77,33 @@ export default function RecordsUploadPage() {
     };
   }, [token]);
 
-  const pickFile = (next: File | null | undefined) => {
-    if (!next) return;
-    if (next.size > MAX_BYTES) {
-      setError(`${next.name} is larger than 25 MB. Please send a smaller file.`);
-      return;
+  const pickFiles = (list: FileList | null | undefined) => {
+    const picked = Array.from(list ?? []);
+    if (!picked.length) return;
+    const tooBig = picked.filter((f) => f.size > MAX_BYTES).map((f) => f.name);
+    const next = [...files];
+    for (const f of picked) {
+      if (f.size > MAX_BYTES) continue;
+      if (next.some((x) => x.name === f.name && x.size === f.size)) continue;
+      next.push(f);
     }
-    setError(null);
-    setFile(next);
+    const capped = next.slice(0, MAX_FILES);
+    setFiles(capped);
+    if (tooBig.length) {
+      setError(`Larger than 25 MB, not added: ${tooBig.join(', ')}. Please send smaller files.`);
+    } else if (next.length > MAX_FILES) {
+      setError(`Up to ${MAX_FILES} files can be sent at once.`);
+    } else {
+      setError(null);
+    }
   };
 
   const upload = async () => {
-    if (!file) return;
+    if (!files.length) return;
     setSubmitting(true);
     setError(null);
     try {
-      await submitPublicRecordsUpload({ token, file, note });
+      await submitPublicRecordsUpload({ token, files, note });
       setDone('uploaded');
     } catch (err) {
       setError(axiosMessage(err) || 'Could not upload that file. Please try again.');
@@ -179,25 +196,47 @@ export default function RecordsUploadPage() {
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
-          pickFile(e.dataTransfer.files?.[0]);
+          pickFiles(e.dataTransfer.files);
         }}
       >
-        <strong>{file ? file.name : 'Choose a file or drag it here'}</strong>
+        <strong>
+          {files.length ? 'Add more files' : 'Choose files or drag them here'}
+        </strong>
         <span className="consent-muted">
-          {file
-            ? `${(file.size / 1024 / 1024).toFixed(1)} MB · click to replace`
-            : 'PDF works best. Images and Word documents are fine too. Up to 25 MB.'}
+          You can select several files at once. PDF works best; images and Word documents
+          are fine too. Up to 25 MB each.
         </span>
         <input
           type="file"
           hidden
+          multiple
           accept="application/pdf,image/*,text/plain,.doc,.docx"
           onChange={(e) => {
-            pickFile(e.currentTarget.files?.[0]);
+            pickFiles(e.currentTarget.files);
             e.currentTarget.value = '';
           }}
         />
       </label>
+
+      {files.length ? (
+        <ul className="records-upload__files">
+          {files.map((f, i) => (
+            <li key={`${f.name}-${f.size}-${i}`}>
+              <span className="records-upload__file-name">{f.name}</span>
+              <span className="consent-muted">{formatSize(f.size)}</span>
+              <button
+                type="button"
+                className="records-upload__remove"
+                disabled={submitting}
+                aria-label={`Remove ${f.name}`}
+                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <label className="consent-field">
         Anything we should know? (optional)
@@ -221,10 +260,14 @@ export default function RecordsUploadPage() {
         <button
           type="button"
           className="consent-btn"
-          disabled={!file || submitting}
+          disabled={!files.length || submitting}
           onClick={() => void upload()}
         >
-          {submitting ? 'Sending…' : 'Send records'}
+          {submitting
+            ? 'Sending…'
+            : files.length > 1
+              ? `Send ${files.length} files`
+              : 'Send records'}
         </button>
       </div>
 

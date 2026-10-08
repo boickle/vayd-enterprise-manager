@@ -124,6 +124,11 @@ function tabBadgesForPath(
             variant="urgent"
             title={`${counts.recordsUrgent} still open with the visit three days out or sooner`}
           />
+          <TabBadge
+            count={counts.recordsToReview}
+            variant="review"
+            title={`${counts.recordsToReview} received — summarize and close out`}
+          />
         </>
       );
     default:

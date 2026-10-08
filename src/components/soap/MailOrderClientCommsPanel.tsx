@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DateTime } from 'luxon';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { sendClientSms } from '../../api/clientSms';
 import type { Message } from '../../api/clientPortal';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
@@ -48,6 +49,23 @@ type Props = {
 type Channel = 'text' | 'email';
 
 const RX_PREVIEW = 5;
+const COMMS_OPEN_KEY = 'vayd.mailQueue.commsOpen';
+
+function readCommsOpen(): boolean {
+  try {
+    return localStorage.getItem(COMMS_OPEN_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function writeCommsOpen(open: boolean) {
+  try {
+    localStorage.setItem(COMMS_OPEN_KEY, open ? '1' : '0');
+  } catch {
+    /* private mode or quota */
+  }
+}
 
 function isIncoming(message: Message): boolean {
   const dir = String(message.direction ?? '').toLowerCase();
@@ -82,6 +100,7 @@ export default function MailOrderClientCommsPanel({
   const [emailHistoryOpen, setEmailHistoryOpen] = useState(false);
   const [showMoreRx, setShowMoreRx] = useState(false);
   const [channel, setChannel] = useState<Channel>('text');
+  const [commsOpen, setCommsOpen] = useState(readCommsOpen);
 
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailLoadError, setEmailLoadError] = useState<string | null>(null);
@@ -370,7 +389,28 @@ export default function MailOrderClientCommsPanel({
 
   return (
     <div className="mail-queue__side-card">
-      <h3>Text / email client</h3>
+      <button
+        type="button"
+        className={`mail-queue__collapse${commsOpen ? '' : ' is-collapsed'}`}
+        aria-expanded={commsOpen}
+        onClick={() => {
+          setCommsOpen((prev) => {
+            const next = !prev;
+            writeCommsOpen(next);
+            return next;
+          });
+        }}
+      >
+        {commsOpen ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        Text / email client
+        {!commsOpen && clientReplied ? (
+          <span className="mail-queue__collapse-status">Client replied</span>
+        ) : !commsOpen && order.clientQuestionPendingAt ? (
+          <span className="mail-queue__collapse-status">Pending</span>
+        ) : null}
+      </button>
+      {commsOpen ? (
+      <>
       {clientReplied ? (
         <p className="mail-queue__sent" role="status" style={{ marginTop: 0 }}>
           Client replied on RX line
@@ -659,6 +699,8 @@ export default function MailOrderClientCommsPanel({
           clientLabel={order.customerName}
           onClose={() => setEmailHistoryOpen(false)}
         />
+      ) : null}
+      </>
       ) : null}
     </div>
   );

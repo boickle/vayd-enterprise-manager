@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ClipboardSignature,
+  FileInput,
   FileText,
   GitMerge,
   Mail,
@@ -23,7 +24,8 @@ import ChartSendForm from './ChartSendForm';
 import ChartPrintDocumentModal from './ChartPrintDocumentModal';
 import BriefMergePanel from '../brief/BriefMergePanel';
 import BriefClientMergePanel from '../brief/BriefClientMergePanel';
-import BriefRecordReview from '../brief/BriefRecordReview';
+import RecordDocumentsReview from '../records/RecordDocumentsReview';
+import { SchedulerRecordsRequestModal } from '../../pages/SchedulerRecordsRequestModal';
 import { useCan } from '../../permissions/PermissionContext';
 import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
 
@@ -85,6 +87,7 @@ export default function PimsChartWorkBar({
   const [soapPickOpen, setSoapPickOpen] = useState(false);
   const [formSendOpen, setFormSendOpen] = useState(false);
   const [printDocOpen, setPrintDocOpen] = useState(false);
+  const [recordsRequestOpen, setRecordsRequestOpen] = useState(false);
 
   useEffect(() => {
     if (!launchNote && !launchCommunicate) return;
@@ -169,6 +172,16 @@ export default function PimsChartWorkBar({
             <Upload size={15} aria-hidden />
             Upload File
           </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Email another hospital for this pet's previous medical records"
+            onClick={() => setRecordsRequestOpen(true)}
+          >
+            <FileInput size={15} aria-hidden />
+            Request records
+          </button>
         </div>
         <div className="pims-chart-work__group pims-chart-work__group--end">
           <span className="pims-chart-work__label">Visit</span>
@@ -224,9 +237,12 @@ export default function PimsChartWorkBar({
                 aria-label="Close"
                 onClick={() => setUploadOpen(false)}
               />
-              <div className="pims-chart-pick__card" style={{ width: 'min(640px, 100%)' }}>
+              <div
+                className="pims-chart-pick__card"
+                style={{ width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
+              >
                 <div className="pims-chart-pick__head">
-                  <h3 id="pims-upload-title">Upload File · {patientName}</h3>
+                  <h3 id="pims-upload-title">Upload records · {patientName}</h3>
                   <button
                     type="button"
                     className="pims-chart-pick__close"
@@ -236,7 +252,7 @@ export default function PimsChartWorkBar({
                     ×
                   </button>
                 </div>
-                <BriefRecordReview
+                <RecordDocumentsReview
                   patientId={patientId}
                   patientName={patientName}
                   clientId={clientId}
@@ -380,6 +396,15 @@ export default function PimsChartWorkBar({
           clientName={clientName}
           clientDefaultEmail={clientDefaultEmail}
           onFiled={() => onRecordsChanged?.()}
+        />
+      ) : null}
+
+      {recordsRequestOpen && Number.isFinite(patientIdNum) ? (
+        <SchedulerRecordsRequestModal
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          onClose={() => setRecordsRequestOpen(false)}
         />
       ) : null}
 

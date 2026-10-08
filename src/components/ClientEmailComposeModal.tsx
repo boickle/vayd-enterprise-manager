@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Paperclip, X } from 'lucide-react';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import EmailRecipientInput, { type EmailRecipientChoice } from './EmailRecipientInput';
 import {
   fetchGmailMailboxes,
   fetchGmailSendAsAlias,
@@ -33,6 +34,7 @@ import MessageTemplateHtmlEditor from './messageTemplates/MessageTemplateHtmlEdi
 import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
 
 export type EmailRegardingPatient = { id: number; name: string };
+export type { EmailRecipientChoice };
 
 type Props = {
   open: boolean;
@@ -42,6 +44,7 @@ type Props = {
   initialBodyText: string;
   /** When set, skip the client inbox lookup and use this To line instead. */
   initialTo?: string;
+  recipientChoices?: EmailRecipientChoice[];
   mergeValues?: MergeValues;
   title?: string;
   initialAttachments?: GmailComposeAttachment[];
@@ -75,6 +78,7 @@ export function ClientEmailComposeModal({
   initialSubject,
   initialBodyText,
   initialTo,
+  recipientChoices,
   mergeValues,
   title = 'Email client',
   initialAttachments,
@@ -107,6 +111,17 @@ export function ClientEmailComposeModal({
   const [subject, setSubject] = useState('');
   const [bodyText, setBodyText] = useState('');
   const [attachments, setAttachments] = useState<GmailComposeAttachment[]>([]);
+  const [recipientKey, setRecipientKey] = useState<string | null>(null);
+  const picked = recipientChoices?.find((c) => c.key === recipientKey) ?? null;
+  const recipient =
+    picked?.to.trim() && to.toLowerCase().includes(picked.to.trim().toLowerCase()) ? picked : null;
+
+  const chooseRecipient = (next: EmailRecipientChoice) => {
+    const prevBody = picked?.bodyText ?? initialBodyText;
+    setRecipientKey(next.key);
+    // Keep anything staff already typed; only swap the stock message.
+    if (next.bodyText != null && bodyText === prevBody) setBodyText(next.bodyText);
+  };
 
   async function applySharedMailbox(sendMailbox: string, cancelled = false) {
     const aliases = await loadSendAsAliases(sendMailbox);
@@ -163,6 +178,7 @@ export function ClientEmailComposeModal({
     setSubject(initialSubject);
     setBodyText(initialBodyText);
     setAttachments(initialAttachments ?? []);
+    setRecipientKey(recipientChoices?.[0]?.key ?? null);
 
     void (async () => {
       try {
@@ -317,7 +333,7 @@ export function ClientEmailComposeModal({
               {title}
             </h3>
             <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
-              Review and edit the email before sending to {clientLabel}.
+              Review and edit the email before sending to {recipient?.label ?? (recipientChoices?.length && to.trim() ? to.trim() : clientLabel)}.
             </p>
             {mailbox && sharedInboxes.length === 1 ? (
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
@@ -380,14 +396,30 @@ export function ClientEmailComposeModal({
             />
             <label style={{ display: 'block', marginBottom: 14 }}>
               <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>To</span>
-              <input
-                type="email"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                disabled={sending}
-                className="settings-input"
-                style={{ width: '100%', boxSizing: 'border-box' }}
-              />
+              {recipientChoices?.length ? (
+                <EmailRecipientInput
+                  value={to}
+                  onChange={setTo}
+                  onPick={chooseRecipient}
+                  choices={recipientChoices}
+                  disabled={sending}
+                  placeholder="Type an email, or a hospital name to search"
+                />
+              ) : (
+                <input
+                  type="email"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  disabled={sending}
+                  className="settings-input"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              )}
+              {recipientChoices?.length ? (
+                <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  Start typing a hospital name to send to another practice.
+                </span>
+              ) : null}
             </label>
 
             {sharedInboxes.length > 1 ? (

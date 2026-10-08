@@ -150,7 +150,7 @@ export default function PlanOrdersSection({
         searchItems({
           q,
           practiceId,
-          limit: 25,
+          limit: 50,
           code: q,
           patientId,
           clientId,

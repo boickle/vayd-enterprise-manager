@@ -63,6 +63,7 @@ import {
   refundVisitTender,
   listVisitRefundPeers,
   saveOrderPrescription,
+  listPatientPrescriptions,
   startTerminalCheckout,
   type TerminalReaderCatalog,
   type VisitRefundPeer,
@@ -144,8 +145,10 @@ import {
 import CheckoutInventoryBranchField from '../soap/CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from '../soap/SendRxLabelButton';
 import MailInvoiceLineCheckbox, {
+  approveMailOrderFromInvoice,
   cancelMailOrdersForInvoiceLines,
   isMailOrderShipped,
+  mailOrderWaitsForQueueApproval,
   matchingMailOrderForLine,
   shippedMailMessage,
   shippingLineFromNotes,
@@ -354,8 +357,8 @@ function approveScriptMissingFields(
     missing.push('refillExpiration');
   }
   if (!draft.acuity) missing.push('acuity');
-  if (futureDateMissing('discard after', draft.discardAfter)) missing.push('discardAfter');
   if (!mailed) {
+    if (futureDateMissing('discard after', draft.discardAfter)) missing.push('discardAfter');
     if (invoice?.inventoryBranchId == null) missing.push('branch');
     if (invoice?.inventoryLocationId == null) missing.push('location');
     if (line.trackLots && line.inventoryLotBalanceId == null) missing.push('lot');
@@ -1190,6 +1193,8 @@ export default function ClientFinancialWorkspace({
   const [prescriptionByOrderId, setPrescriptionByOrderId] = useState<
     Record<string, OrderPrescription>
   >({});
+  /** Counter lines (no visit order): the prescription written when the script was approved. */
+  const [writtenRxById, setWrittenRxById] = useState<Record<number, OrderPrescription>>({});
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [printedLineId, setPrintedLineId] = useState<string | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
@@ -1865,6 +1870,38 @@ export default function ClientFinancialWorkspace({
     };
   }, [vaccineLoadKey]);
 
+  const writtenRxLines = selected
+    ? activeLines(selected).filter(
+        (line) => !line.orderId && line.writtenPrescriptionId != null && line.patientId != null,
+      )
+    : [];
+  const writtenRxKey = writtenRxLines
+    .map((line) => `${line.patientId}:${line.writtenPrescriptionId}`)
+    .sort()
+    .join(',');
+  useEffect(() => {
+    if (!writtenRxKey) {
+      setWrittenRxById({});
+      return;
+    }
+    let canceled = false;
+    const wanted = new Set(writtenRxLines.map((line) => Number(line.writtenPrescriptionId)));
+    const patientIds = [...new Set(writtenRxLines.map((line) => Number(line.patientId)))];
+    void Promise.all(patientIds.map((id) => listPatientPrescriptions(id).catch(() => [])))
+      .then((lists) => {
+        if (canceled) return;
+        const next: Record<number, OrderPrescription> = {};
+        for (const rx of lists.flat()) {
+          if (wanted.has(rx.id)) next[rx.id] = { ...rx, encounterOrderId: rx.encounterOrderId ?? null };
+        }
+        setWrittenRxById(next);
+      });
+    return () => {
+      canceled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writtenRxKey, selected?.id]);
+
   // In-house lab forms live on the lab line itself. The API opens a pending
   // form for each lab line that has one, so the load doubles as the create.
   const labLoadKey =
@@ -1950,7 +1987,7 @@ export default function ClientFinancialWorkspace({
         searchItems({
           q,
           practiceId: VISIT_WORKFLOW_PRACTICE_ID,
-          limit: 8,
+          limit: 50,
           patientId: linePatientId ?? undefined,
           clientId,
         }),
@@ -2550,7 +2587,11 @@ export default function ClientFinancialWorkspace({
   );
   const invoicePrescribedDate = toDateInput(selected?.created ?? selected?.paidAt) || dateForInput(new Date());
   const recordedRxFor = (line: VisitInvoiceLine): OrderPrescription | null =>
-    line.orderId ? prescriptionByOrderId[line.orderId] ?? null : null;
+    line.orderId
+      ? prescriptionByOrderId[line.orderId] ?? null
+      : line.writtenPrescriptionId != null
+        ? writtenRxById[line.writtenPrescriptionId] ?? null
+        : null;
   const draftOf = (line: VisitInvoiceLine): SigDraft =>
     sigDrafts[line.id] ??
     defaultSigDraft(line, invoicePrescribedDate, recordedRxFor(line));
@@ -3250,10 +3291,26 @@ export default function ClientFinancialWorkspace({
       });
       setSelected(next);
       await refreshList(next.id);
+      await syncMailApproval(line, d, refillCount);
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function syncMailApproval(line: VisitInvoiceLine, d: SigDraft, refillCount: number) {
+    const order = mailOrderForLine(line);
+    if (!order) return;
+    try {
+      const changed = await approveMailOrderFromInvoice(order, line, {
+        refills: refillCount,
+        refillExpiration: d.refillExpiration,
+        instructions: d.instructions,
+      });
+      if (changed) setMailOrders(await listMailOrders(VISIT_WORKFLOW_PRACTICE_ID));
+    } catch (e: unknown) {
+      setError(`Script approved, but the mail order still shows waiting on doctor: ${apiErr(e)}`);
     }
   }
 
@@ -4724,7 +4781,11 @@ export default function ClientFinancialWorkspace({
                         );
                       })}
                       {hits.map((item) => (
-                        <li key={`${item.itemType}-${item.name}`}>
+                        <li
+                          key={`${item.itemType}-${
+                            item.inventoryItem?.id ?? item.lab?.id ?? item.procedure?.id ?? item.name
+                          }`}
+                        >
                           <button type="button" disabled={busy} onClick={() => void addItem(item)}>
                             <span>
                               <Plus size={14} aria-hidden /> {item.name}
@@ -4889,6 +4950,7 @@ export default function ClientFinancialWorkspace({
                         const needsSigSave = canEdit && showRxMeta && lineNeedsSigSave(line);
                         const needsReapprove = Boolean(sigNeedsReapprove[line.id]);
                         const mailedLineOrder = mailOrderForLine(line);
+                        const mailDoctorApproves = mailOrderWaitsForQueueApproval(mailedLineOrder);
                         const fulfillSibling = visibleLines.find(
                           (other) =>
                             other.id !== line.id &&
@@ -5096,13 +5158,15 @@ export default function ClientFinancialWorkspace({
                           : [];
                         const rxMissing = (field: RxMissingField) => missingFields.includes(field);
                         const approveButton =
-                          showRxMeta && canEdit && !scriptApproved && mailedLineOrder ? (
+                          showRxMeta && canEdit && !scriptApproved && mailDoctorApproves ? (
                             <span className="client-fin__entered client-fin__needs-approver">
                               The doctor approves this from the mail queue
                             </span>
                           ) : showRxMeta && canEdit && !scriptApproved && !canApproveRx ? (
                             <span className="client-fin__entered client-fin__needs-approver">
-                              A doctor or technician must approve — or switch to Mail order
+                              {mailedLineOrder
+                                ? 'A doctor or technician approves here, or the doctor approves from the mail queue'
+                                : 'A doctor or technician must approve — or switch to Mail order'}
                             </span>
                           ) : showRxMeta && canEdit && !scriptApproved ? (
                             <button
@@ -5587,13 +5651,17 @@ export default function ClientFinancialWorkspace({
                                       }}
                                     />
                                   </div>
-                                ) : mailedLineOrder ? (
+                                ) : mailDoctorApproves ? (
                                   <p className="client-fin__fulfill-note">
                                     Mail order: the mail team picks the lot and fill location, and
                                     the doctor sets refills when approving.
                                   </p>
+                                ) : mailedLineOrder ? (
+                                  <p className="client-fin__fulfill-note">
+                                    Mail order: the mail team picks the lot and fill location.
+                                  </p>
                                 ) : null}
-                                {mailedLineOrder ? null : isRefillFill && selected ? (
+                                {mailDoctorApproves ? null : isRefillFill && selected ? (
                                   <RefillSummary
                                     invoiceId={selected.id}
                                     lineId={line.id}

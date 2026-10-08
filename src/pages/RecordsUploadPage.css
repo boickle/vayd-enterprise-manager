@@ -19,6 +19,48 @@
   background: rgba(122, 106, 79, 0.06);
 }
 
+.records-upload__files {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 1px solid #e6dfd1;
+  border-radius: 10px;
+}
+
+.records-upload__files li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.records-upload__files li + li {
+  border-top: 1px solid #efe9dd;
+}
+
+.records-upload__file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.records-upload__remove {
+  border: none;
+  background: none;
+  color: #9a3b2e;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.records-upload__remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .records-upload__foot {
   margin-top: 16px;
   font-size: 12px;

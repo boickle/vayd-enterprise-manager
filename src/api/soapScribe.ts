@@ -224,9 +224,7 @@ export async function writeVisitWriteup(opts: {
     ...(opts.patientId != null ? { patientId: opts.patientId } : {}),
     ...(opts.clientId != null ? { clientId: opts.clientId } : {}),
     ...(opts.appointmentId != null ? { appointmentId: opts.appointmentId } : {}),
-    ...(opts.soapEncounterId?.trim()
-      ? { soapEncounterId: opts.soapEncounterId.trim() }
-      : {}),
+    ...(opts.soapEncounterId?.trim() ? { soapEncounterId: opts.soapEncounterId.trim() } : {}),
     ...(opts.patients?.length
       ? {
           patients: opts.patients.map((p) => ({
@@ -241,17 +239,14 @@ export async function writeVisitWriteup(opts: {
     ...(opts.staffName?.trim() ? { staffName: opts.staffName.trim() } : {}),
     ...(opts.visitType?.trim() ? { visitType: opts.visitType.trim() } : {}),
     ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
-    ...(opts.roomLoaderHistory?.trim()
-      ? { roomLoaderHistory: opts.roomLoaderHistory.trim() }
-      : {}),
+    ...(opts.roomLoaderHistory?.trim() ? { roomLoaderHistory: opts.roomLoaderHistory.trim() } : {}),
   });
   return {
     history: typeof data?.history === 'string' ? data.history.trim() : '',
     plan: typeof data?.plan === 'string' ? data.plan.trim() : '',
     clientEmailSubject:
       typeof data?.clientEmailSubject === 'string' ? data.clientEmailSubject.trim() : '',
-    clientEmailBody:
-      typeof data?.clientEmailBody === 'string' ? data.clientEmailBody.trim() : '',
+    clientEmailBody: typeof data?.clientEmailBody === 'string' ? data.clientEmailBody.trim() : '',
     patients: Array.isArray(data?.patients)
       ? data.patients.map((p) => ({
           patientId: Number(p?.patientId),
@@ -263,7 +258,7 @@ export async function writeVisitWriteup(opts: {
   };
 }
 
-export async function summarizeChartText(opts: {
+type SummarizeChartTextOpts = {
   mode: 'outside-record' | 'case-history' | 'household';
   sourceText?: string;
   images?: { mimeType: string; base64: string }[];
@@ -271,10 +266,57 @@ export async function summarizeChartText(opts: {
   clientName?: string | null;
   fileName?: string | null;
   asOfDate?: string | null;
-}): Promise<string> {
-  const { data } = await http.post<{ summary: string }>('/scribe/summarize-chart', {
+  /** Outside records are matched against this patient's chart. */
+  patientId?: number | null;
+};
+
+export type OutsideRecordReminder = {
+  item: string;
+  status: 'overdue' | 'due_soon' | 'up_to_date' | 'not_on_record';
+  /** YYYY-MM-DD or '' */
+  dueDate: string;
+  lastDone: string;
+  note: string;
+  /** The practice's own reminder name for this service, or ''. */
+  practiceReminder?: string;
+};
+
+export type OutsideRecordDeclined = { item: string; date: string };
+
+export type OutsideRecordsSummary = {
+  summary: string;
+  reminders: OutsideRecordReminder[];
+  declined: OutsideRecordDeclined[];
+};
+
+export async function summarizeChartText(opts: SummarizeChartTextOpts): Promise<string> {
+  return (await postSummarizeChart(opts)).summary;
+}
+
+export async function summarizeOutsideRecords(
+  opts: Omit<SummarizeChartTextOpts, 'mode'>
+): Promise<OutsideRecordsSummary> {
+  const data = await postSummarizeChart({ ...opts, mode: 'outside-record' });
+  return {
+    summary: data.summary,
+    reminders: Array.isArray(data.reminders) ? data.reminders : [],
+    declined: Array.isArray(data.declined) ? data.declined : [],
+  };
+}
+
+async function postSummarizeChart(opts: SummarizeChartTextOpts): Promise<{
+  summary: string;
+  reminders?: OutsideRecordReminder[];
+  declined?: OutsideRecordDeclined[];
+}> {
+  const { data } = await http.post<{
+    summary: string;
+    reminders?: OutsideRecordReminder[];
+    declined?: OutsideRecordDeclined[];
+  }>('/scribe/summarize-chart', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
     mode: opts.mode,
+    ...(opts.patientId != null && opts.patientId > 0 ? { patientId: opts.patientId } : {}),
     ...(opts.sourceText?.trim() ? { sourceText: opts.sourceText.trim() } : {}),
     ...(opts.images?.length ? { images: opts.images } : {}),
     ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
@@ -282,7 +324,11 @@ export async function summarizeChartText(opts: {
     ...(opts.fileName?.trim() ? { fileName: opts.fileName.trim() } : {}),
     ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
   });
-  return typeof data?.summary === 'string' ? data.summary.trim() : '';
+  return {
+    summary: typeof data?.summary === 'string' ? data.summary.trim() : '',
+    reminders: data?.reminders,
+    declined: data?.declined,
+  };
 }
 
 export async function chatAboutChart(opts: {
@@ -354,9 +400,12 @@ export type AssistantChatSearchHit = {
 
 /** Private to the signed-in user. Other staff never receive this thread. */
 export async function fetchMyCaseHistoryChat(patientId: string): Promise<CaseHistoryChatTurn[]> {
-  const { data } = await http.get<{ messages?: CaseHistoryChatTurn[] }>('/scribe/case-history-chat', {
-    params: { patientId },
-  });
+  const { data } = await http.get<{ messages?: CaseHistoryChatTurn[] }>(
+    '/scribe/case-history-chat',
+    {
+      params: { patientId },
+    }
+  );
   return Array.isArray(data?.messages) ? data.messages : [];
 }
 
@@ -364,10 +413,13 @@ export async function saveMyCaseHistoryChat(
   patientId: string,
   messages: CaseHistoryChatTurn[]
 ): Promise<CaseHistoryChatTurn[]> {
-  const { data } = await http.put<{ messages?: CaseHistoryChatTurn[] }>('/scribe/case-history-chat', {
-    patientId,
-    messages,
-  });
+  const { data } = await http.put<{ messages?: CaseHistoryChatTurn[] }>(
+    '/scribe/case-history-chat',
+    {
+      patientId,
+      messages,
+    }
+  );
   return Array.isArray(data?.messages) ? data.messages : messages;
 }
 
@@ -438,9 +490,7 @@ export async function searchMyAssistantChats(
 }
 
 /** Practice-wide desk context (staffing, catalog snapshot, Scout help). */
-export async function fetchPracticeDeskContext(opts?: {
-  date?: string | null;
-}): Promise<{
+export async function fetchPracticeDeskContext(opts?: { date?: string | null }): Promise<{
   sourceText: string;
   asOfDate: string;
   timezone: string;

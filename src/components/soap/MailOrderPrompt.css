@@ -12,6 +12,9 @@
 
 .mail-order-prompt {
   width: min(440px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
   background: #fff;
   border-radius: 12px;
   padding: 18px;

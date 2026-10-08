@@ -1797,6 +1797,79 @@
   background: #f8fafc;
 }
 
+.pims-patient-detail__send {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__send button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 8px;
+  color: #1e4d8c;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__send button span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__send button:hover:not(:disabled) {
+  background: #dbeafe;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__send button:disabled {
+  color: #94a3b8;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  cursor: default;
+}
+
+.pims-patient-detail__send-status {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__summarize-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: #1e4d8c;
+  background: #1e4d8c;
+  color: #fff;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__summarize-selected:hover:not(:disabled) {
+  background: #173d70;
+}
+
+.pims-patient-detail__filters .pims-patient-detail__summarize-selected:disabled {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: default;
+}
+
+.pims-patient-detail__doc-select {
+  width: 15px;
+  height: 15px;
+  margin: 0 2px 0 0;
+  accent-color: #1e4d8c;
+  cursor: pointer;
+}
+
+.pims-patient-detail__summarize-doc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .pims-patient-detail__mr-count {
   font-size: 12px;
   color: #64748b;
@@ -2248,6 +2321,41 @@
 .pims-patient-detail__html-body th {
   color: #64748b;
   font-weight: 700;
+}
+
+.idexx-lab__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.idexx-lab__table td:nth-child(n + 2):nth-child(-n + 5) {
+  white-space: nowrap;
+}
+
+.idexx-lab__table td:last-child {
+  font-size: 12px;
+  color: #475569;
+  max-width: 320px;
+}
+
+.pims-patient-detail__html-body .idexx-lab__panel td {
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 700;
+  padding: 3px 8px;
+}
+
+.idexx-lab__abnormal td {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.idexx-lab__abnormal td:last-child {
+  color: #475569;
+  font-weight: 400;
 }
 
 /* ---------- By-category accordions ---------- */

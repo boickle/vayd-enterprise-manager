@@ -7,12 +7,14 @@ import {
   mailCancelPending,
   mailOrderWorkedOn,
   requestMailOrderCancellation,
+  respondMailApproval,
   withdrawMailOrder,
   type MailCancelReason,
   type MailOrder,
 } from '../../api/onlineStore';
 import { VISIT_WORKFLOW_PRACTICE_ID, type VisitInvoiceLine } from '../../api/visitWorkflow';
 import MailOrderPrompt, { type MailOrderPromptResult } from './MailOrderPrompt';
+import { saveMailingAddressOnFile, shipBodyFromFields } from './MailShipAddressPicker';
 import './MailInvoiceLineCheckbox.css';
 
 /** Where the order is, in words staff can read back to the client. */
@@ -131,6 +133,46 @@ export function shippingLineFromNotes(notes: string | null | undefined): string 
 
 export function invoiceLineMailNote(lineId: string) {
   return `invoiceLine:${lineId}`;
+}
+
+/** "Doctor approves first, then collect payment": the doctor decides from the mail queue, not the invoice. */
+export function mailOrderWaitsForQueueApproval(order: MailOrder | null | undefined): boolean {
+  return Boolean(order?.payAfterApproval);
+}
+
+/**
+ * The doctor approved the script on the invoice, so the mail queue doesn't wait on a
+ * second approval. Returns false when there was nothing on the order left to approve.
+ */
+export async function approveMailOrderFromInvoice(
+  order: MailOrder,
+  line: { catalogItemId?: number | null; stockInventoryItemId?: number | null },
+  rx: { refills: number; refillExpiration?: string | null; instructions: string }
+): Promise<boolean> {
+  if (mailOrderWaitsForQueueApproval(order)) return false;
+  const waiting = (order.lines || []).filter(
+    (row) => row.lineStatus === 'awaiting_doctor_approval' || row.lineStatus === 'send_back'
+  );
+  const itemIds = new Set(
+    [line.catalogItemId, line.stockInventoryItemId].filter((id): id is number => id != null)
+  );
+  const byItem = waiting.filter(
+    (row) => row.inventoryItemId != null && itemIds.has(row.inventoryItemId)
+  );
+  const targets = byItem.length ? byItem : waiting.length === 1 ? waiting : [];
+  if (!targets.length) return false;
+  await respondMailApproval(VISIT_WORKFLOW_PRACTICE_ID, order.id, {
+    outcome: 'approved',
+    notes: 'Approved on the invoice',
+    lineIds: targets.map((row) => row.id),
+    lineRefills: targets.map((row) => ({
+      lineId: row.id,
+      refills: rx.refills,
+      expiration: rx.refills > 0 ? rx.refillExpiration || null : null,
+    })),
+    lineScripts: targets.map((row) => ({ lineId: row.id, scriptText: rx.instructions.trim() })),
+  });
+  return true;
 }
 
 function isInventoryLine(line: VisitInvoiceLine): boolean {
@@ -427,12 +469,13 @@ export default function MailInvoiceLineCheckbox({
       {ask ? (
         <MailOrderPrompt
           practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+          clientId={clientId ?? null}
           itemName={line.description}
           maxQty={Number(line.qty) || 1}
           paid={paymentStatus === 'paid'}
           approvalNote={
             approvalReason
-              ? `${approvalReason} — the doctor will be asked to approve it from the mail queue before anything is filled.`
+              ? `${approvalReason} — approve it on this invoice, or the doctor approves it from the mail queue before anything is filled.`
               : null
           }
           onCancel={() => setAsk(false)}
@@ -472,6 +515,7 @@ export default function MailInvoiceLineCheckbox({
                 payAfterApproval: result.payAfterApproval,
                 shippingChargeName: result.shippingChargeName,
                 shipping: result.shipping,
+                ship: result.ship ? shipBodyFromFields(result.ship.fields, clientName) : undefined,
                 doctorEmployeeId:
                   doctorEmployeeId ?? mailedLine.providerEmployeeId ?? line.providerEmployeeId ?? null,
                 lines: [
@@ -487,6 +531,11 @@ export default function MailInvoiceLineCheckbox({
               setClosedOrder(null);
               setAsk(false);
               onQueueChange?.(mailedLine, true);
+              if (result.ship?.saveAsMailing) {
+                await saveMailingAddressOnFile(clientId, result.ship.fields).catch(() =>
+                  onError?.('Sent to the mail queue, but the mailing address could not be saved on the client.')
+                );
+              }
             })()
               .catch((e) =>
                 onError?.(e instanceof Error ? e.message : 'Could not send to mail orders')

@@ -12,6 +12,7 @@ import { mergeClinicianPrevisitNotes } from '../../utils/roomLoaderSubjectiveTex
 import { markBriefsInjected } from '../../utils/briefStore';
 import { buildPhoneDialHref } from '../../utils/quoContact';
 import BriefEmailModal from './BriefEmailModal';
+import RecordDocumentsReview from '../records/RecordDocumentsReview';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 
 type Props = {
@@ -39,15 +40,21 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
   useEffect(() => {
     setTitle(session.title);
     recorder.setTranscript(session.transcript);
+    setShowRaw(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-hydrate when switching sessions
   }, [session.id]);
 
   const persist = useCallback(
     async (patch: Partial<BriefSession>) => {
       const next = await patchBrief(session.id, patch);
-      if (next) onChange(next);
+      if (!next) return;
+      if (!('rawTranscript' in patch) && !next.rawTranscript && session.rawTranscript) {
+        onChange({ ...next, rawTranscript: session.rawTranscript });
+        return;
+      }
+      onChange(next);
     },
-    [onChange, session.id]
+    [onChange, session.id, session.rawTranscript]
   );
 
   const saveTranscript = useCallback(
@@ -137,7 +144,9 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
   );
 
   const polishAndSave = async (raw: string) => {
-    const source = raw.trim();
+    const typed = raw.trim();
+    const savedOriginal = session.rawTranscript?.trim();
+    const source = savedOriginal && typed === session.transcript.trim() ? savedOriginal : typed;
     if (!source) {
       await saveTranscript(source);
       return source;
@@ -150,6 +159,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
         kind: session.kind,
         patientName: session.patientName,
         clientName: session.clientName,
+        asOfDate: session.date,
       });
       const next = cleaned.trim() || source;
       recorder.setTranscript(next);
@@ -200,8 +210,21 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
         }`
       : null;
 
-  return (
-    <div className="brief-session">
+  const deleteJot = () => {
+    void (async () => {
+      const ok = await appConfirm({
+        title: 'Delete Jot?',
+        message: 'Delete this Jot? The transcript cannot be recovered.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      setBusy(true);
+      void removeBrief(session.id).then(onDeleted);
+    })();
+  };
+
+  const top = (
       <div className="brief-session__top">
         <div>
           <p className="brief-kicker">{BRIEF_KIND_LABEL[session.kind]}</p>
@@ -226,7 +249,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
               <Phone size={15} aria-hidden /> Call
             </button>
           ) : null}
-          {recorder.recording ? (
+          {session.kind === 'review' ? null : recorder.recording ? (
             <button
               type="button"
               className="brief-btn record is-on"
@@ -246,6 +269,34 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           )}
         </div>
       </div>
+  );
+
+  if (session.kind === 'review') {
+    return (
+      <div className="brief-session">
+        {top}
+        {session.patientId != null ? (
+          <RecordDocumentsReview
+            patientId={session.patientId}
+            patientName={session.patientName}
+            clientId={session.clientId}
+            hideHeading
+          />
+        ) : (
+          <p className="brief-muted">Pick a patient for this record review to upload documents.</p>
+        )}
+        <div className="brief-session__tools">
+          <button type="button" className="brief-btn danger" disabled={busy} onClick={deleteJot}>
+            <Trash2 size={14} aria-hidden /> Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="brief-session">
+      {top}
 
       {recorder.error ? <p className="brief-error">{recorder.error}</p> : null}
       {hint ? <p className="brief-muted">{hint}</p> : null}
@@ -267,6 +318,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           }}
           onBlur={() => {
             if (showRaw || recorder.recording || cleaning) return;
+            if (recorder.transcript === session.transcript) return;
             void saveTranscript(recorder.transcript);
           }}
           readOnly={recorder.recording || cleaning || showRaw}
@@ -283,7 +335,8 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
         >
           <Sparkles size={14} aria-hidden /> {cleaning ? 'Cleaning…' : 'Clean up notes'}
         </button>
-        {session.rawTranscript && session.rawTranscript.trim() !== recorder.transcript.trim() ? (
+        {session.rawTranscript &&
+        (showRaw || session.rawTranscript.trim() !== recorder.transcript.trim()) ? (
           <button type="button" className="brief-btn" onClick={() => setShowRaw((v) => !v)}>
             {showRaw ? 'Show cleaned notes' : 'Show original recording'}
           </button>
@@ -350,19 +403,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           type="button"
           className="brief-btn danger"
           disabled={busy}
-          onClick={() => {
-            void (async () => {
-              const ok = await appConfirm({
-                title: 'Delete Jot?',
-                message: 'Delete this Jot? The transcript cannot be recovered.',
-                confirmLabel: 'Delete',
-                danger: true,
-              });
-              if (!ok) return;
-              setBusy(true);
-              void removeBrief(session.id).then(onDeleted);
-            })();
-          }}
+          onClick={deleteJot}
         >
           <Trash2 size={14} aria-hidden /> Delete
         </button>
