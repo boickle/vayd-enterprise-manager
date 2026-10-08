@@ -761,6 +761,12 @@
   color: var(--error);
 }
 
+.pmp-card-update {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 .pmp-paused {
   display: flex;
   align-items: center;

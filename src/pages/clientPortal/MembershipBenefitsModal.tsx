@@ -5,6 +5,7 @@ import {
   type MembershipGroup,
   type PatientMembership,
 } from '../../api/memberships';
+import MembershipCardUpdate from '../../components/MembershipCardUpdate';
 import { Icon, PortalModal } from './PortalPrimitives';
 import { fmtShortDate, possessive, type MembershipView, type PetWithWellness } from './portalShared';
 
@@ -219,6 +220,12 @@ export default function MembershipBenefitsModal({
               ))}
             </ul>
           </section>
+
+          {current && current.status !== 'inactive' ? (
+            <section className="pp-benefit-group">
+              <MembershipCardUpdate membershipId={current.id} mine buttonClassName="pp-btn pp-btn--ghost" />
+            </section>
+          ) : null}
         </>
       )}
     </PortalModal>

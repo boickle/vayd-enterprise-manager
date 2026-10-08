@@ -569,6 +569,40 @@ export async function changeMembershipPlan(
   return data;
 }
 
+export type MembershipBillingCard = {
+  card: { brand: string; last4: string; expMonth: number | null; expYear: number | null } | null;
+  canUpdate: boolean;
+  reason: string | null;
+};
+
+function membershipCardPath(membershipId: number, mine: boolean) {
+  return `/memberships/patient-memberships/${mine ? 'mine/' : ''}${encodeURIComponent(membershipId)}/card`;
+}
+
+/** The card a membership is billed on. `mine` is the client portal. */
+export async function getMembershipCard(
+  membershipId: number,
+  opts?: { mine?: boolean }
+): Promise<MembershipBillingCard> {
+  const { data } = await http.get<MembershipBillingCard>(
+    membershipCardPath(membershipId, opts?.mine === true),
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return data;
+}
+
+export async function updateMembershipCard(
+  membershipId: number,
+  paymentMethodId: string,
+  opts?: { mine?: boolean }
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    membershipCardPath(membershipId, opts?.mine === true),
+    { practiceId: currentPracticeId(), paymentMethodId }
+  );
+  return data;
+}
+
 export async function resumeMembershipBenefits(
   membershipId: number,
   note?: string | null

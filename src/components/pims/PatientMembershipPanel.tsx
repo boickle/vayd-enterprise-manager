@@ -64,6 +64,7 @@ import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
 import { useCan } from '../../permissions/PermissionContext';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
 import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
+import MembershipCardUpdate from '../MembershipCardUpdate';
 import MembershipAgreementWaiver, {
   hasDrawnMembershipSignature,
 } from '../MembershipAgreementWaiver';
@@ -299,6 +300,7 @@ export default function PatientMembershipPanel({
   const canPostVisitSignup = useCan('membership.post_visit.rerate');
   const canResumeBenefits = useCan('membership.benefits.resume');
   const canHandleOwnerChange = useCan('membership.owner_change.handle');
+  const canUpdateCard = useCan('membership.card.update');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -1567,6 +1569,14 @@ export default function PatientMembershipPanel({
                     },
                   ]}
                 />
+                {canUpdateCard && membership.status !== 'inactive' ? (
+                  <div className="pmp-card-update">
+                    <MembershipCardUpdate
+                      membershipId={membership.id}
+                      buttonClassName="pims-detail__btn-secondary"
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {mode === 'change' ? (
