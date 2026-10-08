@@ -7,7 +7,7 @@ import {
 import './MembershipAgreementWaiver.css';
 
 export const MEMBERSHIP_AGREEMENT_CHECKBOX_LABEL =
-  'I have read and agree to the Vet At Your Door Membership Plan terms. I understand this membership bills monthly or annually, renews automatically, and that you will charge the card on file on an ongoing basis. If I cancel early, I am responsible for services used that exceed payments made.';
+  'I have read and agree to the Vet At Your Door Membership Plan terms. I understand this membership bills monthly or annually, renews automatically, and that you will charge the card on file on an ongoing basis for membership payments and for future services and products. If I cancel early, I am responsible for services used that exceed payments made.';
 
 export function hasDrawnMembershipSignature(dataUrl: string | null | undefined): boolean {
   return Boolean(dataUrl?.startsWith('data:image/'));

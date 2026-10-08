@@ -106,6 +106,43 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
+        <h4>Prescription refills</h4>
+        {preview.prescriptions.length === 0 ? (
+          <p className="death-wrapup-empty">None to stop</p>
+        ) : (
+          <ul>
+            {preview.prescriptions.map((row) => (
+              <li key={row.id}>
+                <strong>{[row.name, row.strength].filter(Boolean).join(' ')}</strong>
+                <span>Marked no longer taking, so no refills</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="death-wrapup-section">
+        <h4>Pharmacy orders</h4>
+        {preview.mailOrders.length === 0 ? (
+          <p className="death-wrapup-empty">None to cancel</p>
+        ) : (
+          <ul>
+            {preview.mailOrders.map((row) => (
+              <li key={row.id}>
+                <strong>
+                  Order #{row.id}
+                  {row.lines?.length
+                    ? ` · ${row.lines.map((line) => line.name).filter(Boolean).join(', ')}`
+                    : ''}
+                </strong>
+                <span>The mail team is asked to cancel it and refund anything paid</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="death-wrapup-section">
         <h4>Future appointments</h4>
         {preview.futureAppointments.length === 0 ? (
           <p className="death-wrapup-empty">None to cancel</p>

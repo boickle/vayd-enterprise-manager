@@ -2809,6 +2809,7 @@ function AgreementSection({
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you fourteen (14) days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
+          <p>By enrolling, you authorize Vet At Your Door to charge the card on file for membership payments and for future services and products provided to your pet.</p>
           <p>Foundations, Golden, and Puppy / Kitten plans require a twelve (12) month term. Annual billing saves ten percent (10%) compared with paying monthly.</p>
           <p>If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
           <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client&apos;s new lease or mortgage agreement.</p>
@@ -2835,7 +2836,7 @@ function AgreementSection({
             style={{ marginTop: 4 }}
           />
           <span style={{ fontSize: 14 }}>
-            I have read and agree to the Vet At Your Door Membership Plan terms and conditions. I understand that upon early termination of the agreement that I am responsible for services due if it is more than the monthly payments made.
+            I have read and agree to the Vet At Your Door Membership Plan terms and conditions. I authorize Vet At Your Door to charge my card on file for membership payments and for future services and products. I understand that upon early termination of the agreement that I am responsible for services due if it is more than the monthly payments made.
           </span>
         </label>
 

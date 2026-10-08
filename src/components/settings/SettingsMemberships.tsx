@@ -19,6 +19,7 @@ import {
   getBundle,
   getBundleAudit,
   listBundles,
+  listRenewalGaps,
   updateBundle,
   type Bundle,
   type BundleFields,
@@ -32,6 +33,7 @@ import {
   type MembershipAuditEntry,
   type MembershipItemType,
   type PropagationResult,
+  type RenewalGap,
 } from '../../api/memberships';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import { getToken } from '../../api/http';
@@ -966,6 +968,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const [renewalGaps, setRenewalGaps] = useState<RenewalGap[]>([]);
 
   const [selection, setSelection] = useState<Selection>(null);
   const [detail, setDetail] = useState<Bundle | null>(null);
@@ -1127,6 +1130,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
     try {
       setPlans(await listBundles({ kind: 'membership', includeArchived }));
       setListError(null);
+      setRenewalGaps(await listRenewalGaps().catch(() => []));
     } catch (e) {
       setListError(extractErr(e));
       setPlans([]);
@@ -2039,6 +2043,41 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
           {listError ? (
             <p className="settings-message settings-error-message">{listError}</p>
+          ) : null}
+
+          {renewalGaps.length ? (
+            <div className="memberships-renewal-gaps" role="status">
+              <p className="memberships-renewal-gaps__title">Needs a renewal plan</p>
+              <p className="settings-muted memberships-renewal-gaps__hint">
+                These members would renew onto an archived plan. Set an active plan under
+                "On renewal, move to" or the age-out plan. Until then their renewal emails are
+                on hold and the Lead Client Liaison gets a task.
+              </p>
+              <ul>
+                {renewalGaps.map((gap) => (
+                  <li key={gap.packageId}>
+                    <button
+                      type="button"
+                      className="memberships-renewal-gaps__item"
+                      onClick={() => {
+                        if (gap.isArchived) setShowArchived(true);
+                        setSelection({ mode: 'plan', id: gap.packageId });
+                      }}
+                    >
+                      <strong>{gap.name}</strong> · {gap.activeMemberCount} active member
+                      {gap.activeMemberCount === 1 ? '' : 's'}
+                      <span className="settings-muted">
+                        {gap.problem === 'no_next_plan'
+                          ? 'Archived, with no next plan'
+                          : gap.problem === 'next_plan_archived'
+                            ? `Next plan ${gap.archivedPlanName} is archived`
+                            : `Age-out plan ${gap.archivedPlanName} is archived`}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
 
           {listLoading ? (

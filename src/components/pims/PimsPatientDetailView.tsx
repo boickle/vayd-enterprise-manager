@@ -141,6 +141,12 @@ import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings'
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 import DeathWrapUpModal from '../soap/DeathWrapUpModal';
+import InactivationRestoreModal from '../soap/InactivationRestoreModal';
+import {
+  getOpenPatientInactivation,
+  type PatientInactivationRecord,
+} from '../../api/patientInactivation';
+import { appAlert } from '../../utils/appDialog';
 import {
   previewDeathWrapUp,
   type DeathWrapUpPreview,
@@ -1175,6 +1181,7 @@ export default function PimsPatientDetailView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [inactivateWrapUp, setInactivateWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
+  const [restoreRecord, setRestoreRecord] = useState<PatientInactivationRecord | null>(null);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [photoGalleryOpen, setPhotoGalleryOpen] = useState(false);
   const [photoVersion, setPhotoVersion] = useState(0);
@@ -1969,6 +1976,16 @@ export default function PimsPatientDetailView({
       await applyWriteResult(await reactivatePatient(patientId));
     } catch (err) {
       setSaveError(extractPatientSaveErr(err));
+      setBusy(false);
+      return;
+    }
+    try {
+      const record = await getOpenPatientInactivation(Number(patientId));
+      if (record?.items.length) setRestoreRecord(record);
+    } catch (err) {
+      setSaveError(
+        `${pname} is active again, but the list of what was stopped could not be loaded: ${extractPatientSaveErr(err)}`
+      );
     } finally {
       setBusy(false);
     }
@@ -4241,6 +4258,19 @@ export default function PimsPatientDetailView({
             } finally {
               setBusy(false);
             }
+          }}
+        />
+      ) : null}
+
+      {restoreRecord ? (
+        <InactivationRestoreModal
+          record={restoreRecord}
+          patientName={pname}
+          onClose={() => setRestoreRecord(null)}
+          onDone={async (notes) => {
+            setRestoreRecord(null);
+            await reloadChartData();
+            if (notes.length) await appAlert({ title: 'Restored', message: notes.join('\n') });
           }}
         />
       ) : null}

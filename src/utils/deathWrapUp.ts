@@ -11,15 +11,23 @@ import {
   type MembershipCancelPreview,
 } from '../api/memberships';
 import {
+  listMailOrders,
   listStoreSubscriptions,
+  mailCancelPending,
   patchStoreSubscription,
+  requestMailOrderCancellation,
+  type MailOrder,
   type StoreStaffSubscription,
 } from '../api/onlineStore';
+import { recordPatientInactivation, type InactivationItem } from '../api/patientInactivation';
 import { getEstimateForAppointment, listClientEstimates } from '../api/visitEstimates';
 import {
   VISIT_WORKFLOW_PRACTICE_ID,
   getInvoiceByAppointment,
   listClientVisitInvoices,
+  listPatientPrescriptions,
+  updatePatientPrescription,
+  type PatientPrescription,
 } from '../api/visitWorkflow';
 import { membershipCancelLineDescription } from './membershipCancelEstimateLine';
 import {
@@ -41,6 +49,10 @@ export type DeathWrapUpPreview = {
   autoships: StoreStaffSubscription[];
   reminders: UnscheduledReminder[];
   futureAppointments: EuthanasiaFutureAppointmentRow[];
+  /** Chronic meds still being taken; Accept marks them no longer taking, so no refills. */
+  prescriptions: PatientPrescription[];
+  /** Pharmacy and mail orders not yet shipped or picked up; Accept asks the mail team to cancel. */
+  mailOrders: MailOrder[];
   /**
    * Memberships whose cancel charge or credit is already a line on this visit's estimate or
    * invoice, or (from the chart, with no visit) on one of the owner's open estimates or bills.
@@ -56,7 +68,11 @@ export type DeathWrapUpAcceptResult = {
   autoshipsCanceled: number;
   remindersCanceled: number;
   appointmentsCanceled: number;
+  prescriptionsStopped: number;
+  mailOrderCancelsRequested: number;
 };
+
+const MAIL_ORDER_DONE_STATUSES = new Set(['shipped', 'picked_up', 'cancelled']);
 
 function money(n: number): string {
   return Number(n || 0).toLocaleString('en-US', {
@@ -91,7 +107,9 @@ export function deathWrapUpHasWork(preview: DeathWrapUpPreview | null | undefine
     preview.memberships.length > 0 ||
     preview.autoships.length > 0 ||
     preview.reminders.length > 0 ||
-    preview.futureAppointments.length > 0
+    preview.futureAppointments.length > 0 ||
+    preview.prescriptions.length > 0 ||
+    preview.mailOrders.length > 0
   );
 }
 
@@ -159,16 +177,21 @@ async function previewOnePatient(
       ? [args.appointmentId]
       : [];
 
-  const [memberships, reminders, futureAppointments] = await Promise.all([
-    listPatientMemberships({ patientId }).catch(() => []),
-    listPatientOpenReminders(patientId).catch(() => [] as UnscheduledReminder[]),
-    findFutureAppointmentsForPatients({
-      practiceId: args.practiceId,
-      practiceTz: args.practiceTz,
-      patients: [{ patientId: String(patientId), patientName }],
-      excludeAppointmentIds,
-    }).catch(() => [] as EuthanasiaFutureAppointmentRow[]),
-  ]);
+  const [memberships, reminders, futureAppointments, prescriptions, mailOrders] =
+    await Promise.all([
+      listPatientMemberships({ patientId }).catch(() => []),
+      listPatientOpenReminders(patientId).catch(() => [] as UnscheduledReminder[]),
+      findFutureAppointmentsForPatients({
+        practiceId: args.practiceId,
+        practiceTz: args.practiceTz,
+        patients: [{ patientId: String(patientId), patientName }],
+        excludeAppointmentIds,
+      }).catch(() => [] as EuthanasiaFutureAppointmentRow[]),
+      listPatientPrescriptions(patientId, { activeChronicOnly: true }).catch(
+        () => [] as PatientPrescription[]
+      ),
+      listMailOrders(args.practiceId, undefined, patientId).catch(() => [] as MailOrder[]),
+    ]);
 
   const membershipPreviews: MembershipCancelPreview[] = [];
   for (const membership of memberships.filter((row) => row.status === 'active')) {
@@ -203,6 +226,13 @@ async function previewOnePatient(
       (row) => Number(row.patient?.id ?? 0) === Number(patientId) || !row.patient,
     ),
     futureAppointments,
+    prescriptions: prescriptions.filter((row) => !row.discontinuedAt),
+    mailOrders: mailOrders.filter(
+      (row) =>
+        Number(row.patientId ?? patientId) === Number(patientId) &&
+        !MAIL_ORDER_DONE_STATUSES.has(row.status) &&
+        !mailCancelPending(row)
+    ),
     moneyOnVisitMembershipIds: membershipPreviews
       .filter((row) => visitMoney.descriptions.has(membershipCancelLineDescription(row.planName)))
       .map((row) => row.membershipId),
@@ -359,6 +389,7 @@ export async function acceptDeathWrapUp(
   let membershipsCanceled = 0;
   let autoshipsCanceled = 0;
   let remindersCanceled = 0;
+  const stopped: InactivationItem[] = [];
 
   for (const membership of preview.memberships) {
     const skipMoney = membershipCancelMoneyOnVisit(preview, membership.membershipId, kind);
@@ -376,6 +407,7 @@ export async function acceptDeathWrapUp(
         skipMoney,
       });
       membershipsCanceled += 1;
+      stopped.push({ kind: 'membership', id: membership.membershipId, label: membership.planName });
     } catch (err) {
       errors.push(apiErrorMessage(err) || `Could not cancel ${membership.planName}`);
     }
@@ -385,6 +417,7 @@ export async function acceptDeathWrapUp(
     try {
       await patchStoreSubscription(practiceId, autoship.id, { cancel: true });
       autoshipsCanceled += 1;
+      stopped.push({ kind: 'autoship', id: autoship.id, label: autoship.itemName || 'Auto-ship' });
     } catch (err) {
       errors.push(
         apiErrorMessage(err) || `Could not cancel auto-ship for ${autoship.itemName || 'item'}`,
@@ -396,8 +429,34 @@ export async function acceptDeathWrapUp(
     try {
       await patchReminder(reminder.id, { isHidden: true });
       remindersCanceled += 1;
+      stopped.push({ kind: 'reminder', id: reminder.id, label: reminder.description });
     } catch (err) {
       errors.push(apiErrorMessage(err) || `Could not cancel reminder ${reminder.description}`);
+    }
+  }
+
+  let prescriptionsStopped = 0;
+  for (const rx of preview.prescriptions) {
+    try {
+      await updatePatientPrescription(rx.id, { discontinued: true });
+      prescriptionsStopped += 1;
+      stopped.push({ kind: 'prescription', id: rx.id, label: rx.name });
+    } catch (err) {
+      errors.push(apiErrorMessage(err) || `Could not stop refills for ${rx.name}`);
+    }
+  }
+
+  let mailOrderCancelsRequested = 0;
+  for (const order of preview.mailOrders) {
+    try {
+      await requestMailOrderCancellation(practiceId, order.id, {
+        reason: 'other',
+        note: reason,
+      });
+      mailOrderCancelsRequested += 1;
+      stopped.push({ kind: 'mailOrder', id: order.id, label: `Order #${order.id}` });
+    } catch (err) {
+      errors.push(apiErrorMessage(err) || `Could not request cancellation of order #${order.id}`);
     }
   }
 
@@ -407,6 +466,25 @@ export async function acceptDeathWrapUp(
     reason,
   });
   errors.push(...appointments.errors);
+  const cancelled = new Set(appointments.cancelledIds);
+  for (const row of preview.futureAppointments) {
+    if (!cancelled.has(row.appointmentId)) continue;
+    stopped.push({
+      kind: 'appointment',
+      id: row.appointmentId,
+      label: [row.scheduledLabel, row.appointmentTypeLabel].filter(Boolean).join(' · '),
+    });
+  }
+
+  if (stopped.length) {
+    try {
+      await recordPatientInactivation(preview.patientId, stopped);
+    } catch (err) {
+      errors.push(
+        `${apiErrorMessage(err) || 'Could not save the list of what was stopped'}. If ${preview.patientName} is made active again, these will need to be restored by hand.`
+      );
+    }
+  }
 
   return {
     errors,
@@ -414,6 +492,8 @@ export async function acceptDeathWrapUp(
     autoshipsCanceled,
     remindersCanceled,
     appointmentsCanceled: appointments.cancelledIds.length,
+    prescriptionsStopped,
+    mailOrderCancelsRequested,
   };
 }
 
@@ -427,6 +507,8 @@ export async function acceptDeathWrapUpHousehold(
     autoshipsCanceled: 0,
     remindersCanceled: 0,
     appointmentsCanceled: 0,
+    prescriptionsStopped: 0,
+    mailOrderCancelsRequested: 0,
   };
   for (const preview of previews) {
     const next = await acceptDeathWrapUp(preview, args);
@@ -435,6 +517,8 @@ export async function acceptDeathWrapUpHousehold(
     totals.autoshipsCanceled += next.autoshipsCanceled;
     totals.remindersCanceled += next.remindersCanceled;
     totals.appointmentsCanceled += next.appointmentsCanceled;
+    totals.prescriptionsStopped += next.prescriptionsStopped;
+    totals.mailOrderCancelsRequested += next.mailOrderCancelsRequested;
   }
   return totals;
 }

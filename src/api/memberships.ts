@@ -279,6 +279,23 @@ export async function listBundles(opts?: {
   return Array.isArray(data) ? data : [];
 }
 
+/** A plan whose members would renew onto an archived plan. */
+export type RenewalGap = {
+  packageId: number;
+  name: string;
+  isArchived: boolean;
+  activeMemberCount: number;
+  problem: 'no_next_plan' | 'next_plan_archived' | 'age_out_plan_archived';
+  archivedPlanName: string;
+};
+
+export async function listRenewalGaps(): Promise<RenewalGap[]> {
+  const { data } = await http.get<RenewalGap[]>('/memberships/bundles/renewal-gaps', {
+    params: { practiceId: currentPracticeId() },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 export async function getBundle(id: number): Promise<Bundle> {
   const { data } = await http.get<Bundle>(`/memberships/bundles/${encodeURIComponent(id)}`, {
     params: { practiceId: currentPracticeId() },
