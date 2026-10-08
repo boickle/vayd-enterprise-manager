@@ -1464,7 +1464,7 @@ export default function VisitCheckoutPanel({
       }
       onInvoiceChange(await voidInvoice(invoice.id, { reason }));
       setVoidPromptOpen(false);
-      setNote("Invoice voided and its items taken off the pet's chart. Reopen and finalize it to bill and chart them again.");
+      setNote("Invoice voided. Its items show as voided on the pet's chart. Reopen and finalize it to bill them again.");
     });
 
   const reopen = () =>
@@ -3039,7 +3039,7 @@ export default function VisitCheckoutPanel({
       <ReasonPrompt
         open={voidPromptOpen}
         title="Void this invoice?"
-        note="Every charge comes off the bill and the pet's chart, and any membership benefits it used are returned. No payment can be taken until it is reopened. Reopening and finalizing puts the items back on the chart. Nothing has been collected yet."
+        note="Every charge comes off the bill and shows as voided on the pet's chart, and any membership benefits it used are returned. No payment can be taken until it is reopened. Nothing has been collected yet."
         presets={[
           'Entered on the wrong patient',
           'Duplicate invoice',

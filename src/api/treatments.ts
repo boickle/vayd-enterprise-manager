@@ -67,6 +67,10 @@ export type TreatmentItem = {
   procedure?: TreatmentItemProcedure | null;
   inventoryItem?: TreatmentItemInventory | null;
   prescriptions?: unknown[];
+  /** Set when the Scout invoice that charged this item was voided. */
+  voidedAt?: string | null;
+  voidReason?: string | null;
+  voidedByName?: string | null;
   [key: string]: unknown;
 };
 

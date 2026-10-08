@@ -579,7 +579,36 @@ export function mergeInHouseLabsIntoChart(
   return out;
 }
 
+/**
+ * A charge whose invoice was voided stays on the chart, readable, with who voided it,
+ * when and why.
+ */
+function voidedChartFields(
+  name: string,
+  detail: string,
+  voided: { at?: string | null; reason?: string | null; byName?: string | null }
+): Pick<ChartRow, 'description' | 'detailText' | 'removed' | 'removedReason' | 'removedByName' | 'removedAt'> {
+  const when = voided.at ? new Date(voided.at).toLocaleDateString() : null;
+  return {
+    description: `${name} — invoice voided${voided.byName ? ` · ${voided.byName}` : ''}`,
+    detailText: [
+      ['Invoice voided', when && `on ${when}`, voided.byName && `by ${voided.byName}`]
+        .filter(Boolean)
+        .join(' '),
+      voided.reason && `Reason: ${voided.reason}`,
+      detail,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    removed: true,
+    removedReason: voided.reason ?? null,
+    removedByName: voided.byName ?? null,
+    removedAt: voided.at ?? null,
+  };
+}
+
 function visitChargeChartRow(c: PostedVisitCharge, hint?: MedicationHint | null): ChartRow {
+  const detail = visitChargeDetail(c, hint);
   return {
     id: `visitCharge:${c.id}`,
     source: 'visitCharge',
@@ -589,9 +618,10 @@ function visitChargeChartRow(c: PostedVisitCharge, hint?: MedicationHint | null)
     provider: '—',
     serviceDateIso: c.postedToRecordAt,
     sortTime: parseSortTime(c.postedToRecordAt),
-    detailText: visitChargeDetail(c, hint),
+    detailText: detail,
     isCovered: c.isCovered,
     hasResult: !(c.prescriptionPending || c.vaccinationPending),
+    ...(c.voided ? voidedChartFields(c.name, detail, c.voided) : {}),
   };
 }
 
@@ -674,7 +704,7 @@ export function buildChartRowsFromMedicalRecord(
     (visitCharges ?? [])
       .filter((c) => {
         const extra = c as PostedVisitCharge & { isDeleted?: boolean; isActive?: boolean };
-        return extra.isDeleted !== true && extra.isActive !== false;
+        return extra.isDeleted !== true && extra.isActive !== false && !c.voided;
       })
       .map((c) => {
         const day = (c.postedToRecordAt || '').slice(0, 10);
@@ -687,7 +717,8 @@ export function buildChartRowsFromMedicalRecord(
   for (const plan of treatments ?? []) {
     if (!treatmentPlanBelongsOnChart(plan)) continue;
     for (const item of plan.treatmentItems ?? []) {
-      if (!treatmentItemBelongsOnChart(item)) continue;
+      const voided = item.isDeleted !== true && Boolean(item.voidedAt);
+      if (!voided && !treatmentItemBelongsOnChart(item)) continue;
       const inv = item.inventoryItem?.name?.trim();
       const proc = item.procedure?.name?.trim();
       const lab = item.lab?.name?.trim();
@@ -724,6 +755,13 @@ export function buildChartRowsFromMedicalRecord(
         detailText: [treatmentItemDetail(item, hint), laterNote].filter(Boolean).join('\n'),
         isDeclined: item.isDeclined === true,
         laterReceivedOn,
+        ...(voided
+          ? voidedChartFields(name, treatmentItemDetail(item, hint), {
+              at: item.voidedAt,
+              reason: item.voidReason,
+              byName: item.voidedByName,
+            })
+          : {}),
       });
     }
   }

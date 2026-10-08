@@ -877,6 +877,8 @@ export type PostedVisitCharge = {
     nextVaccinationDate: string | null;
     dateVaccinated: string | null;
   } | null;
+  /** Set while the invoice that billed this charge is void. */
+  voided?: { at: string | null; reason: string | null; byName: string | null } | null;
 };
 
 export async function listPatientVisitCharges(patientId: number): Promise<PostedVisitCharge[]> {

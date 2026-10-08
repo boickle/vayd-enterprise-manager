@@ -3889,7 +3889,7 @@ export default function ClientFinancialWorkspace({
     const reason = await askVoidReason(
       'Void invoice?',
       'Enter a reason for voiding this invoice. Payments on it will be voided too. ' +
-        "Its items will come off the pet's chart and any membership benefits it used will be returned.",
+        "Its items will stay on the pet's chart marked voided, and any membership benefits it used will be returned.",
     );
     if (!reason) return;
     setBusy(true);
@@ -3901,7 +3901,7 @@ export default function ClientFinancialWorkspace({
       });
       setSelected(next);
       await refreshList(next.id);
-      setNote("Invoice voided. Its items are off the pet's chart.");
+      setNote("Invoice voided. Its items show as voided on the pet's chart.");
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
