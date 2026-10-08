@@ -3888,7 +3888,8 @@ export default function ClientFinancialWorkspace({
     if (!selected) return;
     const reason = await askVoidReason(
       'Void invoice?',
-      'Enter a reason for voiding this invoice. Payments on it will be voided too.',
+      'Enter a reason for voiding this invoice. Payments on it will be voided too. ' +
+        "Its items will come off the pet's chart and any membership benefits it used will be returned.",
     );
     if (!reason) return;
     setBusy(true);
@@ -3900,7 +3901,7 @@ export default function ClientFinancialWorkspace({
       });
       setSelected(next);
       await refreshList(next.id);
-      setNote('Invoice voided.');
+      setNote("Invoice voided. Its items are off the pet's chart.");
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
