@@ -516,7 +516,7 @@ function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
     priceAnnual: cadence === 'annual' ? amount : null,
     outOfPlanDiscount: numOrNull(draft.outOfPlanDiscount),
     onlineStoreDiscount: numOrNull(draft.onlineStoreDiscount),
-    renewalMonths: numOrNull(draft.renewalMonths) ?? 12,
+    renewalMonths: numOrNull(draft.termMonths) ?? 12,
     isAutoRenew: true,
     isActive: draft.isActive,
     portalSlug: draft.portalSlug.trim() || null,
@@ -2256,22 +2256,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </label>
                   ) : null}
                   <label className="settings-label">
-                    Coverage length (months)
-                    <input
-                      className="settings-input"
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={planDraft.renewalMonths}
-                      onChange={(e) => setField('renewalMonths', e.target.value)}
-                    />
-                    <span className="memberships-field__hint">
-                      How long benefits last from a member's start date. This is not the billing
-                      cadence — leave it at 12 on monthly plans, or they lose coverage after one
-                      payment.
-                    </span>
-                  </label>
-                  <label className="settings-label">
                     Sort order
                     <input
                       className="settings-input"
@@ -2419,9 +2403,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       onChange={(e) => setField('termMonths', e.target.value)}
                     />
                     <span className="memberships-field__hint">
-                      When the membership comes up for renewal, and when the notice email goes out
-                      14 days before it with the plan chosen below. Monthly plans still use a
-                      12-month membership year.
+                      How long benefits last from a member's start date, when the membership comes
+                      up for renewal, and when the notice email goes out 14 days before it with the
+                      plan chosen below. This is not the billing cadence: leave it at 12 on monthly
+                      plans.
                     </span>
                   </label>
                   <label className="settings-label memberships-fields__wide">
