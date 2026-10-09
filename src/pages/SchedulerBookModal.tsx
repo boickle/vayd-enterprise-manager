@@ -64,7 +64,12 @@ import {
 } from '../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
-import { formatSendSlotOfferError, fetchPendingSlotOfferForClient, sendSlotOffer } from '../api/slotOffers';
+import {
+  draftSlotOfferMessage,
+  formatSendSlotOfferError,
+  fetchPendingSlotOfferForClient,
+  sendSlotOffer,
+} from '../api/slotOffers';
 import { lookupClientZoneForAddress } from '../api/zoneLookup';
 import {
   buildSendSlotOfferPayload,
@@ -78,7 +83,7 @@ import {
 import { buildSlotOfferSmsMessage } from '../utils/slotOfferSmsMessage';
 import { readRoutingForwardBookingIntent } from '../utils/routingForwardBookingIntent';
 import { applySlotOfferOutreachNotes } from '../utils/slotOfferOutreachNote';
-import type { SendSlotOfferPayload } from '../api/slotOffers';
+import type { SendSlotOfferPayload, SlotOfferMessageDraft } from '../api/slotOffers';
 import { findScheduleOptimizeQueueItemForAppointments } from '../utils/scheduleOptimizeQueue';
 import {
   appendExploreAlternativeCreatedStaffNote,
@@ -699,9 +704,11 @@ export function SchedulerBookModal({
   const [slotOfferComposeError, setSlotOfferComposeError] = useState<string | null>(null);
   const [slotOfferOverwriteOpen, setSlotOfferOverwriteOpen] = useState(false);
   const slotOfferPendingPayloadRef = useRef<SendSlotOfferPayload | null>(null);
-  const slotOfferComposeDraftRef = useRef<{ payload: SendSlotOfferPayload; message: string } | null>(
-    null
-  );
+  const slotOfferComposeDraftRef = useRef<{
+    payload: SendSlotOfferPayload;
+    draft: SlotOfferMessageDraft;
+  } | null>(null);
+  const [slotOfferDraftMeta, setSlotOfferDraftMeta] = useState<SlotOfferMessageDraft | null>(null);
   const slotOfferConfirmOverwriteRef = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -2861,12 +2868,13 @@ export function SchedulerBookModal({
   }
 
   function openSlotOfferComposeModal(
-    draft: { payload: SendSlotOfferPayload; message: string },
+    compose: { payload: SendSlotOfferPayload; draft: SlotOfferMessageDraft },
     confirmOverwrite: boolean
   ) {
     slotOfferConfirmOverwriteRef.current = confirmOverwrite;
-    slotOfferPendingPayloadRef.current = draft.payload;
-    setSlotOfferComposeMessage(draft.message);
+    slotOfferPendingPayloadRef.current = compose.payload;
+    setSlotOfferDraftMeta(compose.draft);
+    setSlotOfferComposeMessage(compose.draft.message);
     setSlotOfferComposeOpen(true);
   }
 
@@ -2908,28 +2916,41 @@ export function SchedulerBookModal({
           : fbi?.origin === 'schedule_loader'
             ? fbi.scheduleLoaderAnyPastDue !== false
             : false;
-      const message = buildSlotOfferSmsMessage({
-        clientFirstName: selectedClientFirstName,
-        clientDisplayName: clientLabel,
-        petNames: resolved.petNames,
-        providerDisplayName: providerName,
-        arrivalWindowStartIso,
-        arrivalWindowEndIso,
-        slotDateIso: String(opt.date ?? '').trim() || null,
-        anyPastDue,
-        practiceTz,
-      });
-      const draft = { payload: resolved.payload, message };
-      const pending = await fetchPendingSlotOfferForClient({
-        practiceId: resolved.payload.practiceId,
-        clientId: resolved.payload.clientId,
-      });
+      const p = resolved.payload;
+      const [drafted, pending] = await Promise.all([
+        draftSlotOfferMessage({
+          practiceId: p.practiceId,
+          clientId: p.clientId,
+          petIds: p.petIds,
+          doctorId: p.doctorId,
+          slotDate: p.slotDate,
+          arrivalWindowStart: p.arrivalWindowStart,
+          arrivalWindowEnd: p.arrivalWindowEnd,
+        }).catch((): SlotOfferMessageDraft => ({
+          message: buildSlotOfferSmsMessage({
+            clientFirstName: selectedClientFirstName,
+            clientDisplayName: clientLabel,
+            petNames: resolved.petNames,
+            providerDisplayName: providerName,
+            arrivalWindowStartIso,
+            arrivalWindowEndIso,
+            slotDateIso: String(opt.date ?? '').trim() || null,
+            anyPastDue,
+            practiceTz,
+          }),
+          flags: ["Couldn't load the reminder-based draft, so the basic message is shown."],
+          source: 'local',
+          segments: null,
+        })),
+        fetchPendingSlotOfferForClient({ practiceId: p.practiceId, clientId: p.clientId }),
+      ]);
+      const compose = { payload: p, draft: drafted };
       if (pending.hasPending) {
-        slotOfferComposeDraftRef.current = draft;
+        slotOfferComposeDraftRef.current = compose;
         setSlotOfferOverwriteOpen(true);
         return;
       }
-      openSlotOfferComposeModal(draft, false);
+      openSlotOfferComposeModal(compose, false);
     } finally {
       setSendingOffer(false);
     }
@@ -2969,6 +2990,13 @@ export function SchedulerBookModal({
         ...base,
         smsBody: trimmed,
         confirmOverwrite: slotOfferConfirmOverwriteRef.current || undefined,
+        ...(slotOfferDraftMeta
+          ? {
+              smsDraftBody: slotOfferDraftMeta.message,
+              smsDraftSource: slotOfferDraftMeta.source,
+              smsDraftFlags: slotOfferDraftMeta.flags,
+            }
+          : {}),
       });
       const notesResult = await applySlotOfferOutreachNotes({
         payload: base,
@@ -2979,6 +3007,7 @@ export function SchedulerBookModal({
         providers,
       });
       setSlotOfferComposeOpen(false);
+      setSlotOfferDraftMeta(null);
       slotOfferPendingPayloadRef.current = null;
       slotOfferConfirmOverwriteRef.current = false;
       onSlotOfferSent?.(
@@ -2992,10 +3021,26 @@ export function SchedulerBookModal({
     }
   }
 
+  const slotOfferDraftEdited =
+    slotOfferDraftMeta != null && slotOfferComposeMessage.trim() !== slotOfferDraftMeta.message;
+  const slotOfferDraftHint = slotOfferDraftMeta
+    ? [
+        slotOfferDraftMeta.source === 'local' ? 'Basic message' : 'Drafted from reminders on file',
+        slotOfferDraftEdited
+          ? 'edited'
+          : slotOfferDraftMeta.segments != null
+            ? `${slotOfferDraftMeta.segments} text segment${slotOfferDraftMeta.segments === 1 ? '' : 's'} with the link`
+            : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : null;
+
   function closeSlotOfferCompose() {
     if (sendingOffer) return;
     setSlotOfferComposeOpen(false);
     setSlotOfferComposeError(null);
+    setSlotOfferDraftMeta(null);
     slotOfferPendingPayloadRef.current = null;
     slotOfferConfirmOverwriteRef.current = false;
   }
@@ -3018,6 +3063,8 @@ export function SchedulerBookModal({
           subtitle="Review the message before sending. The confirmation link is added automatically."
           showProductionOverride={false}
           primarySendLabel="Send offer"
+          reviewNotes={slotOfferDraftMeta?.flags}
+          messageHint={slotOfferDraftHint}
         />
         {slotOfferOverwriteOpen && typeof document !== 'undefined'
           ? createPortal(
@@ -4241,6 +4288,8 @@ export function SchedulerBookModal({
         subtitle="Review the message before sending. The confirmation link is added automatically."
         showProductionOverride={false}
         primarySendLabel="Send offer"
+        reviewNotes={slotOfferDraftMeta?.flags}
+        messageHint={slotOfferDraftHint}
       />
       {slotOfferOverwriteOpen && typeof document !== 'undefined'
         ? createPortal(
