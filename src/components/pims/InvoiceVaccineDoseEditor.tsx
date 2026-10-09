@@ -96,8 +96,7 @@ export default function InvoiceVaccineDoseEditor({
       setVaccineExpiration(toDateInput(recorded.vaccineExpiration));
       setDateVaccinated(toDateInput(recorded.dateVaccinated) || today());
       setNextDue(toDateInput(recorded.nextVaccinationDate));
-      const tag = (recorded.tagNumber ?? '').trim();
-      setTagNumber(!tag || tag === '0' ? '' : tag);
+      setTagNumber((recorded.tagNumber ?? '').trim());
       setManufacturer(recorded.manufacturer ?? '');
       setVaccineType(recorded.vaccineType ?? '');
       setPrefilled(true);
@@ -206,9 +205,8 @@ export default function InvoiceVaccineDoseEditor({
       return;
     }
     if (isRabies) {
-      const tag = tagNumber.trim();
-      if (!tag || tag === '0') {
-        setError('Rabies tag is required.');
+      if (!tagNumber.trim()) {
+        setError('Rabies tag is required (use 0 if no physical tag).');
         return;
       }
     }

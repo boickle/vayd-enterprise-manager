@@ -285,6 +285,22 @@ export async function fetchSoapCalendarLockIndex(
   return { lockedAppointmentIds: ids };
 }
 
+/** Appointment ids that already have a SOAP encounter (draft or signed). */
+export async function fetchSoapCalendarEncounterIndex(
+  practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
+): Promise<{ appointmentIds: number[] }> {
+  const { data } = await http.get<{ appointmentIds?: number[] }>(
+    '/soap-encounters/calendar-encounter-index',
+    { params: { practiceId } }
+  );
+  const ids = Array.isArray(data?.appointmentIds)
+    ? data.appointmentIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  return { appointmentIds: ids };
+}
+
 export async function createEncounter(body: {
   appointmentId: number;
   patientId: number;

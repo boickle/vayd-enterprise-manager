@@ -50,6 +50,7 @@ import {
 import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import {
   createInvoice,
+  fetchSoapCalendarEncounterIndex,
   fetchSoapCalendarLockIndex,
   getInvoiceByAppointment,
 } from '../api/visitWorkflow';
@@ -4072,6 +4073,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [soapLockedAppointmentIds, setSoapLockedAppointmentIds] = useState<ReadonlySet<number>>(
     () => new Set()
   );
+  /** Appointments that already have an encounter — the menu says "Edit Encounter" and opens it. */
+  const [encounterAppointmentIds, setEncounterAppointmentIds] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
 
   const refreshForwardBookingSourceIds = useCallback(async () => {
     try {
@@ -4088,6 +4093,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     try {
       const index = await fetchSoapCalendarLockIndex(PRACTICE_ID);
       setSoapLockedAppointmentIds(new Set(index.lockedAppointmentIds));
+    } catch {
+      /* keep prior set */
+    }
+  }, []);
+
+  const refreshEncounterAppointmentIds = useCallback(async () => {
+    try {
+      const index = await fetchSoapCalendarEncounterIndex(PRACTICE_ID);
+      setEncounterAppointmentIds(new Set(index.appointmentIds));
     } catch {
       /* keep prior set */
     }
@@ -5246,6 +5260,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
         void refreshForwardBookingSourceIds();
         void refreshSoapLockedAppointmentIds();
+        void refreshEncounterAppointmentIds();
         void loadRoomLoaderStatusesForRange();
         void loadEuthanasiaConsentStatuses(rows);
         void loadRecordsRequestStatuses(rows);
@@ -5327,7 +5342,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (providers.length === 0) return;
     void refreshForwardBookingSourceIds();
     void refreshSoapLockedAppointmentIds();
-  }, [providers.length, refreshForwardBookingSourceIds, refreshSoapLockedAppointmentIds]);
+    void refreshEncounterAppointmentIds();
+  }, [
+    providers.length,
+    refreshForwardBookingSourceIds,
+    refreshSoapLockedAppointmentIds,
+    refreshEncounterAppointmentIds,
+  ]);
 
   const applyRealtimeCalendarBatch = useCallback(
     async (batch: AppointmentCalendarPayload[]) => {
@@ -10794,6 +10815,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       await loadRange({ refreshDrive: true });
       await refreshForwardBookingSourceIds();
       await refreshSoapLockedAppointmentIds();
+      await refreshEncounterAppointmentIds();
       const apptId = typeof updated.id === 'number' ? updated.id : Number(updated.id);
       if (Number.isFinite(apptId) && apptId > 0) {
         pulseEditVisitHighlight(apptId, 3000);
@@ -10807,6 +10829,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       pulseEditVisitHighlight,
       refreshForwardBookingSourceIds,
       refreshSoapLockedAppointmentIds,
+      refreshEncounterAppointmentIds,
     ]
   );
 
@@ -10828,6 +10851,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             }
             void refreshForwardBookingSourceIds();
             void refreshSoapLockedAppointmentIds();
+            void refreshEncounterAppointmentIds();
             setActualVisitModal(appt);
             return;
           case 'openJot': {
@@ -10877,6 +10901,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           case 'startEncounter': {
             if (!firstPatient) {
               fail('No patient on this appointment to start an encounter for.');
+              return;
+            }
+            // An encounter already exists — open it instead of asking which kind to start.
+            if (encounterAppointmentIds.has(Number(appt.id))) {
+              const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
+              navigate(`/schedule/soap/${appt.id}/${firstPatient.id}${clientQs}`);
               return;
             }
             setStartEncounterAppt(appt);
@@ -13941,6 +13971,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               : undefined
           }
           soapLocked={soapLockedAppointmentIds.has(Number(contextMenu.appt.id))}
+          hasEncounter={encounterAppointmentIds.has(Number(contextMenu.appt.id))}
           jotDisabled={!patientsForAppointment(contextMenu.appt)[0]?.id}
           jotDisabledTitle={
             patientsForAppointment(contextMenu.appt)[0]?.id

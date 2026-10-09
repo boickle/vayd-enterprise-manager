@@ -464,14 +464,50 @@ const COVER_STOP = new Set([
   'their',
 ]);
 
+/** Eating / peeing / pooping said two ways still count as the same fact. */
+function stemPhrase(s: string): string {
+  return s
+    .replace(/\b(eating|eats|ate|appetite)\b/g, 'eat')
+    .replace(/\b(drinking|drinks|drank)\b/g, 'drink')
+    .replace(/\b(urinating|urination|urinates|peeing|pees)\b/g, 'urine')
+    .replace(/\b(defecating|defecation|defecates|pooing|pooping|poops|stool)\b/g, 'stool')
+    .replace(/\b(outdoors|outdoor|outside)\b/g, 'outdoor')
+    .replace(/\b(indoors|indoor)\b/g, 'indoor')
+    .replace(/\b(normally|normal)\b/g, 'normal');
+}
+
+/** Capitalized words mid-sentence (usually the pet's name) — the visit bullets rarely repeat them. */
+function properNounTokens(raw: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of raw.matchAll(/(?<=\S\s+)([A-Z][a-z]{2,})\b/g)) out.add(m[1]!.toLowerCase());
+  const first = raw.trim().match(/^([A-Z][a-z]{2,})\s+(?:is|does|has|was|eats|lives|goes)\b/);
+  if (first) out.add(first[1]!.toLowerCase());
+  return out;
+}
+
 function phraseCoveredBy(haystack: string, needle: string): boolean {
-  const h = normPhrase(haystack);
-  const n = normPhrase(needle);
+  const h = stemPhrase(normPhrase(haystack));
+  const n = stemPhrase(normPhrase(needle));
   if (!n || !h) return false;
   if (h.includes(n) || (n.length > 24 && n.includes(h))) return true;
-  const tokens = n.split(' ').filter((t) => t.length > 2 && !COVER_STOP.has(t));
+  if (isIndoorOnlyLine(haystack) && isIndoorOnlyLine(needle)) return true;
+  const names = properNounTokens(needle);
+  const tokens = n
+    .split(' ')
+    .filter((t) => t.length > 2 && !COVER_STOP.has(t) && !(names.has(t) && !h.includes(t)));
   if (tokens.length === 0) return false;
   return tokens.filter((t) => h.includes(t)).length / tokens.length >= 0.72;
+}
+
+function isLabPanelElection(s: string): boolean {
+  return (
+    /elect(?:ed|s)?|selected|requests?|chose/i.test(s) &&
+    /screen|bloodwork|blood work|\bcbc\b|chem|panel|senior/i.test(s)
+  );
+}
+
+function mentionsDeclinedLabs(s: string): boolean {
+  return /declin/i.test(s) && /blood|lab|screen|\bcbc\b|chem|panel/i.test(s);
 }
 
 function checkinReasonAddon(checkin: string): string {
@@ -501,7 +537,7 @@ function combinePresentingComplaints(checkinPc: string, visitPc: string): string
 
 function isIndoorOnlyLine(s: string): boolean {
   return (
-    /\bdoes not go outdoors\b|\bnot (?:an )?outdoor\b|\bindoor only\b|\bindoor cat\b|\bdoes not live with a (?:cat|dog) that goes outdoors\b/i.test(
+    /\bdoes not go outdoors\b|\bnot (?:an )?outdoor\b|\bindoors? only\b|\bstrictly indoors?\b|\bexclusively indoors?\b|\bindoor cat\b|\bdoes not live with a (?:cat|dog) (?:that|who) goes outdoors\b/i.test(
       s
     ) && !/\bindoor\s*[/-]\s*outdoor\b|\bindoor-outdoor\b/i.test(s)
   );
@@ -569,9 +605,45 @@ function mergeHistoryBullets(
         continue;
       }
     }
+    if (isLabPanelElection(checkin)) {
+      const idx = history.findIndex(mentionsDeclinedLabs);
+      if (idx >= 0) {
+        history[idx] = withParenthetical(history[idx]!, 'elected on pre-exam check-in');
+        continue;
+      }
+    }
+    const topic = historyTopic(checkin);
+    const idx = topic ? history.findIndex((v) => historyTopic(v) === topic) : -1;
+    if (idx >= 0) {
+      history[idx] = `${trimPeriod(history[idx]!)}; ${lowerFirst(stripOwnerReports(checkin))} (per pre-exam check-in)`;
+      continue;
+    }
     leftover.push(checkin);
   }
   return { history, leftover };
+}
+
+const HISTORY_TOPICS: Array<[string, RegExp]> = [
+  ['intake', /\b(eat|eats|eating|appetite|drink|drinks|drinking|urinat|pee|defecat|stool|poop|vomit|diarrh|diet|food|kibble)/i],
+  ['lifestyle', /\b(indoor|outdoor|outside|hunt|parasite|flea|tick|travel|board)/i],
+  ['behavior', /\b(shy|nervous|anxious|anxiety|fearful|scared|skittish|hides?|hiding|aggress|temperament|carrier|muzzle|bite|bites|scratch)/i],
+  ['mobility', /\b(limp|lame|stiff|arthrit|jump|stairs|mobility|gait)/i],
+  ['skin', /\b(itch|scratching|lick|skin|coat|hair loss|rash|lump|mass)\b/i],
+];
+
+function historyTopic(s: string): string | null {
+  for (const [topic, re] of HISTORY_TOPICS) if (re.test(s)) return topic;
+  return null;
+}
+
+function stripOwnerReports(s: string): string {
+  return trimPeriod(s.replace(/^(?:the\s+)?(?:owner|client)\s+(?:reports|states|says|notes)\s+(?:that\s+)?/i, ''));
+}
+
+function lowerFirst(s: string): string {
+  return /^[A-Z][a-z]/.test(s) && !/^[A-Z][a-z]+\s+(?:is|does|has|was|eats|lives|goes)\b/.test(s)
+    ? s.charAt(0).toLowerCase() + s.slice(1)
+    : s;
 }
 
 function mergeMedicationBullets(visit: string[], checkin: string[]): string[] {

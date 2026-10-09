@@ -84,6 +84,8 @@ type Props = {
   jotDisabledTitle?: string;
   /** True when this visit's SOAP has been signed & locked. */
   soapLocked?: boolean;
+  /** True when this appointment already has an encounter, so the menu edits it instead of starting one. */
+  hasEncounter?: boolean;
   /** Progress modal: only "View Chart" (Scout patient EMR). */
   patientChartOnly?: boolean;
 };
@@ -117,6 +119,7 @@ export function SchedulerAppointmentContextMenu({
   visitTimesDisabledTitle,
   jotDisabled,
   jotDisabledTitle,
+  hasEncounter = false,
   patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -304,7 +307,7 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => onAction({ kind: 'visitTimes' })}
         />
         <CtxSubRow
-          label="Start Encounter"
+          label={hasEncounter ? 'Edit Encounter' : 'Start Encounter'}
           onPick={() => onAction({ kind: 'startEncounter' })}
         />
         <CtxSubRow
