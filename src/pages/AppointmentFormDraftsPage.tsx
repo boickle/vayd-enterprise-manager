@@ -319,7 +319,7 @@ export default function AppointmentFormDraftsPage() {
                 <strong>Service area:</strong> {detail.serviceArea || '—'}
               </Typography>
               <Typography variant="body2">
-                <strong>Reception notified:</strong>{' '}
+                <strong>Client emailed:</strong>{' '}
                 {detail.notificationSentAt ? formatDt(detail.notificationSentAt) : 'No'}
                 {detail.receptionistEmail ? ` (${detail.receptionistEmail})` : ''}
               </Typography>
