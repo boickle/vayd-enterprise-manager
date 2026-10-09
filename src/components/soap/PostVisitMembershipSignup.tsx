@@ -336,6 +336,8 @@ export default function PostVisitMembershipSignup({
   const [agreementSignatureDrawing, setAgreementSignatureDrawing] = useState('');
   const previewSeq = useRef(0);
   const subKeyRef = useRef<string | null>(null);
+  /** Blocks double-submit before React re-renders with `running` (FE-PVS-010). */
+  const executeLockRef = useRef(false);
 
   useEffect(() => {
     if (choosePet) return;
@@ -666,6 +668,7 @@ export default function PostVisitMembershipSignup({
   ]);
 
   const runExecute = useCallback(async () => {
+    if (executeLockRef.current || running) return;
     if (!packageId || !preview || selectedInvoiceIds.length === 0) return;
     if (preview.outsideWindow && (!overrideWindow || !overrideReason.trim())) {
       setError('Confirm the window override and add a short reason before continuing.');
@@ -683,6 +686,7 @@ export default function PostVisitMembershipSignup({
         return;
       }
     }
+    executeLockRef.current = true;
     setRunning(true);
     setError(null);
     try {
@@ -690,7 +694,6 @@ export default function PostVisitMembershipSignup({
       if (preview.needsCard && !preview.ownerAlreadyPaid) {
         if (!createCardRef.current) {
           setError('Enter a card to start the membership.');
-          setRunning(false);
           return;
         }
         paymentMethodId = await createCardRef.current();
@@ -733,6 +736,7 @@ export default function PostVisitMembershipSignup({
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
+      executeLockRef.current = false;
       setRunning(false);
     }
   }, [
@@ -1400,8 +1404,8 @@ export default function PostVisitMembershipSignup({
               <button
                 type="button"
                 className="btn primary"
-                onClick={runExecute}
-                disabled={!canExecute}
+                onClick={() => void runExecute()}
+                disabled={!canExecute || running}
                 title={
                   !preview
                     ? 'Calculate the refund first'

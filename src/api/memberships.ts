@@ -236,6 +236,8 @@ export type PatientMembership = {
   notes: string | null;
   createdByEmployeeId: number | null;
   isScoutManaged: boolean;
+  /** True once the membership fee was collected (agreement on chart for Scout enrolments). */
+  membershipFeePaid: boolean;
   /** Set while a card dispute is open: no member pricing or covered services. */
   benefitsPaused: { since: string; reason: string | null } | null;
   /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
@@ -878,6 +880,8 @@ export type MembershipRenewalPreview = {
   nextPrice: number | null;
   termEnd: string;
   reason: 'aged_out' | 'successor' | 'same' | 'chosen';
+  alreadyRenewed: boolean;
+  termReviewClosed: boolean;
   alreadyCanceling: boolean;
   cancelPhrase: string;
   /** Still billed through the old (Square) system: ask for a card and plan. */

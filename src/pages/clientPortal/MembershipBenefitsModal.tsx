@@ -7,7 +7,7 @@ import {
 } from '../../api/memberships';
 import MembershipCardUpdate from '../../components/MembershipCardUpdate';
 import { Icon, PortalModal } from './PortalPrimitives';
-import { fmtShortDate, possessive, type MembershipView, type PetWithWellness } from './portalShared';
+import { fmtMembershipShortDate, possessive, type MembershipView, type PetWithWellness } from './portalShared';
 
 /** Perks every plan carries that aren't tracked as countable benefits. */
 export function membershipPerkLines(m: PatientMembership | null | undefined): string[] {
@@ -168,8 +168,8 @@ export default function MembershipBenefitsModal({
                   {totals.included > 0 ? `${totals.left} of ${totals.included} included services left` : 'All included services'}
                 </div>
                 <div className="pp-muted pp-small">
-                  {current.startDate ? `Started ${fmtShortDate(current.startDate)}` : 'Active'}
-                  {current.expirationDate ? ` · renews ${fmtShortDate(current.expirationDate)}` : ''}
+                  {current.startDate ? `Started ${fmtMembershipShortDate(current.startDate)}` : 'Active'}
+                  {current.expirationDate ? ` · renews ${fmtMembershipShortDate(current.expirationDate)}` : ''}
                   {current.billingInterval ? ` · billed ${current.billingInterval}` : ''}
                 </div>
               </div>

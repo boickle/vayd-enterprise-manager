@@ -9,6 +9,7 @@ import {
 import MembershipRenewalCard from './MembershipRenewalCard';
 import MembershipRenewalPlanChoice from './MembershipRenewalPlanChoice';
 import RenewalComparison from './RenewalComparison';
+import { formatMembershipCalendarDay } from '../utils/membershipCalendarDay';
 import './MembershipRenewalReview.css';
 
 function money(value: number | null): string {
@@ -21,13 +22,7 @@ function money(value: number | null): string {
 }
 
 function formatDay(iso: string): string {
-  const date = new Date(`${iso}T12:00:00Z`);
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(date);
+  return formatMembershipCalendarDay(iso, 'long');
 }
 
 function extractErr(error: unknown): string {
@@ -153,7 +148,36 @@ export default function MembershipRenewalReview() {
         </>
       ) : null}
 
-      {preview && !canceled && !cardSaved ? (
+      {preview && !canceled && preview.alreadyRenewed ? (
+        <>
+          <h1>This membership already renewed</h1>
+          <p>
+            Hi {preview.clientFirstName || 'there'}. {preview.petName}&apos;s membership renewed for
+            another year after the period that ended on{' '}
+            <strong>{formatDay(preview.termEnd)}</strong>. This review link was for that earlier
+            year, so there is nothing left to choose or cancel here.
+          </p>
+          <p className="renewal-review__muted">
+            If you have questions about billing or coverage, call Vet At Your Door and we will help.
+          </p>
+        </>
+      ) : null}
+
+      {preview && !canceled && !preview.alreadyRenewed && preview.termReviewClosed ? (
+        <>
+          <h1>This membership year has ended</h1>
+          <p>
+            This review link was for the membership year that ended on{' '}
+            <strong>{formatDay(preview.termEnd)}</strong>. It can no longer be used to change plans
+            or schedule a cancellation.
+          </p>
+          <p className="renewal-review__muted">
+            Contact Vet At Your Door if you need help with {preview.petName}&apos;s membership.
+          </p>
+        </>
+      ) : null}
+
+      {preview && !canceled && !cardSaved && !preview.termReviewClosed ? (
         <>
           <h1>Review {preview.petName}&apos;s membership</h1>
           <p>

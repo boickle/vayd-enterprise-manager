@@ -355,6 +355,8 @@ export default function PatientMembershipPanel({
   const [cancelReason, setCancelReason] = useState('');
   const [cancelLoading, setCancelLoading] = useState(false);
   const cancelSectionRef = useRef<HTMLDivElement | null>(null);
+  /** Blocks double-submit before React re-renders with `busy` (FE-STF-012, FE-STF-026). */
+  const actionLockRef = useRef(false);
 
   // Plan change / enrolment.
   const [changeReason, setChangeReason] = useState('');
@@ -765,6 +767,7 @@ export default function PatientMembershipPanel({
   }
 
   async function enrol(plan: Bundle) {
+    if (busy || actionLockRef.current) return;
     if (
       !agreementAccepted ||
       !agreementSignature.trim() ||
@@ -777,17 +780,19 @@ export default function PatientMembershipPanel({
     }
     const interval = billingIntervalForPlan(plan);
     const price = listedPriceForPlan(plan, interval);
-    const ok = await appConfirm({
-      title: `Enroll in ${plan.name}?`,
-      message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}, billed ${
-        interval === 'annual' ? 'annually' : 'monthly'
-      } on an ongoing basis. Benefits are available right away — you’ll be taken to an invoice to collect payment.`,
-      confirmLabel: 'Enroll',
-    });
-    if (!ok) return;
+    actionLockRef.current = true;
     setBusy(true);
     setFormError(null);
+    let ok = false;
     try {
+      ok = await appConfirm({
+        title: `Enroll in ${plan.name}?`,
+        message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}, billed ${
+          interval === 'annual' ? 'annually' : 'monthly'
+        } on an ongoing basis. You’ll open a counter invoice to collect the membership fee.`,
+        confirmLabel: 'Enroll',
+      });
+      if (!ok) return;
       const signedAt = new Date().toISOString();
       const created = await createPatientMembership({
         patientId,
@@ -848,6 +853,7 @@ export default function PatientMembershipPanel({
     } catch (e) {
       setFormError(apiErrorMessage(e));
     } finally {
+      actionLockRef.current = false;
       setBusy(false);
     }
   }
@@ -879,12 +885,13 @@ export default function PatientMembershipPanel({
   }
 
   async function cancel() {
-    if (!membership) return;
+    if (!membership || busy || actionLockRef.current) return;
     const reason = cancelReason.trim();
     if (!reason) {
       setFormError('Tell us why the owner is canceling.');
       return;
     }
+    actionLockRef.current = true;
     setBusy(true);
     setError(null);
     setFormError(null);
@@ -912,6 +919,7 @@ export default function PatientMembershipPanel({
     } catch (e) {
       setFormError(apiErrorMessage(e));
     } finally {
+      actionLockRef.current = false;
       setBusy(false);
     }
   }
@@ -1332,8 +1340,9 @@ export default function PatientMembershipPanel({
                 disabled={busy}
               />
               <p className="pmp-muted">
-                Enroll starts benefits right away. The signed agreement is filed on this pet after
-                the membership is paid. It stays off the printed medical record.
+                Enrolling lets you price this visit at member rates. Collect the membership fee on
+                the counter invoice. The signed agreement is filed on this pet after payment and
+                stays off the printed medical record.
               </p>
               {plans.length === 0 ? (
                 <p className="pmp-muted">
@@ -1372,7 +1381,7 @@ export default function PatientMembershipPanel({
                         }
                         onClick={() => void enrol(plan)}
                       >
-                        Enroll
+                        {busy ? 'Enrolling…' : 'Enroll'}
                       </button>
                     </li>
                   ))}
@@ -1438,6 +1447,17 @@ export default function PatientMembershipPanel({
                         <PimsBadge tone="info">{customCount} added for this pet</PimsBadge>
                       ) : null}
                     </div>
+                    {membership.status === 'active' && membership.membershipFeePaid ? (
+                      <p className="pmp-muted pmp-summary__fee-note">
+                        Benefits are available right away.
+                      </p>
+                    ) : membership.status === 'active' &&
+                      membership.isScoutManaged &&
+                      membership.membershipFeePaid === false ? (
+                      <p className="pmp-muted pmp-summary__fee-note" role="status">
+                        Membership fee not collected yet — finish payment on the counter invoice.
+                      </p>
+                    ) : null}
                   </div>
                   <div className="pmp-summary__actions">
                     {ownerPaidRecently && clientId && canPostVisitSignup ? (
@@ -1750,11 +1770,13 @@ export default function PatientMembershipPanel({
                       disabled={busy || cancelLoading || !cancelReason.trim()}
                       onClick={() => void cancel()}
                     >
-                      {cancelPreview?.chargeAmount && cancelPreview.chargeAmount > 0.009
-                        ? `Cancel & charge ${money(cancelPreview.chargeAmount)}`
-                        : cancelPreview?.refundAmount && cancelPreview.refundAmount > 0.009
-                          ? `Cancel & refund ${money(cancelPreview.refundAmount)}`
-                          : 'Cancel membership'}
+                      {busy
+                        ? 'Canceling…'
+                        : cancelPreview?.chargeAmount && cancelPreview.chargeAmount > 0.009
+                          ? `Cancel & charge ${money(cancelPreview.chargeAmount)}`
+                          : cancelPreview?.refundAmount && cancelPreview.refundAmount > 0.009
+                            ? `Cancel & refund ${money(cancelPreview.refundAmount)}`
+                            : 'Cancel membership'}
                     </button>
                   </div>
                 </Card>

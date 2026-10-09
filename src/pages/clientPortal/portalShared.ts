@@ -2,6 +2,7 @@
 import type { ClientAppointment, ClientReminder, Pet, WellnessPlan } from '../../api/clientPortal';
 import { apiBaseUrl } from '../../api/http';
 import { patientPhotoSrc } from '../../components/pims/PetThumb';
+import { formatMembershipCalendarDay } from '../../utils/membershipCalendarDay';
 
 export type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -52,6 +53,10 @@ export function fmtShortDate(iso?: string | null) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+/** Membership start/expiry — same calendar day as renewal emails and the renewal page (OQ-89). */
+export function fmtMembershipShortDate(iso?: string | null) {
+  return formatMembershipCalendarDay(iso, 'short');
 }
 export function fmtReminderDate(r: ClientReminder): string {
   if (!r?.dueIso) return '—';
