@@ -36,6 +36,8 @@ type HouseholdState = {
   loading: boolean;
   error: string | null;
   pets: CareOutreachHouseholdPet[];
+  /** Client pet list is known, so the button can stay hidden when there are no other pets. */
+  rosterReady: boolean;
   /** True after the user opened "Other household pets" and a load was attempted. */
   loaded: boolean;
 };
@@ -44,7 +46,13 @@ type HouseholdContextValue = HouseholdState & {
   ensureLoaded: () => void;
 };
 
-const EMPTY: HouseholdState = { loading: false, error: null, pets: [], loaded: false };
+const EMPTY: HouseholdState = {
+  loading: false,
+  error: null,
+  pets: [],
+  rosterReady: false,
+  loaded: false,
+};
 
 const noopEnsureLoaded = () => {};
 
@@ -114,8 +122,11 @@ async function loadHouseholdState(
   if (cached?.loaded && !cached.loading) return cached;
 
   try {
-    const raw = await fetchClientByIdStaff(clientId);
-    const basePets = extractHouseholdPets(raw);
+    const cachedRoster = cache.get(cacheKey);
+    const basePets =
+      cachedRoster?.rosterReady && !cachedRoster.error
+        ? cachedRoster.pets
+        : extractHouseholdPets(await fetchClientByIdStaff(clientId));
     const outreachSet = new Set(outreachPatientIds.map(Number));
     const pets = await Promise.all(
       basePets.map(async (pet) => {
@@ -134,7 +145,13 @@ async function loadHouseholdState(
         }
       })
     );
-    const next: HouseholdState = { loading: false, error: null, pets, loaded: true };
+    const next: HouseholdState = {
+      loading: false,
+      error: null,
+      pets,
+      rosterReady: true,
+      loaded: true,
+    };
     cache.set(cacheKey, next);
     return next;
   } catch {
@@ -142,6 +159,7 @@ async function loadHouseholdState(
       loading: false,
       error: 'Could not load household pets',
       pets: [],
+      rosterReady: true,
       loaded: true,
     };
     cache.set(cacheKey, next);
@@ -177,8 +195,54 @@ export function CareOutreachHouseholdProvider({
       setState(EMPTY);
       return;
     }
-    const cached = cache.get(String(clientId));
-    setState(cached ?? EMPTY);
+    const cacheKey = String(clientId);
+    const cached = cache.get(cacheKey);
+    if (cached?.rosterReady || cached?.loaded) {
+      setState(cached);
+      return;
+    }
+
+    let cancelled = false;
+    setState(EMPTY);
+    void fetchClientByIdStaff(clientId)
+      .then((raw) => {
+        if (cancelled) return;
+        const existing = cache.get(cacheKey);
+        if (existing?.loaded) {
+          setState(existing);
+          return;
+        }
+        const pets = extractHouseholdPets(raw).map((pet) => ({
+          ...pet,
+          summary: null,
+          summaryError: null,
+        }));
+        const next: HouseholdState = {
+          loading: false,
+          error: null,
+          pets,
+          rosterReady: true,
+          loaded: false,
+        };
+        cache.set(cacheKey, next);
+        setState(next);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const next: HouseholdState = {
+          loading: false,
+          error: 'Could not load household pets',
+          pets: [],
+          rosterReady: true,
+          loaded: false,
+        };
+        cache.set(cacheKey, next);
+        setState(next);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [clientId, outreachKey]);
 
   const ensureLoaded = useCallback(() => {
@@ -191,7 +255,7 @@ export function CareOutreachHouseholdProvider({
     }
     if (loadStartedRef.current) return;
     loadStartedRef.current = true;
-    setState({ loading: true, error: null, pets: [], loaded: true });
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     void loadHouseholdState(clientId, practiceTz, outreachPatientIds).then((next) => {
       setState(next);
     });
@@ -241,7 +305,7 @@ export function CareOutreachOtherHouseholdPets({
   onToggleIncludeInBook: (patientId: number, patientName: string, included: boolean) => void;
   practiceTz: string;
 }) {
-  const { loading, error, pets, loaded, ensureLoaded } = useCareOutreachHousehold();
+  const { loading, error, pets, rosterReady, loaded, ensureLoaded } = useCareOutreachHousehold();
   const outreachSet = useMemo(() => new Set(outreachPatientIds.map(Number)), [outreachPatientIds]);
 
   const otherPets = useMemo(
@@ -249,7 +313,9 @@ export function CareOutreachOtherHouseholdPets({
     [pets, outreachSet]
   );
 
-  if (loaded && !loading && (error || otherPets.length === 0)) return null;
+  const householdKnown = rosterReady || loaded;
+  if (!householdKnown) return null;
+  if (!error && otherPets.length === 0) return null;
 
   return (
     <details
@@ -260,7 +326,7 @@ export function CareOutreachOtherHouseholdPets({
     >
       <summary className="care-outreach-household-details__summary">
         Other household pets
-        {loaded && otherPets.length > 0 ? ` (${otherPets.length})` : ''}
+        {otherPets.length > 0 ? ` (${otherPets.length})` : ''}
       </summary>
       <div className="care-outreach-household-details__body">
         {loading ? (
