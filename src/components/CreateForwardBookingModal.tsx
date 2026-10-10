@@ -5,7 +5,11 @@ import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { createForwardBooking, type ForwardBookingEntry } from '../api/forwardBooking';
-import { fetchPatientAppointmentsStaff, clientIdFromAppointment } from '../api/pimsAppointments';
+import {
+  fetchPatientAppointmentsStaff,
+  clientIdFromAppointment,
+  isPatientRowActiveForListing,
+} from '../api/pimsAppointments';
 import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import type { Appointment } from '../api/roomLoader';
@@ -110,6 +114,7 @@ export function CreateForwardBookingModal({
   const [patientResults, setPatientResults] = useState<PatientPick[]>([]);
   const [patientOpen, setPatientOpen] = useState(false);
   const [patientSearching, setPatientSearching] = useState(false);
+  const [includeInactive, setIncludeInactive] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<PatientPick | null>(null);
   const patientWrapRef = useRef<HTMLDivElement>(null);
   const patientSeq = useRef(0);
@@ -295,7 +300,10 @@ export function CreateForwardBookingModal({
     const timer = window.setTimeout(async () => {
       setPatientSearching(true);
       try {
-        const rows = await searchPatientsStaff(q, { practiceId, activeOnly: true });
+        const rows = await searchPatientsStaff(q, {
+          practiceId,
+          activeOnly: !includeInactive,
+        });
         if (patientSeq.current !== id) return;
         setPatientResults(
           rows
@@ -304,9 +312,11 @@ export function CreateForwardBookingModal({
             .map((r) => {
               const row = r as Record<string, unknown>;
               const idRaw = row.id ?? row.patientId;
+              const base = patientSearchLabel(row);
+              const inactive = !isPatientRowActiveForListing(row);
               return {
                 id: Number(idRaw),
-                label: patientSearchLabel(row),
+                label: inactive ? `${base} (inactive)` : base,
               };
             })
             .filter((x) => Number.isFinite(x.id) && x.id > 0)
@@ -319,7 +329,7 @@ export function CreateForwardBookingModal({
       }
     }, 280);
     return () => window.clearTimeout(timer);
-  }, [patientQuery, practiceId, selectedPatient]);
+  }, [patientQuery, practiceId, selectedPatient, includeInactive]);
 
   const loadAppointments = useCallback(
     async (patientId: number, preferredAppointmentId?: number) => {
@@ -328,7 +338,10 @@ export function CreateForwardBookingModal({
       setAppointments([]);
       setSelectedAppointmentId('');
       try {
-        const rows = await fetchPatientAppointmentsStaff(patientId, { practiceId });
+        const rows = await fetchPatientAppointmentsStaff(patientId, {
+          practiceId,
+          ...(includeInactive ? { includeInactivePatient: true } : {}),
+        });
         const sorted = [...rows].sort(
           (a, b) =>
             DateTime.fromISO(b.appointmentStart).toMillis() -
@@ -360,8 +373,16 @@ export function CreateForwardBookingModal({
         setAppointmentsLoading(false);
       }
     },
-    [practiceId]
+    [practiceId, includeInactive]
   );
+
+  // Reload visits when staff toggles Include inactive (needed for inactive patient history).
+  useEffect(() => {
+    if (!selectedPatient) return;
+    void loadAppointments(selectedPatient.id);
+    // pickPatient / prefill own the initial load; this effect is only for the toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedPatient intentionally omitted
+  }, [includeInactive]);
 
   useEffect(() => {
     if (!prefill?.patientId || prefill.patientId <= 0) return;
@@ -551,7 +572,7 @@ export function CreateForwardBookingModal({
         <div className="scheduler-modal-body scheduler-modal-body--edit">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
 
-          <label className="scheduler-edit-field" style={{ display: 'block' }}>
+          <div className="scheduler-edit-field" style={{ display: 'flex', flexDirection: 'column' }}>
             <span>Patient *</span>
             <div ref={patientWrapRef} style={{ position: 'relative' }}>
               <input
@@ -567,6 +588,7 @@ export function CreateForwardBookingModal({
                 disabled={busy}
                 autoComplete="off"
                 placeholder="Enter patient"
+                aria-label="Patient"
                 style={{ width: '100%' }}
               />
               {patientSearching ? (
@@ -596,7 +618,20 @@ export function CreateForwardBookingModal({
                 </ul>
               ) : null}
             </div>
-          </label>
+            <label
+              className="settings-checkbox-item"
+              style={{ marginTop: 4, fontWeight: 400 }}
+              title="Include inactive / deceased patients (e.g. ash drop-offs)"
+            >
+              <input
+                type="checkbox"
+                checked={includeInactive}
+                onChange={(e) => setIncludeInactive(e.target.checked)}
+                disabled={busy}
+              />
+              Include inactive
+            </label>
+          </div>
 
           {selectedPatient ? (
             <div className="scheduler-forward-booking-patient-context" style={{ marginTop: 10 }}>

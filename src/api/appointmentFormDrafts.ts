@@ -5,7 +5,7 @@ import { apiBaseUrl, http, practiceHostHeaders } from './http';
 export const APPOINTMENT_FORM_DRAFTS_ENABLED =
   import.meta.env.VITE_APPOINTMENT_FORM_DRAFTS_ENABLED !== 'false';
 
-const DEFAULT_ABANDON_IDLE_MINUTES = 15;
+const DEFAULT_ABANDON_IDLE_MINUTES = 60;
 
 /** Inactivity before `idle_timeout` abandon. Set minutes to `0` to disable. */
 export function getAppointmentFormAbandonIdleMs(): number {

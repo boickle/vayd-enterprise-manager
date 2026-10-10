@@ -170,7 +170,7 @@ Prefer **`Content-Type: application/json`**; also accept `text/plain` body that 
 | `component_unmount` | React cleanup (SPA navigation away) |
 | `browser_back` | Confirmed popstate back |
 | `exit_to_portal` | User confirmed leave to portal |
-| `idle_timeout` | No form activity for N minutes (default 15; `VITE_APPOINTMENT_FORM_ABANDON_IDLE_MINUTES`) |
+| `idle_timeout` | No form activity for N minutes (default 60; `VITE_APPOINTMENT_FORM_ABANDON_IDLE_MINUTES`) |
 | `zone_not_serviced` | Optional: left after zone block |
 
 #### Response `200 OK`
