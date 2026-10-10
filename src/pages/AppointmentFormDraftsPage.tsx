@@ -32,8 +32,9 @@ import {
   type AppointmentFormDraftFollowUpStatus,
   type AppointmentFormDraftListItem,
 } from '../api/appointmentFormDrafts';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
   '7D': () => {

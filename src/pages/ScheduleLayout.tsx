@@ -10,6 +10,8 @@ import {
   LineChart,
   ListChecks,
   Mail,
+  Mic,
+  MessageSquare,
   Package,
   PackageSearch,
   PanelLeft,
@@ -19,6 +21,7 @@ import {
   ShoppingCart,
   Calculator,
   UserPlus,
+  Banknote,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -39,9 +42,10 @@ import {
   useForwardBookingWorkspaceLockActive,
   useForwardBookingWorkspaceNavigationGuard,
 } from '../utils/forwardBookingWorkspaceGuard';
+import { useInvoiceDirectionsNavigationGuard } from '../utils/invoiceDirectionsLeaveGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
-import { evetCreateClientLink } from '../utils/evet';
+import { appAlert } from '../utils/appDialog';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import './ScheduleLayout.css';
 
@@ -77,7 +81,7 @@ const WORK_QUEUE_ROWS: QueueRow[] = [
   { label: 'Pending Checkout', count: 2, title: 'Coming soon', icon: ShoppingCart },
   { label: 'Lab Reviews', count: 1, title: 'Coming soon', icon: FlaskConical },
   { label: 'Pending Count Reviews', count: 2, title: 'Coming soon', icon: Calculator },
-  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory', icon: PackageSearch },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory/items', icon: PackageSearch },
 ];
 
 export default function ScheduleLayout() {
@@ -116,12 +120,16 @@ export default function ScheduleLayout() {
 
   const forwardBookingWorkspaceLockActive = useForwardBookingWorkspaceLockActive();
   useForwardBookingWorkspaceNavigationGuard(forwardBookingWorkspaceLockActive);
+  useInvoiceDirectionsNavigationGuard();
 
   useEffect(() => {
     if (!hasActiveForwardBookingWorkspaceLock()) return;
     if (!location.pathname.startsWith('/schedule')) return;
     if (location.pathname === FORWARD_BOOKING_ROUTE_PATH) return;
-    window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+    void appAlert({
+      title: 'Forward booking in progress',
+      message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+    });
     navigate(FORWARD_BOOKING_ROUTE_PATH, { replace: true });
   }, [location.pathname, navigate]);
 
@@ -166,17 +174,29 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/email' ||
       location.pathname === '/schedule/scheduler' ||
       location.pathname.startsWith('/schedule/scheduler/') ||
-      location.pathname === '/schedule/routing',
+      location.pathname === '/schedule/routing' ||
+      location.pathname === '/schedule/jot' ||
+      location.pathname.startsWith('/schedule/jot/') ||
+      location.pathname === '/schedule/chat' ||
+      location.pathname.startsWith('/schedule/chat/') ||
+      // SOAP / medical-note chart: fill the outlet so chart + invoice scroll independently.
+      /^\/schedule\/(soap|note)\/[^/]+\/[^/]+$/.test(location.pathname),
     [location.pathname]
   );
 
-  /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split stays overflow-hidden. */
+  const soapChartSplit = useMemo(
+    () => /^\/schedule\/(soap|note)\/[^/]+\/[^/]+$/.test(location.pathname),
+    [location.pathname]
+  );
+
+  /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split and SOAP chart stay overflow-hidden. */
   const outletFlushVerticallyScrollable = useMemo(
     () =>
       outletFlush &&
       !location.pathname.startsWith('/schedule/routing') &&
-      location.pathname !== '/schedule/email',
-    [outletFlush, location.pathname]
+      location.pathname !== '/schedule/email' &&
+      !soapChartSplit,
+    [outletFlush, location.pathname, soapChartSplit]
   );
 
   /** Lets practice week/day `position: sticky` stick to the outlet (see ScheduleLayout.css). */
@@ -243,7 +263,10 @@ export default function ScheduleLayout() {
               onClick={(e) => {
                 if (forwardBookingWorkspaceLockActive) {
                   e.preventDefault();
-                  window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+                  void appAlert({
+                    title: 'Forward booking in progress',
+                    message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+                  });
                   return;
                 }
                 if (appointmentHref === '/schedule/routing') {
@@ -260,18 +283,42 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">+ Appointment</span>
             </NavLink>
-            <a
-              href={evetCreateClientLink()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="schedule-app__quick-link"
+            <NavLink
+              to="/schedule/clients?add=1"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
               title={railCollapsedEffective ? 'New Client' : undefined}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
                 <UserPlus size={18} strokeWidth={1.75} />
               </span>
               <span className="schedule-app__quick-link-label">+ New Client</span>
-            </a>
+            </NavLink>
+            <NavLink
+              to="/schedule/jot"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
+              title={railCollapsedEffective ? 'Jot' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <Mic size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Jot</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/chat"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
+              title={railCollapsedEffective ? 'Chat' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <MessageSquare size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Chat</span>
+            </NavLink>
             <NavLink
               to="/schedule/room-loader"
               className="schedule-app__quick-link"
@@ -284,7 +331,7 @@ export default function ScheduleLayout() {
             </NavLink>
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
-                to="/schedule/inventory"
+                to="/schedule/inventory/items"
                 className="schedule-app__quick-link"
                 title={railCollapsedEffective ? 'Restock Location' : undefined}
               >
@@ -315,18 +362,33 @@ export default function ScheduleLayout() {
               <span className="schedule-app__quick-link-label">+ Forward Booking</span>
             </NavLink>
             {canAccessScheduleAnalytics ? (
-              <NavLink
-                to="/schedule/analytics"
-                className={({ isActive }) =>
-                  `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
-                }
-                title={railCollapsedEffective ? 'Analytics' : undefined}
-              >
-                <span className="schedule-app__quick-link-icon" aria-hidden>
-                  <LineChart size={18} strokeWidth={1.75} />
-                </span>
-                <span className="schedule-app__quick-link-label">Analytics</span>
-              </NavLink>
+              <>
+                <NavLink
+                  to="/schedule/deposits"
+                  end
+                  className={({ isActive }) =>
+                    `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                  }
+                  title={railCollapsedEffective ? 'Create deposit' : undefined}
+                >
+                  <span className="schedule-app__quick-link-icon" aria-hidden>
+                    <Banknote size={18} strokeWidth={1.75} />
+                  </span>
+                  <span className="schedule-app__quick-link-label">Create deposit</span>
+                </NavLink>
+                <NavLink
+                  to="/schedule/analytics"
+                  className={({ isActive }) =>
+                    `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                  }
+                  title={railCollapsedEffective ? 'Analytics' : undefined}
+                >
+                  <span className="schedule-app__quick-link-icon" aria-hidden>
+                    <LineChart size={18} strokeWidth={1.75} />
+                  </span>
+                  <span className="schedule-app__quick-link-label">Analytics</span>
+                </NavLink>
+              </>
             ) : null}
             {canAccessGmailInbox ? (
               <NavLink
@@ -392,7 +454,11 @@ export default function ScheduleLayout() {
       >
         <div
           className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
-            location.pathname === '/schedule/routing' ? ' schedule-app__outlet--routing-split' : ''
+            location.pathname === '/schedule/routing' ||
+            location.pathname.startsWith('/schedule/jot') ||
+            soapChartSplit
+              ? ' schedule-app__outlet--routing-split'
+              : ''
           }${outletFlushVerticallyScrollable ? ' schedule-app__outlet--flush-scroll-y' : ''}${
             scheduleMainStickyCalendarChain ? ' schedule-app__outlet--practice-sticky-x' : ''
           }`}
@@ -400,6 +466,7 @@ export default function ScheduleLayout() {
           <Outlet context={{ schedulingToolsLinkPrefix: '/schedule/scheduling-tools' }} />
         </div>
       </div>
+
     </div>
   );
 }

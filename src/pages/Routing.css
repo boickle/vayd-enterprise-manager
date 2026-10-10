@@ -1475,6 +1475,7 @@
 
   .routing-page-root > .routing-results-card {
     order: 2;
+    scroll-margin-top: calc(var(--scout-schedule-navbar-height, 96px) + 8px);
   }
 
   .routing-page-root--calendar-workspace .routing-route-form-card > form,

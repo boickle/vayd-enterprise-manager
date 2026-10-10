@@ -1,272 +1,188 @@
-// src/pages/ClientPortal.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+// src/pages/ClientPortal.tsx — pet-first client portal
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchClientAppointments,
   fetchClientPets,
-  type Pet,
-  type ClientAppointment,
   fetchWellnessPlansForPatient,
-  type WellnessPlan,
   fetchClientReminders,
-  type ClientReminder,
-  type Vaccination,
+  fetchClientChronicMeds,
   fetchClientInfo,
-  submitReferral,
+  fetchPortalProviders,
+  fetchMyRememberedPets,
+  togglePetLove,
+  updateMyPetProfile,
   getClientRoomLoaderPdfHref,
   getClientRoomLoaderFormPath,
+  type ClientAppointment,
+  type ClientReminder,
+  type PetPortalProfilePatch,
+  type PortalProvider,
+  type RememberedPet,
 } from '../api/clientPortal';
+import { formatDeclinedDate, type DeclinedTreatmentItem } from '../api/declinedTreatments';
 import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
-import {
-  defaultChatHoursOfOperation,
-  formatChatHoursSchedule,
-  isChatOpen,
-  type ChatHoursOfOperation,
-} from '../utils/chatHours';
+import { defaultChatHoursOfOperation, formatChatHoursSchedule, isChatOpen, type ChatHoursOfOperation } from '../utils/chatHours';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
-import { uploadPetImage } from '../api/patients';
+import PatientPhotoGalleryModal from '../components/pims/PatientPhotoGalleryModal';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
-import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
+import { appAlert } from '../utils/appDialog';
+import { publicStoreProducts } from '../api/onlineStore';
+import { addToStoreCart, rememberStorePortalReturn } from './store/storeCartState';
+import type { PatientPrescription } from '../api/visitWorkflow';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-type PetWithWellness = Pet & {
-  wellnessPlans?: WellnessPlan[];
-  membershipStatus?: string | null;
-  membershipPlanName?: string | null;
-  membershipPricingOption?: string | null;
-  membershipUpdatedAt?: string | null;
-};
+import './clientPortal/ClientPortal.css';
+import { CardHead, Icon, Toast } from './clientPortal/PortalPrimitives';
+import PetHero, { type HeroStat } from './clientPortal/PetHero';
+import PetAboutCard from './clientPortal/PetAboutCard';
+import PetSpotlightConsentCard from './clientPortal/PetSpotlightConsentCard';
+import CommunitySnapshotsCard from './clientPortal/CommunitySnapshotsCard';
+import ProviderBioModal from './clientPortal/ProviderBioModal';
+import EmailCertificateModal from './clientPortal/EmailCertificateModal';
+import ReferralModal from './clientPortal/ReferralModal';
+import PreferencesModal from './clientPortal/PreferencesModal';
+import AutoshipManageModal from './clientPortal/AutoshipManageModal';
+import RememberedPetsCard from './clientPortal/RememberedPetsCard';
+import RenewalBanner from './clientPortal/RenewalBanner';
+import MembershipBenefitsModal, { membershipPerkLines } from './clientPortal/MembershipBenefitsModal';
+import { PortalModal } from './clientPortal/PortalPrimitives';
+import {
+  APPOINTMENT_REQUEST_URL,
+  LIVE_CHAT_URL,
+  LOGO_SRC,
+  PRACTICE_INFO_EMAIL,
+  PRACTICE_PHONE_DISPLAY,
+  PRACTICE_PHONE_SMS,
+  PRACTICE_PHONE_TEL,
+  apptAddress,
+  apptMatchesPet,
+  apptTypeLabel,
+  computeMembershipView,
+  daysUntil,
+  fmtReminderDate,
+  fmtShortDate,
+  fmtTime,
+  groupApptsByDay,
+  petImg,
+  petMatchesId,
+  planIsActive,
+  possessive,
+  providerEmailFromName,
+  relativeDay,
+  type PetWithWellness,
+} from './clientPortal/portalShared';
+import { savingsBullets, useMembershipSavings } from '../api/membershipSavings';
 
-/* ---------------------------
-   App Constants (edit me)
----------------------------- */
-const CONTACT_PHONE = '+1-555-555-5555'; // TODO: set your real phone number
-const CONTACT_EMAIL = 'support@yourpractice.com'; // TODO: set your real email
-const BOOKING_PATH = '/booking'; // TODO: update if you use a different route
-const CONTACT_PATH = '/contact'; // optional route if you have one
+const STORE_PRACTICE_ID = currentPracticeId();
 
-/* ---------------------------
-   Helpers
----------------------------- */
-function fmtDateTime(iso?: string) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-}
-function fmtDate(iso?: string) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-}
-function fmtOnlyDate(iso?: string) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-function fmtReminderDate(r: ClientReminder): string {
-  if (!r?.dueIso) return '—';
-  const t = Date.parse(r.dueIso);
-  if (!Number.isFinite(t)) return r.dueIso;
-  return new Date(t).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function planIsActive(plan: Pick<WellnessPlan, 'isActive' | 'status'> | null | undefined): boolean {
-  if (!plan) return false;
-
-  // Check if plan is deleted - if so, it's not active
-  const isDeleted = (plan as any)?.isDeleted;
-  if (isDeleted === true || String(isDeleted).toLowerCase() === 'true') {
-    return false;
-  }
-
-  // Check expiration date - if expired, it's not active
-  const expirationDate = (plan as any)?.expirationDate;
-  if (expirationDate) {
-    const expDate = new Date(expirationDate);
-    if (!isNaN(expDate.getTime()) && expDate.getTime() < Date.now()) {
-      return false;
-    }
-  }
-
-  // Check isActive field
-  const direct =
-    plan.isActive === true ||
-    String(plan.isActive).toLowerCase() === 'true' ||
-    String(plan.isActive) === '1';
-  if (direct) return true;
-
-  if (typeof (plan as any)?.active === 'boolean' && (plan as any).active) return true;
-  if (typeof (plan as any)?.active === 'string') {
-    const activeStr = String((plan as any).active).toLowerCase();
-    if (activeStr === 'true' || activeStr === '1' || activeStr === 'active') return true;
-  }
-
-  const status = typeof plan.status === 'string' ? plan.status.toLowerCase() : undefined;
-  return status === 'active';
-}
-function heroImgUrl() {
-  return 'https://images.unsplash.com/photo-1601758123927-196d1b1e6c3f?q=80&w=1600&auto=format&fit=crop';
-}
-function encodeSvgData(svg: string): string {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+function greetingWord(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
-const DOG_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}doggy.png`;
-
-const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
-
-const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
-
-function petImg(p: Pet) {
-  // Check for uploaded photo first
-  if (p.photoUrl) {
-    return p.photoUrl;
-  }
-  // Fallback to species-based placeholders
-  const s = (p.species || p.breed || '').toLowerCase();
-  if (s.includes('canine') || s.includes('dog')) {
-    return DOG_PLACEHOLDER;
-  }
-  if (s.includes('feline') || s.includes('cat')) {
-    return CAT_PLACEHOLDER;
-  }
-  return CAT_PLACEHOLDER;
-}
-function groupApptsByDay(appts: ClientAppointment[]) {
-  const map = new Map<string, ClientAppointment[]>();
-  for (const a of appts) {
-    const key = new Date(a.startIso).toISOString().slice(0, 10);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(a);
-  }
-  return Array.from(map.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, items]) => ({ key, label: fmtDate(items[0]?.startIso), items }));
-}
-function titleCase(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function cleanMembershipDisplayText(text: string): string {
-  if (!text) return text;
-  
-  // Check if text contains "Add-ons:" pattern
-  if (text.includes('Add-ons:')) {
-    // Match pattern like "Foundations (Add-ons: PLUS Add-on, Puppy / Kitten Add-on)"
-    const match = text.match(/^([^(]+)\s*\(Add-ons:\s*([^)]+)\)/);
-    if (match) {
-      const basePlan = match[1].trim();
-      const addOnsText = match[2].trim();
-      
-      // Split add-ons by comma and clean each one
-      const addOns = addOnsText
-        .split(',')
-        .map(addon => addon.trim().replace(/\s+Add-on$/i, '').trim())
-        .filter(Boolean);
-      
-      // Combine: base plan + cleaned add-ons
-      if (addOns.length > 0) {
-        return `${basePlan} ${addOns.join(', ')}`;
-      }
-      return basePlan;
-    }
-  }
-  
-  // If no pattern match, just remove any standalone " Add-on" suffixes
-  return text.replace(/\s+Add-on\b/gi, '');
-}
-
-/* ---------------------------
-   Page
----------------------------- */
 export default function ClientPortal() {
   const { userEmail, userId, logout, clientInfo, token } = useAuth() as any;
+  const membershipSavings = useMembershipSavings();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  /* ---------------- data ---------------- */
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const [pets, setPets] = useState<PetWithWellness[]>([]);
+  const [rememberedPets, setRememberedPets] = useState<RememberedPet[]>([]);
+  const [chronicByPet, setChronicByPet] = useState<Record<string, PatientPrescription[]>>({});
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
-  const [rawApptsData, setRawApptsData] = useState<any[]>([]); // Store raw appointment data for client info
+  const [rawApptsData, setRawApptsData] = useState<any[]>([]);
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
-  const [showReminderModal, setShowReminderModal] = useState(false);
-  const [selectedPetReminders, setSelectedPetReminders] = useState<{
-    pet: PetWithWellness;
-    reminders: ClientReminder[];
-  } | null>(null);
+  const [declinedItems, setDeclinedItems] = useState<DeclinedTreatmentItem[]>([]);
   const [chatHours, setChatHours] = useState<ChatHoursOfOperation>(defaultChatHoursOfOperation());
-  const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
-  const [showErrorModal, setShowErrorModal] = useState(false);
-  const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
-  const [showVaccinationModal, setShowVaccinationModal] = useState(false);
-  const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
   const [localClientInfo, setLocalClientInfo] = useState<any | null>(null);
+  const [providers, setProviders] = useState<PortalProvider[]>([]);
+  /** Inventory items sold in the online store; null until loaded (or if the store can't be reached). */
+  const [storeItemIds, setStoreItemIds] = useState<Set<number> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    publicStoreProducts(STORE_PRACTICE_ID)
+      .then((listings) => {
+        if (!alive) return;
+        const ids = new Set<number>();
+        for (const l of listings) for (const v of l.variants ?? []) if (v.inventoryItemId) ids.add(Number(v.inventoryItemId));
+        setStoreItemIds(ids);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* ---------------- ui state ---------------- */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
-  const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
-  const [allowText, setAllowText] = useState<boolean | null>(null);
-  const [savingPreferences, setSavingPreferences] = useState(false);
-  const [showReferralModal, setShowReferralModal] = useState(false);
-  const [referralEmail, setReferralEmail] = useState('');
-  const [referralName, setReferralName] = useState('');
-  const [referralError, setReferralError] = useState<string | null>(null);
-  const [referralSuccess, setReferralSuccess] = useState(false);
-  const [referralSubmitting, setReferralSubmitting] = useState(false);
+  const [showReferral, setShowReferral] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(searchParams.get('preferences') === '1');
+  const [showProviderBio, setShowProviderBio] = useState(false);
+  const [remindersModalPet, setRemindersModalPet] = useState<PetWithWellness | null>(null);
+  const [certificatePet, setCertificatePet] = useState<PetWithWellness | null>(null);
+  const [emailCertPet, setEmailCertPet] = useState<PetWithWellness | null>(null);
+  const [galleryPet, setGalleryPet] = useState<PetWithWellness | null>(null);
+  const [galleryRefreshKey, setGalleryRefreshKey] = useState(0);
+  const [autoOpenPhotos, setAutoOpenPhotos] = useState(searchParams.get('photos') === '1');
+  const [showAllPetsAppts, setShowAllPetsAppts] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [nicknameEditRequest, setNicknameEditRequest] = useState(0);
+  const [benefitsPet, setBenefitsPet] = useState<PetWithWellness | null>(null);
+  const [autoshipRx, setAutoshipRx] = useState<{ pet: PetWithWellness; rx: PatientPrescription } | null>(null);
+
+  const aboutRef = useRef<HTMLDivElement>(null);
+  const remindersRef = useRef<HTMLDivElement>(null);
+  const medsRef = useRef<HTMLDivElement>(null);
+  const apptsRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const pageTopRef = useRef<HTMLDivElement>(null);
+
+  // Clear one-shot query params (preferences / photos) after reading them.
+  useEffect(() => {
+    if (!searchParams.has('preferences') && !searchParams.has('photos')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('preferences');
+    next.delete('photos');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Close the menu on outside click.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
 
   // Fetch client info if not available in auth context
   useEffect(() => {
     if (!clientInfo && userId && token) {
-      // Only fetch if we have a token
       fetchClientInfo(userId)
         .then((info) => {
           if (info) {
             setLocalClientInfo(info);
-            // Also store it in localStorage for future use
             try {
               localStorage.setItem('vayd_clientInfo', JSON.stringify(info));
             } catch {}
           }
         })
-        .catch((err) => {
-          console.warn('Failed to fetch client info:', err);
-        });
+        .catch((err) => console.warn('Failed to fetch client info:', err));
     }
   }, [clientInfo, userId, token]);
-
-  // Load communication preferences when preferences modal opens
-  useEffect(() => {
-    if (showPreferencesModal) {
-      getCurrentUser()
-        .then((response) => {
-          const user = response.data;
-          setAllowEmail(user?.allowEmail ?? null);
-          setAllowText(user?.allowText ?? null);
-        })
-        .catch((err) => {
-          console.warn('Failed to fetch user preferences:', err);
-          // Try to get from clientInfo as fallback
-          const info = clientInfo || localClientInfo;
-          if (info) {
-            setAllowEmail(info?.allowEmail ?? null);
-            setAllowText(info?.allowText ?? null);
-          }
-        });
-    }
-  }, [showPreferencesModal, clientInfo, localClientInfo]);
 
   useEffect(() => {
     let alive = true;
@@ -274,44 +190,39 @@ export default function ClientPortal() {
       setLoading(true);
       setError(null);
       try {
-        const [pBase, a, r, loadedChatHours] = await Promise.all([
+        const [pBase, a, r, loadedChatHours, provs] = await Promise.all([
           fetchClientPets(),
           fetchClientAppointments(),
           fetchClientReminders(),
           fetchClientChatHoursOfOperation(),
+          fetchPortalProviders().catch(() => [] as PortalProvider[]),
         ]);
-        
-        // Store raw appointment data for client info lookup
-        // We need to fetch the raw data separately to get full client object with secondEmail
+
         try {
           const { data: rawApptsResponse } = await http.get('/appointments/client');
-          const rawAppts = Array.isArray(rawApptsResponse) ? rawApptsResponse : (rawApptsResponse?.appointments ?? rawApptsResponse ?? []);
+          const rawAppts = Array.isArray(rawApptsResponse)
+            ? rawApptsResponse
+            : (rawApptsResponse?.appointments ?? rawApptsResponse ?? []);
           if (alive) setRawApptsData(rawAppts);
         } catch (err) {
           console.warn('Failed to fetch raw appointment data for client info:', err);
         }
-        
-        if (alive) setChatHours(loadedChatHours);
+
         if (!alive) return;
+        setChatHours(loadedChatHours);
+        setProviders(provs);
 
         const clientIdForTransactions =
-          typeof userId === 'string' && userId.trim().length
-            ? userId
-            : userId != null
-            ? String(userId)
-            : undefined;
+          typeof userId === 'string' && userId.trim().length ? userId : userId != null ? String(userId) : undefined;
 
         const petsWithWellness = await Promise.all(
           pBase.map(async (pet) => {
-            const dbId = (pet as any).dbId as string | undefined;
-
+            const dbId = pet.dbId;
             const [wellnessPlans, membershipInfo] = await Promise.all([
               (async () => {
                 try {
                   if (!dbId) return null;
-                  const plans = await fetchWellnessPlansForPatient(dbId);
-                  // Keep full plan data so planIsActive can check all fields
-                  return plans ?? [];
+                  return (await fetchWellnessPlansForPatient(dbId)) ?? [];
                 } catch {
                   return null;
                 }
@@ -319,71 +230,69 @@ export default function ClientPortal() {
               (async () => {
                 try {
                   const patientIdentifier = dbId ?? pet.id;
-                  if (!patientIdentifier) return null;
                   const patientNumeric = Number(patientIdentifier);
                   if (!Number.isFinite(patientNumeric)) return null;
-
-                  const queryClientId =
-                    clientIdForTransactions ?? (pet as any)?.clientId ?? undefined;
-
                   const txns = await listMembershipTransactions({
                     patientId: patientNumeric,
-                    clientId: queryClientId,
+                    clientId: clientIdForTransactions ?? (pet as any)?.clientId ?? undefined,
                   });
                   if (!Array.isArray(txns) || txns.length === 0) return null;
-                  const sorted = txns
-                    .slice()
-                    .sort((a, b) => {
-                      const aTime = Date.parse(a.updatedAt ?? a.createdAt ?? '');
-                      const bTime = Date.parse(b.updatedAt ?? b.createdAt ?? '');
-                      if (Number.isFinite(bTime) && Number.isFinite(aTime)) {
-                        return bTime - aTime;
-                      }
-                      return (b.id ?? 0) - (a.id ?? 0);
-                    });
-                  return sorted[0] ?? null;
+                  return (
+                    txns.slice().sort((x, y) => {
+                      const xt = Date.parse(x.updatedAt ?? x.createdAt ?? '');
+                      const yt = Date.parse(y.updatedAt ?? y.createdAt ?? '');
+                      if (Number.isFinite(yt) && Number.isFinite(xt)) return yt - xt;
+                      return (y.id ?? 0) - (x.id ?? 0);
+                    })[0] ?? null
+                  );
                 } catch {
                   return null;
                 }
               })(),
             ]);
 
-            const membershipStatus = membershipInfo?.status ?? membershipInfo?.metadata?.status ?? null;
-            const membershipPlanName =
-              membershipInfo?.planName ??
-              membershipInfo?.metadata?.planName ??
-              null;
-            // Extract pricingOption from plansSelected if available
             const plansSelected = (membershipInfo as any)?.plansSelected;
-            const pricingFromPlansSelected = Array.isArray(plansSelected) && plansSelected.length > 0
-              ? plansSelected[0]?.pricingOption
-              : null;
-            const membershipPricingOption =
-              membershipInfo?.pricingOption ??
-              pricingFromPlansSelected ??
-              membershipInfo?.metadata?.billingPreference ??
-              null;
-            const membershipUpdatedAt =
-              membershipInfo?.updatedAt ??
-              membershipInfo?.createdAt ??
-              null;
+            const pricingFromPlansSelected =
+              Array.isArray(plansSelected) && plansSelected.length > 0 ? plansSelected[0]?.pricingOption : null;
 
             return {
               ...pet,
               wellnessPlans: wellnessPlans ?? pet.wellnessPlans,
-              membershipStatus,
-              membershipPlanName,
-              membershipPricingOption,
-              membershipUpdatedAt,
-            };
-          })
+              membershipStatus: membershipInfo?.status ?? membershipInfo?.metadata?.status ?? null,
+              membershipPlanName: membershipInfo?.planName ?? membershipInfo?.metadata?.planName ?? null,
+              membershipPricingOption:
+                membershipInfo?.pricingOption ?? pricingFromPlansSelected ?? membershipInfo?.metadata?.billingPreference ?? null,
+              membershipUpdatedAt: membershipInfo?.updatedAt ?? membershipInfo?.createdAt ?? null,
+            } as PetWithWellness;
+          }),
         );
 
+        if (!alive) return;
         setPets(petsWithWellness);
-        setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
-        setReminders(
-          [...r].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
+
+        // Pets the family has lost — shown in a quiet remembrance section. Best-effort.
+        void fetchMyRememberedPets()
+          .then((rows) => {
+            if (alive) setRememberedPets(rows);
+          })
+          .catch(() => undefined);
+
+        const chronicEntries = await Promise.all(
+          petsWithWellness.map(async (pet) => {
+            const id = Number(pet.dbId);
+            if (!Number.isFinite(id)) return [pet.id, []] as const;
+            try {
+              return [pet.id, await fetchClientChronicMeds(id)] as const;
+            } catch {
+              return [pet.id, []] as const;
+            }
+          }),
         );
+        if (!alive) return;
+        setChronicByPet(Object.fromEntries(chronicEntries));
+        setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
+        setReminders([...r.reminders].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? '')));
+        setDeclinedItems(r.declinedItems);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || 'Failed to load your portal.');
@@ -394,2873 +303,1150 @@ export default function ClientPortal() {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ---------------- derived ---------------- */
   const clientFirstName = useMemo(() => {
-    if (!userEmail) return null;
-    
-    // Use clientInfo from auth context or localClientInfo (fetched in ClientPortal)
     const info = clientInfo || localClientInfo;
-    
-    // First priority: Use client info from auth context or local fetch
+    const emailLower = (userEmail || '').toLowerCase();
     if (info) {
-      const emailLower = userEmail.toLowerCase();
-      
-      // Check if userEmail matches secondEmail - use secondFirstName and secondLastName
-      if (info.secondEmail && info.secondEmail.toLowerCase() === emailLower) {
-        if (info.secondFirstName) {
-          return info.secondFirstName;
-        }
-      }
-      
-      // Check if userEmail matches primary email - use firstName and lastName
+      if (info.secondEmail && info.secondEmail.toLowerCase() === emailLower && info.secondFirstName) return info.secondFirstName;
       const primaryEmail = info.email || info.primaryEmail;
-      if (primaryEmail && primaryEmail.toLowerCase() === emailLower) {
-        if (info.firstName) {
-          return info.firstName;
-        }
-      }
-      
-      // If we can't determine which email matches, try to get a name anyway
-      if (info.firstName) {
-        return info.firstName;
-      }
-      if (info.secondFirstName) {
-        return info.secondFirstName;
-      }
+      if (primaryEmail && primaryEmail.toLowerCase() === emailLower && info.firstName) return info.firstName;
+      if (info.firstName) return info.firstName;
+      if (info.secondFirstName) return info.secondFirstName;
     }
-    
-    // Second priority: Check if userEmail matches secondEmail in raw appointment data
     for (const rawAppt of rawApptsData) {
       const client = rawAppt?.client;
-      
-      // Check if secondEmail matches the logged-in user's email
-      if (client?.secondEmail && client.secondEmail.toLowerCase() === userEmail.toLowerCase()) {
-        // Use secondFirstName if secondEmail matches
-        if (client.secondFirstName) {
-          return client.secondFirstName;
-        }
+      if (client?.secondEmail && client.secondEmail.toLowerCase() === emailLower && client.secondFirstName) {
+        return client.secondFirstName;
       }
     }
-    
-    // Third priority: Also check pets for client information (pets might have client data)
-    for (const pet of pets) {
-      const rawPet = pet as any;
-      const client = rawPet?.client || rawPet?.clientData || rawPet?.owner;
-      
-      if (client?.secondEmail && client.secondEmail.toLowerCase() === userEmail.toLowerCase()) {
-        if (client.secondFirstName) {
-          return client.secondFirstName;
-        }
-      }
-    }
-    
-    // Fourth priority: Get client first name from first appointment's clientName
     const firstAppt = appts[0];
-    if (firstAppt?.clientName) {
-      // Extract first name from full name
-      const firstName = firstAppt.clientName.split(' ')[0];
-      return firstName;
-    }
-    
-    // Fallback: use email username part if no client name found
+    if (firstAppt?.clientName) return firstAppt.clientName.split(' ')[0];
+    if (!userEmail) return null;
     const emailPart = userEmail.split('@')[0];
     return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
-  }, [clientInfo, localClientInfo, appts, userEmail, pets, rawApptsData]);
+  }, [clientInfo, localClientInfo, appts, userEmail, rawApptsData]);
+
+  // Enrich pets with provider names from appointments if missing
+  const petsWithProvider = useMemo(() => {
+    return pets.map((pet) => {
+      if (pet.primaryProviderName) return pet;
+      for (const appt of appts.filter((a) => apptMatchesPet(a, pet))) {
+        const x = appt as any;
+        const providerName =
+          x?.patientPrimaryProvider?.name ||
+          x?.patient?.primaryProvider?.name ||
+          x?.doctor?.name ||
+          x?.doctorName ||
+          x?.provider?.name ||
+          x?.providerName ||
+          (x?.doctor?.firstName && x?.doctor?.lastName ? `${x.doctor.firstName} ${x.doctor.lastName}` : null);
+        if (typeof providerName === 'string' && providerName.trim()) return { ...pet, primaryProviderName: providerName.trim() };
+      }
+      return pet;
+    });
+  }, [pets, appts]);
+
+  // Selected pet (from ?pet= deep link, else first).
+  useEffect(() => {
+    if (petsWithProvider.length === 0) return;
+    if (selectedKey && petsWithProvider.some((p) => p.id === selectedKey)) return;
+    const wanted = searchParams.get('pet');
+    const match = wanted ? petsWithProvider.find((p) => petMatchesId(p, wanted)) : null;
+    setSelectedKey((match ?? petsWithProvider[0]).id);
+  }, [petsWithProvider, selectedKey, searchParams]);
+
+  const selectedPet = useMemo(
+    () => petsWithProvider.find((p) => p.id === selectedKey) ?? petsWithProvider[0] ?? null,
+    [petsWithProvider, selectedKey],
+  );
+
+  const membership = useMemo(() => (selectedPet ? computeMembershipView(selectedPet) : null), [selectedPet]);
+
+  const selectedProvider = useMemo<PortalProvider | null>(() => {
+    if (!selectedPet) return null;
+    const pid = selectedPet.primaryProviderId;
+    if (pid != null) {
+      const byId = providers.find((p) => String(p.id) === String(pid));
+      if (byId) return byId;
+    }
+    const nm = (selectedPet.primaryProviderName || '').trim().toLowerCase();
+    if (nm) {
+      const byName = providers.find((p) => {
+        const full = `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim().toLowerCase();
+        return p.name.toLowerCase() === nm || (full && full === nm) || (p.lastName && nm.endsWith(p.lastName.toLowerCase()));
+      });
+      if (byName) return byName;
+    }
+    return null;
+  }, [selectedPet, providers]);
+
+  const isChatHoursOpen = useMemo(() => isChatOpen(chatHours), [chatHours]);
+  const chatHoursLines = useMemo(() => formatChatHoursSchedule(chatHours), [chatHours]);
+  /** Compact text like "Sat–Sun 8:00 AM – 5:00 PM · Mon–Fri Closed" (merges consecutive days with equal hours). */
+  const formattedChatHours = useMemo(() => {
+    // Start the week on Monday so weekend hours collapse to "Sat–Sun".
+    const lines =
+      chatHoursLines.length > 0 && /^sun/i.test(chatHoursLines[0].day)
+        ? [...chatHoursLines.slice(1), chatHoursLines[0]]
+        : chatHoursLines;
+    const groups: { from: string; to: string; hours: string }[] = [];
+    for (const line of lines) {
+      const last = groups[groups.length - 1];
+      if (last && last.hours === line.hours) last.to = line.day;
+      else groups.push({ from: line.day, to: line.day, hours: line.hours });
+    }
+    const open = groups.filter((g) => g.hours !== 'Closed');
+    const src = open.length > 0 ? open : groups;
+    return src.map((g) => `${g.from === g.to ? g.from : `${g.from}–${g.to}`} ${g.hours}`).join(' · ');
+  }, [chatHoursLines]);
+
+  const getAllPetReminders = useCallback(
+    (pet: PetWithWellness): ClientReminder[] =>
+      reminders
+        .filter((r) => {
+          if (!petMatchesId(pet, r.patientId)) return false;
+          const done = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
+          return !done;
+        })
+        .sort((a, b) => {
+          const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
+          const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
+          return ta - tb;
+        }),
+    [reminders],
+  );
+
+  const petDeclined = useCallback(
+    (pet: PetWithWellness) =>
+      declinedItems.filter((item) => item.patientId == null || petMatchesId(pet, item.patientId)),
+    [declinedItems],
+  );
 
   const upcomingAppts = useMemo(() => {
     const now = Date.now();
     return appts.filter((a) => new Date(a.startIso).getTime() >= now);
   }, [appts]);
-  const upcomingByDay = useMemo(() => groupApptsByDay(upcomingAppts), [upcomingAppts]);
-  const pastAppts = useMemo(() => {
-    const now = Date.now();
-    return appts
-      .filter((a) => new Date(a.startIso).getTime() < now)
-      .slice(-8)
-      .reverse();
-  }, [appts]);
 
-  // Enrich pets with provider names from appointments if missing
-  const petsWithProvider = useMemo(() => {
-    return pets.map((pet) => {
-      // If pet already has a provider name, keep it
-      if (pet.primaryProviderName) {
-        return pet;
-      }
+  const selectedUpcoming = useMemo(() => {
+    if (!selectedPet) return [];
+    return upcomingAppts.filter((a) => apptMatchesPet(a, selectedPet));
+  }, [upcomingAppts, selectedPet]);
 
-      // Try to find provider from appointments for this pet
-      const petAppts = appts.filter((a) => {
-        const apptPetId = a.patientPimsId ? String(a.patientPimsId) : null;
-        const petId = pet.id;
-        const petDbId = (pet as any).dbId;
-        return (
-          apptPetId === petId ||
-          apptPetId === petDbId ||
-          String(apptPetId) === String(petId) ||
-          String(apptPetId) === String(petDbId)
-        );
-      });
+  const apptsToShow = showAllPetsAppts || petsWithProvider.length <= 1 ? upcomingAppts : selectedUpcoming;
+  const apptsByDay = useMemo(() => groupApptsByDay(apptsToShow), [apptsToShow]);
 
-      // Look for provider in appointment data - check multiple possible field structures
-      for (const appt of petAppts) {
-        const apptAny = appt as any;
-        // Try various nested structures
-        const providerName = 
-          apptAny?.doctor?.name ||
-          apptAny?.doctor?.fullName ||
-          apptAny?.doctor?.displayName ||
-          apptAny?.doctorName ||
-          apptAny?.provider?.name ||
-          apptAny?.provider?.fullName ||
-          apptAny?.providerName ||
-          apptAny?.primaryProvider?.name ||
-          apptAny?.primaryProvider?.fullName ||
-          apptAny?.primaryProviderName ||
-          apptAny?.primaryVet?.name ||
-          apptAny?.primaryVetName ||
-          apptAny?.primaryDoctor?.name ||
-          // Try constructing from first/last name
-          (apptAny?.doctor?.firstName && apptAny?.doctor?.lastName
-            ? `${apptAny.doctor.firstName} ${apptAny.doctor.lastName}`.trim()
-            : null) ||
-          (apptAny?.provider?.firstName && apptAny?.provider?.lastName
-            ? `${apptAny.provider.firstName} ${apptAny.provider.lastName}`.trim()
-            : null) ||
-          (apptAny?.primaryProvider?.firstName && apptAny?.primaryProvider?.lastName
-            ? `${apptAny.primaryProvider.firstName} ${apptAny.primaryProvider.lastName}`.trim()
-            : null);
+  const hasAnyPetWithPlan = useMemo(
+    () =>
+      pets.some((p) => {
+        const hasSubscription = p.subscription?.status === 'active' || p.subscription?.status === 'pending';
+        const hasMembership = p.membershipStatus === 'active' || p.membershipStatus === 'pending';
+        return hasSubscription || hasMembership || (p.wellnessPlans || []).length > 0;
+      }),
+    [pets],
+  );
 
-        if (providerName && typeof providerName === 'string' && providerName.trim()) {
-          return { ...pet, primaryProviderName: providerName.trim() };
-        }
-      }
-
-      return pet;
+  const showMultiPetCredit =
+    petsWithProvider.length > 1 &&
+    !petsWithProvider.every((p) => {
+      const status = (p.membershipStatus || '').toLowerCase();
+      return p.membershipPlanName != null && (status === 'active' || status === 'pending');
     });
-  }, [pets, appts]);
 
-  // Get all reminders for a specific pet (not limited)
-  const getAllPetReminders = (pet: PetWithWellness): ClientReminder[] => {
-    const petId = pet.id;
-    const petDbId = (pet as any).dbId;
-
-    return reminders
-      .filter((r) => {
-        // Filter by patient ID
-        const matchesPatient =
-          r.patientId === petId ||
-          r.patientId === petDbId ||
-          String(r.patientId) === String(petId) ||
-          String(r.patientId) === String(petDbId);
-
-        if (!matchesPatient) return false;
-
-        // Filter out completed reminders
-        const done = (r.statusName || '').toLowerCase() === 'completed' || !!r.completedIso;
-        if (done) return false;
-
-        return true;
-      })
-      .sort((a, b) => {
-        const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
-        const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
-        return ta - tb;
-      });
-  };
-
-  // Get reminders for display (max 3)
-  const getPetReminders = (pet: PetWithWellness): ClientReminder[] => {
-    return getAllPetReminders(pet).slice(0, 3);
-  };
-
-  const isReminderOverdue = (r: ClientReminder): boolean => {
-    if (!r.dueIso) return false;
-    const t = Date.parse(r.dueIso);
-    return Number.isFinite(t) && t < Date.now();
-  };
-
-  const isReminderUpcoming = (r: ClientReminder): boolean => {
-    if (!r.dueIso) return false;
-    const t = Date.parse(r.dueIso);
-    return Number.isFinite(t) && t >= Date.now();
-  };
-
-  // Check if any pet has an active plan (subscription, membership, or wellness plan)
-  const hasAnyPetWithPlan = useMemo(() => {
-    return pets.some((p) => {
-      const hasSubscription = p.subscription?.status === 'active' || p.subscription?.status === 'pending';
-      const hasMembership = p.membershipStatus === 'active' || p.membershipStatus === 'pending';
-      const hasWellnessPlan = (p.wellnessPlans || []).length > 0;
-      return hasSubscription || hasMembership || hasWellnessPlan;
-    });
-  }, [pets]);
-
-  // Get primary provider name for email (format: first initial + last name, lowercase)
-  const getProviderEmail = (providerName?: string | null): string => {
-    if (!providerName) return 'support@vetatyourdoor.com';
-    const parts = providerName.trim().split(/\s+/);
-    if (parts.length === 0) return 'support@vetatyourdoor.com';
-    if (parts.length === 1) return `${parts[0].toLowerCase()}@vetatyourdoor.com`;
-    const firstName = parts[0];
-    const lastName = parts[parts.length - 1];
-    const emailName = `${firstName.charAt(0)}${lastName}`.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return `${emailName}@vetatyourdoor.com`;
-  };
-
-  // Get the most common primary provider from pets, or use first one
   const primaryProviderEmail = useMemo(() => {
-    const providers = petsWithProvider.map(p => p.primaryProviderName).filter(Boolean) as string[];
-    if (providers.length === 0) return 'support@vetatyourdoor.com';
-    // Get the most common provider, or first one
-    const providerCounts = new Map<string, number>();
-    providers.forEach(p => providerCounts.set(p, (providerCounts.get(p) || 0) + 1));
-    const sortedProviders = Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1]);
-    const mostCommonProvider = sortedProviders[0]?.[0] || providers[0];
-    return getProviderEmail(mostCommonProvider);
-  }, [pets]);
+    if (selectedProvider?.email) return selectedProvider.email;
+    return providerEmailFromName(selectedPet?.primaryProviderName);
+  }, [selectedProvider, selectedPet]);
 
-  async function handlePetImageUpload(pet: PetWithWellness, file: File) {
-    if (!pet.dbId) {
-      setErrorModalMessage('Unable to upload image: Pet ID not found.');
-      setShowErrorModal(true);
+  /* ---------------- actions ---------------- */
+  function goRequestVisit() {
+    if (APPOINTMENT_REQUEST_URL.startsWith('/')) navigate(APPOINTMENT_REQUEST_URL);
+    else window.location.href = APPOINTMENT_REQUEST_URL;
+  }
+
+  function handleChat() {
+    if (!isChatHoursOpen) {
+      void appAlert({ title: 'Chat is closed right now', message: `Our chat hours are:\n${formattedChatHours}` });
       return;
     }
-
-    // Validate file type
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      setErrorModalMessage('Please select a valid image file (JPEG, PNG, GIF, or WebP).');
-      setShowErrorModal(true);
-      return;
-    }
-
-    // Validate file size (5MB max)
-    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
-    if (file.size > maxSize) {
-      setErrorModalMessage('Image file is too large. Maximum size is 5MB.');
-      setShowErrorModal(true);
-      return;
-    }
-
-    setUploadingPetId(pet.id);
-    setError(null);
-
-    try {
-      const result = await uploadPetImage(pet.dbId, file);
-      
-      // Update the pet's photoUrl in the pets array
-      setPets((prevPets) =>
-        prevPets.map((p) =>
-          p.id === pet.id ? { ...p, photoUrl: result.imageUrl } : p
-        )
-      );
-    } catch (err: any) {
-      let errorMessage = 'Failed to upload image. Please try again.';
-      
-      // Handle different types of errors more gracefully
-      if (err?.response) {
-        const status = err.response.status;
-        const serverMessage = err.response.data?.message || err.response.data?.error;
-        
-        if (status === 413) {
-          errorMessage = 'Image file is too large. Please choose a smaller image (max 5MB).';
-        } else if (status === 400) {
-          errorMessage = serverMessage || 'Invalid image file. Please choose a valid image format (JPEG, PNG, GIF, or WebP).';
-        } else if (status === 401 || status === 403) {
-          errorMessage = 'You do not have permission to upload images. Please contact support if this issue persists.';
-        } else if (status === 500) {
-          errorMessage = 'Server error occurred. Please try again in a few moments.';
-        } else if (serverMessage) {
-          errorMessage = serverMessage;
-        } else {
-          errorMessage = `Upload failed (${status}). Please try again.`;
-        }
-      } else if (err?.message) {
-        if (err.message.includes('Network') || err.message.includes('network')) {
-          errorMessage = 'Network error. Please check your connection and try again.';
-        } else if (err.message.includes('timeout')) {
-          errorMessage = 'Upload timed out. Please try again with a smaller image.';
-        } else {
-          errorMessage = err.message;
-        }
-      }
-      
-      setErrorModalMessage(errorMessage);
-      setShowErrorModal(true);
-    } finally {
-      setUploadingPetId(null);
+    if (membership?.hasActiveWellnessPlan || hasAnyPetWithPlan) {
+      window.open(LIVE_CHAT_URL, '_blank', 'noopener,noreferrer');
+    } else {
+      void appAlert({
+        title: 'Members only',
+        message: 'After-hours chat is only available to members. Please sign up for a membership plan to access this feature.',
+      });
     }
   }
 
   function handleEnrollMembership(pet: PetWithWellness) {
-    if (!pet.id) {
-      return;
-    }
-    
-    // Track explore memberships click
+    if (!pet.id) return;
     trackEvent('membership_explore_clicked', {
       pet_id: pet.id,
       pet_name: pet.name || 'Unknown',
       pet_species: pet.species || pet.breed || 'Unknown',
       pet_age_years: pet.dob ? ((Date.now() - new Date(pet.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25)).toFixed(1) : null,
-      has_membership: pet.membershipStatus ? true : false,
+      has_membership: Boolean(pet.membershipStatus),
       membership_status: pet.membershipStatus || 'none',
     });
-    
     navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
   }
 
-  function handleUpgradeMembership(pet: PetWithWellness) {
-    if (!pet.id || !pet.dbId) {
+  /** Remember we're sending them to the store from here so the store can offer "Back to portal". */
+  function rememberPortalForStore(pet: PetWithWellness | null | undefined = selectedPet) {
+    rememberStorePortalReturn({ petId: pet?.dbId ?? null, petName: pet?.name ?? null });
+  }
+  function goToStore(path = '/store') {
+    rememberPortalForStore();
+    navigate(path);
+  }
+
+  async function orderChronicForPet(pet: PetWithWellness, rx: PatientPrescription) {
+    rememberPortalForStore(pet);
+    if (!rx.inventoryItemId) {
+      navigate('/store');
       return;
     }
-    navigate('/client-portal/membership-upgrade', { 
-      state: { 
-        petId: pet.id,
-        patientId: pet.dbId,
-        petName: pet.name,
-        currentPlanName: pet.membershipPlanName,
-        petSpecies: pet.species,
-      } 
+    const listings = await publicStoreProducts(STORE_PRACTICE_ID);
+    const listing = listings.find((row) => row.variants.some((v) => v.inventoryItemId === rx.inventoryItemId));
+    const variant = listing?.variants.find((row) => row.inventoryItemId === rx.inventoryItemId);
+    addToStoreCart({
+      inventoryItemId: rx.inventoryItemId,
+      name: variant?.name || rx.name,
+      quantity: 1,
+      unitPrice: Number(variant?.onlineStorePrice ?? listing?.priceFrom ?? 0),
+      autoshipFrequency: listing?.recommendedFrequency || 'monthly',
+      recommendedFrequency: listing?.recommendedFrequency || null,
+      listingId: listing?.listingId,
+      storeProductId: listing?.storeProductId ?? null,
+      hasImage: Boolean(variant?.hasImage || listing?.hasImage),
+      approvalTag: listing?.approvalTag,
+      patientIds: pet.dbId && Number.isFinite(Number(pet.dbId)) ? [Number(pet.dbId)] : [],
     });
+    navigate('/store/cart', { state: { highlightItemId: rx.inventoryItemId } });
   }
 
-  function canUpgradeMembership(pet: PetWithWellness): boolean {
-    // Only show upgrade button if they have a base plan that can be upgraded
-    // Don't show if they already have Plus or Puppy/Kitten add-ons
-    // Check BOTH membership transactions AND wellness plans
-    
-    // Don't show upgrade button if membership is processing/pending
-    const membershipStatus = (pet.membershipStatus || '').toLowerCase();
-    if (membershipStatus === 'pending' || membershipStatus === 'processing') {
-      console.log('[canUpgradeMembership] Membership is processing/pending, hiding upgrade button:', pet.name, membershipStatus);
-      return false;
-    }
-    
-    // Also check if they have membership but no active wellness plan (processing state)
-    const allWellnessPlans = pet.wellnessPlans || [];
-    const activeWellnessPlans = allWellnessPlans.filter((plan) => planIsActive(plan));
-    const hasMembership = pet.membershipPlanName != null;
-    if (hasMembership && activeWellnessPlans.length === 0) {
-      console.log('[canUpgradeMembership] Membership is processing (no active wellness plan), hiding upgrade button:', pet.name);
-      return false;
-    }
-    
-    const membershipPlanName = (pet.membershipPlanName || '').toLowerCase();
-    
-    // Check if they have Puppy/Kitten plan
-    const hasPuppyKittenInMembership = membershipPlanName.includes('puppy') || membershipPlanName.includes('kitten');
-    let hasPuppyKittenInWellness = false;
-    for (const plan of allWellnessPlans) {
-      const packageName = (plan.packageName || '').toLowerCase();
-      const planName = (plan.name || '').toLowerCase();
-      if (packageName.includes('puppy') || packageName.includes('kitten') ||
-          planName.includes('puppy') || planName.includes('kitten')) {
-        hasPuppyKittenInWellness = true;
-        break;
-      }
-    }
-    
-    const hasPuppyKitten = hasPuppyKittenInMembership || hasPuppyKittenInWellness;
-    
-    // Helper function to check if pet is eligible for Puppy/Kitten upgrade
-    const isEligibleForPuppyKittenUpgrade = (): boolean => {
-      // Check if pet is less than 1 year old
-      let isLessThanOneYear = false;
-      if (pet.dob) {
-        const birthDate = new Date(pet.dob);
-        const today = new Date();
-        const oneYearAgo = new Date(today);
-        oneYearAgo.setFullYear(today.getFullYear() - 1);
-        isLessThanOneYear = birthDate > oneYearAgo;
-      }
-      
-      // Check if patient has had any appointments yesterday or before
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(23, 59, 59, 999); // End of yesterday
-      
-      const hasPastAppointments = appts.some((apt) => {
-        // Check if appointment is for this pet
-        // Match by PIMS ID or name
-        const matchesPet = 
-          apt.patientPimsId === pet.id ||
-          String(apt.patientPimsId) === String(pet.id) ||
-          apt.patientName?.toLowerCase() === pet.name?.toLowerCase();
-        
-        if (!matchesPet) return false;
-        
-        // Check if appointment is yesterday or before
-        if (apt.startIso) {
-          const aptDate = new Date(apt.startIso);
-          return aptDate <= yesterday;
-        }
-        return false;
-      });
-      
-      return isLessThanOneYear && !hasPastAppointments;
-    };
-    
-    // If they have Puppy/Kitten, check if they can upgrade to Foundations/Foundations Plus
-    if (hasPuppyKitten) {
-      const eligible = isEligibleForPuppyKittenUpgrade();
-      if (eligible) {
-        console.log('[canUpgradeMembership] Puppy/Kitten can upgrade to Foundations:', pet.name, {
-          dob: pet.dob,
-        });
-        return true;
-      } else {
-        console.log('[canUpgradeMembership] Puppy/Kitten cannot upgrade:', pet.name, {
-          dob: pet.dob,
-        });
-        return false;
-      }
-    }
-    
-    // Check if they have Foundations/Foundations Plus (but not Puppy/Kitten)
-    const hasFoundations = membershipPlanName.includes('foundations') || membershipPlanName.includes('foundation');
-    let hasFoundationsInWellness = false;
-    for (const plan of allWellnessPlans) {
-      const packageName = (plan.packageName || '').toLowerCase();
-      const planName = (plan.name || '').toLowerCase();
-      if (packageName.includes('foundations') || packageName.includes('foundation') ||
-          planName.includes('foundations') || planName.includes('foundation')) {
-        hasFoundationsInWellness = true;
-        break;
-      }
-    }
-    
-    const hasFoundationsPlan = hasFoundations || hasFoundationsInWellness;
-    
-    // If they have Foundations/Foundations Plus (but not Puppy/Kitten), check if they can upgrade to Puppy/Kitten
-    if (hasFoundationsPlan && !hasPuppyKitten) {
-      const eligible = isEligibleForPuppyKittenUpgrade();
-      if (eligible) {
-        console.log('[canUpgradeMembership] Foundations/Foundations Plus can upgrade to Puppy/Kitten:', pet.name, {
-          membershipPlanName,
-          dob: pet.dob,
-        });
-        return true;
-      }
-    }
-    
-    // Check if they already have Plus in membership transaction (but only if they don't have Foundations)
-    if (membershipPlanName.includes('plus') && !hasFoundationsPlan) {
-      console.log('[canUpgradeMembership] Pet has Plus in membership (non-Foundations):', pet.name, membershipPlanName);
-      return false; // Already has Plus upgrade (and it's not Foundations Plus)
-    }
-    
-    // Check ALL wellness plans (active and inactive) for Plus (but only if they don't have Foundations)
-    if (!hasFoundationsPlan) {
-      for (const plan of allWellnessPlans) {
-        const packageName = (plan.packageName || '').toLowerCase();
-        const planName = (plan.name || '').toLowerCase();
-        
-        // Check if any wellness plan has Plus (but not Foundations)
-        if ((packageName.includes('plus') || planName.includes('plus')) &&
-            !packageName.includes('foundations') && !planName.includes('foundations') &&
-            !packageName.includes('foundation') && !planName.includes('foundation')) {
-          console.log('[canUpgradeMembership] Pet has Plus in wellness plan (non-Foundations):', pet.name, packageName, planName);
-          return false; // Already has Plus upgrade (and it's not Foundations Plus)
-        }
-      }
-    }
-    
-    // Base plans that can be upgraded: Foundations, Golden, Comfort Care
-    const basePlans = ['foundations', 'golden', 'comfort', 'comfort-care'];
-    
-    // Check if membership transaction has a base plan
-    const hasBasePlanInMembership = basePlans.some((basePlan) => membershipPlanName.includes(basePlan));
-    
-    // Check if any wellness plan has a base plan
-    let hasBasePlanInWellness = false;
-    for (const plan of allWellnessPlans) {
-      const packageName = (plan.packageName || '').toLowerCase();
-      const planName = (plan.name || '').toLowerCase();
-      if (basePlans.some((basePlan) => packageName.includes(basePlan) || planName.includes(basePlan))) {
-        hasBasePlanInWellness = true;
-        console.log('[canUpgradeMembership] Found base plan in wellness:', pet.name, packageName, planName);
-        break;
-      }
-    }
-    
-    const canUpgrade = hasBasePlanInMembership || hasBasePlanInWellness;
-    console.log('[canUpgradeMembership]', pet.name, {
-      membershipPlanName,
-      hasBasePlanInMembership,
-      hasBasePlanInWellness,
-      canUpgrade,
-      wellnessPlansCount: allWellnessPlans.length,
-    });
-    
-    // PLUS add-on is retired for new upgrades. Only Puppy/Kitten upgrades remain (handled above).
-    return false;
-  }
-
-  const brand = 'var(--brand, #0f766e)';
-  const brandSoft = 'var(--brand-soft, #e6f7f5)';
-
-  const isChatHoursOpen = useMemo(() => isChatOpen(chatHours), [chatHours]);
-  const formattedChatHours = useMemo(() => formatChatHoursSchedule(chatHours), [chatHours]);
-
-  /* ---------------------------
-     Bottom Nav Handlers
-  ---------------------------- */
-  function handleBook() {
-    if (APPOINTMENT_REQUEST_URL.startsWith('/')) {
-      navigate(APPOINTMENT_REQUEST_URL);
-    } else {
-      window.location.href = APPOINTMENT_REQUEST_URL;
-    }
-  }
-  function handleContact() {
-    // If pet has plan, use chat; otherwise use email
-    if (hasAnyPetWithPlan) {
-      window.open('https://direct.lc.chat/19087357/', '_blank');
-    } else {
-      window.location.assign(`mailto:${primaryProviderEmail}`);
-    }
-  }
-  function handleCall() {
-    window.location.assign('tel:207-536-8387');
-  }
-  function handleMessages() {
-    window.location.assign('sms:207-536-8387');
-  }
-  function handleShop() {
-    window.open('https://www.vetatyourdoor.com/online-pharmacy', '_blank');
-  }
-  async function handleSavePreferences() {
-    setSavingPreferences(true);
+  const toggleLove = useCallback(async (pet: PetWithWellness) => {
+    if (!pet.dbId) return;
+    const before = pet.loves ?? { count: 0, mine: false };
+    const next = !before.mine;
+    setPets((prev) =>
+      prev.map((p) =>
+        p.id === pet.id
+          ? { ...p, loves: { mine: next, count: Math.max(0, before.count + (next ? 1 : -1)) } }
+          : p,
+      ),
+    );
     try {
-      await updateCommunicationPreferences(
-        allowEmail ?? undefined,
-        allowText ?? undefined
-      );
-      setShowPreferencesModal(false);
-      setMenuOpen(false);
-    } catch (err) {
-      console.error('Failed to save preferences:', err);
-      setErrorModalMessage('Failed to save preferences. Please try again.');
-      setShowErrorModal(true);
-    } finally {
-      setSavingPreferences(false);
+      const loves = await togglePetLove(pet.dbId, next);
+      setPets((prev) => prev.map((p) => (p.id === pet.id ? { ...p, loves } : p)));
+      if (next) setToast(`${pet.name} feels the love ❤️`);
+    } catch {
+      setPets((prev) => prev.map((p) => (p.id === pet.id ? { ...p, loves: before } : p)));
+      setToast("Couldn't save that — try again.");
+    }
+  }, []);
+
+  const saveProfile = useCallback(async (pet: PetWithWellness, patch: PetPortalProfilePatch) => {
+    if (!pet.dbId) throw new Error('Missing pet id');
+    const updated = await updateMyPetProfile(pet.dbId, patch);
+    setPets((prev) => prev.map((p) => (p.id === pet.id ? { ...p, portalProfile: updated ?? p.portalProfile } : p)));
+    if ('socialMediaConsent' in patch) {
+      setToast(patch.socialMediaConsent ? `${pet.name} is ready for the spotlight! 🌟` : `Got it — we won't share ${pet.name}.`);
+    } else {
+      setToast('Saved! 🐾');
+    }
+  }, []);
+
+  function scrollTo(ref: React.RefObject<HTMLDivElement | null>) {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function scrollToTop() {
+    // The app shell scrolls <main>, not the window.
+    pageTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* ---------------- hero stats ---------------- */
+  const overdueCountFor = useCallback(
+    (pet: PetWithWellness) => getAllPetReminders(pet).filter((r) => (daysUntil(r.dueIso) ?? 1) < 0).length,
+    [getAllPetReminders]
+  );
+
+  /** After the owner changes an auto-ship, re-pull that pet's meds so the "Auto-ship" line stays honest. */
+  async function refreshChronicFor(pet: PetWithWellness) {
+    const id = Number(pet.dbId);
+    if (!Number.isFinite(id)) return;
+    try {
+      const meds = await fetchClientChronicMeds(id);
+      setChronicByPet((prev) => ({ ...prev, [pet.id]: meds }));
+    } catch {
+      /* keep what we have */
     }
   }
+
+  const heroStats: HeroStat[] = useMemo(() => {
+    if (!selectedPet) return [];
+    const rems = getAllPetReminders(selectedPet);
+    const overdue = rems.filter((r) => (daysUntil(r.dueIso) ?? 1) < 0).length;
+    const next = selectedUpcoming[0];
+    const meds = chronicByPet[selectedPet.id] ?? [];
+    const out: HeroStat[] = [];
+    out.push({
+      icon: overdue > 0 ? '⏰' : rems.length > 0 ? '🗓️' : '✅',
+      k: rems.length === 0 ? 'All caught up' : overdue > 0 ? `${overdue} overdue` : `${rems.length} due soon`,
+      l: rems.length === 0 ? 'Preventive care' : 'Care reminders',
+      tone: overdue > 0 ? 'danger' : rems.length > 0 ? 'warn' : undefined,
+      onClick: () => scrollTo(remindersRef),
+    });
+    out.push({
+      icon: '🏡',
+      k: next ? `${relativeDay(next.startIso) || fmtShortDate(next.startIso)}` : 'None booked',
+      l: next ? `Next visit · ${fmtTime(next.startIso)}` : 'Next visit',
+      onClick: next ? () => scrollTo(apptsRef) : goRequestVisit,
+    });
+    if (meds.length > 0) {
+      out.push({ icon: '💊', k: `${meds.length} med${meds.length === 1 ? '' : 's'}`, l: 'Easy reorder', onClick: () => scrollTo(medsRef) });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPet, getAllPetReminders, selectedUpcoming, chronicByPet]);
+
+  /* ---------------- render ---------------- */
+  const greet = greetingWord();
 
   return (
-    <div className="cp-wrap" style={{ maxWidth: 1120, margin: '32px auto', padding: '0 16px', width: '100%' }}>
-
-      {/* Scoped responsive styles */}
-      <style>{`
-        :root {
-          --bottom-nav-h: 68px;
-        }
-        .cp-card { border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: #fff; }
-        .cp-muted { color: rgba(0,0,0,0.62); }
-        .cp-grid-gap { display: grid; gap: 12px; }
-        .cp-hero { position: relative; overflow: hidden; border-radius: 16px; }
-        .cp-hero-img { position: absolute; inset: 0; object-fit: cover; filter: brightness(0.9) saturate(1.1); }
-        .cp-hero-inner { padding: 28px 20px; min-height: 200px; }
-        .cp-stat { padding: 10px 14px; min-width: 140px; }
-        .cp-pets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-        .cp-pet-card { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
-        .cp-pet-img { height: 120px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
-        .cp-appt-row, .cp-rem-row {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          align-items: center;
-          padding: 10px 12px;
-        }
-        .cp-appt-room-loader {
-          border-top: 1px solid rgba(0,0,0,0.08);
-          padding: 14px 12px 14px;
-          background: linear-gradient(180deg, rgba(15, 118, 110, 0.08) 0%, rgba(15, 118, 110, 0.04) 100%);
-        }
-        .cp-appt-room-loader-label {
-          margin: 0 0 12px;
-          font-size: 13px;
-          line-height: 1.45;
-          color: rgba(0,0,0,0.68);
-          max-width: 52ch;
-        }
-        .cp-appt-room-loader-actions {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          align-items: center;
-        }
-        a.cp-appt-room-loader-btn {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 44px;
-          padding: 0 22px;
-          border-radius: 10px;
-          font-size: 15px;
-          font-weight: 600;
-          text-decoration: none !important;
-          cursor: pointer;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-          transition: transform 0.06s ease, box-shadow 0.15s ease, filter 0.15s ease;
-        }
-        a.cp-appt-room-loader-btn:hover {
-          filter: brightness(1.05);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.14);
-        }
-        a.cp-appt-room-loader-btn:active {
-          transform: scale(0.98);
-        }
-        a.cp-appt-room-loader-btn--form {
-          background: var(--brand, #0f766e);
-          color: #fff !important;
-        }
-        a.cp-appt-room-loader-btn--pdf {
-          background: #1e293b;
-          color: #fff !important;
-        }
-        .cp-hide-xs { display: none; }
-        .cp-section { margin-top: 28px; }
-        h1.cp-title { margin: 12px 0 4px; font-size: 28px; }
-        h2.cp-h2 { margin: 0 0 10px; font-size: 20px; }
-        h3.cp-h3 { margin: 0 0 8px; font-size: 16px; }
-
-        /* Bottom nav (hidden by default; shown on small screens) */
-        .cp-bottom-nav {
-          position: fixed;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          display: none;
-          background: rgba(255,255,255,0.98);
-          backdrop-filter: saturate(150%) blur(8px);
-          border-top: 1px solid rgba(0,0,0,0.08);
-          z-index: 1000;
-          margin: 0;
-          padding: 0;
-          /* Nav extends to bottom edge, safe area padding pushes content up */
-          padding-bottom: env(safe-area-inset-bottom, 0px);
-          height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
-        }
-        .cp-bottom-inner {
-          /* Inner content is the nav height, sits above the safe area padding */
-          height: var(--bottom-nav-h);
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          align-items: center;
-          gap: 4px;
-          max-width: 1120px;
-          margin: 0 auto;
-          padding: 0 8px;
-        }
-        .cp-tab {
-          height: 100%;
-          min-height: 56px;
-          border: none;
-          background: transparent;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          align-items: center;
-          justify-content: center;
-          border-radius: 10px;
-          font-size: 12px;
-          color: #111;
-          text-decoration: none;
-        }
-        .cp-tab:active { background: rgba(15, 118, 110, 0.08); }
-        .cp-tab svg { width: 24px; height: 24px; }
-
-        /* >= 480px */
-        @media (min-width: 480px) {
-          .cp-hero-inner { padding: 28px 24px; }
-          .cp-pets { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-          .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
-        }
-
-        /* Share Vet at Your Door: desktop = next to logo, mobile = below welcome */
-        .cp-referral-btn-desktop { display: none; }
-        .cp-referral-btn-mobile { display: flex; }
-        @media (min-width: 640px) {
-          .cp-referral-btn-desktop { display: inline-flex; }
-          .cp-referral-btn-mobile { display: none !important; }
-        }
-
-        /* >= 640px (sm) */
-        @media (min-width: 640px) {
-          h1.cp-title { font-size: 32px; }
-          .cp-hero-inner { padding: 32px 28px; min-height: 220px; }
-          .cp-appt-row {
-            grid-template-columns: 160px 1fr 1fr 1fr 120px; /* time | pet | type | addr | status */
-          }
-          .cp-rem-row {
-            grid-template-columns: 140px 1fr 1fr 120px; /* date | pet | desc | status */
-          }
-          .cp-hide-xs { display: initial; }
-          .cp-pet-img { height: 140px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
-        }
-
-        /* >= 900px */
-        @media (min-width: 900px) {
-          .cp-pets { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-        }
-
-        /* Show bottom nav & add bottom padding on small screens only */
-        @media (max-width: 639px) {
-          .cp-bottom-nav { display: block; }
-          .cp-wrap { 
-            margin: 0 !important;
-            padding: 0 16px calc(var(--bottom-nav-h) + 8px) 16px !important;
-            width: 100% !important;
-            max-width: 100% !important;
-          }
-          /* Hide top service action buttons when bottom nav is showing */
-          .cp-service-actions-section { display: none !important; }
-        .cp-service-actions-mobile { display: block !important; }
-        .cp-service-actions-desktop { display: none !important; }
-      }
-
-      /* Show desktop buttons on larger screens */
-      @media (min-width: 640px) {
-        .cp-service-actions-mobile { display: none !important; }
-        .cp-service-actions-desktop { display: grid !important; }
-      }
-
-      /* Chat hours tooltip */
-      .chat-hours-tooltip {
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s;
-      }
-
-      /* Hamburger menu */
-      .cp-hamburger-menu {
-        position: relative;
-      }
-      .cp-hamburger-button {
-        position: fixed;
-        top: 16px;
-        right: 16px;
-        z-index: 1001;
-        width: 44px;
-        height: 44px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 8px;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        transition: all 0.2s;
-      }
-      /* Push hamburger menu down on mobile to avoid status bar */
-      @media (max-width: 768px) {
-        .cp-hamburger-button {
-          top: calc(env(safe-area-inset-top, 0px) + 0px);
-        }
-        .cp-menu-dropdown {
-          top: calc(env(safe-area-inset-top, 0px) + 96px) !important;
-        }
-      }
-      .cp-hamburger-button:hover {
-        background: rgba(255, 255, 255, 1);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      }
-      .cp-hamburger-button svg {
-        width: 24px;
-        height: 24px;
-        stroke: #111827;
-      }
-      .cp-menu-dropdown {
-        position: fixed;
-        top: 68px;
-        right: 16px;
-        z-index: 1000;
-        background: white;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-        min-width: 180px;
-        overflow: hidden;
-        opacity: 0;
-        transform: translateY(-8px);
-        pointer-events: none;
-        transition: all 0.2s;
-      }
-      .cp-menu-dropdown.open {
-        opacity: 1;
-        transform: translateY(0);
-        pointer-events: all;
-      }
-      .cp-menu-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 16px;
-        color: #374151;
-        cursor: pointer;
-        transition: background 0.2s;
-        border: none;
-        background: none;
-        width: 100%;
-        text-align: left;
-        font-size: 14px;
-        font-weight: 500;
-      }
-      .cp-menu-item:hover {
-        background: #f3f4f6;
-      }
-      .cp-menu-item svg {
-        width: 18px;
-        height: 18px;
-        stroke: currentColor;
-      }
-      .cp-menu-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 999;
-        background: transparent;
-        display: none;
-      }
-      .cp-menu-overlay.open {
-        display: block;
-      }
-
-      /* Preferences Modal */
-      .cp-preferences-modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 2000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 16px;
-      }
-      .cp-preferences-modal {
-        background: white;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 600px;
-        max-height: 90vh;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-      }
-      .cp-preferences-modal-header {
-        padding: 20px 24px;
-        border-bottom: 1px solid #e5e7eb;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .cp-preferences-modal-title {
-        font-size: 20px;
-        font-weight: 600;
-        color: #111827;
-        margin: 0;
-      }
-      .cp-preferences-modal-close {
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border: none;
-        background: transparent;
-        border-radius: 6px;
-        cursor: pointer;
-        color: #6b7280;
-        transition: all 0.2s;
-      }
-      .cp-preferences-modal-close:hover {
-        background: #f3f4f6;
-        color: #111827;
-      }
-      .cp-preferences-modal-tabs {
-        display: flex;
-        border-bottom: 1px solid #e5e7eb;
-        padding: 0 24px;
-      }
-      .cp-preferences-modal-tab {
-        padding: 12px 16px;
-        border: none;
-        background: none;
-        font-size: 14px;
-        font-weight: 500;
-        color: #6b7280;
-        cursor: pointer;
-        border-bottom: 2px solid transparent;
-        transition: all 0.2s;
-        margin-bottom: -1px;
-      }
-      .cp-preferences-modal-tab.active {
-        color: #0f766e;
-        border-bottom-color: #0f766e;
-      }
-      .cp-preferences-modal-tab:hover:not(.active) {
-        color: #111827;
-      }
-      .cp-preferences-modal-content {
-        padding: 24px;
-        overflow-y: auto;
-        flex: 1;
-      }
-      .cp-preferences-section {
-        margin-bottom: 24px;
-      }
-      .cp-preferences-section-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #111827;
-        margin: 0 0 12px 0;
-      }
-      .cp-preferences-section-description {
-        font-size: 14px;
-        color: #6b7280;
-        margin: 0 0 16px 0;
-      }
-      .cp-preferences-checkbox-group {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .cp-preferences-checkbox-item {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 12px;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 0.2s;
-      }
-      .cp-preferences-checkbox-item:hover {
-        border-color: #0f766e;
-        background: #f0fdfa;
-      }
-      .cp-preferences-checkbox {
-        width: 20px;
-        height: 20px;
-        margin-top: 2px;
-        cursor: pointer;
-        accent-color: #0f766e;
-      }
-      .cp-preferences-checkbox-label {
-        flex: 1;
-        font-size: 14px;
-        color: #111827;
-        cursor: pointer;
-      }
-      .cp-preferences-checkbox-description {
-        font-size: 12px;
-        color: #6b7280;
-        margin-top: 4px;
-      }
-      .cp-preferences-modal-footer {
-        padding: 16px 24px;
-        border-top: 1px solid #e5e7eb;
-        display: flex;
-        justify-content: flex-end;
-        gap: 12px;
-      }
-      .cp-preferences-button {
-        padding: 10px 20px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s;
-        border: none;
-      }
-      .cp-preferences-button-secondary {
-        background: #f3f4f6;
-        color: #374151;
-      }
-      .cp-preferences-button-secondary:hover {
-        background: #e5e7eb;
-      }
-      .cp-preferences-button-primary {
-        background: #0f766e;
-        color: white;
-      }
-      .cp-preferences-button-primary:hover:not(:disabled) {
-        background: #0d9488;
-      }
-      .cp-preferences-button-primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      `}</style>
-
-      {/* Hamburger Menu */}
-      <div className="cp-hamburger-menu">
-        <button
-          className="cp-hamburger-button"
-          onClick={() => setMenuOpen(!menuOpen)}
-          aria-label="Menu"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            {menuOpen ? (
-              <path d="M18 6L6 18M6 6l12 12" />
-            ) : (
-              <>
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-              </>
-            )}
-          </svg>
-        </button>
-        <div
-          className={`cp-menu-overlay ${menuOpen ? 'open' : ''}`}
-          onClick={() => setMenuOpen(false)}
-        />
-        <div className={`cp-menu-dropdown ${menuOpen ? 'open' : ''}`}>
-          <button
-            className="cp-menu-item"
-            onClick={() => {
-              setShowPreferencesModal(true);
-              setMenuOpen(false);
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
-            </svg>
-            Preferences
-          </button>
-          <button
-            className="cp-menu-item"
-            onClick={async () => {
-              await logout();
-              navigate('/login');
-              setMenuOpen(false);
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16 17 21 12 16 7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-            Log out
-          </button>
-        </div>
-      </div>
-
-      {/* HERO - Logo */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-          marginBottom: '32px',
-          marginTop: '16px',
-          background: 'radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9',
-          padding: '20px',
-          borderRadius: '16px',
-        }}
-      >
-        <div style={{ width: '100%', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
-          <img
-            src="/final_thick_lines_cropped.jpeg"
-            alt="Vet At Your Door logo"
-            style={{
-              width: 'min(320px, 60vw)',
-              maxWidth: 360,
-              height: 'auto',
-              mixBlendMode: 'multiply',
-            }}
-          />
-          <button
-            type="button"
-            className="cp-referral-btn-desktop"
-            onClick={() => {
-              setShowReferralModal(true);
-              setReferralError(null);
-              setReferralSuccess(false);
-              setReferralEmail('');
-              setReferralName('');
-            }}
-            style={{
-              position: 'absolute',
-              right: 0,
-              alignItems: 'center',
-              gap: '8px',
-              padding: '10px 18px',
-              fontSize: '14px',
-              fontWeight: 600,
-              color: '#0f766e',
-              background: '#ecfff8',
-              border: '1px solid #0f766e',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-            Share Vet at Your Door
-          </button>
-        </div>
-        {clientFirstName && (
-          <>
-            <h1 style={{ 
-              margin: 0, 
-              fontSize: '24px', 
-              fontWeight: 600, 
-              color: '#111827',
-              textAlign: 'center',
-              width: '100%'
-            }}>
-              Welcome, {clientFirstName} to your VAYD Client Portal!
-            </h1>
-            <div className="cp-referral-btn-mobile" style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: 12 }}>
+    <div className="pp-root">
+      <div className="pp-page">
+        <div ref={pageTopRef} aria-hidden />
+        {/* ---------- top bar ---------- */}
+        <header className="pp-topbar">
+          <div className="pp-brand">
+            <img src={LOGO_SRC} alt="Vet At Your Door" />
+            <div className="pp-greeting">
+              <div className="pp-greeting-hi">{greet},</div>
+              <div className="pp-greeting-name">{clientFirstName || 'friend'} 👋</div>
+            </div>
+          </div>
+          <div className="pp-topbar-actions">
+            <button
+              type="button"
+              className="pp-btn pp-btn--green pp-btn--sm pp-btn--refer"
+              onClick={() => setShowReferral(true)}
+              aria-label="Refer a friend"
+              title="Refer a friend"
+            >
+              <Icon name="gift" /> <span className="pp-btn-label">Refer a friend</span>
+            </button>
+            <div className="pp-menu-wrap" ref={menuRef}>
               <button
                 type="button"
-                onClick={() => {
-                  setShowReferralModal(true);
-                  setReferralError(null);
-                  setReferralSuccess(false);
-                  setReferralEmail('');
-                  setReferralName('');
-                }}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '10px 18px',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  color: '#0f766e',
-                  background: '#ecfff8',
-                  border: '1px solid #0f766e',
-                  borderRadius: '10px',
-                  cursor: 'pointer',
-                  boxShadow: '0 0 20px rgba(15, 118, 110, 0.5), 0 0 40px rgba(15, 118, 110, 0.3)',
-                }}
+                className="pp-btn pp-btn--icon"
+                aria-label="Menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((v) => !v)}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="9" cy="7" r="4"></circle>
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                </svg>
-                Share Vet at Your Door
+                <Icon name="menu" size={20} />
               </button>
+              {menuOpen ? (
+                <div className="pp-menu pp-pop" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowPreferences(true);
+                    }}
+                  >
+                    <Icon name="settings" size={16} /> Communication preferences
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      goToStore();
+                    }}
+                  >
+                    <Icon name="cart" size={16} /> Online store
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      setMenuOpen(false);
+                      await logout();
+                      navigate('/login');
+                    }}
+                  >
+                    <Icon name="logout" size={16} /> Log out
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </header>
+
+        {error ? <div className="pp-error">{error}</div> : null}
+
+        {!loading ? <RenewalBanner /> : null}
+
+        {loading ? (
+          <div style={{ display: 'grid', gap: 18 }}>
+            <div className="pp-skeleton" style={{ height: 90 }} />
+            <div className="pp-skeleton" style={{ height: 420, borderRadius: 22 }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+              <div className="pp-skeleton" style={{ height: 240, borderRadius: 22 }} />
+              <div className="pp-skeleton" style={{ height: 240, borderRadius: 22 }} />
+              <div className="pp-skeleton" style={{ height: 240, borderRadius: 22 }} />
+            </div>
+          </div>
+        ) : !selectedPet || !membership ? (
+          <section className="pp-card pp-card--tint" style={{ textAlign: 'center', padding: 40 }}>
+            <div style={{ fontSize: 56 }}>🐾</div>
+            <h2 style={{ margin: '8px 0 4px', fontFamily: "'Libre Baskerville', serif" }}>No pets on your account yet</h2>
+            <p className="pp-muted">Request a visit and we&apos;ll get your furry family set up.</p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" className="pp-btn pp-btn--primary" onClick={goRequestVisit}>
+                <Icon name="calendar" /> Request a visit
+              </button>
+              <a className="pp-btn pp-btn--ghost" href={PRACTICE_PHONE_TEL}>
+                <Icon name="phone" /> {PRACTICE_PHONE_DISPLAY}
+              </a>
+            </div>
+          </section>
+        ) : (
+          <>
+            {/* ---------- pet switcher ---------- */}
+            {petsWithProvider.length > 1 ? (
+              <nav className="pp-switcher" aria-label="Your pets">
+                {petsWithProvider.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`pp-switch${p.id === selectedPet.id ? ' pp-switch--active' : ''}`}
+                    onClick={() => {
+                      setSelectedKey(p.id);
+                      setShowAllPetsAppts(false);
+                      setNicknameEditRequest(0);
+                    }}
+                    aria-pressed={p.id === selectedPet.id}
+                  >
+                    {(() => {
+                      const overdue = overdueCountFor(p);
+                      return (
+                        <span className="pp-switch-avatar-wrap">
+                          <img className="pp-switch-avatar" src={petImg(p)} alt="" />
+                          {overdue > 0 ? (
+                            <span
+                              className="pp-switch-badge"
+                              aria-label={`${overdue} overdue reminder${overdue === 1 ? '' : 's'}`}
+                              title={`${overdue} overdue reminder${overdue === 1 ? '' : 's'}`}
+                            >
+                              {overdue > 9 ? '9+' : overdue}
+                            </span>
+                          ) : null}
+                        </span>
+                      );
+                    })()}
+                    <span className="pp-switch-name">{p.name}</span>
+                  </button>
+                ))}
+              </nav>
+            ) : null}
+
+            {/* ---------- hero ---------- */}
+            <PetHero
+              key={selectedPet.id}
+              pet={selectedPet}
+              membership={membership}
+              provider={selectedProvider}
+              stats={heroStats}
+              chatOpen={isChatHoursOpen}
+              chatIsMember={membership.hasActiveWellnessPlan || hasAnyPetWithPlan}
+              onRequestVisit={goRequestVisit}
+              onChat={handleChat}
+              onCertificate={() => setCertificatePet(selectedPet)}
+              onShop={() => goToStore()}
+              onExploreMembership={membership.state === 'none' ? () => handleEnrollMembership(selectedPet) : undefined}
+              onLove={() => void toggleLove(selectedPet)}
+              onProviderBio={() => setShowProviderBio(true)}
+              onEditNickname={() => {
+                setNicknameEditRequest((n) => n + 1);
+                scrollTo(aboutRef);
+              }}
+              onOpenGalleryManager={() => setGalleryPet(selectedPet)}
+              onPrimaryPhotoChange={(url) =>
+                setPets((prev) => prev.map((p) => (p.id === selectedPet.id ? { ...p, photoUrl: url || p.photoUrl } : p)))
+              }
+              autoOpenPhotos={autoOpenPhotos}
+              onAutoOpenHandled={() => setAutoOpenPhotos(false)}
+              galleryRefreshKey={galleryRefreshKey}
+            />
+
+            {showMultiPetCredit ? (
+              <div className="pp-notice">
+                <span className="pp-notice-emoji" aria-hidden>
+                  🎉
+                </span>
+                <div>
+                  <strong>Multi-pet bonus:</strong> enroll more than one pet in a membership and receive a <strong>$75 credit</strong> for each
+                  additional pet — good at any future Vet At Your Door visit.
+                </div>
+              </div>
+            ) : null}
+
+            {/* ---------- cards ---------- */}
+            <div className="pp-grid">
+              <div className="pp-col-7" ref={aboutRef} style={{ scrollMarginTop: 16 }}>
+                <PetAboutCard
+                  key={`${selectedPet.id}-${nicknameEditRequest}`}
+                  pet={selectedPet}
+                  onSave={saveProfile}
+                  autoEdit={nicknameEditRequest > 0 ? 'nickname' : null}
+                />
+              </div>
+              <div className="pp-col-5 pp-stack">
+                <PetSpotlightConsentCard pet={selectedPet} onSave={saveProfile} />
+                <CommunitySnapshotsCard
+                  pet={selectedPet}
+                  onToast={setToast}
+                  onPetLoves={(dbId, loves) =>
+                    setPets((prev) => prev.map((p) => (Number(p.dbId) === dbId ? { ...p, loves } : p)))
+                  }
+                />
+              </div>
+
+              {/* Membership */}
+              <section className="pp-card pp-col-4" aria-label="Membership">
+                <CardHead
+                  icon="💚"
+                  tone="green"
+                  title={membership.state === 'active' ? 'Membership' : membership.state === 'processing' ? 'Membership' : 'Become a member'}
+                  sub={
+                    membership.state === 'active'
+                      ? `${selectedPet.name} is covered`
+                      : membership.state === 'processing'
+                      ? "We're setting things up"
+                      : `Care that fits ${possessive(selectedPet.name)} life`
+                  }
+                />
+                {membership.state === 'active' && membership.planText ? (
+                  <>
+                    <div className="pp-member-plan">
+                      <span className="pp-member-plan-icon" aria-hidden>
+                        🏅
+                      </span>
+                      <div>
+                        <div className="pp-member-plan-name">{membership.planText}</div>
+                        <div className="pp-muted pp-small">Active membership</div>
+                      </div>
+                    </div>
+                    <ul className="pp-perks">
+                      {membershipPerkLines(null)
+                        .slice(0, 3)
+                        .map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      <li>Wellness exams, vaccines & labs included in your plan</li>
+                    </ul>
+                    <div className="pp-member-actions">
+                      <button type="button" className="pp-btn pp-btn--soft" onClick={() => setBenefitsPet(selectedPet)}>
+                        <Icon name="check" /> What&apos;s included & what&apos;s left
+                      </button>
+                    </div>
+                  </>
+                ) : membership.state === 'processing' || membership.state === 'pending' ? (
+                  <>
+                    <div className="pp-member-plan">
+                      <span className="pp-member-plan-icon" aria-hidden>
+                        ⏳
+                      </span>
+                      <div>
+                        <div className="pp-member-plan-name">{membership.planText || 'Membership'}</div>
+                        <span className="pp-tag pp-tag--processing">Processing</span>
+                      </div>
+                    </div>
+                    <p className="pp-muted pp-small" style={{ margin: 0 }}>
+                      Thanks for joining! Your plan is being activated — perks unlock as soon as it&apos;s live. Questions?{' '}
+                      <a href={`mailto:${PRACTICE_INFO_EMAIL}`}>Email us</a>.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <ul className="pp-perks">
+                      <li>Annual wellness exam, vaccines & labs included</li>
+                      {savingsBullets(
+                        membershipSavings?.examPercentOff ?? null,
+                        membershipSavings?.storePercentOff ?? null,
+                      ).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                      <li>After-hours chat & priority scheduling with your One-Team</li>
+                      <li>Spread the cost of care — monthly or annual</li>
+                    </ul>
+                    <button type="button" className="pp-btn pp-btn--sun" onClick={() => handleEnrollMembership(selectedPet)}>
+                      Explore plans for {selectedPet.name} <Icon name="arrow" />
+                    </button>
+                  </>
+                )}
+              </section>
+
+              {/* Reminders */}
+              <section className="pp-card pp-col-4" aria-label="Care reminders" ref={remindersRef} style={{ scrollMarginTop: 16 }}>
+                {(() => {
+                  const all = getAllPetReminders(selectedPet);
+                  const declined = petDeclined(selectedPet);
+                  const shown = all.slice(0, 4);
+                  return (
+                    <>
+                      <CardHead
+                        icon="🗓️"
+                        tone="sun"
+                        title="Care reminders"
+                        sub={all.length === 0 ? `${selectedPet.name} is all caught up!` : `${all.length} item${all.length === 1 ? '' : 's'} on the list`}
+                        action={
+                          all.length > shown.length || declined.length > 0 ? (
+                            <button type="button" className="pp-link-btn" onClick={() => setRemindersModalPet(selectedPet)}>
+                              See all
+                            </button>
+                          ) : null
+                        }
+                      />
+                      {all.length === 0 && declined.length === 0 ? (
+                        <div className="pp-empty">🎉 Nothing due. We&apos;ll let you know when something comes up.</div>
+                      ) : (
+                        <div className="pp-rows">
+                          {shown.map((r) => {
+                            const d = daysUntil(r.dueIso);
+                            const overdue = d != null && d < 0;
+                            const soon = d != null && d >= 0 && d <= 30;
+                            return (
+                              <div key={r.id} className={`pp-row${overdue ? ' pp-row--overdue' : soon ? ' pp-row--soon' : ''}`}>
+                                <div className="pp-row-main">
+                                  <div className="pp-row-title">{r.description ?? r.kind ?? '—'}</div>
+                                  <div className="pp-row-sub">
+                                    {overdue ? 'Was due ' : 'Due '}
+                                    {fmtReminderDate(r)}
+                                  </div>
+                                </div>
+                                <span className={`pp-tag ${overdue ? 'pp-tag--overdue' : soon ? 'pp-tag--soon' : 'pp-tag--ok'}`}>
+                                  {overdue ? 'Overdue' : soon ? relativeDay(r.dueIso) || 'Soon' : 'Upcoming'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {all.length > 0 ? (
+                        <button type="button" className="pp-btn pp-btn--soft pp-btn--sm" onClick={goRequestVisit} style={{ alignSelf: 'flex-start' }}>
+                          <Icon name="calendar" /> Book these in one visit
+                        </button>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </section>
+
+              {/* Chronic meds */}
+              <section className="pp-card pp-col-4" aria-label="Medications" ref={medsRef} style={{ scrollMarginTop: 16 }}>
+                {(() => {
+                  const meds = chronicByPet[selectedPet.id] ?? [];
+                  return (
+                    <>
+                      <CardHead
+                        icon="💊"
+                        tone="sky"
+                        title="Medications"
+                        sub={meds.length === 0 ? 'Ongoing prescriptions appear here' : 'Reorder in a tap · delivered to your door'}
+                      />
+                      {meds.length === 0 ? (
+                        <>
+                          <div className="pp-empty">No ongoing medications on file for {selectedPet.name}.</div>
+                          <Link
+                            className="pp-btn pp-btn--ghost pp-btn--sm"
+                            to="/store"
+                            style={{ alignSelf: 'flex-start' }}
+                            onClick={() => rememberPortalForStore()}
+                          >
+                            <Icon name="cart" /> Browse flea, tick & heartworm
+                          </Link>
+                        </>
+                      ) : (
+                        <div className="pp-rows">
+                          {meds.map((rx) => {
+                            const notInStore =
+                              storeItemIds != null &&
+                              (!rx.inventoryItemId || !storeItemIds.has(Number(rx.inventoryItemId)));
+                            return (
+                            <div key={rx.id} className="pp-med">
+                              <div className="pp-med-icon" aria-hidden>
+                                💊
+                              </div>
+                              <div className="pp-row-main">
+                                <div className="pp-row-title">
+                                  {rx.name}
+                                  {rx.strength ? <span className="pp-muted"> · {rx.strength}</span> : null}
+                                </div>
+                                <div className="pp-row-sub">
+                                  {rx.refill != null ? `${rx.refill} refill${rx.refill === 1 ? '' : 's'} left` : 'Chronic medication'}
+                                  {rx.autoshipStartedAt ? (
+                                    <>
+                                      {' · '}
+                                      <span className="pp-tag pp-tag--autoship">Auto-ship</span>
+                                    </>
+                                  ) : null}
+                                </div>
+                                {notInStore && !rx.autoshipStartedAt ? (
+                                  <div className="pp-med-note">
+                                    Not sold in our online store —{' '}
+                                    <a href={PRACTICE_PHONE_SMS}>text us</a> or ask at your next visit to refill.
+                                  </div>
+                                ) : null}
+                              </div>
+                              {notInStore && !rx.autoshipStartedAt ? null : rx.autoshipStartedAt && rx.inventoryItemId ? (
+                                <button
+                                  type="button"
+                                  className="pp-btn pp-btn--xs pp-btn--soft"
+                                  onClick={() => setAutoshipRx({ pet: selectedPet, rx })}
+                                >
+                                  <Icon name="settings" size={13} /> Manage
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`pp-btn pp-btn--xs ${rx.inventoryItemId ? 'pp-btn--primary' : 'pp-btn--ghost'}`}
+                                  onClick={() => void orderChronicForPet(selectedPet, rx)}
+                                >
+                                  <Icon name="refresh" size={13} /> {rx.inventoryItemId ? 'Reorder' : 'Shop'}
+                                </button>
+                              )}
+                            </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </section>
+
+              {/* Appointments */}
+              <section className="pp-card pp-col-7" aria-label="Upcoming visits" ref={apptsRef} style={{ scrollMarginTop: 16 }}>
+                <CardHead
+                  icon="🏡"
+                  title="Upcoming visits"
+                  sub={
+                    apptsToShow.length === 0
+                      ? petsWithProvider.length > 1 && !showAllPetsAppts
+                        ? `Nothing on the calendar for ${selectedPet.name}`
+                        : 'Nothing on the calendar yet'
+                      : `${apptsToShow.length} visit${apptsToShow.length === 1 ? '' : 's'} scheduled`
+                  }
+                  action={
+                    petsWithProvider.length > 1 ? (
+                      <button type="button" className="pp-link-btn" onClick={() => setShowAllPetsAppts((v) => !v)}>
+                        {showAllPetsAppts ? `Only ${selectedPet.name}` : 'All pets'}
+                      </button>
+                    ) : null
+                  }
+                />
+                {apptsToShow.length === 0 ? (
+                  <>
+                    <div className="pp-empty">We come to you — no car rides, no waiting room, no stress.</div>
+                    <button type="button" className="pp-btn pp-btn--primary" onClick={goRequestVisit} style={{ alignSelf: 'flex-start' }}>
+                      <Icon name="calendar" /> Request a visit for {selectedPet.name}
+                    </button>
+                  </>
+                ) : (
+                  <div className="pp-appts">
+                    {apptsByDay.map(({ key, items }) => {
+                      const d = new Date(items[0].startIso);
+                      return (
+                        <div key={key} className="pp-appt-day">
+                          <div className="pp-appt-date">
+                            <div className="pp-appt-date-dow">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                            <div className="pp-appt-date-day">{d.getDate()}</div>
+                            <div className="pp-appt-date-mon">{d.toLocaleDateString(undefined, { month: 'short' })}</div>
+                          </div>
+                          <div className="pp-appt-items">
+                            {items.map((a) => {
+                              const apptPet = petsWithProvider.find((p) => apptMatchesPet(a, p));
+                              const token = (a.roomLoaderPublicToken ?? '').trim();
+                              const checkinDone = (a.roomLoaderSentStatus ?? '').toLowerCase() === 'completed';
+                              return (
+                                <div key={a.id} className="pp-appt">
+                                  <div className="pp-appt-main">
+                                    <img className="pp-appt-pet" src={apptPet ? petImg(apptPet) : petImg(selectedPet)} alt="" />
+                                    <div className="pp-appt-info">
+                                      <div className="pp-appt-time">
+                                        {fmtTime(a.startIso)}
+                                        {relativeDay(a.startIso) ? <span className="pp-muted"> · {relativeDay(a.startIso)}</span> : null}
+                                      </div>
+                                      <div className="pp-appt-type">
+                                        {a.patientName ?? apptPet?.name ?? ''}
+                                        {a.patientName || apptPet ? ' · ' : ''}
+                                        {apptTypeLabel(a)}
+                                      </div>
+                                      {apptAddress(a) ? <div className="pp-appt-addr">📍 {apptAddress(a)}</div> : null}
+                                    </div>
+                                    {a.statusName ? <span className="pp-tag pp-tag--ok">{a.statusName}</span> : null}
+                                  </div>
+                                  {token ? (
+                                    <div className={`pp-appt-checkin${checkinDone ? ' pp-appt-checkin--done' : ''}`}>
+                                      <span>
+                                        {checkinDone
+                                          ? '✅ Pre-visit check-in complete. Download a copy for your records.'
+                                          : '📝 Please complete your pre-visit check-in before we arrive.'}
+                                      </span>
+                                      {checkinDone ? (
+                                        <a
+                                          className="pp-btn pp-btn--ghost pp-btn--xs"
+                                          href={getClientRoomLoaderPdfHref(token)}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          <Icon name="download" size={13} /> Download PDF
+                                        </a>
+                                      ) : (
+                                        <Link
+                                          className="pp-btn pp-btn--primary pp-btn--xs"
+                                          to={getClientRoomLoaderFormPath(token)}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          Open check-in form <Icon name="arrow" size={13} />
+                                        </Link>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              {/* Need us? */}
+              <section className="pp-card pp-col-5" aria-label="Contact us">
+                <CardHead icon="💬" tone="sky" title="Need us?" sub="We're a tap away" />
+                <div className="pp-rows">
+                  <button
+                    type="button"
+                    className="pp-row"
+                    onClick={handleChat}
+                    style={{ cursor: 'pointer', textAlign: 'left', border: '1px solid var(--pp-border)' }}
+                  >
+                    <div className="pp-row-main">
+                      <div className="pp-row-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className={`pp-chat-dot${isChatHoursOpen ? ' pp-chat-dot--open' : ''}`} />
+                        After-hours chat {isChatHoursOpen ? '· open now' : '· closed'}
+                      </div>
+                      <div className="pp-row-sub">
+                        {membership.hasActiveWellnessPlan || hasAnyPetWithPlan ? 'Member perk — chat with our team' : 'A member perk'}
+                      </div>
+                      <div className="pp-chat-hours" style={{ marginTop: 4 }}>
+                        {formattedChatHours}
+                      </div>
+                    </div>
+                    <Icon name="arrow" size={16} />
+                  </button>
+                  <a className="pp-row" href={PRACTICE_PHONE_TEL} style={{ color: 'inherit' }}>
+                    <div className="pp-row-main">
+                      <div className="pp-row-title">📞 Call {PRACTICE_PHONE_DISPLAY}</div>
+                      <div className="pp-row-sub">Scheduling, questions, anything</div>
+                    </div>
+                    <Icon name="arrow" size={16} />
+                  </a>
+                  <a className="pp-row" href={PRACTICE_PHONE_SMS} style={{ color: 'inherit' }}>
+                    <div className="pp-row-main">
+                      <div className="pp-row-title">💬 Text us</div>
+                      <div className="pp-row-sub">Quick questions & photos welcome</div>
+                    </div>
+                    <Icon name="arrow" size={16} />
+                  </a>
+                  <a className="pp-row" href={`mailto:${primaryProviderEmail}`} style={{ color: 'inherit' }}>
+                    <div className="pp-row-main">
+                      <div className="pp-row-title">✉️ Email {possessive(selectedPet.name)} vet</div>
+                      <div className="pp-row-sub">{primaryProviderEmail}</div>
+                    </div>
+                    <Icon name="arrow" size={16} />
+                  </a>
+                </div>
+              </section>
+            </div>
+
+            {/* ---------- promos ---------- */}
+            <div className="pp-promos">
+              <button type="button" className="pp-promo pp-promo--teal" onClick={goRequestVisit}>
+                <span className="pp-promo-emoji" aria-hidden>
+                  📅
+                </span>
+                <h3>Book online, any time</h3>
+                <p>Pick a day that works for you and we&apos;ll bring the clinic to your living room. No phone tag required.</p>
+                <span className="pp-btn pp-btn--sm">
+                  Request a visit <Icon name="arrow" size={14} />
+                </span>
+              </button>
+              <Link className="pp-promo pp-promo--green" to="/store" onClick={() => rememberPortalForStore()}>
+                <span className="pp-promo-emoji" aria-hidden>
+                  📦
+                </span>
+                <h3>Online pharmacy & store</h3>
+                <p>Vet-approved food, flea & tick, and {possessive(selectedPet.name)} meds — set up auto-ship and never run out.</p>
+                <span className="pp-btn pp-btn--sm">
+                  Shop now <Icon name="cart" size={14} />
+                </span>
+              </Link>
+              {membership.state === 'none' ? (
+                <button type="button" className="pp-promo pp-promo--sun" onClick={() => handleEnrollMembership(selectedPet)}>
+                  <span className="pp-promo-emoji" aria-hidden>
+                    💚
+                  </span>
+                  <h3>Membership for {selectedPet.name}</h3>
+                  <p>Predictable pricing, after-hours chat, and a plan built around {possessive(selectedPet.name)} life stage.</p>
+                  <span className="pp-btn pp-btn--sm">
+                    See plans <Icon name="arrow" size={14} />
+                  </span>
+                </button>
+              ) : (
+                <button type="button" className="pp-promo pp-promo--violet" onClick={() => setShowReferral(true)}>
+                  <span className="pp-promo-emoji" aria-hidden>
+                    🎁
+                  </span>
+                  <h3>Share the love</h3>
+                  <p>Know a pet who&apos;d love a house call? Refer a friend and their first trip fee is on us.</p>
+                  <span className="pp-btn pp-btn--sm">
+                    Refer a friend <Icon name="gift" size={14} />
+                  </span>
+                </button>
+              )}
             </div>
           </>
         )}
+
+        {/* ---------- pets we remember ---------- */}
+        {!loading && rememberedPets.length > 0 ? (
+          <RememberedPetsCard
+            pets={rememberedPets}
+            onLoves={(id, loves) =>
+              setRememberedPets((prev) => prev.map((p) => (p.id === id ? { ...p, loves } : p)))
+            }
+            onToast={setToast}
+          />
+        ) : null}
+
+        {/* ---------- footer ---------- */}
+        <footer className="pp-footer">
+          <div className="pp-footer-brand">Vet At Your Door</div>
+          <div>Fear-free veterinary care, delivered to your doorstep.</div>
+          <div className="pp-footer-links">
+            <a href={PRACTICE_PHONE_TEL}>{PRACTICE_PHONE_DISPLAY}</a>
+            <a href={`mailto:${PRACTICE_INFO_EMAIL}`}>{PRACTICE_INFO_EMAIL}</a>
+            <a href="https://www.vetatyourdoor.com" target="_blank" rel="noopener noreferrer">
+              www.vetatyourdoor.com
+            </a>
+          </div>
+          <div className="pp-footer-copy">© {new Date().getFullYear()} Vet At Your Door. All rights reserved.</div>
+        </footer>
       </div>
 
-      {/* NOTICES */}
-      {loading && <div style={{ marginTop: 16 }}>Loading your information…</div>}
-      {error && <div style={{ marginTop: 16, color: '#b00020' }}>{error}</div>}
+      {/* ---------- mobile bottom nav ---------- */}
+      <nav className="pp-bottom-nav" aria-label="Primary">
+        <div className="pp-bottom-inner">
+          <button type="button" className="pp-bottom--primary" onClick={scrollToTop}>
+            <Icon name="home" /> Home
+          </button>
+          <button type="button" onClick={goRequestVisit}>
+            <Icon name="calendar" /> Book
+          </button>
+          <button type="button" onClick={handleChat}>
+            <Icon name="chat" /> Chat
+          </button>
+          <button type="button" onClick={() => goToStore()}>
+            <Icon name="cart" /> Shop
+          </button>
+          <button type="button" onClick={() => window.location.assign(PRACTICE_PHONE_TEL)}>
+            <Icon name="phone" /> Call
+          </button>
+        </div>
+      </nav>
 
-      {!loading && !error && (
-        <>
-          {/* SERVICE ACTION BUTTONS */}
-          <section className="cp-section cp-service-actions-section" style={{ marginTop: 28 }}>
-            {/* Mobile View - Card with List */}
-            <div className="cp-service-actions-mobile" style={{ display: 'none' }}>
-              <div className="cp-card" style={{ padding: 20, borderRadius: 14 }}>
-                <div style={{ marginBottom: 16, textAlign: 'center' }}>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981', marginBottom: 8 }}>
-                    Vet At Your Door
-                  </div>
-                  <div style={{ fontSize: 14, color: '#6b7280' }}>
-                    Open Now 8:00 AM – 5:00 PM
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  <a
-                    href={APPOINTMENT_REQUEST_URL}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '14px 12px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderBottom: '1px solid #e5e7eb',
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                        <line x1="16" y1="2" x2="16" y2="6"></line>
-                        <line x1="8" y1="2" x2="8" y2="6"></line>
-                        <line x1="3" y1="10" x2="21" y2="10"></line>
-                      </svg>
-                    </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Request An Appointment</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </a>
-                  <a
-                    href="tel:207-536-8387"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '14px 12px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderBottom: '1px solid #e5e7eb',
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
-                      </svg>
-                    </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Call us</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </a>
-                  <a
-                    href="sms:207-536-8387"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '14px 12px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderBottom: '1px solid #e5e7eb',
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                      </svg>
-                    </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Text us</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </a>
-                  <a
-                    href={`mailto:${primaryProviderEmail}`}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '14px 12px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderBottom: '1px solid #e5e7eb',
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a855f7' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                        <polyline points="22,6 12,13 2,6"></polyline>
-                      </svg>
-                    </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Email Us</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </a>
-                  <a
-                    href="https://www.vetatyourdoor.com/online-pharmacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '14px 12px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderBottom: '1px solid #e5e7eb',
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20 }}>
-                        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
-                        <line x1="3" y1="6" x2="21" y2="6"></line>
-                        <path d="M16 10a4 4 0 0 1-8 0"></path>
-                      </svg>
-                    </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500 }}>Shop Our Online Pharmacy</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 20, height: 20, color: '#9ca3af' }}>
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </a>
-                </div>
-              </div>
-            </div>
-
-            {/* Desktop View - Button Grid */}
-            <div className="cp-service-actions-desktop" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-              <a
-                href={APPOINTMENT_REQUEST_URL}
-                className="cp-card"
-                style={{
-                  padding: '16px 20px',
-                  textDecoration: 'none',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: 12,
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '';
-                }}
-              >
-                <div style={{ fontSize: 20, color: '#3b82f6' }}>📅</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Request An Appointment</span>
-              </a>
-              <a
-                href="tel:207-536-8387"
-                className="cp-card"
-                style={{
-                  padding: '16px 20px',
-                  textDecoration: 'none',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: 12,
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '';
-                }}
-              >
-                <div style={{ fontSize: 20, color: '#10b981' }}>📞</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Call Us</span>
-              </a>
-              <a
-                href="sms:207-536-8387"
-                className="cp-card"
-                style={{
-                  padding: '16px 20px',
-                  textDecoration: 'none',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: 12,
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '';
-                }}
-              >
-                <div style={{ fontSize: 20, color: '#10b981' }}>💬</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Text Us</span>
-              </a>
-              <a
-                href={`mailto:${primaryProviderEmail}`}
-                className="cp-card"
-                style={{
-                  padding: '16px 20px',
-                  textDecoration: 'none',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: 12,
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '';
-                }}
-              >
-                <div style={{ fontSize: 20, color: '#a855f7' }}>✉️</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Email Us</span>
-              </a>
-              <a
-                href="https://www.vetatyourdoor.com/online-pharmacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="cp-card"
-                style={{
-                  padding: '16px 20px',
-                  textDecoration: 'none',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderRadius: 12,
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '';
-                }}
-              >
-                <div style={{ fontSize: 20, color: '#3b82f6' }}>💊</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Shop Online Pharmacy</span>
-              </a>
-            </div>
-          </section>
-
-          {/* PETS */}
-          <section className="cp-section">
-            {petsWithProvider.length > 1 &&
-              !petsWithProvider.every((p) => {
-                const hasPlan = p.membershipPlanName != null;
-                const status = (p.membershipStatus || '').toLowerCase();
-                return hasPlan && (status === 'active' || status === 'pending');
-              }) && (
-                <div
-                  style={{
-                    marginBottom: 16,
-                    padding: '12px 16px',
-                    background: '#f0fdf4',
-                    border: '1px solid #bbf7d0',
-                    borderRadius: 8,
-                    color: '#166534',
-                    fontSize: 14,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  Enroll more than one pet and receive a $75 credit for each additional pet. Credits may be used at any future Vet At Your Door visit.
-                </div>
-              )}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'baseline',
-                justifyContent: 'space-between',
-                marginBottom: 10,
-              }}
-            >
-              <h2 className="cp-h2" style={{ margin: 0 }}>
-                Your Pets
-              </h2>
-            </div>
-
-            {petsWithProvider.length === 0 ? (
-              <div className="cp-muted">No pets found yet.</div>
-            ) : (
-              <div className="cp-pets">
-                {petsWithProvider.map((p) => {
-                  const subStatus = p.subscription?.status;
-                  const isActive = subStatus === 'active';
-                  const isPending = subStatus === 'pending';
-                  const hasSubscription = isActive || isPending;
-
-                  // Get active wellness plans - filter to only active ones
-                  const activeWellnessPlans = (p.wellnessPlans || []).filter((plan) =>
-                    planIsActive(plan)
-                  );
-                  const hasActiveWellnessPlan = activeWellnessPlans.length > 0;
-                  const hasWellnessPlans = (p.wellnessPlans || []).length > 0;
-                  
-                  // Get membership info
-                  const membershipStatusRaw = p.membershipStatus ?? null;
-                  const membershipStatusNormalized = membershipStatusRaw
-                    ? String(membershipStatusRaw).toLowerCase()
-                    : null;
-                  const membershipIsActive = membershipStatusNormalized === 'active';
-                  const membershipIsPending = membershipStatusNormalized === 'pending';
-                  const hasMembership = p.membershipPlanName != null;
-                  
-                  // Check if membership was created within last 7 days
-                  const membershipUpdatedAt = p.membershipUpdatedAt;
-                  const membershipIsRecent = membershipUpdatedAt
-                    ? (Date.now() - new Date(membershipUpdatedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
-                    : false;
-                  
-                  // Determine what to display for membership/wellness
-                  let membershipDisplayText: string | null = null;
-                  let showMembershipNotice = false;
-                  
-                  if (hasActiveWellnessPlan) {
-                    // Use the first active wellness plan and display its package name
-                    // Don't show billing preference for active plans - only show in processing state
-                    const firstActivePlan = activeWellnessPlans[0];
-                    // Prioritize packageName, fallback to name, then default text
-                    membershipDisplayText = 
-                      firstActivePlan.packageName || 
-                      firstActivePlan.name || 
-                      'Wellness Plan';
-                    showMembershipNotice = true;
-                  } else if (hasMembership && !hasWellnessPlans) {
-                    // No wellness plans but has membership - show with PROCESSING
-                    let planName = p.membershipPlanName || 'Membership';
-                    // Clean the plan name first (removes "Add-ons:" pattern)
-                    planName = cleanMembershipDisplayText(planName);
-                    // Check if planName already includes billing preference
-                    const planNameLower = planName.toLowerCase();
-                    const alreadyHasMonthly = planNameLower.includes('monthly');
-                    const alreadyHasAnnually = planNameLower.includes('annually') || planNameLower.includes('annual');
-                    
-                    // Format billing preference as "Annual" or "Monthly" (title case)
-                    const membershipPricingLabel = !alreadyHasMonthly && !alreadyHasAnnually && p.membershipPricingOption
-                      ? String(p.membershipPricingOption).toLowerCase() === 'annual'
-                        ? 'Annual'
-                        : String(p.membershipPricingOption).toLowerCase() === 'monthly'
-                        ? 'Monthly'
-                        : titleCase(
-                            String(p.membershipPricingOption)
-                              .replace(/[_-]+/g, ' ')
-                              .trim()
-                          )
-                      : null;
-                    
-                    // Debug logging
-                    console.log('[ClientPortal] Processing membership display:', {
-                      membershipPlanName: p.membershipPlanName,
-                      cleanedPlanName: planName,
-                      membershipPricingOption: p.membershipPricingOption,
-                      membershipPricingLabel,
-                      alreadyHasMonthly,
-                      alreadyHasAnnually,
-                    });
-                    
-                    membershipDisplayText = membershipPricingLabel
-                      ? `${planName} ${membershipPricingLabel}`
-                      : planName;
-                    showMembershipNotice = true;
-                  } else if (hasMembership && hasWellnessPlans && !hasActiveWellnessPlan) {
-                    // Has membership and wellness plans but none are active
-                    if (membershipIsRecent) {
-                      // Show membership with PROCESSING if created within 7 days
-                      let planName = p.membershipPlanName || 'Membership';
-                      // Clean the plan name first (removes "Add-ons:" pattern)
-                      planName = cleanMembershipDisplayText(planName);
-                      // Check if planName already includes billing preference
-                      const planNameLower = planName.toLowerCase();
-                      const alreadyHasMonthly = planNameLower.includes('monthly');
-                      const alreadyHasAnnually = planNameLower.includes('annually') || planNameLower.includes('annual');
-                      
-                      // Format billing preference as "Annual" or "Monthly" (title case)
-                      const membershipPricingLabel = !alreadyHasMonthly && !alreadyHasAnnually && p.membershipPricingOption
-                        ? String(p.membershipPricingOption).toLowerCase() === 'annual'
-                          ? 'Annual'
-                          : String(p.membershipPricingOption).toLowerCase() === 'monthly'
-                          ? 'Monthly'
-                          : titleCase(
-                              String(p.membershipPricingOption)
-                                .replace(/[_-]+/g, ' ')
-                                .trim()
-                            )
-                        : null;
-                      
-                      // Debug logging
-                      console.log('[ClientPortal] Processing membership display (recent):', {
-                        membershipPlanName: p.membershipPlanName,
-                        cleanedPlanName: planName,
-                        membershipPricingOption: p.membershipPricingOption,
-                        membershipPricingLabel,
-                        alreadyHasMonthly,
-                        alreadyHasAnnually,
-                      });
-                      
-                      membershipDisplayText = membershipPricingLabel
-                        ? `${planName} ${membershipPricingLabel}`
-                        : planName;
-                      showMembershipNotice = true;
-                    } else {
-                      // Don't show anything if older than 7 days
-                      showMembershipNotice = false;
-                    }
-                  }
-                  
-                  // Show signup button if no active wellness plan and no membership (or membership is old)
-                  const showMembershipButton =
-                    !hasActiveWellnessPlan &&
-                    (!hasMembership || (hasMembership && hasWellnessPlans && !hasActiveWellnessPlan && !membershipIsRecent));
-
-                  // Determine if membership is processing (has membership but no active wellness plan)
-                  const isMembershipProcessing = hasMembership && !hasActiveWellnessPlan && showMembershipNotice;
-                  
-                  const badgeLabel = isActive
-                    ? 'Subscription Active'
-                    : isPending
-                    ? 'Subscription Pending'
-                    : hasActiveWellnessPlan
-                    ? 'Membership Active'
-                    : isMembershipProcessing
-                    ? 'Membership Processing'
-                    : membershipIsPending
-                    ? 'Membership Pending'
-                    : null;
-                  
-                  // Colors based on badge label: Membership Active = green, Membership Processing = orange
-                  let badgeColor = '#f97316'; // Default orange
-                  if (badgeLabel === 'Subscription Active' || badgeLabel === 'Membership Active') {
-                    badgeColor = '#4FB128'; // Green
-                  } else if (badgeLabel === 'Membership Processing') {
-                    badgeColor = '#f97316'; // Orange
-                  } else {
-                    badgeColor = '#f97316'; // Orange for pending
-                  }
-
-                  return (
-                    <article
-                      key={p.id}
-                      className="cp-card cp-pet-card"
-                      style={{ borderRadius: 14, overflow: 'hidden' }}
-                    >
-                      <div
-                        className="cp-pet-img"
-                        style={{
-                          position: 'relative',
-                          overflow: 'hidden',
-                          background: '#fff',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundImage: `url(${petImg(p)})`,
-                          backgroundRepeat: 'no-repeat',
-                          backgroundPosition: 'center',
-                          backgroundSize: 'contain',
-                          borderRadius: '16px',
-                          border: '1px solid rgba(0, 0, 0, 0.06)',
-                        }}
-                      >
-                        {badgeLabel && (
-                          <span
-                            style={{
-                              position: 'absolute',
-                              top: 10,
-                              left: 10,
-                              background: badgeColor === '#4FB128' 
-                                ? '#E8F5E9' 
-                                : '#FFF4E6',
-                              color: badgeColor,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              padding: '3px 10px',
-                              borderRadius: 4,
-                              border: `1px solid ${badgeColor}`,
-                              boxShadow: 'none',
-                            }}
-                          >
-                            {badgeLabel}
-                          </span>
-                        )}
-                        {p.dbId && (
-                          <label
-                            style={{
-                              position: 'absolute',
-                              top: 10,
-                              right: 10,
-                              background: 'rgba(255, 255, 255, 0.9)',
-                              border: '1px solid rgba(0, 0, 0, 0.1)',
-                              borderRadius: '50%',
-                              width: 32,
-                              height: 32,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              cursor: uploadingPetId === p.id ? 'wait' : 'pointer',
-                              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
-                              transition: 'all 0.2s ease',
-                            }}
-                            title="Upload pet image"
-                            onMouseEnter={(e) => {
-                              if (uploadingPetId !== p.id) {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 1)';
-                                e.currentTarget.style.transform = 'scale(1.1)';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.9)';
-                              e.currentTarget.style.transform = 'scale(1)';
-                            }}
-                          >
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-                              style={{ display: 'none' }}
-                              disabled={uploadingPetId === p.id}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  handlePetImageUpload(p, file);
-                                }
-                                // Reset input so same file can be selected again
-                                e.target.value = '';
-                              }}
-                            />
-                            {uploadingPetId === p.id ? (
-                              <span style={{ fontSize: 14, color: '#666' }}>⏳</span>
-                            ) : (
-                              <span style={{ fontSize: 16 }}>📷</span>
-                            )}
-                          </label>
-                        )}
-                      </div>
-
-                      <div style={{ padding: 12 }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                            alignItems: 'center',
-                          }}
-                        >
-                          <strong
-                            style={{
-                              fontSize: 16,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {p.name}
-                          </strong>
-                        </div>
-
-                        <div className="cp-muted" style={{ marginTop: 4, fontSize: 12 }}>
-                          <strong style={{ fontWeight: 600 }}>Primary Provider:</strong>{' '}
-                          {p.primaryProviderName || '—'}
-                        </div>
-                        <div className="cp-muted" style={{ marginTop: 6, fontSize: 14 }}>
-                          {p.species || p.breed
-                            ? [p.species, p.breed].filter(Boolean).join(' • ')
-                            : '—'}
-                        </div>
-                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-                          {showMembershipNotice && membershipDisplayText && (
-                            <div className="cp-muted" style={{ fontSize: 13 }}>
-                              <strong style={{ fontWeight: 600 }}>Membership:</strong>{' '}
-                              {membershipDisplayText}
-                              {!hasActiveWellnessPlan && (
-                                <span style={{ color: '#fbbf24', fontWeight: 600 }}> - PROCESSING</span>
-                              )}
-                            </div>
-                          )}
-                          {p.subscription?.name && (
-                            <div className="cp-muted" style={{ fontSize: 12 }}>
-                              {p.subscription.name} ({p.subscription.status})
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Reminders for this pet */}
-                        {(() => {
-                          const allPetReminders = getAllPetReminders(p);
-                          const displayedReminders = allPetReminders.slice(0, 3);
-                          const hasMore = allPetReminders.length > 3;
-
-                          if (allPetReminders.length === 0) return null;
-
-                          return (
-                            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#111827' }}>
-                                Reminders
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {displayedReminders.map((r) => {
-                                  const overdue = isReminderOverdue(r);
-                                  const upcoming = isReminderUpcoming(r);
-                                  return (
-                                    <div
-                                      key={r.id}
-                                      style={{
-                                        fontSize: 12,
-                                        color: overdue ? '#dc2626' : '#374151',
-                                        fontWeight: upcoming ? 700 : 400,
-                                      }}
-                                    >
-                                      {fmtReminderDate(r)} — {r.description ?? r.kind ?? '—'}
-                                    </div>
-                                  );
-                                })}
-                                {hasMore && (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedPetReminders({ pet: p, reminders: allPetReminders });
-                                      setShowReminderModal(true);
-                                    }}
-                                    style={{
-                                      marginTop: 4,
-                                      fontSize: 12,
-                                      color: '#10b981',
-                                      background: 'transparent',
-                                      border: 'none',
-                                      cursor: 'pointer',
-                                      padding: 0,
-                                      textAlign: 'left',
-                                      fontWeight: 600,
-                                    }}
-                                  >
-                                    More...
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Vaccination Certificate Link */}
-                        {p.vaccinations && p.vaccinations.length > 0 && (
-                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
-                            <button
-                              onClick={() => {
-                                setSelectedPetForVaccination(p);
-                                setShowVaccinationModal(true);
-                              }}
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                backgroundColor: 'transparent',
-                                color: '#0f766e',
-                                border: '1px solid #0f766e',
-                                borderRadius: 8,
-                                fontSize: 13,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
-                                transition: 'all 0.2s',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = '#f0fdfa';
-                                e.currentTarget.style.borderColor = '#0d9488';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'transparent';
-                                e.currentTarget.style.borderColor = '#0f766e';
-                              }}
-                            >
-                              <svg
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                style={{ width: 16, height: 16 }}
-                              >
-                                <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-                                <rect x="6" y="14" width="12" height="8"></rect>
-                              </svg>
-                              Print Vaccination Certificate
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {false && (() => {
-                          const canUpgrade = canUpgradeMembership(p);
-                          // canUpgradeMembership already checks for base plans in both membership and wellness plans
-                          // So if it returns true, we know they have a base plan somewhere
-                          if (canUpgrade) {
-                            console.log('[Upgrade Button] Showing upgrade button for:', p.name, {
-                              membershipPlanName: p.membershipPlanName,
-                              wellnessPlansCount: (p.wellnessPlans || []).length,
-                              hasMembership,
-                              hasActiveWellnessPlan,
-                            });
-                          }
-                          return canUpgrade;
-                        })() && (
-                          <button
-                            onClick={() => handleUpgradeMembership(p)}
-                            style={{
-                              width: '100%',
-                              padding: '8px 12px',
-                              backgroundColor: '#0f766e',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 8,
-                              fontSize: 14,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              transition: 'opacity 0.2s',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.opacity = '0.9';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.opacity = '1';
-                            }}
-                          >
-                            Upgrade My Plan
-                          </button>
-                        )}
-                        {showMembershipButton && (
-                          <button
-                            onClick={() => handleEnrollMembership(p)}
-                            style={{
-                              width: '100%',
-                              padding: '8px 12px',
-                              backgroundColor: '#4FB128',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 8,
-                              fontSize: 14,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              transition: 'opacity 0.2s',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.opacity = '0.9';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.opacity = '1';
-                            }}
-                          >
-                            Explore membership options for {p.name}
-                          </button>
-                        )}
-                        <div style={{ position: 'relative', width: '100%' }}>
-                          {isChatHoursOpen ? (
-                            <button
-                              onClick={() => {
-                                if (hasActiveWellnessPlan) {
-                                  window.open('https://direct.lc.chat/19087357/', '_blank', 'noopener,noreferrer');
-                                } else {
-                                  alert('After-hours chat is only available to members. Please sign up for a membership plan to access this feature.');
-                                }
-                              }}
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                backgroundColor: '#3b82f6',
-                                color: '#fff',
-                                border: 'none',
-                                borderRadius: 8,
-                                fontSize: 14,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                textAlign: 'center',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
-                                transition: 'opacity 0.2s',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.opacity = '0.9';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.opacity = '1';
-                              }}
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                              </svg>
-                              After-hours Chat
-                            </button>
-                          ) : (
-                            <div
-                              style={{
-                                width: '100%',
-                                padding: '8px 12px',
-                                backgroundColor: '#9ca3af',
-                                color: '#fff',
-                                border: 'none',
-                                borderRadius: 8,
-                                fontSize: 14,
-                                fontWeight: 600,
-                                cursor: 'not-allowed',
-                                textAlign: 'center',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
-                                position: 'relative',
-                              }}
-                              onMouseEnter={(e) => {
-                                const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
-                                if (tooltip) tooltip.style.opacity = '1';
-                              }}
-                              onMouseLeave={(e) => {
-                                const tooltip = e.currentTarget.querySelector('.chat-hours-tooltip') as HTMLElement;
-                                if (tooltip) tooltip.style.opacity = '0';
-                              }}
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 18, height: 18 }}>
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                              </svg>
-                              After-hours Chat
-                              {hasActiveWellnessPlan && formattedChatHours ? (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    bottom: '100%',
-                                    left: '50%',
-                                    transform: 'translateX(-50%)',
-                                    marginBottom: '8px',
-                                    padding: '12px 16px',
-                                    backgroundColor: '#1f2937',
-                                    color: '#fff',
-                                    borderRadius: 8,
-                                    fontSize: 13,
-                                    lineHeight: 1.6,
-                                    whiteSpace: 'pre-line',
-                                    textAlign: 'left',
-                                    minWidth: '240px',
-                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                    opacity: 0,
-                                    pointerEvents: 'none',
-                                    transition: 'opacity 0.2s',
-                                    zIndex: 1000,
-                                  }}
-                                  className="chat-hours-tooltip"
-                                >
-                                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                                    Chat is only available during the hours the practice allows:
-                                  </div>
-                                  <div style={{ display: 'grid', gap: '4px' }}>
-                                    {formattedChatHours.map((f) => (
-                                      <div key={f.day} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ fontWeight: 500 }}>{f.day}:</span>
-                                        <span style={{ marginLeft: '12px' }}>{f.hours}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    bottom: '100%',
-                                    left: '50%',
-                                    transform: 'translateX(-50%)',
-                                    marginBottom: '8px',
-                                    padding: '12px 16px',
-                                    backgroundColor: '#1f2937',
-                                    color: '#fff',
-                                    borderRadius: 8,
-                                    fontSize: 13,
-                                    lineHeight: 1.6,
-                                    whiteSpace: 'pre-line',
-                                    textAlign: 'left',
-                                    minWidth: '240px',
-                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                    opacity: 0,
-                                    pointerEvents: 'none',
-                                    transition: 'opacity 0.2s',
-                                    zIndex: 1000,
-                                  }}
-                                  className="chat-hours-tooltip"
-                                >
-                                  <div style={{ fontWeight: 600 }}>
-                                    Chat is available for members only. Sign up today!
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          {/* UPCOMING APPOINTMENTS */}
-          <section className="cp-section">
-            <h2 className="cp-h2">Upcoming Appointments</h2>
-
-            {upcomingAppts.length === 0 ? (
-              <div className="cp-muted">No upcoming appointments.</div>
-            ) : (
-              <div className="cp-grid-gap">
-                {upcomingByDay.map(({ key, label, items }) => (
-                  <div key={key} className="cp-card" style={{ padding: 14 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 999,
-                          background: brand,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <h3 className="cp-h3" style={{ margin: 0 }}>
-                        {label}
-                      </h3>
-                    </div>
-
-                    <div className="cp-grid-gap" style={{ marginTop: 10 }}>
-                      {items.map((a) => (
-                        <div
-                          key={a.id}
-                          className="cp-card"
-                          style={{ padding: 0, overflow: 'hidden' }}
-                        >
-                          <div className="cp-appt-row">
-                            <div style={{ fontWeight: 600 }}>{fmtDateTime(a.startIso)}</div>
-                            <div className="cp-muted">
-                              <strong>{a.patientName ?? '—'}</strong>
-                            </div>
-                            <div className="cp-muted cp-hide-xs">
-                              {a.appointmentTypeName ??
-                                (typeof a.appointmentType === 'string'
-                                  ? a.appointmentType
-                                  : a.appointmentType?.name) ??
-                                '—'}
-                            </div>
-                            <div
-                              className="cp-muted cp-hide-xs"
-                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-                            >
-                              {[a.address1, a.city, a.state, a.zip].filter(Boolean).join(', ') ||
-                                '—'}
-                            </div>
-                            <div className="cp-muted cp-hide-xs" style={{ textAlign: 'right' }}>
-                              {a.statusName ?? '—'}
+      {/* ---------- modals ---------- */}
+      {showReferral ? <ReferralModal onClose={() => setShowReferral(false)} /> : null}
+      {showPreferences ? (
+        <PreferencesModal
+          onClose={() => setShowPreferences(false)}
+          fallbackInfo={clientInfo || localClientInfo}
+          onSaved={() => setToast('Preferences saved')}
+        />
+      ) : null}
+      {showProviderBio && selectedPet ? (
+        <ProviderBioModal
+          provider={selectedProvider}
+          fallbackName={selectedPet.primaryProviderName ?? null}
+          petName={selectedPet.name}
+          onClose={() => setShowProviderBio(false)}
+          onRequestVisit={() => {
+            setShowProviderBio(false);
+            goRequestVisit();
+          }}
+        />
+      ) : null}
+      {remindersModalPet ? (
+        <PortalModal title={`${possessive(remindersModalPet.name)} care list`} onClose={() => setRemindersModalPet(null)} labelledBy="pp-rem-title">
+          {(() => {
+            const all = getAllPetReminders(remindersModalPet);
+            const declined = petDeclined(remindersModalPet);
+            return (
+              <>
+                {all.length > 0 ? (
+                  <div className="pp-rows">
+                    {all.map((r) => {
+                      const d = daysUntil(r.dueIso);
+                      const overdue = d != null && d < 0;
+                      return (
+                        <div key={r.id} className={`pp-row${overdue ? ' pp-row--overdue' : ''}`}>
+                          <div className="pp-row-main">
+                            <div className="pp-row-title">{r.description ?? r.kind ?? '—'}</div>
+                            <div className="pp-row-sub">
+                              {overdue ? 'Was due ' : 'Due '}
+                              {fmtReminderDate(r)}
                             </div>
                           </div>
-                          {(() => {
-                            const token = (a.roomLoaderPublicToken ?? '').trim();
-                            if (!token) return null;
-                            const completed =
-                              (a.roomLoaderSentStatus ?? '').toLowerCase() === 'completed';
-                            return (
-                              <div className="cp-appt-room-loader">
-                                {completed ? (
-                                  <>
-                                    <p className="cp-appt-room-loader-label">
-                                      Pre-visit check-in is complete. You can download a copy for your records.
-                                    </p>
-                                    <div className="cp-appt-room-loader-actions">
-                                      <a
-                                        className="cp-appt-room-loader-btn cp-appt-room-loader-btn--pdf"
-                                        href={getClientRoomLoaderPdfHref(token)}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                      >
-                                        Download PDF
-                                      </a>
-                                    </div>
-                                  </>
-                                ) : (
-                                  <>
-                                    <p className="cp-appt-room-loader-label">
-                                      Your care team shared a pre-visit check-in for this appointment. Please complete
-                                      it before your visit.
-                                    </p>
-                                    <div className="cp-appt-room-loader-actions">
-                                      <Link
-                                        className="cp-appt-room-loader-btn cp-appt-room-loader-btn--form"
-                                        to={getClientRoomLoaderFormPath(token)}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                      >
-                                        Open check-in form
-                                      </Link>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })()}
+                          <span className={`pp-tag ${overdue ? 'pp-tag--overdue' : 'pp-tag--ok'}`}>{overdue ? 'Overdue' : 'Upcoming'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="pp-empty">No open reminders.</div>
+                )}
+                {declined.length > 0 ? (
+                  <div>
+                    <div className="pp-small" style={{ fontWeight: 800, margin: '6px 0' }}>
+                      Previously declined
+                    </div>
+                    <div className="pp-rows">
+                      {declined.map((item) => (
+                        <div key={item.id} className="pp-row">
+                          <div className="pp-row-main">
+                            <div className="pp-row-title">{item.label}</div>
+                            {item.declinedAt ? <div className="pp-row-sub">Declined {formatDeclinedDate(item.declinedAt)}</div> : null}
+                          </div>
+                          <span className="pp-tag pp-tag--declined">Declined</span>
                         </div>
                       ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* Error Modal */}
-          {showErrorModal && errorModalMessage && (
-            <div
-              style={{
-                position: 'fixed',
-                inset: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 10000,
-                padding: '20px',
-              }}
-              onClick={() => {
-                setShowErrorModal(false);
-                setErrorModalMessage(null);
-              }}
-            >
-              <div
-                className="cp-card"
-                style={{
-                  maxWidth: '500px',
-                  width: '100%',
-                  padding: '24px',
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                  <h2 className="cp-h2" style={{ margin: 0, color: '#b00020' }}>
-                    Upload Error
-                  </h2>
+                ) : null}
+                <div className="pp-modal-foot">
                   <button
+                    type="button"
+                    className="pp-btn pp-btn--primary"
                     onClick={() => {
-                      setShowErrorModal(false);
-                      setErrorModalMessage(null);
-                    }}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      fontSize: 24,
-                      cursor: 'pointer',
-                      color: '#6b7280',
-                      padding: '0 8px',
+                      setRemindersModalPet(null);
+                      goRequestVisit();
                     }}
                   >
-                    ×
+                    <Icon name="calendar" /> Request a visit
                   </button>
                 </div>
-                <div style={{ color: '#374151', lineHeight: 1.6, marginBottom: 24 }}>
-                  {errorModalMessage}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    onClick={() => {
-                      setShowErrorModal(false);
-                      setErrorModalMessage(null);
-                    }}
-                    style={{
-                      background: '#4FB128',
-                      color: '#fff',
-                      border: 'none',
-                      padding: '10px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      fontWeight: 600,
-                    }}
-                  >
-                    OK
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Reminder Modal */}
-          {showReminderModal && selectedPetReminders && (
-            <div
-              style={{
-                position: 'fixed',
-                inset: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '20px',
-              }}
-              onClick={() => {
-                setShowReminderModal(false);
-                setSelectedPetReminders(null);
-              }}
-            >
-              <div
-                className="cp-card"
-                style={{
-                  maxWidth: '500px',
-                  width: '100%',
-                  maxHeight: '80vh',
-                  overflowY: 'auto',
-                  padding: '24px',
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                  <h2 className="cp-h2" style={{ margin: 0 }}>
-                    Reminders for {selectedPetReminders.pet.name}
-                  </h2>
-                  <button
-                    onClick={() => {
-                      setShowReminderModal(false);
-                      setSelectedPetReminders(null);
-                    }}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      fontSize: 24,
-                      cursor: 'pointer',
-                      color: '#6b7280',
-                      padding: '0 8px',
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {selectedPetReminders.reminders.map((r) => {
-                    const overdue = isReminderOverdue(r);
-                    const upcoming = isReminderUpcoming(r);
-                    return (
-                      <div
-                        key={r.id}
-                        style={{
-                          padding: '12px',
-                          borderRadius: 8,
-                          border: '1px solid #e5e7eb',
-                          backgroundColor: '#fff',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 14,
-                            color: overdue ? '#dc2626' : '#374151',
-                            fontWeight: upcoming ? 700 : 400,
-                            marginBottom: 4,
-                          }}
-                        >
-                          {fmtReminderDate(r)}
-                        </div>
-                        <div style={{ fontSize: 14, color: '#6b7280' }}>
-                          {r.description ?? r.kind ?? '—'}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
-                  <a
-                    href={APPOINTMENT_REQUEST_URL}
-                    className="cp-card"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '14px 16px',
-                      textDecoration: 'none',
-                      color: '#111827',
-                      borderRadius: 8,
-                      transition: 'transform 0.2s, box-shadow 0.2s',
-                      cursor: 'pointer',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = 'translateY(-2px)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = 'translateY(0)';
-                      e.currentTarget.style.boxShadow = '';
-                    }}
-                  >
-                    <div style={{ fontSize: 20, color: '#3b82f6' }}>📅</div>
-                    <span style={{ fontSize: 14, fontWeight: 600 }}>Request An Appointment</span>
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Vaccination Certificate Modal */}
-          {showVaccinationModal && selectedPetForVaccination && selectedPetForVaccination.vaccinations && (
-            <VaccinationCertificateModal
-              pet={selectedPetForVaccination}
-              vaccinations={selectedPetForVaccination.vaccinations}
-              onClose={() => {
-                setShowVaccinationModal(false);
-                setSelectedPetForVaccination(null);
-              }}
-            />
-          )}
-
-        </>
-      )}
-
-      {/* ---------------------------
-          Footer
-      ---------------------------- */}
-      <footer
-        style={{
-          marginTop: '48px',
-          padding: '32px 16px',
-          borderTop: '1px solid #e5e7eb',
-          backgroundColor: '#f9fafb',
-          textAlign: 'center',
-        }}
-      >
-        <div style={{ maxWidth: 1120, margin: '0 auto' }}>
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ fontSize: '18px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
-              Vet At Your Door
-            </div>
-            <div style={{ fontSize: '14px', color: '#6b7280' }}>
-              Providing quality veterinary care at your doorstep.
-            </div>
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-              gap: '24px',
-              marginBottom: '16px',
+              </>
+            );
+          })()}
+        </PortalModal>
+      ) : null}
+      {certificatePet ? (
+        certificatePet.vaccinations && certificatePet.vaccinations.length > 0 ? (
+          <VaccinationCertificateModal
+            pet={certificatePet}
+            vaccinations={certificatePet.vaccinations}
+            onClose={() => setCertificatePet(null)}
+            onEmail={() => {
+              setEmailCertPet(certificatePet);
+              setCertificatePet(null);
             }}
-          >
-            <a
-              href="tel:207-536-8387"
-              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
-            >
-              (207) 536-8387
-            </a>
-            <a
-              href="mailto:info@vetatyourdoor.com"
-              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
-            >
-              info@vetatyourdoor.com
-            </a>
-            <a
-              href="https://www.vetatyourdoor.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ fontSize: '14px', color: '#4FB128', textDecoration: 'none' }}
-            >
-              www.vetatyourdoor.com
-            </a>
-          </div>
-          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '16px' }}>
-            © {new Date().getFullYear()} Vet At Your Door. All rights reserved.
-          </div>
-        </div>
-      </footer>
-
-
-      {/* ---------------------------
-          Referral Modal
-      ---------------------------- */}
-      {showReferralModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-            padding: '20px',
-          }}
-          onClick={() => {
-            if (!referralSubmitting) {
-              setShowReferralModal(false);
-              setReferralError(null);
-              setReferralSuccess(false);
-              setReferralEmail('');
-              setReferralName('');
-            }
-          }}
-        >
-          <div
-            className="cp-card"
-            style={{
-              maxWidth: '440px',
-              width: '100%',
-              padding: '24px',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-              <h2 className="cp-h2" style={{ margin: 0 }}>
-                {referralSuccess ? 'Thank you' : 'Know someone who would love this way of veterinary care?'}
-              </h2>
+          />
+        ) : (
+          <PortalModal title="No vaccinations on file" onClose={() => setCertificatePet(null)} labelledBy="pp-novacc">
+            <p className="pp-muted pp-small" style={{ margin: 0, lineHeight: 1.55 }}>
+              We don&apos;t have any vaccinations recorded for {certificatePet.name} yet. Once we do, you&apos;ll be able to print or email an
+              official certificate from here.
+            </p>
+            <div className="pp-modal-foot">
+              <button type="button" className="pp-btn pp-btn--ghost" onClick={() => setCertificatePet(null)}>
+                Close
+              </button>
               <button
                 type="button"
+                className="pp-btn pp-btn--primary"
                 onClick={() => {
-                  if (!referralSubmitting) {
-                    setShowReferralModal(false);
-                    setReferralError(null);
-                    setReferralSuccess(false);
-                    setReferralEmail('');
-                    setReferralName('');
-                  }
-                }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  fontSize: 24,
-                  cursor: referralSubmitting ? 'not-allowed' : 'pointer',
-                  color: '#6b7280',
-                  padding: '0 8px',
+                  setCertificatePet(null);
+                  goRequestVisit();
                 }}
               >
-                ×
+                Book a wellness visit
               </button>
             </div>
-            {referralSuccess ? (
-              <>
-                <p style={{ color: '#0f766e', fontWeight: 600, marginBottom: 12 }}>
-                  Your referral has been sent successfully.
-                </p>
-                <p style={{ color: '#374151', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
-                  Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
-                </p>
-                <p style={{ color: '#374151', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
-                  We will reach out to your friend directly. As a warm welcome, their first trip fee is on us.
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReferralError(null);
-                      setReferralSuccess(false);
-                      setReferralEmail('');
-                      setReferralName('');
-                    }}
-                    style={{
-                      background: 'transparent',
-                      color: '#0f766e',
-                      border: '2px solid #0f766e',
-                      padding: '10px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Refer another friend
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowReferralModal(false);
-                      setReferralError(null);
-                      setReferralSuccess(false);
-                      setReferralEmail('');
-                      setReferralName('');
-                    }}
-                    style={{
-                      background: '#0f766e',
-                      color: '#fff',
-                      border: 'none',
-                      padding: '10px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
-                  Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
-                </p>
-                <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
-                  As a warm welcome, their first trip fee is on us. If someone comes to mind whose pet would benefit from calmer visits and relationship-based care, we'd be honored if you shared Vet at Your Door.
-                </p>
-                {referralError && (
-                  <div
-                    style={{
-                      padding: '12px',
-                      marginBottom: 16,
-                      borderRadius: 8,
-                      background: '#fef2f2',
-                      color: '#b91c1c',
-                      fontSize: 14,
-                    }}
-                  >
-                    {referralError}
-                  </div>
-                )}
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const email = referralEmail.trim();
-                    const name = referralName.trim();
-                    if (!email) {
-                      setReferralError('Please enter an email address.');
-                      return;
-                    }
-                    if (!name) {
-                      setReferralError('Please enter your friend\'s name.');
-                      return;
-                    }
-                    setReferralError(null);
-                    setReferralSubmitting(true);
-                    try {
-                      await submitReferral(email, name);
-                      setReferralSuccess(true);
-                    } catch (err: any) {
-                      const message =
-                        err?.response?.data?.message ??
-                        err?.response?.data?.error ??
-                        err?.message ??
-                        'Something went wrong. Please try again.';
-                      setReferralError(typeof message === 'string' ? message : 'Something went wrong. Please try again.');
-                    } finally {
-                      setReferralSubmitting(false);
-                    }
-                  }}
-                  style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
-                >
-                  <div>
-                    <label htmlFor="referral-email" style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
-                      Email <span style={{ color: '#b91c1c' }}>*</span>
-                    </label>
-                    <input
-                      id="referral-email"
-                      type="email"
-                      value={referralEmail}
-                      onChange={(e) => setReferralEmail(e.target.value)}
-                      placeholder="friend@example.com"
-                      required
-                      disabled={referralSubmitting}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        fontSize: 14,
-                        border: '1px solid #d1d5db',
-                        borderRadius: 8,
-                        boxSizing: 'border-box',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="referral-name" style={{ display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
-                      Name <span style={{ color: '#b91c1c' }}>*</span>
-                    </label>
-                    <input
-                      id="referral-name"
-                      type="text"
-                      value={referralName}
-                      onChange={(e) => setReferralName(e.target.value)}
-                      placeholder="Friend's name"
-                      required
-                      disabled={referralSubmitting}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        fontSize: 14,
-                        border: '1px solid #d1d5db',
-                        borderRadius: 8,
-                        boxSizing: 'border-box',
-                      }}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!referralSubmitting) {
-                          setShowReferralModal(false);
-                          setReferralError(null);
-                          setReferralEmail('');
-                          setReferralName('');
-                        }
-                      }}
-                      style={{
-                        background: '#f3f4f6',
-                        color: '#374151',
-                        border: 'none',
-                        padding: '10px 20px',
-                        borderRadius: '8px',
-                        cursor: referralSubmitting ? 'not-allowed' : 'pointer',
-                        fontSize: 14,
-                        fontWeight: 500,
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={referralSubmitting}
-                      style={{
-                        background: referralSubmitting ? '#9ca3af' : '#0f766e',
-                        color: '#fff',
-                        border: 'none',
-                        padding: '10px 24px',
-                        borderRadius: '8px',
-                        cursor: referralSubmitting ? 'not-allowed' : 'pointer',
-                        fontSize: 14,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {referralSubmitting ? 'Sending…' : 'Send referral'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+          </PortalModal>
+        )
+      ) : null}
+      {emailCertPet ? (
+        <EmailCertificateModal
+          pet={emailCertPet}
+          defaultTo={userEmail ?? null}
+          onClose={() => setEmailCertPet(null)}
+          onSent={(to) => setToast(`Certificate sent to ${to} ✉️`)}
+        />
+      ) : null}
+      {galleryPet?.dbId ? (
+        <PatientPhotoGalleryModal
+          open
+          patientId={galleryPet.dbId}
+          patientName={galleryPet.name || 'Pet'}
+          onClose={() => {
+            setGalleryPet(null);
+            setGalleryRefreshKey((k) => k + 1);
+          }}
+          onPrimaryChange={(imageUrl) => {
+            const petKey = galleryPet.id;
+            setPets((prev) => prev.map((p) => (p.id === petKey ? { ...p, photoUrl: imageUrl || null } : p)));
+          }}
+        />
+      ) : null}
+      {benefitsPet ? (
+        <MembershipBenefitsModal
+          pet={benefitsPet}
+          membership={computeMembershipView(benefitsPet)}
+          onClose={() => setBenefitsPet(null)}
+        />
+      ) : null}
 
-      {/* ---------------------------
-          Preferences Modal
-      ---------------------------- */}
-      {showPreferencesModal && (
-        <div
-          className="cp-preferences-modal-overlay"
-          onClick={() => setShowPreferencesModal(false)}
-        >
-          <div
-            className="cp-preferences-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="cp-preferences-modal-header">
-              <h2 className="cp-preferences-modal-title">Preferences</h2>
-              <button
-                className="cp-preferences-modal-close"
-                onClick={() => setShowPreferencesModal(false)}
-                aria-label="Close"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="cp-preferences-modal-tabs">
-              <button className="cp-preferences-modal-tab active">Communications</button>
-            </div>
-            <div className="cp-preferences-modal-content">
-              <div className="cp-preferences-section">
-                <h3 className="cp-preferences-section-title">Communication Preferences</h3>
-                <p className="cp-preferences-section-description">
-                  Choose how you would like to receive communications from us.
-                </p>
-                <div className="cp-preferences-checkbox-group">
-                  <label className="cp-preferences-checkbox-item">
-                    <input
-                      type="checkbox"
-                      className="cp-preferences-checkbox"
-                      checked={allowEmail === true}
-                      onChange={(e) => setAllowEmail(e.target.checked)}
-                    />
-                    <div className="cp-preferences-checkbox-label">
-                      <div>Email</div>
-                      <div className="cp-preferences-checkbox-description">
-                        If you uncheck this, you will no longer receive any communications via email, including appointment and service reminders, appointment request confirmations, and anything else now or in the future managed through the client portal.
-                      </div>
-                    </div>
-                  </label>
-                  <label className="cp-preferences-checkbox-item">
-                    <input
-                      type="checkbox"
-                      className="cp-preferences-checkbox"
-                      checked={allowText === true}
-                      onChange={(e) => setAllowText(e.target.checked)}
-                    />
-                    <div className="cp-preferences-checkbox-label">
-                      <div>Text (SMS)</div>
-                      <div className="cp-preferences-checkbox-description">
-                        If you uncheck this, you will no longer receive any communications via text, including appointment and service reminders, appointment request confirmations, and anything else now or in the future managed through the client portal.
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-            <div className="cp-preferences-modal-footer">
-              <button
-                className="cp-preferences-button cp-preferences-button-secondary"
-                onClick={() => setShowPreferencesModal(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="cp-preferences-button cp-preferences-button-primary"
-                onClick={handleSavePreferences}
-                disabled={savingPreferences}
-              >
-                {savingPreferences ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {autoshipRx ? (
+        <AutoshipManageModal
+          pet={autoshipRx.pet}
+          rx={autoshipRx.rx}
+          practiceId={STORE_PRACTICE_ID}
+          onClose={() => setAutoshipRx(null)}
+          onOrderNow={() => {
+            const { pet, rx } = autoshipRx;
+            setAutoshipRx(null);
+            void orderChronicForPet(pet, rx);
+          }}
+          onChanged={() => void refreshChronicFor(autoshipRx.pet)}
+          onToast={(text) => setToast(text)}
+        />
+      ) : null}
 
-      {/* ---------------------------
-          Mobile Bottom Navigation
-          (shows only under 640px)
-      ---------------------------- */}
-      <nav className="cp-bottom-nav" aria-label="Primary">
-        <div className="cp-bottom-inner">
-          <button className="cp-tab" onClick={handleBook} aria-label="Book an appointment">
-            {/* calendar-plus icon (inline svg) */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
-              <line x1="12" y1="14" x2="12" y2="20" />
-              <line x1="9" y1="17" x2="15" y2="17" />
-            </svg>
-            <span>Book</span>
-          </button>
-
-          <button className="cp-tab" onClick={handleShop} aria-label="Shop online pharmacy">
-            {/* shopping-bag icon */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <path d="M16 10a4 4 0 0 1-8 0"></path>
-            </svg>
-            <span>Shop</span>
-          </button>
-
-          <button className="cp-tab" onClick={handleCall} aria-label="Call us">
-            {/* phone */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.59 2.6a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.48-1.11a2 2 0 0 1 2.11-.45c.83.27 1.7.47 2.6.59A2 2 0 0 1 22 16.92z" />
-            </svg>
-            <span>Call</span>
-          </button>
-
-          <button className="cp-tab" onClick={handleMessages} aria-label="Text">
-            {/* text message icon */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              <line x1="8" y1="10" x2="16" y2="10" />
-              <line x1="8" y1="14" x2="14" y2="14" />
-            </svg>
-            <span>Text</span>
-          </button>
-        </div>
-      </nav>
+      <Toast message={toast} onDone={() => setToast(null)} />
     </div>
   );
 }

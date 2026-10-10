@@ -1,9 +1,11 @@
 // src/App.tsx
-import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router';
-import { useEffect, useMemo, useRef } from 'react';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
 import ResetPass from './pages/ResetPass';
+import PracticeHandoffPage from './pages/PracticeHandoff';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
@@ -11,6 +13,7 @@ import UserMenu, { type UserMenuExtra } from './components/UserMenu';
 import NavbarGlobalSearch from './components/NavbarGlobalSearch';
 import NavbarScheduleHorizontalNav from './components/NavbarScheduleHorizontalNav';
 import { getAccessiblePages } from './app-pages';
+import { CATALOG_HOME, INVENTORY_HOME } from './utils/catalogInventoryNav';
 import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
@@ -20,7 +23,7 @@ import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
-import MembershipUpgrade from './pages/MembershipUpgrade';
+import MembershipRenewalReview from './pages/MembershipRenewalReview';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
@@ -32,23 +35,62 @@ import AppointmentSearchPage from './pages/AppointmentSearchPage';
 import HoldsPage from './pages/HoldsPage';
 import {
   parseAppointmentRequestsHighlightFromSearch,
+  APPOINTMENT_SEARCH_PATH,
 } from './appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
+import SoapEncounterPage from './pages/SoapEncounterPage';
+import MedicalNoteEncounterPage from './pages/MedicalNoteEncounterPage';
+import VisitWrapUpPage from './pages/VisitWrapUpPage';
+import VisitCheckoutPage from './pages/VisitCheckoutPage';
+import BriefWorkspacePage from './pages/BriefWorkspacePage';
+import PracticeChatPage from './pages/PracticeChatPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
+import MyCallIndicator from './components/pims/MyCallIndicator';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
-import InventoryManagement from './pages/InventoryManagement';
-import PimsPlaceholder from './pages/PimsPlaceholder';
+import Catalog from './pages/Catalog';
+import { LegacyCatalogRedirect } from './pages/CatalogLayout';
+import InventoryLayout from './pages/InventoryLayout';
+import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
+import InitialInventoryEntryPage from './pages/InitialInventoryEntryPage';
+import MoveItemsPage from './pages/MoveItemsPage';
+import WasteAdjustPage from './pages/WasteAdjustPage';
+import InventoryActivityPage from './pages/InventoryActivityPage';
+import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
+import InventoryCountsPage from './pages/InventoryCountsPage';
+import InventoryCountReportPage from './pages/InventoryCountReportPage';
+import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import InventoryExpiringReportPage from './pages/InventoryExpiringReportPage';
+import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
+import SuppliersAdminPage from './pages/SuppliersAdminPage';
+import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
+import MailOrdersPage from './pages/MailOrdersPage';
+import AbandonedCartsPage from './pages/AbandonedCartsPage';
+import StoreCategoriesPage from './pages/StoreCategoriesPage';
+import StoreSubscriptionsPage from './pages/StoreSubscriptionsPage';
+import StoreLayout from './pages/store/StoreLayout';
+import StoreHome from './pages/store/StoreHome';
+import StoreProduct from './pages/store/StoreProduct';
+import StoreCartPage from './pages/store/StoreCartPage';
+import StoreThanks from './pages/store/StoreThanks';
+import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
+import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
+import PatientSnapshotsPage from './pages/PatientSnapshotsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
+import PendingLabsPage from './pages/PendingLabsPage';
 import GmailInbox from './pages/GmailInbox';
+import BankDepositsPage from './pages/BankDepositsPage';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
+import EuthanasiaConsentForm from './pages/EuthanasiaConsentForm';
+import FormSignPage from './pages/FormSignPage';
+import RecordsUploadPage from './pages/RecordsUploadPage';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import SlotOfferConfirmPage from './pages/SlotOfferConfirmPage';
 import ErrorPage from './pages/ErrorPage';
@@ -59,10 +101,9 @@ import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from './utils/routingNewAppointment';
-import { evetCreateClientLink } from './utils/evet';
-import { scoutTabPermissionOk } from './scout-tabs';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
+import { listMessageTemplates } from './api/messageTemplates';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
@@ -87,6 +128,97 @@ function NavbarScheduleAddAppointment() {
     >
       + Appointment
     </button>
+  );
+}
+
+/**
+ * MobileNav – compact one-row nav shown only on mobile (≤900 px).
+ * Shows: tiny logo | Inventory ▾ | Scheduling ▾ | Tasks ▾
+ * Each item opens a dropdown on tap. Tapping outside closes it.
+ */
+function MobileNav() {
+  const { abilities } = useAuth() as { abilities?: string[] };
+  const navigate = useNavigate();
+  const [open, setOpen] = useState<'inventory' | 'scheduling' | 'tasks' | null>(null);
+  const navRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when tapping outside
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: PointerEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setOpen(null);
+      }
+    };
+    document.addEventListener('pointerdown', handler, true);
+    return () => document.removeEventListener('pointerdown', handler, true);
+  }, [open]);
+
+  const canSeeRouting = !abilities || abilities.includes('canSeeRouting');
+
+  const toggle = useCallback(
+    (menu: 'inventory' | 'scheduling' | 'tasks') => setOpen((prev) => (prev === menu ? null : menu)),
+    []
+  );
+
+  const go = useCallback(
+    (to: string) => {
+      setOpen(null);
+      navigate(to);
+    },
+    [navigate]
+  );
+
+  return (
+    <div className="mobile-nav" ref={navRef} aria-label="Mobile navigation">
+      {/* Tiny logo */}
+      <Link to="/schedule" className="mobile-nav__brand" aria-label="Go to Scout home">
+        <img src="/final_thick_lines_cropped.jpeg" alt="" />
+      </Link>
+
+      {/* Inventory */}
+      <div className={`mobile-nav__menu${open === 'inventory' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('inventory')} aria-expanded={open === 'inventory'}>
+          Inventory <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'inventory' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/receive')}>Receive</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/transfer-list')}>Transfer List</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/move')}>Move</button>
+          </div>
+        )}
+      </div>
+
+      {/* Scheduling */}
+      <div className={`mobile-nav__menu${open === 'scheduling' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('scheduling')} aria-expanded={open === 'scheduling'}>
+          Scheduling <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'scheduling' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            {canSeeRouting && (
+              <button type="button" role="menuitem" onClick={() => go('/schedule/routing')}>+ Appointment</button>
+            )}
+            <button type="button" role="menuitem" onClick={() => go(APPOINTMENT_SEARCH_PATH)}>Appt Search</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/scheduling-tools/forward-booking?new=1')}>+ Forward Book</button>
+          </div>
+        )}
+      </div>
+
+      {/* Tasks */}
+      <div className={`mobile-nav__menu${open === 'tasks' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('tasks')} aria-expanded={open === 'tasks'}>
+          Tasks <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'tasks' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            <button type="button" role="menuitem" onClick={() => go('/schedule/tasks')}>My Tasks</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/tasks?new=1')}>+ Task</button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -285,6 +417,11 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+function LegacyMailOrdersRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
+}
+
 export default function App() {
   const { token, abilities, role } = useAuth() as any;
   const nav = useNavigate();
@@ -316,25 +453,26 @@ export default function App() {
     const onSchedule = location.pathname.startsWith('/schedule');
 
     if (onSchedule) {
-      if (scoutTabPermissionOk('canSeeRouting', abilities)) {
-        out.push({ label: '+ Appointment', to: '/schedule/routing' });
-      }
-      out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
+      out.push({ label: '+ New Patient', to: '/schedule/patients?add=1' });
+      out.push({ label: '+ New Client', to: '/schedule/clients?add=1' });
       out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
-      out.push({
-        label: 'Forward Booking',
-        to: '/schedule/scheduling-tools/forward-booking?new=1',
-      });
       if (canAccessGmailInbox) {
         out.push({ label: 'Email', to: '/schedule/email' });
       }
-      out.push({ label: 'New Client', href: evetCreateClientLink(), external: true });
+      out.push({ label: 'Catalog', to: CATALOG_HOME });
+      out.push({ label: 'Pharmacy', to: INVENTORY_HOME });
+      out.push({ label: '🎉 Pet Snapshots', to: '/schedule/patient-snapshots' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/schedule/analytics' });
+      out.push({ label: 'Settings', to: '/schedule/settings' });
+      if (roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()))) {
+        out.push({ label: 'Admin', to: '/schedule/admin' });
+      }
+    } else {
+      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+      if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     }
-
-    if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
-    if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     return out;
-  }, [isClient, pages, location.pathname, canAccessGmailInbox, abilities]);
+  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -344,6 +482,13 @@ export default function App() {
     }
   }, [token, isClient, location.pathname, nav]);
 
+  useEffect(() => {
+    if (!token || isClient) return;
+    void listMessageTemplates().catch(() => {
+      /* local fallback hydrates itself */
+    });
+  }, [token, isClient]);
+
   // Keep-alive list for employee tabs (home + all page paths)
   const keepAlivePaths = useMemo(() => ['/home', ...pages.map((p: any) => p.path)], [pages]);
 
@@ -351,8 +496,8 @@ export default function App() {
 
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
+    if (location.pathname === '/store' || location.pathname.startsWith('/store/')) return '';
     const path = location.pathname;
-    if (path.startsWith('/pims')) return 'pims-main-wrapper';
     if (path.startsWith('/schedule')) return 'schedule-main-wrapper';
     return 'container';
   }, [isClient, location.pathname]);
@@ -370,6 +515,8 @@ export default function App() {
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         !location.pathname.startsWith('/client-portal/request-appointment') &&
+        location.pathname !== '/store' &&
+        !location.pathname.startsWith('/store/') &&
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
@@ -425,6 +572,9 @@ export default function App() {
               </span>
             </Link>
 
+            {/* Mobile compact nav — shown only at ≤900px on schedule pages */}
+            {token && !isClient && location.pathname.startsWith('/schedule') && <MobileNav />}
+
             {token && !isClient && (
               <div className="navbar__center-block">
                 <div className="navbar__mid">
@@ -474,6 +624,7 @@ export default function App() {
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/reset-password" element={<ResetPass />} />
           <Route path="/resetpass" element={<ResetPass />} />
+          <Route path="/auth/handoff" element={<PracticeHandoffPage />} />
           <Route path="/error" element={<ErrorPage />} />
 
           {/* Client portal (standalone) */}
@@ -501,27 +652,32 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/client-portal/membership-upgrade"
-            element={
-              <ProtectedRoute>
-                <MembershipUpgrade />
-              </ProtectedRoute>
-            }
-          />
           <Route path="/client-portal/request-appointment" element={<AppointmentRequestForm />} />
           {/* Public membership signup when started from appointment request (no auth required) */}
           <Route path="/client-portal/request-appointment/membership-signup" element={<MembershipSignup />} />
+          <Route path="/membership/renewal" element={<MembershipRenewalReview />} />
 
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
+          <Route path="/consent/euthanasia" element={<EuthanasiaConsentForm />} />
+          {/* Generic signed forms — public, token-based, no login required */}
+          <Route path="/forms/:token" element={<FormSignPage />} />
+          {/* Outside hospital uploads previous records from an emailed link */}
+          <Route path="/records/upload" element={<RecordsUploadPage />} />
           <Route path="/share" element={<PublicReferAFriend />} />
           <Route path="/refer-a-friend" element={<Navigate to="/share" replace />} />
           {/* Slot offer confirm — same host as portal, e.g. /confirm/:token from SMS */}
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
+          <Route path="/store" element={<StoreLayout />}>
+            <Route index element={<StoreHome />} />
+            <Route path="cart" element={<StoreCartPage />} />
+            <Route path="autoship" element={<StoreAutoshipPage />} />
+            <Route path="thanks/:id" element={<StoreThanks />} />
+            <Route path=":id" element={<StoreProduct />} />
+          </Route>
 
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
@@ -534,6 +690,10 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route
+                path="/analytics/bank-deposits"
+                element={<Navigate to="/schedule/deposits" replace />}
+              />
               <Route path="/scout/*" element={<ScoutLegacyRedirect />} />
               <Route path="/routing" element={<Navigate to="/schedule/routing" replace />} />
               <Route path="/doctor" element={<Navigate to="/schedule/my-day" replace />} />
@@ -594,13 +754,114 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="jot" element={<BriefWorkspacePage />} />
+                    <Route path="epiphany" element={<Navigate to="/schedule/jot" replace />} />
+                    <Route path="brief" element={<Navigate to="/schedule/jot" replace />} />
+                    <Route path="chat" element={<PracticeChatPage />} />
+                    <Route path="soap" element={<Navigate to="/schedule/home" replace />} />
+                    <Route
+                      path="soap/:appointmentId/:patientId"
+                      element={<SoapEncounterPage />}
+                    />
+                    <Route
+                      path="soap/:appointmentId/:patientId/wrap-up"
+                      element={<VisitWrapUpPage />}
+                    />
+                    <Route
+                      path="soap/:appointmentId/:patientId/checkout"
+                      element={<VisitCheckoutPage />}
+                    />
+                    <Route
+                      path="note/:appointmentId/:patientId"
+                      element={<MedicalNoteEncounterPage />}
+                    />
                     <Route path="scheduler" element={<Scheduler />} />
-                    <Route path="inventory" element={<InventoryManagement />} />
+                    <Route
+                      path="mail-orders"
+                      element={<InventoryLayout basePath="/schedule/inventory" />}
+                    >
+                      <Route index element={<MailOrdersPage />} />
+                    </Route>
+                    <Route
+                      path="inventory"
+                      element={<InventoryLayout basePath="/schedule/inventory" />}
+                    >
+                      <Route index element={<Navigate to="items" replace />} />
+                      <Route path="items" element={<Catalog />} />
+                      <Route path="online-store" element={<Outlet />}>
+                        <Route index element={<OnlineStoreImportPage />} />
+                        <Route
+                          path="categories"
+                          element={<Navigate to="/schedule/inventory/store-categories" replace />}
+                        />
+                      </Route>
+                      <Route path="store-categories" element={<StoreCategoriesPage />} />
+                      <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
+                      <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
+                      <Route path="auto-ships" element={<StoreSubscriptionsPage />} />
+                      <Route
+                        path="subscriptions"
+                        element={<Navigate to="/schedule/inventory/auto-ships" replace />}
+                      />
+                      <Route path="receive" element={<ReceiveShipmentPage />} />
+                      <Route path="initial-entry" element={<InitialInventoryEntryPage />} />
+                      <Route path="move" element={<MoveItemsPage />} />
+                      <Route path="waste" element={<WasteAdjustPage />} />
+                      <Route path="activity" element={<InventoryActivityPage />} />
+                      <Route
+                        path="totals"
+                        element={<Navigate to="/schedule/analytics/inventory-totals" replace />}
+                      />
+                      <Route path="par-levels" element={<InventoryParLevelsPage />} />
+                      <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
+                      <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
+                      <Route path="count-report" element={<InventoryCountReportPage />} />
+                      <Route path="expiring" element={<InventoryExpiringReportPage />} />
+                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
+                      <Route
+                        path="fill-list"
+                        element={<Navigate to="/schedule/inventory/transfer-list" replace />}
+                      />
+                      <Route
+                        path="order-list"
+                        element={<InventoryStockRequestsPage kind="order" />}
+                      />
+                      <Route
+                        path="transfer-list"
+                        element={<InventoryStockRequestsPage kind="transfer" />}
+                      />
+                      <Route path="suppliers" element={<SuppliersAdminPage />} />
+                      <Route
+                        path="waste-admin"
+                        element={<Navigate to="/schedule/settings?tab=inventory-waste" replace />}
+                      />
+                    </Route>
+                    <Route
+                      path="procedures"
+                      element={<Navigate to="/schedule/inventory/items?type=procedure" replace />}
+                    />
+                    <Route
+                      path="labs"
+                      element={<Navigate to="/schedule/inventory/items?type=lab" replace />}
+                    />
+                    <Route path="catalog" element={<LegacyCatalogRedirect />} />
+                    <Route path="catalog/*" element={<LegacyCatalogRedirect />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
+                    <Route path="in-house-labs" element={<PendingLabsPage />} />
                     <Route path="settings" element={<Settings />} />
+                    <Route
+                      path="settings/forms"
+                      element={<Navigate to="/schedule/settings?tab=forms" replace />}
+                    />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
+                    <Route path="patient-snapshots" element={<PatientSnapshotsPage />} />
                     <Route path="email" element={<GmailInbox />} />
+                    <Route path="deposits" element={<BankDepositsPage />} />
+                    <Route
+                      path="analytics/bank-deposits"
+                      element={<Navigate to="/schedule/deposits" replace />}
+                    />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
                       <Route
@@ -623,39 +884,17 @@ export default function App() {
                     </Route>
                   </Route>
                 ) : p.path === '/pims' ? (
-                  <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<Navigate to="/pims/scheduler" replace />} />
-                    <Route path="overview" element={<PimsPlaceholder title="Overview" />} />
-                    <Route path="scheduler" element={<Scheduler />} />
-                    <Route path="tasks" element={<PimsTasksPage />} />
-                    <Route path="clients" element={<PimsClientsPage />} />
-                    <Route path="patients" element={<PimsPatientsPage />} />
-                    <Route path="labs" element={<PimsPlaceholder title="Labs" />} />
-                    <Route path="inventory" element={<InventoryManagement />} />
-                    <Route
-                      path="reports/summary"
-                      element={<PimsPlaceholder title="Reports — Summary" />}
-                    />
-                    <Route
-                      path="reports/activity"
-                      element={<PimsPlaceholder title="Reports — Activity" />}
-                    />
-                    <Route
-                      path="settings/practice"
-                      element={<PimsPlaceholder title="Settings — Practice" />}
-                    />
-                    <Route
-                      path="settings/users"
-                      element={<PimsPlaceholder title="Settings — Users" />}
-                    />
-                  </Route>
+                  <Route key={p.path} path="/pims/*" element={p.element} />
                 ) : p.path === '/tools' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route
                       path="care-outreach"
                       element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                     />
-                    <Route path="inventory" element={<Navigate to="/pims/inventory" replace />} />
+                    <Route
+                      path="inventory"
+                      element={<Navigate to="/schedule/inventory/receive" replace />}
+                    />
                     <Route index element={<Navigate to={EXIT_SURVEY_PATH} replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route
@@ -679,6 +918,12 @@ export default function App() {
           <Route path="*" element={<RouteGuard />} />
         </Routes>
       </main>
+      {location.pathname.startsWith('/client-portal') ||
+      location.pathname === '/store' ||
+      location.pathname.startsWith('/store/') ? (
+        <StoreCartFloat />
+      ) : null}
+      {token && !isClient ? <MyCallIndicator /> : null}
     </div>
   );
 }

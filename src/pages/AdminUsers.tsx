@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -10,10 +11,13 @@ import {
   type AdminManagedUser,
   type ScoutUserRole,
 } from '../api/users';
-import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
+import { fetchAllEmployees, fetchEmployee, type Employee } from '../api/appointmentSettings';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { saveEmployees, type EmployeeDto } from '../api/employeesMutations';
+import { listTasks, reassignFromEmployee } from '../api/tasks';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Settings.css';
+import { appConfirm } from '../utils/appDialog';
 
 function extractErr(err: unknown): string {
   const e = err as {
@@ -84,7 +88,12 @@ export default function AdminUsers() {
   const [editEmployeeId, setEditEmployeeId] = useState('');
   const [editDoctorId, setEditDoctorId] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
+  const [editEmail, setEditEmail] = useState('');
+  const [deactivateToEmployeeId, setDeactivateToEmployeeId] = useState('');
+  const [openTaskCount, setOpenTaskCount] = useState<number | null>(null);
+  const [openTaskCountLoading, setOpenTaskCountLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [resettingId, setResettingId] = useState<number | null>(null);
 
   const [creating, setCreating] = useState(false);
@@ -115,6 +124,26 @@ export default function AdminUsers() {
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
+
+  useEffect(() => {
+    if (loading || users.length === 0) return;
+    const raw = Number(searchParams.get('user'));
+    if (!Number.isFinite(raw) || raw <= 0) return;
+    const match = users.find((u) => u.id === raw);
+    if (!match) return;
+    if (editing?.id === match.id) return;
+    openEdit(match);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('user');
+        return next;
+      },
+      { replace: true }
+    );
+    // openEdit is stable enough for this deep link
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, users, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,13 +223,46 @@ export default function AdminUsers() {
     setEditEmployeeId(user.employeeId != null ? String(user.employeeId) : '');
     setEditDoctorId(user.doctorId != null ? String(user.doctorId) : '');
     setEditIsActive(user.isActive !== false);
+    setEditEmail(user.email ?? '');
+    setDeactivateToEmployeeId('');
+    setOpenTaskCount(null);
     setMessage(null);
   };
 
   const closeEdit = () => {
     if (saving) return;
     setEditing(null);
+    setDeactivateToEmployeeId('');
+    setOpenTaskCount(null);
   };
+
+  useEffect(() => {
+    const employeeId = editing?.employeeId;
+    if (!editing || editIsActive || employeeId == null) {
+      setOpenTaskCount(null);
+      setOpenTaskCountLoading(false);
+      return;
+    }
+    let on = true;
+    setOpenTaskCountLoading(true);
+    void listTasks({
+      assignedToEmployeeId: employeeId,
+      includeDone: false,
+      limit: 1,
+    })
+      .then((res) => {
+        if (on) setOpenTaskCount(res.total);
+      })
+      .catch(() => {
+        if (on) setOpenTaskCount(null);
+      })
+      .finally(() => {
+        if (on) setOpenTaskCountLoading(false);
+      });
+    return () => {
+      on = false;
+    };
+  }, [editing, editIsActive]);
 
   const openCreate = () => {
     setCreating(true);
@@ -262,12 +324,17 @@ export default function AdminUsers() {
       const nextEmployeeId = editEmployeeId ? Number(editEmployeeId) : null;
       const nextDoctorId = editDoctorId ? Number(editDoctorId) : null;
       const payload: {
+        email?: string;
         role?: string;
         employeeId?: number | null;
         doctorId?: number | null;
         isActive?: boolean;
       } = {};
 
+      const nextEmail = editEmail.trim().toLowerCase();
+      if (nextEmail && nextEmail !== String(editing.email ?? '').trim().toLowerCase()) {
+        payload.email = nextEmail;
+      }
       if (editRole !== String(editing.role || '')) {
         payload.role = editRole;
       }
@@ -281,6 +348,51 @@ export default function AdminUsers() {
         payload.isActive = editIsActive;
       }
 
+      const deactivatingEmployeeId =
+        editing.isActive !== false && editIsActive === false
+          ? (editing.employeeId ?? null)
+          : null;
+      const reactivatingEmployeeId =
+        editing.isActive === false && editIsActive === true
+          ? (editing.employeeId ?? null)
+          : null;
+      let movedCount = 0;
+      if (deactivatingEmployeeId != null) {
+        if (!deactivateToEmployeeId) {
+          setMessage({
+            text: 'Pick who should receive this person’s incomplete and future automatic tasks.',
+            kind: 'error',
+          });
+          setSaving(false);
+          return;
+        }
+        const toId = Number(deactivateToEmployeeId);
+        if (!Number.isFinite(toId) || toId === deactivatingEmployeeId) {
+          setMessage({
+            text: 'Pick a different person to receive the incomplete tasks.',
+            kind: 'error',
+          });
+          setSaving(false);
+          return;
+        }
+        const moved = await reassignFromEmployee({
+          fromEmployeeId: deactivatingEmployeeId,
+          toEmployeeId: toId,
+          persistAsTaskForwarder: true,
+        });
+        movedCount = moved.reassigned;
+      }
+      if (reactivatingEmployeeId != null) {
+        const full = await fetchEmployee(reactivatingEmployeeId);
+        await saveEmployees({
+          ...(full as unknown as EmployeeDto),
+          id: reactivatingEmployeeId,
+          isActive: true,
+          isDeleted: false,
+          taskForwarderEmployeeId: null,
+        });
+      }
+
       if (Object.keys(payload).length === 0) {
         setEditing(null);
         return;
@@ -289,7 +401,18 @@ export default function AdminUsers() {
       const updated = await updateAdminUser(editing.id, payload);
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
       setEditing(null);
-      setMessage({ text: `Updated ${updated.email ?? `user #${updated.id}`}.`, kind: 'success' });
+      const who = updated.email ?? `user #${updated.id}`;
+      setMessage({
+        text:
+          movedCount > 0
+            ? `Updated ${who}. Reassigned ${movedCount} incomplete task${
+                movedCount === 1 ? '' : 's'
+              } and set their task forwarder.`
+            : deactivatingEmployeeId != null
+              ? `Updated ${who}. Future automatic tasks will go to the task forwarder.`
+              : `Updated ${who}.`,
+        kind: 'success',
+      });
     } catch (err) {
       setMessage({ text: extractErr(err), kind: 'error' });
     } finally {
@@ -312,9 +435,11 @@ export default function AdminUsers() {
       });
       return;
     }
-    const ok = window.confirm(
-      `Send a password reset link to ${user.email ?? `user #${user.id}`}?`,
-    );
+    const ok = await appConfirm({
+      title: 'Send password reset?',
+      message: `Send a password reset link to ${user.email ?? `user #${user.id}`}?`,
+      confirmLabel: 'Send',
+    });
     if (!ok) return;
     setResettingId(user.id);
     setMessage(null);
@@ -551,7 +676,18 @@ export default function AdminUsers() {
             <form onSubmit={onSave}>
               <div className="settings-modal-body" style={{ display: 'grid', gap: 12 }}>
                 <Field label="Email">
-                  <input className="input" value={editing.email ?? ''} disabled />
+                  <input
+                    className="input"
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    required
+                    autoComplete="off"
+                  />
+                  <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                    Login email. Must be unique. If this user is linked to staff, their
+                    staff email updates too.
+                  </p>
                 </Field>
                 <Field label="Role">
                   <select
@@ -621,6 +757,38 @@ export default function AdminUsers() {
                     Active
                   </label>
                 </Field>
+                {!editIsActive && editing.employeeId != null && editing.isActive !== false && (
+                  <Field label="Task forwarder">
+                    <select
+                      className="input"
+                      value={deactivateToEmployeeId}
+                      onChange={(e) => setDeactivateToEmployeeId(e.target.value)}
+                      required
+                      disabled={lookupsLoading || openTaskCountLoading}
+                    >
+                      <option value="">
+                        {openTaskCountLoading
+                          ? 'Checking their tasks…'
+                          : openTaskCount != null && openTaskCount > 0
+                            ? `Select a person (${openTaskCount} open)…`
+                            : 'Select a person…'}
+                      </option>
+                      {employees
+                        .filter(
+                          (emp) => emp.id !== editing.employeeId && emp.isActive !== false,
+                        )
+                        .map((emp) => (
+                          <option key={emp.id} value={String(emp.id)}>
+                            {employeeOptionLabel(emp)}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                      Incomplete tasks move to this person. Any automatic work that
+                      would later have gone to them goes here too.
+                    </p>
+                  </Field>
+                )}
               </div>
               <div className="settings-modal-actions">
                 <button

@@ -1,0 +1,148 @@
+/* src/components/settings/SettingsPermissionScreens.css */
+
+/* ---------------------------------------------------- role permission editor */
+
+.perm-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0 8px;
+}
+.perm-editor-toolbar .settings-input {
+  max-width: 280px;
+}
+.perm-editor-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.perm-editor-section {
+  margin-top: 16px;
+}
+.perm-editor-section-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+  margin-bottom: 4px;
+}
+
+.perm-editor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, #f1f4f8);
+  border-left: 3px solid transparent;
+  font-size: 13px;
+}
+.perm-editor-row.is-changed {
+  border-left-color: #2f6f5e;
+  background: rgba(47, 111, 94, 0.05);
+}
+.perm-editor-row.is-pending {
+  border-left-color: #d97706;
+  background: #fffbeb;
+}
+.perm-editor-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.perm-editor-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+.perm-editor-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.perm-editor-control .settings-input {
+  width: 170px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.perm-editor-reset {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-primary, #2f6f5e);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.perm-editor-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 0 2px;
+  background: var(--surface, #fff);
+}
+
+/* ------------------------------------------------------- permission audit */
+
+.perm-audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.perm-audit-filters label {
+  display: grid;
+  gap: 4px;
+}
+.perm-audit-filters select.settings-input {
+  min-width: 200px;
+}
+
+.perm-audit-table-wrap {
+  overflow-x: auto;
+}
+.perm-audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.perm-audit-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.perm-audit-table td {
+  padding: 8px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle, #f1f4f8);
+}
+.perm-audit-nowrap {
+  white-space: nowrap;
+}
+.perm-audit-sub {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+.perm-audit-details {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}

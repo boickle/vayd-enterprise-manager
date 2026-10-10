@@ -1,14 +1,21 @@
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
+import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
 
 type Props = {
   open: boolean;
+  clientId?: number | null;
+  doNotSms?: boolean;
   clientLabel: string;
   message: string;
   onMessageChange: (value: string) => void;
   onClose: () => void;
   onSend: (opts: { overrideNonProd: boolean }) => void;
-  onOpenMessagesHistory: () => void;
+  onOpenMessagesHistory?: () => void;
   sending: boolean;
   sendError?: string | null;
   title?: string;
@@ -18,6 +25,12 @@ type Props = {
   primarySendLabel?: string;
   /** Shown under the title — e.g. the Quo line this thread uses. */
   fromLineLabel?: string | null;
+  /** Optional pay / portal URL shown above the message so it can be edited or copied. */
+  payLink?: string;
+  payLinkCopied?: boolean;
+  onPayLinkChange?: (value: string) => void;
+  onCopyPayLink?: () => void;
+  mergeValues?: MergeValues;
   /** Items the sender should double-check before sending. */
   reviewNotes?: string[];
   /** Small note under the message box (e.g. how the draft was produced). */
@@ -26,6 +39,8 @@ type Props = {
 
 export function ClientSmsComposeModal({
   open,
+  clientId,
+  doNotSms,
   clientLabel,
   message,
   onMessageChange,
@@ -39,10 +54,45 @@ export function ClientSmsComposeModal({
   showProductionOverride = true,
   primarySendLabel = 'Send message',
   fromLineLabel,
+  payLink,
+  payLinkCopied = false,
+  onPayLinkChange,
+  onCopyPayLink,
+  mergeValues,
   reviewNotes,
   messageHint,
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
+  const [resolvedDoNotSms, setResolvedDoNotSms] = useState(doNotSms === true);
+
+  useEffect(() => {
+    if (!open) return;
+    if (doNotSms === true || doNotSms === false) {
+      setResolvedDoNotSms(doNotSms);
+      return;
+    }
+    if (clientId == null || !Number.isFinite(clientId)) {
+      setResolvedDoNotSms(false);
+      return;
+    }
+    let cancelled = false;
+    void fetchClientByIdStaff(clientId)
+      .then((raw) => {
+        if (!cancelled) setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedDoNotSms(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId, doNotSms]);
+
+  async function handleSend(opts: { overrideNonProd: boolean }) {
+    const ok = await confirmSendDespiteDoNotSms(resolvedDoNotSms);
+    if (!ok) return;
+    onSend(opts);
+  }
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -97,6 +147,7 @@ export function ClientSmsComposeModal({
               </p>
             ) : null}
           </div>
+          {onOpenMessagesHistory ? (
           <button
             type="button"
             className="btn-link"
@@ -115,13 +166,65 @@ export function ClientSmsComposeModal({
           >
             Messages history
           </button>
+          ) : null}
         </div>
+
+        {resolvedDoNotSms ? (
+          <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
+            Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
+          </p>
+        ) : null}
 
         {sendError ? (
           <p role="alert" style={{ color: '#b91c1c', fontSize: 14, margin: '0 0 12px' }}>
             {sendError}
           </p>
         ) : null}
+
+        {payLink != null && onPayLinkChange ? (
+          <label style={{ display: 'block', marginBottom: 16 }}>
+            <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>
+              Pay link
+            </span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <input
+                type="url"
+                value={payLink}
+                onChange={(e) => onPayLinkChange(e.target.value)}
+                disabled={sending}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: '10px 12px',
+                  background: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box',
+                }}
+              />
+              {onCopyPayLink ? (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={sending || !payLink.trim()}
+                  onClick={onCopyPayLink}
+                >
+                  {payLinkCopied ? 'Copied' : 'Copy'}
+                </button>
+              ) : null}
+            </div>
+          </label>
+        ) : null}
+
+        <MessageTemplatePicker
+          channel="sms"
+          mergeValues={mergeValues ?? mergeValuesFromNames({ clientFullName: clientLabel })}
+          disabled={sending}
+          currentBody={message}
+          onApply={({ body }) => onMessageChange(body)}
+        />
 
         {reviewNotes && reviewNotes.length > 0 ? (
           <div
@@ -185,7 +288,7 @@ export function ClientSmsComposeModal({
               type="button"
               className="btn secondary"
               disabled={sending || !message.trim()}
-              onClick={() => onSend({ overrideNonProd: true })}
+              onClick={() => void handleSend({ overrideNonProd: true })}
               title="Send to the client's real number (non-production only)"
             >
               {sending ? 'Sending…' : 'Send to actual client'}
@@ -195,7 +298,7 @@ export function ClientSmsComposeModal({
             type="button"
             className="btn primary"
             disabled={sending || !message.trim()}
-            onClick={() => onSend({ overrideNonProd: false })}
+            onClick={() => void handleSend({ overrideNonProd: false })}
           >
             {sending ? 'Sending…' : primarySendLabel}
           </button>

@@ -42,6 +42,9 @@ export type UnscheduledReminder = {
   notes?: string | null;
   /** When true, reminder may be omitted from fill-day / outreach lists unless explicitly shown. */
   isHidden?: boolean | null;
+  /** Inventory item that created this reminder (catalog sale), when known. */
+  sourceInventoryItemId?: number | null;
+  sourceDefinitionId?: number | null;
   patient?: CareOutreachPatientRef | null;
   employee?: CareOutreachEmployeeRef | null;
   practice?: { id: number; name?: string };
@@ -96,12 +99,42 @@ export type PatchReminderBody = {
   isHidden?: boolean;
 };
 
+export type CreatePatientReminderBody = {
+  patientId: number;
+  description: string;
+  reminderType?: string;
+  dueDate: string;
+  startReminding?: string;
+  stopReminding?: string;
+  sourceCatalogItemType?: 'inventory' | 'procedure' | 'lab' | null;
+  sourceCatalogItemId?: number | null;
+};
+
+export async function createPatientReminder(
+  body: CreatePatientReminderBody,
+): Promise<UnscheduledReminder> {
+  const { data } = await http.post<unknown>('/reminders', body);
+  return unwrapReminderResponse(data);
+}
+
 export async function patchReminder(
   reminderId: number,
   body: PatchReminderBody
 ): Promise<UnscheduledReminder> {
   const { data } = await http.patch<unknown>(`/reminders/${reminderId}`, body);
   return unwrapReminderResponse(data);
+}
+
+/** Open chart reminders for one pet, including rows that still have a future appointment. */
+export async function listPatientOpenReminders(
+  patientId: number,
+): Promise<UnscheduledReminder[]> {
+  if (!Number.isFinite(patientId) || patientId <= 0) return [];
+  const { data } = await http.get<unknown>(`/reminders/patient/${patientId}`);
+  const rows = Array.isArray(data) ? data : [];
+  return rows
+    .map((row) => normalizeCareOutreachReminder(row as UnscheduledReminder))
+    .filter((row) => row.id > 0 && row.isHidden !== true);
 }
 
 export async function patchReminderOutreachNotes(

@@ -1,10 +1,20 @@
 /** Build unified chart rows from GET /patients/:id/medical-record payload. */
 
+import type { RoomLoader } from '../api/roomLoader';
+import type { ScoutChartNote } from '../api/scoutChart';
+import type { TreatmentItem, TreatmentWithItems } from '../api/treatments';
+import type { PatientProblem, PostedVisitCharge } from '../api/visitWorkflow';
+import { resultedByLabel, type LabResult } from '../api/inHouseLabs';
+import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiveText';
+import { communicationBodyForDisplay } from './clientCommunicationDisplay';
+import { looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
+import { chartRemoveReasonLabel } from './chartRemove';
 import {
-  htmlToPlainText,
-  looksLikeHtmlFragment,
-  sanitizeCommunicationHtml,
-} from './sanitizeCommunicationHtml';
+  idexxAbnormalLines,
+  idexxReportHtml,
+  idexxReportText,
+  parseIdexxReport,
+} from './idexxLabResults';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -22,7 +32,113 @@ function employeeName(e: unknown): string {
   const fn = pickStr(o.firstName);
   const ln = pickStr(o.lastName);
   const joined = [fn, ln].filter(Boolean).join(' ').trim();
-  return joined || pickStr(o.name) || '—';
+  const name = joined || pickStr(o.name);
+  if (!name) return '—';
+  const designation = pickStr(o.designation);
+  return designation ? `${name}, ${designation}` : name;
+}
+
+/** Same categories eVet shows on the patient medical-record timeline. */
+const EMR_SOURCES = new Set<ChartRowSource>([
+  'history',
+  'chartNote',
+  'exam',
+  'lab',
+  'document',
+  'communication',
+  'treatment',
+  'visitCharge',
+  'roomLoader',
+  'scoutNote',
+]);
+
+function isStockInventoryName(name: string): boolean {
+  return /^felv\s+inventory$/i.test(name);
+}
+
+/** eVet soft-deletes invoice/treatment lines with `isActive: false` more often than `isDeleted`. */
+export function treatmentPlanBelongsOnChart(plan: {
+  isDeleted?: boolean;
+  isActive?: boolean;
+  isEstimate?: boolean;
+}): boolean {
+  return plan.isDeleted !== true && plan.isActive !== false && plan.isEstimate !== true;
+}
+
+export function treatmentItemBelongsOnChart(item: {
+  isDeleted?: boolean;
+  isActive?: boolean;
+  isDeclined?: boolean;
+}): boolean {
+  return item.isDeleted !== true && item.isActive !== false;
+}
+
+function treatmentItemCatalogKey(item: TreatmentItem): string | null {
+  const inv = item.inventoryItem?.id;
+  if (inv) return `inventory:${inv}`;
+  const proc = item.procedure?.id;
+  if (proc) return `procedure:${proc}`;
+  const lab = item.lab?.id;
+  if (lab) return `lab:${lab}`;
+  const name = (
+    item.inventoryItem?.name ||
+    item.procedure?.name ||
+    item.lab?.name ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  return name ? `name:${name}` : null;
+}
+
+export function laterReceivedDateForDeclinedItem(
+  declined: TreatmentItem,
+  allItems: TreatmentItem[]
+): string | null {
+  if (!declined.isDeclined) return null;
+  const key = treatmentItemCatalogKey(declined);
+  if (!key) return null;
+  const declinedAt = declined.serviceDate ? Date.parse(declined.serviceDate) : 0;
+  let latest: string | null = null;
+  let latestMs = declinedAt;
+  for (const item of allItems) {
+    if (item.isDeclined || !treatmentItemBelongsOnChart(item)) continue;
+    if (treatmentItemCatalogKey(item) !== key) continue;
+    const iso = item.serviceDate;
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms) && ms > latestMs) {
+      latestMs = ms;
+      latest = iso;
+    }
+  }
+  return latest;
+}
+
+function documentChartLabel(o: Record<string, unknown>): { typeLabel: string; description: string } {
+  const name = pickStr(o.name) ?? 'Document';
+  const desc = pickStr(o.description);
+  const typeId = pickStr(o.documentTypePimsId);
+  const blob = `${name} ${desc ?? ''}`.toLowerCase();
+  let typeLabel = 'Document';
+  if (typeId === '564' || /pre-?appt|check[\s-]?in/.test(blob)) {
+    typeLabel = desc && /check|form/i.test(desc) ? desc : 'Pre-appt Check-in form';
+  } else if (typeId === '285' || /previous medical|humane society|veterinary hospital/.test(blob)) {
+    typeLabel = 'Previous Medical Records';
+  } else if (/rabies certificate/i.test(blob)) {
+    typeLabel = 'Rabies Certificate';
+  } else if (/vaccination certificate/i.test(blob)) {
+    typeLabel = 'Vaccination Certificate';
+  } else if (/death certificate/i.test(blob)) {
+    typeLabel = 'Death Certificate';
+  } else if (/spay|neuter certificate/i.test(blob)) {
+    typeLabel = 'Spay/Neuter Certificate';
+  } else if (/\bprescription\b|rx print/i.test(blob)) {
+    typeLabel = 'Prescription';
+  } else if (desc && !/generated/i.test(desc)) {
+    typeLabel = desc;
+  }
+  return { typeLabel, description: `📥 ${name}` };
 }
 
 function parseSortTime(iso: string | null): number {
@@ -42,11 +158,40 @@ export type ChartRow = {
   detailText: string;
   /** Sanitized HTML body for communication rows when the source payload is HTML email. */
   detailHtml?: string;
+  /** Plain-text version of `detailHtml` for printing, when stripping the HTML would lose its layout. */
+  printText?: string;
+  /** Outside-lab result header, so the row can be titled with the lab that was ordered. */
+  labReport?: { status: string; orderedBy: string; panels: string };
   hasResult?: boolean;
+  /** Membership-covered visit charge — show a heart next to the description. */
+  isCovered?: boolean;
+  filePatientId?: number;
+  fileDocumentId?: number;
+  removed?: boolean;
+  removedReason?: string | null;
+  removedByName?: string | null;
+  removedAt?: string | null;
+  filePurged?: boolean;
+  removable?: boolean;
+  removeKind?: 'document' | 'scoutNote';
+  removeDocumentId?: number;
+  removeScoutNoteId?: string;
+  isDeclined?: boolean;
+  laterReceivedOn?: string | null;
+  /** Form / consent emails — driven by communication `statusDetails`. */
+  communicationStatusBadge?: 'pending' | 'signed' | 'expired';
+  /**
+   * In-house lab forms for this charge. The row shows a WAITING / result chip
+   * and the forms are run right from the timeline.
+   */
+  labResults?: LabResult[];
+  /** Visit charges: the invoice line billed, so lab forms can find their row. */
+  invoiceLineId?: string;
 };
 
 export type ChartRowSource =
   | 'complaint'
+  | 'problem'
   | 'diagnosis'
   | 'medication'
   | 'lab'
@@ -57,7 +202,15 @@ export type ChartRowSource =
   | 'monitoring'
   | 'communication'
   | 'reminder'
-  | 'vaccination';
+  | 'vaccination'
+  | 'visitCharge'
+  | 'chartNote'
+  | 'document'
+  | 'treatment'
+  | 'roomLoader'
+  | 'scoutNote'
+  | 'mailOrder'
+  | 'inHouseLab';
 
 export type MedicalRecordBundle = {
   labOrders?: unknown[];
@@ -71,10 +224,14 @@ export type MedicalRecordBundle = {
   histories?: unknown[];
   communicationLogs?: unknown[];
   reminders?: unknown[];
+  declinedItems?: unknown[];
   wellnessPlans?: unknown[];
   vaccinationLogs?: unknown[];
   /** Exam vital weights, ordered by service date on the server. */
   weightHistory?: unknown[];
+  /** EVET free-text chart notes (`name` + `noteText`). */
+  chartNotes?: unknown[];
+  chartDocuments?: unknown[];
 };
 
 function communicationMessageObject(o: Record<string, unknown>): Record<string, unknown> | null {
@@ -86,25 +243,73 @@ function communicationRawBody(o: Record<string, unknown>): string | null {
   return pickStr(msg?.body) ?? pickStr(msg?.message) ?? pickStr(o.description);
 }
 
+function communicationTypeLabel(o: Record<string, unknown>): string {
+  const msg = communicationMessageObject(o);
+  return (
+    pickStr(msg?.communicationTypeLabel) ??
+    pickStr(o.communicationTypeLabel) ??
+    pickStr(o.messageType) ??
+    'Client communication'
+  );
+}
+
+function communicationStatusBadge(
+  o: Record<string, unknown>,
+): ChartRow['communicationStatusBadge'] | undefined {
+  const details = (pickStr(o.statusDetails) ?? '').trim().toLowerCase();
+  if (details === 'pending') return 'pending';
+  if (details === 'signed') return 'signed';
+  if (details === 'expired') return 'expired';
+  return undefined;
+}
+
 function communicationLogSummary(o: Record<string, unknown>): string {
   const msg = communicationMessageObject(o);
-  const subject = pickStr(o.subject) ?? pickStr(msg?.subject);
+  const typeLabel = communicationTypeLabel(o);
   const rawBody = communicationRawBody(o);
-  if (subject && !looksLikeHtmlFragment(subject)) return subject;
-  const messageType = pickStr(o.messageType);
-  if (messageType) return messageType;
   if (rawBody) {
-    if (looksLikeHtmlFragment(rawBody)) {
-      const plain = htmlToPlainText(rawBody);
-      const t = plain.replace(/\s+/g, ' ').trim();
-      if (!t) return 'Client communication';
-      return t.length > 140 ? `${t.slice(0, 140)}…` : t;
-    }
-    return rawBody.length > 140 ? `${rawBody.slice(0, 140)}…` : rawBody;
+    const parsed = communicationBodyForDisplay(rawBody);
+    if (parsed.subject && !looksLikeHtmlFragment(parsed.subject)) return parsed.subject;
+    const t = parsed.text.replace(/\s+/g, ' ').trim();
+    if (t) return t.length > 140 ? `${t.slice(0, 140)}…` : t;
   }
-  return (
-    pickStr(o.summary) ?? pickStr(msg?.subject) ?? pickStr(o.messageType) ?? 'Client communication'
-  );
+  const subject = pickStr(o.subject) ?? pickStr(msg?.subject);
+  if (subject && !looksLikeHtmlFragment(subject)) return subject;
+  return pickStr(o.summary) ?? pickStr(o.displayName) ?? typeLabel;
+}
+
+function vitalSignLines(vital: Record<string, unknown> | null): string[] {
+  if (!vital) return [];
+  const bits: string[] = [];
+  const weight = vital.weight != null ? String(vital.weight).trim() : '';
+  if (weight) {
+    const unit = pickStr(vital.weightUnit) ?? pickStr(vital.weightUnitValue);
+    bits.push(`Weight: ${weight}${unit ? ` ${unit}` : ''}`);
+  }
+  if (vital.temperature != null && String(vital.temperature).trim()) {
+    bits.push(`Temp: ${String(vital.temperature).trim()}`);
+  }
+  if (vital.heartRate != null && String(vital.heartRate).trim()) {
+    bits.push(`HR: ${String(vital.heartRate).trim()}`);
+  }
+  if (vital.respiratoryRate != null && String(vital.respiratoryRate).trim()) {
+    bits.push(`RR: ${String(vital.respiratoryRate).trim()}`);
+  }
+  return bits;
+}
+
+function formResponseLines(responses: unknown[]): string[] {
+  return responses
+    .map((r) => {
+      const ro = asObj(r);
+      if (!ro) return null;
+      const cn = pickStr(ro.componentName);
+      const sel = pickStr(ro.selectedOptions);
+      const cm = pickStr(ro.comment);
+      if (!cn && !sel && !cm) return null;
+      return [cn, sel, cm].filter(Boolean).join(': ');
+    })
+    .filter(Boolean) as string[];
 }
 
 function vaccinationLogSummary(o: Record<string, unknown>): string {
@@ -118,51 +323,572 @@ function vaccinationLogSummary(o: Record<string, unknown>): string {
   );
 }
 
-export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null | undefined): ChartRow[] {
-  if (!mr) return [];
+const PROBLEM_TYPE_LABEL: Record<string, string> = {
+  acute: 'Acute problem',
+  chronic: 'Chronic problem',
+};
+
+function visitChargeTypeLabel(c: PostedVisitCharge): string {
+  if (c.isVaccine || c.isMed) return 'Inventory Item';
+  if (c.kind === 'diagnostic') return 'Lab';
+  if (c.kind === 'exam') return 'Exam Form';
+  return 'Procedure';
+}
+
+function firstPrescription(item: Record<string, unknown>): Record<string, unknown> | null {
+  const list = item.prescriptions;
+  if (!Array.isArray(list)) return null;
+  for (const raw of list) {
+    const o = asObj(raw);
+    if (!o || o.isDeleted === true) continue;
+    return o;
+  }
+  return null;
+}
+
+function productMatchKey(name: string | null | undefined): string {
+  return (name ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+inventory$/i, '')
+    .replace(/,?\s*individual chew\b/gi, '')
+    .replace(/\b\d+\s*ct\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+type MedicationHint = {
+  treatmentItemId: number | null;
+  productName: string | null;
+  serviceDate: string | null;
+  instructions: string | null;
+  strength: string | null;
+  refillsAllowed: number | null;
+  rxNumber: string | null;
+  quantityLabel: string | null;
+};
+
+function medicationHintsFromRows(rows: unknown[] | null | undefined): MedicationHint[] {
+  if (!Array.isArray(rows)) return [];
+  const out: MedicationHint[] = [];
+  for (const raw of rows) {
+    const o = asObj(raw);
+    if (!o || !treatmentItemBelongsOnChart(o)) continue;
+    const id = Number(o.treatmentItemId);
+    out.push({
+      treatmentItemId: Number.isFinite(id) && id > 0 ? id : null,
+      productName: pickStr(o.productName) ?? pickStr(o.name),
+      serviceDate: pickStr(o.serviceDate) ?? pickStr(o.startDate),
+      instructions:
+        pickStr(o.instructions) ?? pickStr(o.directions) ?? pickStr(o.sig),
+      strength: pickStr(o.strength),
+      refillsAllowed:
+        o.refillsAllowed != null && Number.isFinite(Number(o.refillsAllowed))
+          ? Number(o.refillsAllowed)
+          : o.refill != null && Number.isFinite(Number(o.refill))
+            ? Number(o.refill)
+            : null,
+      rxNumber: pickStr(o.rxNumber),
+      quantityLabel: pickStr(o.quantityLabel),
+    });
+  }
+  return out;
+}
+
+function namesAlign(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.includes(b) || b.includes(a);
+}
+
+function sameServiceDay(hintDay: string | null | undefined, day: string): boolean {
+  const hd = (hintDay || '').slice(0, 10);
+  return !day || !hd || hd === day;
+}
+
+function hintForTreatmentItem(
+  hints: MedicationHint[],
+  itemId: number,
+  name: string,
+  day: string,
+): MedicationHint | null {
+  const byId = hints.find((h) => h.treatmentItemId === itemId);
+  if (byId?.instructions) return byId;
+  const nameKey = productMatchKey(name);
+  if (!nameKey) return byId ?? null;
+  const aligned = hints.filter((h) => namesAlign(productMatchKey(h.productName), nameKey));
+  const sameDay = aligned.filter((h) => sameServiceDay(h.serviceDate, day));
+  return (
+    sameDay.find((h) => h.instructions) ??
+    aligned.find((h) => h.instructions) ??
+    byId ??
+    sameDay[0] ??
+    aligned[0] ??
+    null
+  );
+}
+
+function isUnitQtyLabel(label: string | null | undefined): boolean {
+  if (!label) return true;
+  return /^(qty\s+)?1(\s*(ea|each))?$/i.test(label.trim());
+}
+
+function treatmentItemDetail(item: TreatmentItem, hint?: MedicationHint | null): string {
+  const bits: string[] = [];
+  const qty = Number(item.quantity);
+  const ownLabel = hint?.treatmentItemId === item.id ? hint.quantityLabel : null;
+  if (ownLabel && !isUnitQtyLabel(ownLabel)) bits.push(ownLabel);
+  else if (Number.isFinite(qty) && qty !== 1) bits.push(`Qty ${qty}`);
+
+  const rec = item as Record<string, unknown>;
+  const rx = firstPrescription(rec);
+  const inv = asObj(item.inventoryItem);
+
+  const sig =
+    hint?.instructions ??
+    (rx
+      ? pickStr(rx.instructions) ?? pickStr(rx.directions) ?? pickStr(rx.sig)
+      : null) ??
+    (inv ? pickStr(inv.dispenseNote) : null) ??
+    pickStr(rec.instructions);
+  if (sig) bits.push(sig);
+  else if (
+    inv &&
+    (inv.isMedication === true || inv.isDispensable === true) &&
+    bits.length === 0
+  ) {
+    bits.push('No directions on file');
+  }
+
+  const strength = hint?.strength ?? (rx ? pickStr(rx.strength) : null);
+  if (strength) bits.push(`Strength ${strength}`);
+
+  const refill =
+    hint?.refillsAllowed ??
+    (rx && rx.refill != null && Number.isFinite(Number(rx.refill)) ? Number(rx.refill) : null);
+  if (refill != null) bits.push(`${refill} refill${refill === 1 ? '' : 's'}`);
+
+  const rxNumber = hint?.rxNumber ?? (rx ? pickStr(rx.rxNumber) : null);
+  if (rxNumber) bits.push(`Rx #${rxNumber}`);
+
+  if (inv) {
+    const lot = pickStr(inv.lotNumber);
+    if (lot) bits.push(`Lot ${lot}`);
+    const clientNote = pickStr(inv.clientNote);
+    if (clientNote) bits.push(clientNote);
+  }
+
+  return bits.join('\n');
+}
+
+function visitChargeDetail(c: PostedVisitCharge, hint?: MedicationHint | null): string {
+  const bits: string[] = [];
+  if (hint?.quantityLabel && !isUnitQtyLabel(hint.quantityLabel) && c.qty !== 1) {
+    bits.push(hint.quantityLabel);
+  } else if (c.qty > 1) bits.push(`Qty ${c.qty}`);
+  if (c.isCovered) bits.push('Membership covered');
+
+  if (c.isMed && c.prescriptionPending && !hint?.instructions) {
+    bits.push('Prescription details pending');
+  } else {
+    const acuity = c.prescription?.acuity;
+    if (acuity) bits.push(acuity === 'chronic' ? 'Chronic' : 'Acute');
+    const strength = hint?.strength ?? c.prescription?.strength ?? null;
+    if (strength) bits.push(`Strength ${strength}`);
+    const sig = hint?.instructions ?? c.prescription?.instructions ?? null;
+    if (sig) bits.push(sig);
+    const refill = hint?.refillsAllowed ?? c.prescription?.refill ?? null;
+    if (refill != null) bits.push(`${refill} refill${Number(refill) === 1 ? '' : 's'}`);
+    if (hint?.rxNumber) bits.push(`Rx #${hint.rxNumber}`);
+  }
+
+  if (c.isVaccine) {
+    if (c.vaccinationPending) {
+      bits.push('Dose details pending');
+    } else if (c.vaccination) {
+      if (c.vaccination.lotNumber) bits.push(`Lot ${c.vaccination.lotNumber}`);
+      if (c.vaccination.nextVaccinationDate) {
+        bits.push(`Next due ${new Date(c.vaccination.nextVaccinationDate).toLocaleDateString()}`);
+      }
+    }
+  }
+
+  return bits.join('\n');
+}
+
+/**
+ * Put in-house lab forms on the timeline. A form charged on a posted visit line
+ * rides on that charge's row (one line, one chip); anything else — a lab on a
+ * bill that is still open, or a form run without a charge — gets its own Lab row
+ * so a test that is still waiting is visible from the chart, not just the bill.
+ */
+export function mergeInHouseLabsIntoChart(
+  rows: ChartRow[],
+  labResults: LabResult[] | null | undefined,
+): ChartRow[] {
+  if (!labResults?.length) return rows;
+  const live = labResults.filter((r) => (r as { isDeleted?: boolean }).isDeleted !== true);
+  const byLine = new Map<string, LabResult[]>();
+  const unlinked: LabResult[] = [];
+  for (const r of live) {
+    if (r.visitInvoiceLineId) {
+      const list = byLine.get(r.visitInvoiceLineId) ?? [];
+      list.push(r);
+      byLine.set(r.visitInvoiceLineId, list);
+    } else {
+      unlinked.push(r);
+    }
+  }
+
+  const claimed = new Set<string>();
+  const out = rows.map((row) => {
+    if (row.source !== 'visitCharge') return row;
+    const lineId = row.invoiceLineId;
+    const results = lineId ? byLine.get(lineId) : undefined;
+    if (!results?.length || !lineId) return row;
+    claimed.add(lineId);
+    return {
+      ...row,
+      labResults: results,
+      hasResult: results.every((r) => r.status === 'complete'),
+    };
+  });
+
+  const standalone = (key: string, results: LabResult[]): ChartRow => {
+    const first = results[0];
+    const complete = results.filter((r) => r.status === 'complete');
+    const resultedDates = complete
+      .map((r) => r.resultedAt ?? r.serviceDate)
+      .filter((d): d is string => Boolean(d))
+      .sort();
+    const when =
+      complete.length === results.length && resultedDates.length
+        ? resultedDates[resultedDates.length - 1]
+        : first.serviceDate;
+    const by = complete.length ? resultedByLabel(complete[complete.length - 1]) : '';
+    return {
+      id: `inHouseLab:${key}`,
+      source: 'inHouseLab',
+      typeLabel: 'Lab',
+      description:
+        first.lab?.name?.trim() ||
+        (results.length === 1 ? first.templateName : results.map((r) => r.templateName).join(', ')),
+      provider: by || '—',
+      serviceDateIso: when ?? null,
+      sortTime: parseSortTime(when ?? null),
+      detailText: '',
+      labResults: results,
+      hasResult: complete.length === results.length,
+    };
+  };
+
+  for (const [lineId, results] of byLine) {
+    if (claimed.has(lineId)) continue;
+    out.push(standalone(`line:${lineId}`, results));
+  }
+  for (const r of unlinked) out.push(standalone(String(r.id), [r]));
+  return out;
+}
+
+/**
+ * A charge whose invoice was voided stays on the chart, readable, with who voided it,
+ * when and why.
+ */
+function voidedChartFields(
+  name: string,
+  detail: string,
+  voided: { at?: string | null; reason?: string | null; byName?: string | null }
+): Pick<ChartRow, 'description' | 'detailText' | 'removed' | 'removedReason' | 'removedByName' | 'removedAt'> {
+  const when = voided.at ? new Date(voided.at).toLocaleDateString() : null;
+  return {
+    description: `${name} — invoice voided${voided.byName ? ` · ${voided.byName}` : ''}`,
+    detailText: [
+      ['Invoice voided', when && `on ${when}`, voided.byName && `by ${voided.byName}`]
+        .filter(Boolean)
+        .join(' '),
+      voided.reason && `Reason: ${voided.reason}`,
+      detail,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    removed: true,
+    removedReason: voided.reason ?? null,
+    removedByName: voided.byName ?? null,
+    removedAt: voided.at ?? null,
+  };
+}
+
+function visitChargeChartRow(c: PostedVisitCharge, hint?: MedicationHint | null): ChartRow {
+  const detail = visitChargeDetail(c, hint);
+  return {
+    id: `visitCharge:${c.id}`,
+    source: 'visitCharge',
+    invoiceLineId: c.invoiceLineId ?? undefined,
+    typeLabel: visitChargeTypeLabel(c),
+    description: c.name,
+    provider: '—',
+    serviceDateIso: c.postedToRecordAt,
+    sortTime: parseSortTime(c.postedToRecordAt),
+    detailText: detail,
+    isCovered: c.isCovered,
+    hasResult: !(c.prescriptionPending || c.vaccinationPending),
+    ...(c.voided ? voidedChartFields(c.name, detail, c.voided) : {}),
+  };
+}
+
+/**
+ * @param problems Master Problem List entries for this patient. Only those already published to
+ *   the record (`postedToRecordAt`) get a row, so a chart still being drafted leaves no trace.
+ * @param visitCharges Finalized Scout visit charges (Trip Fee, Solensia, Revolution, …).
+ * @param treatments eVet treatment plans — inventory, procedure, and lab lines (rebates, trip fee, …).
+ * @param emrOnly When true, only eVet medical-record types (no Scout extras like vaccination logs).
+ */
+export function buildChartRowsFromMedicalRecord(
+  mr: MedicalRecordBundle | null | undefined,
+  problems?: PatientProblem[] | null,
+  visitCharges?: PostedVisitCharge[] | null,
+  treatments?: TreatmentWithItems[] | null,
+  emrOnly = false,
+  medicationHistory?: unknown[] | null,
+  patientId?: number | null,
+  /** Signed form invites — attaches Open PDF on matching communication rows. */
+  formInvites?: Array<{
+    communicationLogId?: number | null;
+    chartDocumentId?: number | null;
+    patientId?: number | null;
+  }> | null,
+): ChartRow[] {
+  if (!mr && !problems?.length && !visitCharges?.length && !treatments?.length) return [];
   const out: ChartRow[] = [];
+  const formDocByCommLog = new Map<number, number>();
+  for (const inv of formInvites ?? []) {
+    const logId = Number(inv.communicationLogId);
+    const docId = Number(inv.chartDocumentId);
+    if (Number.isFinite(logId) && logId > 0 && Number.isFinite(docId) && docId > 0) {
+      formDocByCommLog.set(logId, docId);
+    }
+  }
+  const keep = (row: ChartRow) => {
+    if (!emrOnly) return true;
+    if (!EMR_SOURCES.has(row.source)) return false;
+    if (row.source === 'treatment' && isStockInventoryName(row.description)) return false;
+    return true;
+  };
+  const skipPrintedRecord = (o: Record<string, unknown>) => {
+    if (!emrOnly) return false;
+    if (o.internalUse === true) return true;
+    if (o.includeOnMedicalRecordPrinting === false) return true;
+    return false;
+  };
+
+  for (const p of problems ?? []) {
+    if (!p.postedToRecordAt) continue;
+    const resolvedAt = p.status === 'resolved' ? p.resolvedAt : null;
+    out.push({
+      id: `problem:${p.id}`,
+      source: 'problem',
+      typeLabel: (p.acuity && PROBLEM_TYPE_LABEL[p.acuity]) ?? 'Problem',
+      description: p.label,
+      provider: '—',
+      serviceDateIso: p.postedToRecordAt,
+      sortTime: parseSortTime(p.postedToRecordAt),
+      detailText: [
+        resolvedAt && `Resolved ${new Date(resolvedAt).toLocaleDateString()}`,
+        p.status !== 'resolved' && `Status: ${p.status}`,
+        p.note,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    });
+  }
+
+  const medHints = medicationHintsFromRows(medicationHistory);
+  for (const c of visitCharges ?? []) {
+    const extra = c as PostedVisitCharge & { isDeleted?: boolean; isActive?: boolean };
+    if (extra.isDeleted === true || extra.isActive === false) continue;
+    const day = (c.postedToRecordAt || '').slice(0, 10);
+    const hint = hintForTreatmentItem(medHints, 0, c.name, day);
+    out.push(visitChargeChartRow(c, hint));
+  }
+
+  const visitChargeKeys = new Set(
+    (visitCharges ?? [])
+      .filter((c) => {
+        const extra = c as PostedVisitCharge & { isDeleted?: boolean; isActive?: boolean };
+        return extra.isDeleted !== true && extra.isActive !== false && !c.voided;
+      })
+      .map((c) => {
+        const day = (c.postedToRecordAt || '').slice(0, 10);
+        return `${day}|${(c.name || '').trim().toLowerCase()}`;
+      })
+  );
+  const allChartItems = (treatments ?? []).flatMap((plan) =>
+    treatmentPlanBelongsOnChart(plan) ? plan.treatmentItems ?? [] : []
+  );
+  for (const plan of treatments ?? []) {
+    if (!treatmentPlanBelongsOnChart(plan)) continue;
+    for (const item of plan.treatmentItems ?? []) {
+      const voided = item.isDeleted !== true && Boolean(item.voidedAt);
+      if (!voided && !treatmentItemBelongsOnChart(item)) continue;
+      const inv = item.inventoryItem?.name?.trim();
+      const proc = item.procedure?.name?.trim();
+      const lab = item.lab?.name?.trim();
+      const name = inv || proc || lab;
+      if (!name) continue;
+      const serviceDateIso = item.serviceDate || plan.created || null;
+      const day = (serviceDateIso || '').slice(0, 10);
+      if (!item.isDeclined && visitChargeKeys.has(`${day}|${name.toLowerCase()}`)) continue;
+      const laterReceivedOn = item.isDeclined
+        ? laterReceivedDateForDeclinedItem(item, allChartItems)
+        : null;
+      const typeLabel = item.isDeclined
+        ? 'Declined'
+        : inv
+          ? 'Inventory Item'
+          : proc
+            ? 'Procedure'
+            : 'Lab';
+      const hint = hintForTreatmentItem(medHints, item.id, name, day);
+      const rec = item as Record<string, unknown>;
+      const laterNote = laterReceivedOn
+        ? `later received on ${new Date(laterReceivedOn).toLocaleDateString()}`
+        : null;
+      out.push({
+        id: `treatment:${item.id}`,
+        source: 'treatment',
+        typeLabel,
+        description: laterNote ? `${name} — ${laterNote}` : name,
+        provider: employeeName(
+          rec.productionEmployee ?? rec.employee ?? rec.provider,
+        ),
+        serviceDateIso,
+        sortTime: parseSortTime(serviceDateIso),
+        detailText: [treatmentItemDetail(item, hint), laterNote].filter(Boolean).join('\n'),
+        isDeclined: item.isDeclined === true,
+        laterReceivedOn,
+        ...(voided
+          ? voidedChartFields(name, treatmentItemDetail(item, hint), {
+              at: item.voidedAt,
+              reason: item.voidReason,
+              byName: item.voidedByName,
+            })
+          : {}),
+      });
+    }
+  }
+
+  const seenTreatmentIds = new Set(
+    out.filter((row) => row.id.startsWith('treatment:')).map((row) => row.id)
+  );
+  for (const raw of mr?.declinedItems ?? []) {
+    const o = asObj(raw);
+    if (!o) continue;
+    const itemId = o.id != null ? String(o.id) : '';
+    if (!itemId) continue;
+    const rowId = `treatment:${itemId}`;
+    const label = pickStr(o.label) ?? pickStr(o.description) ?? 'Declined';
+    const recordedBy = pickStr(o.declinedByName);
+    const recordedNote = recordedBy ? `Recorded by ${recordedBy}` : null;
+    const existing = out.find((row) => row.id === rowId);
+    if (existing) {
+      if (!existing.provider && recordedBy) existing.provider = recordedBy;
+      if (recordedNote && !(existing.detailText ?? '').includes(recordedNote)) {
+        existing.detailText = [existing.detailText, recordedNote].filter(Boolean).join('\n');
+      }
+      continue;
+    }
+    if (seenTreatmentIds.has(rowId)) continue;
+    const serviceDateIso =
+      pickStr(o.declinedAt) ?? pickStr(o.serviceDate) ?? pickStr(o.created);
+    out.push({
+      id: rowId,
+      source: 'treatment',
+      typeLabel: 'Declined',
+      description: label,
+      provider: recordedBy ?? '—',
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      detailText: ['Owner declined.', recordedNote].filter(Boolean).join(' '),
+      isDeclined: true,
+    });
+  }
+
+  const finish = (rows: ChartRow[]) =>
+    rows.filter(keep).sort((a, b) => b.sortTime - a.sortTime);
+
+  if (!mr) return finish(out);
 
   for (const log of mr.communicationLogs ?? []) {
     const o = asObj(log);
-    if (!o) continue;
+    if (!o || skipPrintedRecord(o)) continue;
     const id = o.id != null ? String(o.id) : `cc-${out.length}`;
     const serviceDateIso =
-      pickStr(o.serviceDate) ??
-      pickStr(o.sentAt) ??
-      pickStr(o.createdAt) ??
-      pickStr(o.deliveredAt);
+      pickStr(o.serviceDate) ?? pickStr(o.sentAt) ?? pickStr(o.createdAt) ?? pickStr(o.deliveredAt);
     const summary = communicationLogSummary(o);
     const status = (pickStr(o.status) ?? pickStr(o.deliveryStatus) ?? '').toLowerCase();
+    const statusBadge = communicationStatusBadge(o);
     const detailBits = [
       pickStr(o.channel) && `Channel: ${pickStr(o.channel)}`,
       pickStr(o.recipient) && `Recipient: ${pickStr(o.recipient)}`,
       pickStr(o.status) && `Status: ${pickStr(o.status)}`,
+      statusBadge === 'pending' && 'Awaiting client signature',
+      statusBadge === 'signed' && 'Client signed',
     ].filter(Boolean);
     const rawBody = communicationRawBody(o);
     let detailText = detailBits.join('\n');
     let detailHtml: string | undefined;
-    if (rawBody && looksLikeHtmlFragment(rawBody)) {
-      detailHtml = sanitizeCommunicationHtml(rawBody);
-    } else if (rawBody) {
-      detailText = [detailText, rawBody].filter(Boolean).join('\n\n');
+    if (rawBody) {
+      const parsed = communicationBodyForDisplay(rawBody);
+      if (parsed.subject) {
+        detailText = [`Subject: ${parsed.subject}`, detailText].filter(Boolean).join('\n');
+      }
+      if (parsed.html) {
+        detailHtml = parsed.html;
+      } else if (parsed.text) {
+        detailText = [detailText, parsed.text].filter(Boolean).join('\n\n');
+      }
     }
+    const chartDocId = formDocByCommLog.get(Number(id));
     out.push({
       id: `communication:${id}`,
       source: 'communication',
-      typeLabel: 'Client communication entry',
-      description: summary,
+      typeLabel: 'Client Communication Entry',
+      description: (() => {
+        const kind = communicationTypeLabel(o);
+        if (kind && kind !== 'Client communication' && kind !== summary) {
+          return `${kind} - ${summary}`;
+        }
+        return summary;
+      })(),
       provider: employeeName(o.employee ?? o.senderEmployee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
       detailText,
       detailHtml,
-      hasResult: status.includes('deliver') || status.includes('sent') || status === 'complete',
+      hasResult:
+        statusBadge === 'signed' ||
+        status.includes('deliver') ||
+        status.includes('sent') ||
+        status === 'complete',
+      communicationStatusBadge: statusBadge,
+      filePatientId:
+        chartDocId && patientId && Number.isFinite(patientId) ? patientId : undefined,
+      fileDocumentId: chartDocId,
     });
   }
 
   for (const rem of mr.reminders ?? []) {
     const o = asObj(rem);
     if (!o) continue;
+    const reminderType = pickStr(o.reminderType) ?? pickStr(o.type);
+    if ((reminderType ?? '').trim().toLowerCase() === 'callback') continue;
+    if ((reminderType ?? '').trim().toLowerCase() === 'todo') continue;
+    const hidden = o.isHidden ?? o.is_hidden ?? o.hidden;
+    if (hidden === true || hidden === 1) continue;
+    if (typeof hidden === 'string') {
+      const t = hidden.trim().toLowerCase();
+      if (t === 'true' || t === '1' || t === 'yes') continue;
+    }
     const id = o.id != null ? String(o.id) : `rm-${out.length}`;
     const serviceDateIso =
       pickStr(o.dueDate) ??
@@ -170,7 +896,8 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       pickStr(o.serviceDate) ??
       pickStr(o.createdAt);
     const title = pickStr(o.title) ?? pickStr(o.name) ?? pickStr(o.description) ?? 'Reminder';
-    const desc = pickStr(o.description) && pickStr(o.description) !== title ? pickStr(o.description) : null;
+    const desc =
+      pickStr(o.description) && pickStr(o.description) !== title ? pickStr(o.description) : null;
     out.push({
       id: `reminder:${id}`,
       source: 'reminder',
@@ -198,7 +925,7 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     out.push({
       id: `vaccination:${id}`,
       source: 'vaccination',
-      typeLabel: 'Vaccination log',
+      typeLabel: 'Vaccination',
       description: label,
       provider: employeeName(o.employee),
       serviceDateIso,
@@ -213,8 +940,7 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     const o = asObj(c);
     if (!o) continue;
     const id = o.id != null ? String(o.id) : `c-${out.length}`;
-    const serviceDateIso =
-      pickStr(o.serviceDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
+    const serviceDateIso = pickStr(o.serviceDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
     const name = pickStr(o.complaintName) ?? 'Complaint';
     const comments = pickStr(o.customComments);
     out.push({
@@ -244,7 +970,10 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       provider: employeeName(o.employee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: [comments && `Comments: ${comments}`, pickStr(o.pimsId) && `PIMS: ${pickStr(o.pimsId)}`]
+      detailText: [
+        comments && `Comments: ${comments}`,
+        pickStr(o.pimsId) && `PIMS: ${pickStr(o.pimsId)}`,
+      ]
         .filter(Boolean)
         .join('\n'),
     });
@@ -280,6 +1009,39 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     const notes = pickStr(order.notes);
     const rpt = result ? pickStr(result.reportDate) : null;
     const rComments = result ? pickStr(result.comments) : null;
+    const report = result ? parseIdexxReport(pickStr(result.externalData)) : null;
+    if (report) {
+      const abnormal = idexxAbnormalLines(report);
+      // eVet files the result on the order's date, next to the Lab line that ordered it.
+      const when = submitted ?? rpt;
+      out.push({
+        id: `lab:${oid}`,
+        source: 'lab',
+        typeLabel: /idexx/i.test(typeName) ? 'IDEXX VetConnect Result' : `${typeName} (result)`,
+        description: [report.status, report.orderedBy, report.title || notes]
+          .filter(Boolean)
+          .join(' - '),
+        provider: report.orderedBy || '—',
+        serviceDateIso: when,
+        sortTime: parseSortTime(when),
+        detailText: [
+          abnormal.length
+            ? `Out of range: ${abnormal.join('; ')}`
+            : 'All values within reference range.',
+          rpt && `Reported ${new Date(rpt).toLocaleString()}`,
+          rComments && `Comments: ${rComments}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        detailHtml: idexxReportHtml(report),
+        printText: [rComments && `Comments: ${rComments}`, idexxReportText(report)]
+          .filter(Boolean)
+          .join('\n\n'),
+        hasResult: report.status === 'Final',
+        labReport: { status: report.status, orderedBy: report.orderedBy, panels: report.title },
+      });
+      continue;
+    }
     const descParts = [notes, ext ? `Ref: ${ext}` : null, rComments].filter(Boolean);
     out.push({
       id: `lab:${oid}`,
@@ -290,10 +1052,13 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       serviceDateIso: rpt ?? submitted,
       sortTime: parseSortTime(rpt ?? submitted),
       detailText: result
-        ? [rComments && `Result: ${rComments}`, pickStr(result.externalData) && 'Raw data available']
+        ? [
+            rComments && `Result: ${rComments}`,
+            pickStr(result.externalData) && 'Raw data available',
+          ]
             .filter(Boolean)
             .join('\n')
-        : notes ?? '',
+        : (notes ?? ''),
       hasResult: Boolean(result),
     });
   }
@@ -305,27 +1070,17 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     const serviceDateIso = pickStr(o.serviceDate);
     const formName = pickStr(o.formName) ?? 'Exam';
     const comments = pickStr(o.comments);
-    const responses = Array.isArray(o.responses) ? o.responses : [];
-    const respLines = responses
-      .map((r) => {
-        const ro = asObj(r);
-        if (!ro) return null;
-        const cn = pickStr(ro.componentName);
-        const sel = pickStr(ro.selectedOptions);
-        const cm = pickStr(ro.comment);
-        if (!cn && !sel && !cm) return null;
-        return [cn, sel, cm].filter(Boolean).join(': ');
-      })
-      .filter(Boolean) as string[];
+    const respLines = formResponseLines(Array.isArray(o.responses) ? o.responses : []);
+    const vitalLines = vitalSignLines(asObj(o.vitalSign));
     out.push({
       id: `exam:${id}`,
       source: 'exam',
-      typeLabel: 'Exam form',
+      typeLabel: 'Exam Form',
       description: comments ? `${formName} — ${comments}` : formName,
       provider: employeeName(o.employee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: [comments, ...respLines].filter(Boolean).join('\n'),
+      detailText: [comments, ...vitalLines, ...respLines].filter(Boolean).join('\n'),
     });
   }
 
@@ -336,22 +1091,11 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     const serviceDateIso = pickStr(o.serviceDate);
     const formName = pickStr(o.formName) ?? 'History';
     const comments = pickStr(o.comments);
-    const responses = Array.isArray(o.responses) ? o.responses : [];
-    const respLines = responses
-      .map((r) => {
-        const ro = asObj(r);
-        if (!ro) return null;
-        const cn = pickStr(ro.componentName);
-        const sel = pickStr(ro.selectedOptions);
-        const cm = pickStr(ro.comment);
-        if (!cn && !sel && !cm) return null;
-        return [cn, sel, cm].filter(Boolean).join(': ');
-      })
-      .filter(Boolean) as string[];
+    const respLines = formResponseLines(Array.isArray(o.responses) ? o.responses : []);
     out.push({
       id: `history:${id}`,
       source: 'history',
-      typeLabel: 'Medical record notes',
+      typeLabel: 'Medical Record Notes',
       description: comments ? `${formName} — ${comments}` : formName,
       provider: employeeName(o.employee),
       serviceDateIso,
@@ -365,7 +1109,10 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     if (!o) continue;
     const id = o.id != null ? String(o.id) : `img-${out.length}`;
     const serviceDateIso =
-      pickStr(o.serviceDate) ?? pickStr(o.studyDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
+      pickStr(o.serviceDate) ??
+      pickStr(o.studyDate) ??
+      pickStr(o.createdAt) ??
+      pickStr(o.recordDate);
     const acc = pickStr(o.accessionId) ?? pickStr(o.name) ?? 'Imaging';
     out.push({
       id: `imaging:${id}`,
@@ -413,26 +1160,192 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
       detailText: [
-        pickStr(o.anesthesiaStart) && `Anesthesia: ${pickStr(o.anesthesiaStart)} – ${pickStr(o.anesthesiaEnd) ?? ''}`,
-        pickStr(o.ivFluidType) && `Fluids: ${pickStr(o.ivFluidType)} ${pickStr(o.ivFluidRate) ?? ''}`,
+        pickStr(o.anesthesiaStart) &&
+          `Anesthesia: ${pickStr(o.anesthesiaStart)} – ${pickStr(o.anesthesiaEnd) ?? ''}`,
+        pickStr(o.ivFluidType) &&
+          `Fluids: ${pickStr(o.ivFluidType)} ${pickStr(o.ivFluidRate) ?? ''}`,
       ]
         .filter(Boolean)
         .join('\n'),
     });
   }
 
-  return out.sort((a, b) => b.sortTime - a.sortTime);
+  for (const note of mr.chartNotes ?? []) {
+    const o = asObj(note);
+    if (!o) continue;
+    const id = o.id != null ? String(o.id) : `cn-${out.length}`;
+    const title = pickStr(o.name) ?? pickStr(o.recordLabel) ?? 'Medical note';
+    const body = pickStr(o.noteText) ?? pickStr(o.description) ?? '';
+    const serviceDateIso = pickStr(o.serviceDate) ?? pickStr(o.createdAt);
+    out.push({
+      id: `chartNote:${id}`,
+      source: 'chartNote',
+      typeLabel: 'Medical Record Notes',
+      description: title,
+      provider: employeeName(o.employee),
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      detailText: body,
+    });
+  }
+
+  for (const doc of mr.chartDocuments ?? []) {
+    const o = asObj(doc);
+    if (!o || skipPrintedRecord(o)) continue;
+    const name = pickStr(o.name) ?? 'Document';
+    const desc = pickStr(o.description) ?? '';
+    if (
+      /memorial items purchased on euthanasia consent/i.test(desc) ||
+      /^memorial items purchased/i.test(name)
+    ) {
+      continue;
+    }
+    const id = o.id != null ? String(o.id) : `doc-${out.length}`;
+    const { typeLabel, description } = documentChartLabel(o);
+    const ext = pickStr(o.extension);
+    const serviceDateIso = pickStr(o.serviceDate) ?? pickStr(o.createdAt);
+    const removedAt = pickStr(o.removedAt);
+    const removed = Boolean(removedAt);
+    const filePurged = Boolean(pickStr(o.filePurgedAt));
+    const hasFile =
+      !removed &&
+      !filePurged &&
+      (o.hasFile === true || o.isUploadedToBlob === true);
+    const canRetrieve =
+      removed &&
+      !filePurged &&
+      (o.hasFile === true || o.isUploadedToBlob === true);
+    const numericId = Number(o.id);
+    const fileDocumentId = Number.isFinite(numericId) && numericId > 0 ? numericId : undefined;
+    const text = hasFile ? null : pickStr(o.documentText);
+    const removedByName = pickStr(o.removedByName);
+    const removedReason = pickStr(o.removedReason);
+    const scoutUpload = pickStr(o.pimsType) === 'SCOUT';
+    out.push({
+      id: `document:${id}`,
+      source: 'document',
+      typeLabel,
+        description: removed
+        ? `${name} — removed${removedReason ? ` (${chartRemoveReasonLabel(removedReason)})` : ''}${
+            removedByName ? ` · ${removedByName}` : ''
+          }`
+        : description,
+      provider: removedByName || employeeName(o.employee),
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      filePatientId: (hasFile || canRetrieve) && patientId ? patientId : undefined,
+      fileDocumentId: hasFile || canRetrieve ? fileDocumentId : undefined,
+      removed,
+      removedReason,
+      removedByName,
+      removedAt,
+      filePurged,
+      removable: scoutUpload && !removed,
+      removeKind: scoutUpload ? 'document' : undefined,
+      removeDocumentId: scoutUpload ? fileDocumentId : undefined,
+      detailText: removed
+        ? [
+            removedReason && `Reason: ${chartRemoveReasonLabel(removedReason)}`,
+            removedByName && `Removed by ${removedByName}`,
+            removedAt && `Removed ${removedAt}`,
+            filePurged
+              ? 'The file was discarded — it was never a medical record.'
+              : canRetrieve
+                ? 'The file is still stored. Open it from this row if needed.'
+                : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : [
+            text,
+            !text && !hasFile && ext && `File: ${name}${ext.startsWith('.') ? ext : `.${ext}`}`,
+            !text && !hasFile && pickStr(o.contentType) && `Type: ${pickStr(o.contentType)}`,
+            !text &&
+              !hasFile &&
+              'The file itself is not stored in Scout yet — this is the chart entry from the import.',
+            hasFile && 'Signed form PDF is attached. Open it from this row.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+    });
+  }
+
+  linkLabOrdersToResults(out);
+  return finish(out);
+}
+
+function localDay(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA');
+}
+
+/** The ordered "Lab" line points at the result filed that day, so its row is not just a name. */
+function linkLabOrdersToResults(rows: ChartRow[]) {
+  const resultsByDay = new Map<string, ChartRow[]>();
+  for (const r of rows) {
+    if (r.source !== 'lab' || !r.detailHtml) continue;
+    const day = localDay(r.serviceDateIso);
+    if (!day) continue;
+    resultsByDay.set(day, [...(resultsByDay.get(day) ?? []), r]);
+  }
+  if (!resultsByDay.size) return;
+  const orderedByDay = new Map<string, ChartRow[]>();
+  for (const r of rows) {
+    const ordered =
+      (r.source === 'treatment' || r.source === 'visitCharge') &&
+      r.typeLabel === 'Lab' &&
+      !r.isDeclined;
+    if (!ordered) continue;
+    const day = localDay(r.serviceDateIso);
+    if (!resultsByDay.has(day)) continue;
+    orderedByDay.set(day, [...(orderedByDay.get(day) ?? []), r]);
+  }
+  for (const [day, ordered] of orderedByDay) {
+    const results = resultsByDay.get(day)!;
+    // One result that day: it is the lab that was ordered, so it carries that name.
+    // With several, the IDEXX panel names are the only safe title.
+    if (results.length === 1) {
+      const res = results[0]!;
+      const names = [...new Set(ordered.map((o) => o.description.trim()))].join('; ');
+      if (res.labReport && names) {
+        res.description = [res.labReport.status, res.labReport.orderedBy, names]
+          .filter(Boolean)
+          .join(' - ');
+        if (res.labReport.panels) {
+          res.detailText = [`IDEXX panels: ${res.labReport.panels}`, res.detailText]
+            .filter(Boolean)
+            .join('\n');
+        }
+      }
+    }
+    for (const o of ordered) {
+      const lines = results.map((res) => {
+        const outOfRange =
+          res.detailText.split('\n').find((l) => /^(Out of range|All values)/.test(l)) ?? '';
+        return `Result: ${res.typeLabel} (${res.labReport?.status ?? 'see result'}) — ${outOfRange}`;
+      });
+      o.detailText = [o.detailText, ...lines].filter(Boolean).join('\n\n');
+      o.hasResult = true;
+    }
+  }
 }
 
 /** Group already-filtered rows by calendar day in the browser locale. */
-export function groupChartRowsByLocalDate(rows: ChartRow[]): { dateKey: string; rows: ChartRow[] }[] {
+export function groupChartRowsByLocalDate(
+  rows: ChartRow[]
+): { dateKey: string; rows: ChartRow[] }[] {
   const map = new Map<string, ChartRow[]>();
   for (const row of rows) {
     let key = 'Unknown date';
     if (row.serviceDateIso) {
       const d = new Date(row.serviceDateIso);
       if (!Number.isNaN(d.getTime())) {
-        key = d.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+        key = d.toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+        });
       }
     }
     if (!map.has(key)) map.set(key, []);
@@ -450,4 +1363,179 @@ export function filterRowsByDateRange(
     if (!r.sortTime) return true;
     return r.sortTime >= dateStartMs && r.sortTime <= dateEndMs;
   });
+}
+
+function roomLoaderIncludesPatient(rl: RoomLoader, patientId: number): boolean {
+  if ((rl.patients ?? []).some((p) => Number(p.id) === patientId)) return true;
+  return (rl.appointments ?? []).some((a) => Number(a.patient?.id) === patientId);
+}
+
+/** Client-submitted Room Loaders belong on the pet medical record. */
+export function chartRowsFromClientRoomLoaders(
+  loaders: RoomLoader[] | null | undefined,
+  patientId: string | number
+): ChartRow[] {
+  const pid = Number(patientId);
+  if (!Number.isFinite(pid) || !loaders?.length) return [];
+
+  const out: ChartRow[] = [];
+  for (const rl of loaders) {
+    if (rl.sentStatus !== 'completed' && !rl.responseFromClient) continue;
+    if (!roomLoaderIncludesPatient(rl, pid)) continue;
+
+    const appt =
+      (rl.appointments ?? []).find((a) => Number(a.patient?.id) === pid) ??
+      rl.appointments?.[0] ??
+      null;
+    const serviceDateIso =
+      pickStr(appt?.appointmentStart) ?? pickStr(rl.updated) ?? pickStr(rl.created);
+    const typeLabel = pickStr(appt?.appointmentType?.prettyName) ??
+      pickStr(appt?.appointmentType?.name) ??
+      'Pre-visit check-in';
+    const answers = buildSubjectiveTextFromRoomLoaderResponse(
+      rl.responseFromClient as Parameters<typeof buildSubjectiveTextFromRoomLoaderResponse>[0],
+      pid,
+      { appointmentReason: pickStr(appt?.description) }
+    );
+
+    out.push({
+      id: `roomLoader:${rl.id}`,
+      source: 'roomLoader',
+      typeLabel: 'Room Loader',
+      description: `Client submitted · ${typeLabel}`,
+      provider: 'Client',
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      detailText: answers || 'Client submitted the pre-visit check-in form.',
+    });
+  }
+
+  return out.sort((a, b) => b.sortTime - a.sortTime);
+}
+
+function employeeLabel(emp: { firstName?: string | null; lastName?: string | null } | null | undefined): string {
+  const name = [emp?.firstName, emp?.lastName].filter(Boolean).join(' ').trim();
+  return name || 'Staff';
+}
+
+const MAIL_STAGE_LABEL: Record<string, string> = {
+  needs_approval: 'Needs approval',
+  needs_payment: 'Needs payment',
+  fill: 'Fill',
+  check: 'Check',
+  rtg: 'Ready to go',
+  ship: 'Shipping',
+  ready_for_pickup: 'Ready for pickup',
+  done: 'Completed',
+  rejected: 'Rejected',
+};
+
+export type MailOrderChartSource = {
+  id: number;
+  created: string;
+  pickup?: boolean;
+  origin?: string;
+  pharmacyStage?: string | null;
+  doctorName?: string | null;
+  trackingCode?: string | null;
+  patientId?: number | null;
+  lines?: Array<{
+    id: number;
+    patientId?: number | null;
+    name: string;
+    quantity: number;
+    scriptText?: string | null;
+  }>;
+};
+
+/** Online-store / staff mail fills belong on the pet medical record. */
+export function chartRowsFromMailOrders(
+  orders: MailOrderChartSource[] | null | undefined,
+  patientId: number | string,
+): ChartRow[] {
+  const pid = Number(patientId);
+  if (!orders?.length || !Number.isFinite(pid)) return [];
+  const out: ChartRow[] = [];
+  for (const order of orders) {
+    const pickup = Boolean(order.pickup || order.origin === 'office_pickup');
+    const stage = order.pharmacyStage || '';
+    const status =
+      pickup && (stage === 'ship' || stage === 'done')
+        ? 'Ready for pickup'
+        : MAIL_STAGE_LABEL[stage] || stage;
+    const typeLabel =
+      order.origin === 'online_store' ? 'Online store order' : 'Mail order';
+    const mine = (order.lines || []).filter((line) => {
+      if (line.patientId != null) return Number(line.patientId) === pid;
+      return Number(order.patientId) === pid;
+    });
+    for (const line of mine) {
+      const qty = Number(line.quantity) || 1;
+      out.push({
+        id: `mailOrder:${line.id}`,
+        source: 'mailOrder',
+        typeLabel,
+        description: `${line.name} × ${qty}${status ? ` (${status})` : ''}`,
+        provider: order.doctorName || '—',
+        serviceDateIso: order.created,
+        sortTime: parseSortTime(order.created),
+        detailText: [
+          line.scriptText,
+          `Qty: ${qty}`,
+          pickup ? 'Office pickup' : 'Ship',
+          order.trackingCode ? `Tracking ${order.trackingCode}` : '',
+          `Order #${order.id}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
+    }
+  }
+  return out;
+}
+
+/** Wrapped-up Scout medical notes belong on the pet medical record. */
+export function chartRowsFromScoutNotes(notes: ScoutChartNote[] | null | undefined): ChartRow[] {
+  if (!notes?.length) return [];
+  return notes
+    .filter((n) => n.status === 'finalized' && n.body.trim())
+    .map((n) => {
+      const removedAt = n.removedAt ?? null;
+      const removed = Boolean(removedAt);
+      // noteDate wins for notes written after the fact — a call transcribed on Friday
+      // belongs on Tuesday's line, not at the top of today.
+      const when = removedAt || n.noteDate || n.finalizedAt || n.updated || n.created;
+      const preview = n.body.trim().slice(0, 120) + (n.body.trim().length > 120 ? '…' : '');
+      return {
+        id: `scoutNote:${n.id}`,
+        source: 'scoutNote' as const,
+        typeLabel: 'Medical note',
+        description: removed
+          ? `Note — removed${n.removedReason ? ` (${chartRemoveReasonLabel(n.removedReason)})` : ''}${
+              n.removedByName ? ` · ${n.removedByName}` : ''
+            }`
+          : preview,
+        provider: n.removedByName || employeeLabel(n.finalizedByEmployee ?? n.createdByEmployee),
+        serviceDateIso: when,
+        sortTime: parseSortTime(when),
+        detailText: removed
+          ? [
+              n.removedReason && `Reason: ${chartRemoveReasonLabel(n.removedReason)}`,
+              n.removedByName && `Removed by ${n.removedByName}`,
+              removedAt && `Removed ${removedAt}`,
+              n.body.trim() && `\n${n.body.trim()}`,
+            ]
+              .filter(Boolean)
+              .join('\n')
+          : n.body.trim(),
+        removed,
+        removedReason: n.removedReason ?? null,
+        removedByName: n.removedByName ?? null,
+        removedAt,
+        removable: false,
+        removeKind: undefined,
+        removeScoutNoteId: n.id,
+      };
+    })
+    .sort((a, b) => b.sortTime - a.sortTime);
 }

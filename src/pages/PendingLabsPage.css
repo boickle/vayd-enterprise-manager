@@ -1,0 +1,104 @@
+.pending-labs {
+  padding: 20px 24px 48px;
+  max-width: 900px;
+}
+
+.pending-labs__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.pending-labs__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #103b2e;
+}
+
+.pending-labs__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #eef4f2;
+}
+.pending-labs__tabs button {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pending-labs__tabs button.is-active {
+  background: #fff;
+  color: #0f766e;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.pending-labs__group + .pending-labs__group {
+  margin-top: 20px;
+}
+
+.pending-labs__day {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.pending-labs__row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.pending-labs__row-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pending-labs__chart-link {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: 0 14px;
+  border: 1px solid #e4efe9;
+  border-radius: 10px;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.pending-labs__chart-link:hover {
+  background: #f2faf7;
+  border-color: #bcd9cf;
+}
+
+.pending-labs__empty {
+  margin: 0;
+  padding: 40px 0;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .pending-labs {
+    padding: 16px 14px 40px;
+  }
+  .pending-labs__head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

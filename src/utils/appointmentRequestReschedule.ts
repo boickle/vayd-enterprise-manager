@@ -13,8 +13,9 @@ import {
   type RescheduleSameDayVisit,
 } from './routingRescheduleIntent';
 import { fetchAndCacheRescheduleSourcePlacementSnapshot } from './routingRescheduleScoreCompare';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 function appointmentIsTodayOrFuture(apptStart: string, practiceTz: string): boolean {
   const start = DateTime.fromISO(apptStart, { zone: 'utc' }).setZone(practiceTz);

@@ -12,10 +12,18 @@ function holdDescriptionText(hold: HoldListItem): string {
 }
 
 /** Parse short online-booking HOLD calendar titles from the description field. */
+const ONLINE_BOOKING_STATUS_PREFIX =
+  /^Online Booking\s*-\s*(?:NEW|EXISTING)\s+client\s+and\s+(?:NEW|EXISTING)\s+patient(?:\.\s*|\s+)/i;
+
+function stripOnlineBookingStatusLead(text: string): string {
+  const stripped = text.replace(ONLINE_BOOKING_STATUS_PREFIX, '').trim();
+  return stripped ? `Online Booking - ${stripped}` : text;
+}
+
 export function parseOnlineBookingHoldDescription(
   text: string
 ): ParsedOnlineBookingHoldDescription | null {
-  const trimmed = text.trim();
+  const trimmed = stripOnlineBookingStatusLead(text.trim());
   if (!/^Online Booking/i.test(trimmed)) return null;
 
   // "Online Booking - Deirdre Frey (Current client) for Floofy"

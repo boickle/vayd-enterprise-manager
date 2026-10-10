@@ -29,6 +29,7 @@ export async function searchPatients(params?: {
   practiceId?: string | number;
   activeOnly?: boolean;
   clientId?: string | number;
+  limit?: number;
 }) {
   return http.get('/patients/search', { params });
 }
@@ -73,6 +74,7 @@ async function fetchPatientsSearchByName(
       ...(opts?.clientId != null ? { clientId: String(opts.clientId) } : {}),
       ...(opts?.practiceId != null ? { practiceId: opts.practiceId } : {}),
       activeOnly,
+      limit: 40,
     },
   });
   const raw = extractPatientListFromSearchResponse(data);
@@ -83,7 +85,7 @@ async function fetchPatientsForClients(
   clients: ClientSearchRow[],
   petNameHint: string | null,
   opts?: PatientSearchFetchOpts,
-  maxClients = 8
+  maxClients = 3
 ): Promise<PatientSearchRow[]> {
   const slice = clients.slice(0, maxClients);
   if (slice.length === 0) return [];
@@ -103,7 +105,7 @@ async function fetchPatientsViaClientNameSearch(
   tokens: string[],
   petNameHint: string | null,
   opts?: PatientSearchFetchOpts,
-  maxClients = 8
+  maxClients = 3
 ): Promise<PatientSearchRow[]> {
   const includeInactive = opts?.activeOnly === false;
   const clients = await searchClientsStaff(clientQuery, { includeInactive });
@@ -165,6 +167,118 @@ export async function searchPatientsStaff(
   }
 
   return ranked;
+}
+
+export type PortalSnapshotPhoto = {
+  id: number;
+  url: string;
+  isPrimary: boolean;
+  created: string | null;
+};
+
+export type PortalSnapshot = {
+  id: number;
+  name: string;
+  nickname: string | null;
+  favoriteThing: string | null;
+  superpower: string | null;
+  nemesis: string | null;
+  funFact: string | null;
+  keyToMyHeart: string | null;
+  socialMediaConsent: boolean;
+  socialMediaConsentAt: string | null;
+  portalProfileUpdatedAt: string | null;
+  species: string | null;
+  breed: string | null;
+  sex: string | null;
+  dob: string | null;
+  isActive: boolean;
+  hasImage: boolean;
+  filledCount: number;
+  provider: { id: number; name: string } | null;
+  photos: PortalSnapshotPhoto[];
+  loves: { count: number; mine: boolean };
+};
+
+/** Number of owner-answered "about me" questions (nickname + five prompts). */
+export const PORTAL_SNAPSHOT_FACT_TOTAL = 6;
+
+/** Staff browse of pets with portal answers or photos. Inactive pets are never included. */
+export async function fetchPortalSnapshots(opts: {
+  practiceId: number;
+  providerId?: number | null;
+  q?: string;
+  fill?: 'any' | 'photos' | 'started' | 'mostly' | 'complete';
+  consentOnly?: boolean;
+  lovedOnly?: boolean;
+  species?: string;
+  sort?: SnapshotSort;
+  page?: number;
+  pageSize?: number;
+}): Promise<SnapshotPage<PortalSnapshot>> {
+  const { data } = await http.get('/patients/portal-snapshots', {
+    params: {
+      practiceId: opts.practiceId,
+      ...(opts.providerId ? { providerId: opts.providerId } : {}),
+      ...(opts.q?.trim() ? { q: opts.q.trim() } : {}),
+      ...(opts.fill && opts.fill !== 'any' ? { fill: opts.fill } : {}),
+      ...(opts.consentOnly ? { consentOnly: '1' } : {}),
+      ...(opts.lovedOnly ? { lovedOnly: '1' } : {}),
+      ...(opts.species ? { species: opts.species } : {}),
+      ...(opts.sort === 'loves' ? { sort: 'loves' } : {}),
+      page: opts.page ?? 1,
+      ...(opts.pageSize ? { pageSize: opts.pageSize } : {}),
+    },
+  });
+  return normalizeSnapshotPage<PortalSnapshot>(data);
+}
+
+export type SnapshotSort = 'recent' | 'loves';
+
+export type SnapshotPage<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  speciesOptions: Array<{ name: string; count: number }>;
+};
+
+export function normalizeSnapshotPage<T extends { loves: { count: number; mine: boolean } }>(
+  data: any,
+): SnapshotPage<T> {
+  const items: T[] = (Array.isArray(data?.items) ? data.items : []).map((row: any) => ({
+    ...row,
+    loves: {
+      count: Number(row?.loves?.count) || 0,
+      mine: row?.loves?.mine === true,
+    },
+  }));
+  return {
+    items,
+    total: Number(data?.total) || items.length,
+    page: Number(data?.page) || 1,
+    pageSize: Number(data?.pageSize) || items.length || 30,
+    pageCount: Math.max(1, Number(data?.pageCount) || 1),
+    speciesOptions: Array.isArray(data?.speciesOptions)
+      ? data.speciesOptions
+          .filter((s: any) => s && s.name)
+          .map((s: any) => ({ name: String(s.name), count: Number(s.count) || 0 }))
+      : [],
+  };
+}
+
+/** Staff: love / un-love a pet's snapshot. */
+export async function togglePatientLove(
+  patientId: number,
+  loved?: boolean,
+): Promise<{ count: number; mine: boolean }> {
+  const { data } = await http.post(
+    `/patients/${patientId}/love`,
+    typeof loved === 'boolean' ? { loved } : {},
+  );
+  const loves = data?.loves ?? data ?? {};
+  return { count: Number(loves.count) || 0, mine: loves.mine === true };
 }
 
 /** GET /patients/:id — full patient for PIMS profile (may include nested client). */
@@ -237,6 +351,151 @@ export async function fetchPatientProfileForRow(p: {
  * GET /patients/:id/medical-record — chart bundle (labs, exams, complaints, …).
  * Returns null when the backend responds 404 (no medical record row for this patient).
  */
+function filenameFromContentDisposition(header: string | undefined): string | null {
+  if (!header) return null;
+  const utf = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (utf?.[1]) {
+    try {
+      return decodeURIComponent(utf[1].trim().replace(/^["']|["']$/g, ''));
+    } catch {
+      // keep looking
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+  const plain = /filename=([^;]+)/i.exec(header);
+  return plain?.[1]?.trim().replace(/^["']|["']$/g, '') || null;
+}
+
+export function downloadBlobUrl(url: string, filename: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/** PDFs, scans, Word, or plain text, up to 25 MB — matches the API's accepted types. */
+export const CHART_DOCUMENT_UPLOAD_ACCEPT =
+  '.pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.tif,.tiff,.txt,.doc,.docx';
+
+export const CHART_DOCUMENT_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Attach a file to a patient's chart. Defaults to the "Previous Medical Records"
+ * document type so outside records read the same as EVET-imported ones.
+ */
+export async function uploadPatientChartDocument(
+  patientId: number,
+  file: File,
+  opts?: {
+    name?: string;
+    description?: string;
+    documentType?: 'previousRecords' | 'other';
+    serviceDate?: string;
+  },
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('file', file);
+  if (opts?.name?.trim()) form.append('name', opts.name.trim());
+  if (opts?.description?.trim()) form.append('description', opts.description.trim());
+  if (opts?.documentType) form.append('documentType', opts.documentType);
+  if (opts?.serviceDate?.trim()) form.append('serviceDate', opts.serviceDate.trim());
+  const { data } = await http.post<Record<string, unknown>>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents`,
+    form,
+  );
+  return data;
+}
+
+export type PatientChartDocumentRow = {
+  id: number;
+  name: string;
+  description?: string | null;
+  contentType: string;
+  extension: string;
+  hasFile?: boolean;
+  removedAt?: string | null;
+};
+
+export async function fetchPatientChartDocuments(
+  patientId: number,
+): Promise<PatientChartDocumentRow[]> {
+  const { data } = await http.get<PatientChartDocumentRow[]>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function renamePatientChartDocument(
+  patientId: number,
+  documentId: number,
+  body: { name?: string; description?: string | null },
+): Promise<PatientChartDocumentRow> {
+  const { data } = await http.patch<PatientChartDocumentRow>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}`,
+    body,
+  );
+  return data;
+}
+
+export async function removePatientChartDocumentFromChart(
+  patientId: number,
+  documentId: number,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const { data } = await http.post<Record<string, unknown>>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/remove-from-chart`,
+    { reason },
+  );
+  return data;
+}
+
+export async function fetchPatientChartDocumentFile(
+  patientId: number,
+  documentId: number,
+  fallbackFilename = 'document.pdf',
+): Promise<{ objectUrl: string; filename: string; blob: Blob }> {
+  const res = await http.get<Blob>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/file`,
+    { responseType: 'blob' },
+  );
+  const data = res.data;
+  const headerType = String(res.headers?.['content-type'] || '');
+  if (
+    data instanceof Blob &&
+    (data.type.includes('json') || headerType.includes('json'))
+  ) {
+    const text = await data.text();
+    let message = 'Could not open that PDF.';
+    try {
+      const parsed = JSON.parse(text) as { message?: unknown };
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        message = parsed.message;
+      }
+    } catch {
+      // keep default
+    }
+    throw new Error(message);
+  }
+  const blob =
+    data instanceof Blob
+      ? data.type
+        ? data
+        : new Blob([data], { type: 'application/pdf' })
+      : new Blob([data], { type: 'application/pdf' });
+  const fromHeader = filenameFromContentDisposition(
+    String(res.headers?.['content-disposition'] || ''),
+  );
+  return {
+    blob,
+    objectUrl: URL.createObjectURL(blob),
+    filename: fromHeader || fallbackFilename,
+  };
+}
+
 export async function fetchPatientMedicalRecordStaff(
   patientId: string | number
 ): Promise<MedicalRecordBundle | null> {
@@ -270,20 +529,69 @@ export async function getLatestModifiedPatient() {
 //   return http.post('/patients', patients);
 // }
 
-/** PATCH /patients/:id — partial update (e.g. weight). */
-export async function patchPatient(id: number | string, body: Record<string, unknown>): Promise<unknown> {
+/**
+ * Fields accepted by the Scout patient write endpoints. Anything not listed here is
+ * eVet-owned chart data and is not editable in Scout.
+ */
+export type ScoutPatientWrite = {
+  practiceId?: number;
+  name?: string | null;
+  dob?: string | null;
+  speciesId?: number | null;
+  breedId?: number | null;
+  species?: string | null;
+  breed?: string | null;
+  color?: string | null;
+  sex?: string | null;
+  neuterStatus?: string | null;
+  weight?: number | null;
+  alerts?: string | null;
+  primaryProviderId?: number | null;
+  isActive?: boolean;
+  /** When setting isActive false after euthanasia — who performed it. */
+  inactivatedByEmployeeId?: number | null;
+  clientIds?: number[];
+};
+
+/**
+ * PATCH /patients/:id — partial update from Scout.
+ *
+ * Saving marks the patient as Scout-edited, which stops the eVet import from overwriting
+ * these values until eVet reports a change newer than this edit.
+ */
+export async function patchPatient(
+  id: number | string,
+  body: ScoutPatientWrite,
+): Promise<unknown> {
   const { data } = await http.patch(`/patients/${encodeURIComponent(String(id))}`, body);
   return data;
 }
 
-// ---------------------------
-// Delete
-// ---------------------------
-
-// Delete by CSV list of ids
-export async function deletePatients(ids: string[]) {
-  return http.delete('/patients', { params: { ids: ids.join(',') } });
+/**
+ * POST /patients/scout — create a pet that exists only in Scout.
+ * The API assigns pimsType VAYD and a UUID pimsId so no eVet import can claim it.
+ */
+export async function createPatientScout(
+  body: ScoutPatientWrite & { practiceId: number; name: string },
+): Promise<unknown> {
+  const { data } = await http.post('/patients/scout', body);
+  return data;
 }
+
+/** POST /patients/:id/deactivate — soft deactivate, keeps medical history. */
+export async function deactivatePatient(id: number | string): Promise<unknown> {
+  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/deactivate`);
+  return data;
+}
+
+/** POST /patients/:id/reactivate — undo a deactivation. */
+export async function reactivatePatient(id: number | string): Promise<unknown> {
+  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/reactivate`);
+  return data;
+}
+
+// Hard delete (DELETE /patients?ids=) is intentionally not wrapped — it would drop medical
+// history. Use deactivatePatient instead.
 
 // ---------------------------
 // Analytics
@@ -304,27 +612,95 @@ export async function getZonePercentagesForProvider(
 }
 
 // ---------------------------
-// Pet Image Upload
+// Pet Image Upload / Gallery
 // ---------------------------
 
-// Upload a pet image
+export const PATIENT_PHOTO_GALLERY_MAX = 12;
+
+export type PatientGalleryImage = {
+  id: number;
+  url: string;
+  isPrimary: boolean;
+  sortOrder: number;
+  created?: string | null;
+};
+
 export async function uploadPetImage(
   patientId: string | number,
   file: File
 ): Promise<{ success: boolean; imageUrl: string; s3Key: string }> {
   const formData = new FormData();
   formData.append('file', file);
-  
+
   const response = await http.post(`/patients/${patientId}/image`, formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
   });
-  
+
   return response.data;
 }
 
-// Get pet image URL (signed URL, valid for 1 hour)
+export async function listPatientImages(
+  patientId: string | number,
+): Promise<PatientGalleryImage[]> {
+  const { data } = await http.get<PatientGalleryImage[]>(
+    `/patients/${encodeURIComponent(patientId)}/images`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function uploadPatientGalleryImage(
+  patientId: string | number,
+  file: File,
+): Promise<{
+  success: boolean;
+  imageUrl: string;
+  s3Key: string;
+  image: PatientGalleryImage;
+  images: PatientGalleryImage[];
+}> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data;
+}
+
+export async function setPatientImagePrimary(
+  patientId: string | number,
+  imageId: number,
+): Promise<{ success: boolean; imageUrl: string; images: PatientGalleryImage[] }> {
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images/${encodeURIComponent(imageId)}/primary`,
+  );
+  return data;
+}
+
+export async function deletePatientGalleryImage(
+  patientId: string | number,
+  imageId: number,
+): Promise<{ success: boolean; imageUrl: string; images: PatientGalleryImage[] }> {
+  const { data } = await http.delete(
+    `/patients/${encodeURIComponent(patientId)}/images/${encodeURIComponent(imageId)}`,
+  );
+  return data;
+}
+
+/** Staff: email the client that a new pet photo was uploaded (active pets only). */
+export async function notifyPatientPhotoUpload(
+  patientId: string | number,
+): Promise<{ sent: boolean; reason?: string; message?: string }> {
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images/notify-upload`,
+  );
+  return data;
+}
+
+/** @deprecated Prefer gallery modal; kept for callers that only need the primary proxy URL. */
 export async function getPetImageUrl(
   patientId: string | number
 ): Promise<{ imageUrl: string }> {

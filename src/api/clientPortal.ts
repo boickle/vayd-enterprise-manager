@@ -1,6 +1,11 @@
 // src/api/clientPortal.ts
 import { apiBaseUrl, http } from './http';
 import { pickPracticeMainPhone } from '../utils/practicePhone';
+import {
+  parseDeclinedItems,
+  type DeclinedTreatmentItem,
+} from './declinedTreatments';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -41,7 +46,268 @@ export type Pet = {
 
   /** Optional: attached from /wellness-plans?patientId=<DB id> */
   wellnessPlans?: WellnessPlan[];
+
+  /** Owner-editable fun facts + social media consent (from /patients/client/mine). */
+  portalProfile?: PetPortalProfile | null;
+  /** Hearts on this pet's snapshot from staff and family. */
+  loves?: PetLoves | null;
 };
+
+export type PetLoves = { count: number; mine: boolean };
+
+export function normalizeLoves(raw: any): PetLoves {
+  return {
+    count: Number(raw?.count) || 0,
+    mine: raw?.mine === true,
+  };
+}
+
+/** Love (or un-love) a pet's snapshot as the signed-in person. */
+export async function togglePetLove(
+  patientDbId: string | number,
+  loved?: boolean,
+): Promise<PetLoves> {
+  const { data } = await http.post(
+    `/patients/${patientDbId}/love`,
+    typeof loved === 'boolean' ? { loved } : {},
+  );
+  return normalizeLoves(data?.loves ?? data);
+}
+
+export type PetPortalProfile = {
+  nickname: string | null;
+  favoriteThing: string | null;
+  superpower: string | null;
+  nemesis: string | null;
+  funFact: string | null;
+  keyToMyHeart: string | null;
+  socialMediaConsent: boolean;
+  socialMediaConsentAt: string | null;
+  portalProfileUpdatedAt: string | null;
+  color: string | null;
+  weight: string | number | null;
+  microchip: string | null;
+};
+
+export type PetPortalProfilePatch = Partial<
+  Pick<
+    PetPortalProfile,
+    | 'nickname'
+    | 'favoriteThing'
+    | 'superpower'
+    | 'nemesis'
+    | 'funFact'
+    | 'keyToMyHeart'
+    | 'socialMediaConsent'
+  >
+>;
+
+export function normalizePortalProfile(raw: any): PetPortalProfile | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+  return {
+    nickname: str(raw.nickname),
+    favoriteThing: str(raw.favoriteThing),
+    superpower: str(raw.superpower),
+    nemesis: str(raw.nemesis),
+    funFact: str(raw.funFact),
+    keyToMyHeart: str(raw.keyToMyHeart),
+    socialMediaConsent: Boolean(raw.socialMediaConsent),
+    socialMediaConsentAt: str(raw.socialMediaConsentAt),
+    portalProfileUpdatedAt: str(raw.portalProfileUpdatedAt),
+    color: str(raw.color),
+    weight: raw.weight ?? null,
+    microchip: str(raw.microchip),
+  };
+}
+
+/** Owner updates the fun facts / Pet of the Month consent for one of their pets. */
+export async function updateMyPetProfile(
+  patientDbId: string | number,
+  patch: PetPortalProfilePatch,
+): Promise<PetPortalProfile | null> {
+  const { data } = await http.patch(`/patients/client/mine/${patientDbId}/profile`, patch);
+  return normalizePortalProfile(data?.portalProfile ?? data);
+}
+
+/** Emails the server-rendered vaccination certificate PDF to any address. */
+export async function emailVaccinationCertificate(
+  patientDbId: string | number,
+  body: { to: string; note?: string | null },
+): Promise<{ sent: boolean; to: string; vaccines: number }> {
+  const { data } = await http.post(`/patients/${patientDbId}/vaccination-certificate/email`, body);
+  return data;
+}
+
+export type RememberedPetPhoto = {
+  id: number;
+  url: string;
+  isPrimary: boolean;
+  created: string | null;
+};
+
+/** A pet the family has lost — kept in the portal with photos and stories. */
+export type RememberedPet = {
+  id: number;
+  name: string;
+  nickname: string | null;
+  species: string | null;
+  breed: string | null;
+  sex: string | null;
+  dob: string | null;
+  inactiveAt: string | null;
+  status: string | null;
+  primaryProviderName: string | null;
+  profile: PetPortalProfile | null;
+  photos: RememberedPetPhoto[];
+  loves: PetLoves;
+};
+
+/** Inactive (euthanized / deceased / rehomed) pets on the signed-in client's account. */
+/** A pet in the client community gallery (active + shared for social media). */
+export type CommunitySnapshot = {
+  id: number;
+  name: string;
+  nickname: string | null;
+  favoriteThing: string | null;
+  superpower: string | null;
+  nemesis: string | null;
+  funFact: string | null;
+  keyToMyHeart: string | null;
+  species: string | null;
+  breed: string | null;
+  ageYears: number | null;
+  provider: { id: number; name: string } | null;
+  photos: RememberedPetPhoto[];
+  loves: PetLoves;
+  isViewersPet: boolean;
+};
+
+export type CommunitySnapshotPage = {
+  items: CommunitySnapshot[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  speciesOptions: Array<{ name: string; count: number }>;
+};
+
+export async function fetchCommunitySnapshots(opts: {
+  q?: string;
+  species?: string;
+  sort?: 'recent' | 'loves';
+  page?: number;
+  lovedOnly?: boolean;
+}): Promise<CommunitySnapshotPage> {
+  const { data } = await http.get('/patients/client/community-snapshots', {
+    params: {
+      ...(opts.q?.trim() ? { q: opts.q.trim() } : {}),
+      ...(opts.species ? { species: opts.species } : {}),
+      ...(opts.sort === 'loves' ? { sort: 'loves' } : {}),
+      ...(opts.lovedOnly ? { lovedOnly: '1' } : {}),
+      page: opts.page ?? 1,
+    },
+  });
+  const str = (v: any) => (typeof v === 'string' && v.trim() ? v : null);
+  const items: CommunitySnapshot[] = (Array.isArray(data?.items) ? data.items : []).map((r: any) => ({
+    id: Number(r?.id),
+    name: String(r?.name ?? 'Pet'),
+    nickname: str(r?.nickname),
+    favoriteThing: str(r?.favoriteThing),
+    superpower: str(r?.superpower),
+    nemesis: str(r?.nemesis),
+    funFact: str(r?.funFact),
+    keyToMyHeart: str(r?.keyToMyHeart),
+    species: str(r?.species),
+    breed: str(r?.breed),
+    ageYears: Number.isFinite(Number(r?.ageYears)) && r?.ageYears != null ? Number(r.ageYears) : null,
+    provider: r?.provider?.name ? { id: Number(r.provider.id), name: String(r.provider.name) } : null,
+    photos: Array.isArray(r?.photos)
+      ? r.photos.map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url ?? ''),
+          isPrimary: p?.isPrimary === true,
+          created: p?.created ?? null,
+        }))
+      : [],
+    loves: normalizeLoves(r?.loves),
+    isViewersPet: r?.isViewersPet === true,
+  }));
+  return {
+    items,
+    total: Number(data?.total) || items.length,
+    page: Number(data?.page) || 1,
+    pageSize: Number(data?.pageSize) || 24,
+    pageCount: Math.max(1, Number(data?.pageCount) || 1),
+    speciesOptions: Array.isArray(data?.speciesOptions)
+      ? data.speciesOptions.filter((s: any) => s?.name).map((s: any) => ({ name: String(s.name), count: Number(s.count) || 0 }))
+      : [],
+  };
+}
+
+export async function fetchMyRememberedPets(): Promise<RememberedPet[]> {
+  const { data } = await http.get('/patients/client/mine/remembered');
+  const rows: any[] = Array.isArray(data) ? data : [];
+  return rows.map((r) => ({
+    id: Number(r?.id),
+    name: String(r?.name ?? 'Pet'),
+    nickname: typeof r?.nickname === 'string' && r.nickname.trim() ? r.nickname : null,
+    species: r?.species ?? null,
+    breed: r?.breed ?? null,
+    sex: r?.sex ?? null,
+    dob: r?.dob ?? null,
+    inactiveAt: r?.inactiveAt ?? null,
+    status: r?.status ?? null,
+    primaryProviderName: r?.primaryProviderName ?? null,
+    profile: normalizePortalProfile(r?.profile),
+    photos: Array.isArray(r?.photos)
+      ? r.photos.map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url ?? ''),
+          isPrimary: p?.isPrimary === true,
+          created: p?.created ?? null,
+        }))
+      : [],
+    loves: normalizeLoves(r?.loves),
+  }));
+}
+
+export type PortalProvider = {
+  id: string | number;
+  name: string;
+  firstName: string | null;
+  lastName: string | null;
+  designation: string | null;
+  title: string | null;
+  email: string | null;
+  imageUrl: string | null;
+  bio: string | null;
+};
+
+/** Active providers with bio + photo (for the "meet your vet" card). */
+export async function fetchPortalProviders(): Promise<PortalProvider[]> {
+  const { data } = await http.get('/employees/providers');
+  const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
+  return rows.map((r) => {
+    const firstName = r?.firstName ?? null;
+    const lastName = r?.lastName ?? null;
+    const designation = r?.designation ?? r?.credentials ?? null;
+    const name =
+      [firstName, lastName].filter(Boolean).join(' ').trim() ||
+      String(r?.name ?? r?.fullName ?? `Provider ${r?.id ?? ''}`);
+    return {
+      id: r?.id ?? r?.employeeId ?? r?.pimsId,
+      name,
+      firstName,
+      lastName,
+      designation: typeof designation === 'string' ? designation : null,
+      title: typeof r?.title === 'string' ? r.title : null,
+      email: typeof r?.email === 'string' ? r.email : null,
+      imageUrl: typeof r?.imageUrl === 'string' && r.imageUrl ? r.imageUrl : null,
+      bio: typeof r?.bio === 'string' && r.bio.trim() ? r.bio.trim() : null,
+    };
+  });
+}
 
 /** Patient chart primary provider — NOT the appointment visit assignee. */
 function chartPrimaryProviderSource(raw: any): any | null {
@@ -401,6 +667,16 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
  *
  * IMPORTANT: we now capture BOTH the external id (kept in `id`) and the REAL DB id in `dbId`.
  */
+export async function fetchClientChronicMeds(
+  patientId: number,
+  practiceId = currentPracticeId()
+) {
+  const { data } = await http.get('/patient-prescriptions/mine', {
+    params: { patientId, practiceId, activeChronicOnly: true },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 export async function fetchClientPets(): Promise<Pet[]> {
   // 1) Try the first-class endpoint.
   try {
@@ -446,6 +722,8 @@ export async function fetchClientPets(): Promise<Pet[]> {
           status: v?.status ?? '',
           isCurrent: v?.isCurrent ?? false,
         })) : undefined,
+        portalProfile: normalizePortalProfile(p?.portalProfile),
+        loves: normalizeLoves(p?.loves),
       })) as Pet[];
     }
   } catch {
@@ -609,6 +887,15 @@ export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   }
 }
 
+export async function fetchPracticeInfoById(practiceId: number): Promise<PracticeInfo | null> {
+  try {
+    const { data } = await http.get(`/practice/info/${practiceId}`);
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Main practice SMS/call line — from GET /practice/info (not hardcoded). */
 export async function fetchPracticeMainPhone(practiceId?: number): Promise<string | null> {
   try {
@@ -651,6 +938,13 @@ export async function fetchClientPetsWithWellness(): Promise<Pet[]> {
 }
 
 // api/clientPortal.ts
+export type ClientDeclinedItem = {
+  id: number;
+  label: string;
+  declinedAt: string | null;
+  patientId?: number;
+};
+
 export type ClientReminder = {
   id: number | string;
   clientId?: number | string;
@@ -696,14 +990,26 @@ export function mapClientReminder(r: any): ClientReminder {
 }
 
 // Example fetch using the mapper + sort by due date
-export async function fetchClientReminders(): Promise<ClientReminder[]> {
-  const resp = await http.get('/reminders/client'); // your endpoint
-  const list = Array.isArray(resp.data) ? resp.data.map(mapClientReminder) : [];
-  return list.sort((a, b) => {
+export async function fetchClientReminders(): Promise<{
+  reminders: ClientReminder[];
+  declinedItems: DeclinedTreatmentItem[];
+}> {
+  const resp = await http.get('/reminders/client');
+  const data = resp.data;
+  const rawReminders: unknown[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.reminders)
+      ? data.reminders
+      : [];
+  const reminders = rawReminders.map(mapClientReminder).sort((a, b) => {
     const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
     const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
     return ta - tb;
   });
+  return {
+    reminders,
+    declinedItems: parseDeclinedItems(data?.declinedItems),
+  };
 }
 
 // Message types

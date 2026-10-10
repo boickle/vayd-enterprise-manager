@@ -1880,6 +1880,26 @@ export function SelfScheduleCalendarModal({
               </div>
             ) : null}
 
+            {!loadingMonth && availableDays.size === 0 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  background: grey50,
+                  border: `1px solid ${grey200}`,
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: grey700,
+                  lineHeight: 1.5,
+                  textAlign: 'center',
+                }}
+              >
+                No pre-approved online times are open this month for this doctor at
+                your address. Use the arrows to look at other months, or tell us
+                your preferred times below and we&apos;ll find a visit.
+              </div>
+            ) : null}
+
             {!loadingMonth && <AddressMatchedTimesNotice />}
 
             {/* Disabled prev-month hint */}

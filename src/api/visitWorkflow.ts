@@ -1,0 +1,1618 @@
+// src/api/visitWorkflow.ts
+// Doctor workflow API: SOAP encounters, Master Problem List, orders (= charges),
+// visit invoices/checkout, euthanasia prepay, and the VisitCompleted hub event.
+// Mirrors the backend visitWorkflow module. All calls go through the shared
+// authenticated axios instance.
+import { apiBaseUrl, http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
+
+export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
+
+export type SoapEncounterMode = 'quick' | 'comprehensive';
+export type SoapEncounterStatus = 'draft' | 'completed';
+
+export type PatientProblemKind = 'presenting_complaint' | 'rule_out' | 'diagnosis';
+export type PatientProblemStatus = 'open' | 'active' | 'resolved';
+/** Chronic problems pin to the top of the patient record; null means nobody has classified it yet. */
+export type PatientProblemAcuity = 'acute' | 'chronic';
+export type PrescriptionAcuity = 'acute' | 'chronic';
+
+export type EncounterOrderKind = 'exam' | 'diagnostic' | 'treatment' | 'med' | 'client_ed' | 'note';
+export type EncounterOrderState = 'proposed' | 'accepted' | 'declined';
+export type EncounterOrderCatalogType = 'inventory' | 'lab' | 'procedure' | 'custom';
+
+export type VisitInvoiceStatus = 'open' | 'finalized' | 'paid' | 'void';
+
+export type SoapEncounter = {
+  id: string;
+  practiceId: number;
+  appointmentId: number;
+  patientId: number;
+  clientId: number | null;
+  mode: SoapEncounterMode;
+  status: SoapEncounterStatus;
+  subjective: Record<string, unknown> | null;
+  objectiveVitals: Record<string, unknown> | null;
+  objectiveExam: Record<string, unknown> | null;
+  objectiveNotes: string | null;
+  assessmentProblemIds: string[] | null;
+  assessmentReasoning: string | null;
+  planNotes: string | null;
+  forwardBookingDisposition: Record<string, unknown> | null;
+  forwardBookingEntryId: number | null;
+  forwardBookingTaskId: number | null;
+  completedByEmployeeId: number | null;
+  completedAt: string | null;
+  created: string;
+  updated: string;
+};
+
+export type PatientProblem = {
+  id: string;
+  practiceId: number;
+  patientId: number;
+  label: string;
+  kind: PatientProblemKind;
+  status: PatientProblemStatus;
+  acuity: PatientProblemAcuity | null;
+  note: string | null;
+  createdInEncounterId: string | null;
+  /** Set by the first encounter completion that addressed this problem — until then it is
+   * only on the working list and does not appear on the medical record. */
+  postedToRecordAt: string | null;
+  resolvedAt: string | null;
+  created: string;
+  updated: string;
+};
+
+export type EncounterOrder = {
+  id: string;
+  practiceId: number;
+  encounterId: string;
+  patientId: number;
+  catalogItemId: number | null;
+  catalogItemType: EncounterOrderCatalogType | null;
+  kind: EncounterOrderKind;
+  name: string;
+  note: string | null;
+  clientNote?: string | null;
+  microchipNumber?: string | null;
+  qty: number;
+  unitPrice: number;
+  state: EncounterOrderState;
+  isCovered: boolean;
+  invoiceLineId: string | null;
+  medLabel: Record<string, unknown> | null;
+  dischargeInstruction: string | null;
+  created: string;
+  updated: string;
+  catalogFlags?: {
+    allowPriceChange: boolean;
+    hasClientNotes: boolean;
+    isMicrochip: boolean;
+    isDispensable: boolean;
+    requireExpirationOnLots: boolean;
+    trackLots: boolean;
+    excludeFromProduction: boolean;
+  } | null;
+};
+
+export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'other';
+
+export type VisitInvoiceLine = {
+  id: string;
+  invoiceId: string;
+  orderId: string | null;
+  patientId?: number | null;
+  providerEmployeeId?: number | null;
+  enteredByEmployeeId?: number | null;
+  /** When the charge was added to the invoice. */
+  created?: string | null;
+  /** Filled as a refill of this prescription; sig and refills are locked. */
+  refillOfPrescriptionId?: number | null;
+  writtenPrescriptionId?: number | null;
+  enteredByName?: string | null;
+  returnOfLineId?: string | null;
+  description: string;
+  qty: number;
+  unitPrice: number;
+  amount: number;
+  isCovered: boolean;
+  instructions?: string | null;
+  instructionsEnteredByEmployeeId?: number | null;
+  instructionsEnteredByName?: string | null;
+  rxApprovedAt?: string | null;
+  rxApprovedByEmployeeId?: number | null;
+  rxApprovedByName?: string | null;
+  refillCount?: number | null;
+  catalogInstructions?: string | null;
+  catalogRefill?: number | null;
+  catalogDiscardAfter?: string | null;
+  catalogRefillExpiration?: string | null;
+  /** True when the catalog item is marked Medication (or dispensable). */
+  catalogIsMedication?: boolean;
+  catalogIsDispensable?: boolean;
+  /** Catalog Vaccine flag — hide mail-order. */
+  catalogIsVaccine?: boolean;
+  /** Catalog “Allow price change”. Missing/non-catalog lines stay editable. */
+  catalogAllowPriceChange?: boolean;
+  /** Encounter for the linked order — vaccine dose save path. */
+  encounterId?: string | null;
+  catalogChangePatientStatusTo?: string | null;
+  catalogChangePatientSex?: boolean;
+  catalogItemId?: number | null;
+  catalogItemType?: string | null;
+  /** eVet "Show on Invoice" is off: staff see the charge, the client's copy does not. */
+  hideOnInvoice?: boolean;
+  /** Practice revenue — no doctor attributed on the invoice. */
+  excludeFromProduction?: boolean;
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  stockInventoryItemId?: number | null;
+  stockInventoryItemName?: string | null;
+  stockInventoryItemCode?: string | null;
+  trackLots?: boolean;
+  listUnitPrice?: number | null;
+  patientName?: string | null;
+  taxLevelValue?: number | null;
+  isTaxExempt?: boolean;
+  taxableAmount?: number;
+  taxRate?: number;
+  taxAmount?: number;
+  isDeleted?: boolean;
+  /** Shared id for lines from one sell-once bundle expand. */
+  bundleSaleId?: string | null;
+  sourceBundleId?: number | null;
+  sourceBundleName?: string | null;
+  /** Parent charge that auto-added this line via a catalog tagalong rule. */
+  tagalongOfLineId?: string | null;
+  tagalongRuleId?: number | null;
+  /** after_tax = tax the product first (Maine rebate). before_tax folds this into the product. */
+  tagalongTaxMode?: 'after_tax' | 'before_tax' | string | null;
+};
+
+export type VisitInvoiceTender = {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  method: VisitTenderMethod;
+  paymentTypeName?: string | null;
+  cashierEmployeeId: number | null;
+  cashReceived?: number | null;
+  changeGiven?: number | null;
+  checkNumber?: string | null;
+  stripePaymentIntentId?: string | null;
+  /** Dollars already refunded via Stripe against this tender. */
+  refundedAmount?: number;
+  receivedAt: string;
+  voidedAt?: string | null;
+  voidedByEmployeeId?: number | null;
+  voidReason?: string | null;
+};
+
+export type VisitInvoice = {
+  id: string;
+  practiceId: number;
+  appointmentId: number | null;
+  patientId?: number | null;
+  clientId: number | null;
+  status: VisitInvoiceStatus;
+  subtotal: number;
+  membershipAdjustments: number;
+  /** Sum of line tax snapshots — ready for a sales/tax report. */
+  taxTotal: number;
+  total: number;
+  amountPaid: number;
+  isEuthanasiaPrepay: boolean;
+  stripeCustomerId: string | null;
+  stripeSetupIntentId: string | null;
+  savedPaymentMethodId: string | null;
+  stripePaymentIntentId: string | null;
+  lastChargeStatus: string | null;
+  finalizedAt: string | null;
+  paidAt: string | null;
+  created?: string;
+  evetInvoiceId?: number | null;
+  evetInvoiceNumber?: number | null;
+  /** Practice-scoped Scout invoice number. */
+  scoutInvoiceNumber?: number | null;
+  createdByEmployeeId?: number | null;
+  /** Office checkout draws inventory from. Defaults to the cashier’s primary branch. */
+  inventoryBranchId?: number | null;
+  inventoryLocationId?: number | null;
+  isDeleted?: boolean;
+  voidedByEmployeeId?: number | null;
+  voidReason?: string | null;
+  voidedAt?: string | null;
+  deletedByEmployeeId?: number | null;
+  deletedAt?: string | null;
+  /** Staff-only audit (price overrides, etc.). Collapsible on invoice views. */
+  staffAudit?: Array<{
+    at: string;
+    kind: string;
+    message: string;
+    employeeId?: number | null;
+    employeeName?: string | null;
+  }> | null;
+  lines?: VisitInvoiceLine[];
+  tenders?: VisitInvoiceTender[];
+};
+
+export type VisitCompletedResult = {
+  appointmentId: number;
+  visitCompletedAt: string;
+  euthanasiaCharge?: {
+    attempted: boolean;
+    success: boolean;
+    status: string | null;
+    paymentIntentId: string | null;
+    needsManualCollection: boolean;
+    message?: string | null;
+  };
+};
+
+const pid = () => VISIT_WORKFLOW_PRACTICE_ID;
+
+// --- Encounters ---
+
+export async function listEncounters(params: {
+  appointmentId?: number;
+  patientId?: number;
+  status?: SoapEncounterStatus;
+}): Promise<SoapEncounter[]> {
+  const { data } = await http.get<SoapEncounter[]>('/soap-encounters', {
+    params: { practiceId: pid(), ...params },
+  });
+  return data;
+}
+
+/**
+ * Appointment ids whose SOAP is signed & locked — for calendar lock badges / menu copy.
+ * Same pattern as GET /forward-bookings/calendar-index.
+ */
+export async function fetchSoapCalendarLockIndex(
+  practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
+): Promise<{ lockedAppointmentIds: number[] }> {
+  const { data } = await http.get<{ lockedAppointmentIds?: number[] }>(
+    '/soap-encounters/calendar-lock-index',
+    { params: { practiceId } }
+  );
+  const ids = Array.isArray(data?.lockedAppointmentIds)
+    ? data.lockedAppointmentIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  return { lockedAppointmentIds: ids };
+}
+
+/** Appointment ids that already have a SOAP encounter (draft or signed). */
+export async function fetchSoapCalendarEncounterIndex(
+  practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
+): Promise<{ appointmentIds: number[] }> {
+  const { data } = await http.get<{ appointmentIds?: number[] }>(
+    '/soap-encounters/calendar-encounter-index',
+    { params: { practiceId } }
+  );
+  const ids = Array.isArray(data?.appointmentIds)
+    ? data.appointmentIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  return { appointmentIds: ids };
+}
+
+export async function createEncounter(body: {
+  appointmentId: number;
+  patientId: number;
+  clientId?: number;
+  mode?: SoapEncounterMode;
+}): Promise<SoapEncounter> {
+  const { data } = await http.post<SoapEncounter>('/soap-encounters', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+export async function getEncounter(id: string): Promise<SoapEncounter> {
+  const { data } = await http.get<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
+    params: { practiceId: pid() },
+  });
+  return data;
+}
+
+/** One candidate patient for a multi-pet household visit (docs/ai-scribe.md "Multi-pet visits"). */
+export type HouseholdRosterEntry = {
+  patientId: number;
+  patientName: string;
+  species: string | null;
+  appointmentId: number;
+  soapEncounterId: string;
+  isCurrent: boolean;
+};
+
+/**
+ * Other *active* patients from the same client seen around the same time as this encounter's
+ * appointment (docs/ai-scribe.md "Multi-pet visits"), always including the current patient.
+ * Inactive / deceased household mates are omitted. A length-1 result means no siblings were
+ * found — the paste-transcript flow stays single-patient in that case.
+ */
+export async function getHouseholdRoster(encounterId: string): Promise<HouseholdRosterEntry[]> {
+  const { data } = await http.get<HouseholdRosterEntry[]>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/household-roster`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function updateEncounter(
+  id: string,
+  body: Partial<
+    Pick<
+      SoapEncounter,
+      | 'mode'
+      | 'subjective'
+      | 'objectiveVitals'
+      | 'objectiveExam'
+      | 'objectiveNotes'
+      | 'assessmentProblemIds'
+      | 'assessmentReasoning'
+      | 'planNotes'
+      | 'forwardBookingDisposition'
+      | 'forwardBookingEntryId'
+      | 'forwardBookingTaskId'
+    >
+  >,
+  opts?: {
+    /**
+     * `updated` from the copy this screen is editing. Sending it asks the server to
+     * reject (409) when somebody else changed one of these same fields meanwhile,
+     * instead of silently overwriting their work.
+     */
+    expectedUpdatedAt?: string | null;
+    /** Required to persist an empty SOAP text field — autosave never sends this. */
+    allowBlankFields?: Array<
+      'subjective' | 'objectiveNotes' | 'assessmentReasoning' | 'planNotes'
+    >;
+  }
+): Promise<SoapEncounter> {
+  const { data } = await http.patch<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
+    practiceId: pid(),
+    ...body,
+    ...(opts?.expectedUpdatedAt ? { expectedUpdatedAt: opts.expectedUpdatedAt } : {}),
+    ...(opts?.allowBlankFields?.length ? { allowBlankFields: opts.allowBlankFields } : {}),
+  });
+  return data;
+}
+
+/** SOAP fields two people can be in at once; the server stamps a last writer per field. */
+export type CoEditedSoapField =
+  | 'subjective'
+  | 'objectiveVitals'
+  | 'objectiveExam'
+  | 'objectiveNotes'
+  | 'assessmentProblemIds'
+  | 'assessmentReasoning'
+  | 'planNotes';
+
+export type SoapFieldConflict = {
+  conflicts: CoEditedSoapField[];
+  /** The values that won, so the screen can show what is actually on the chart. */
+  current: Partial<Record<CoEditedSoapField, unknown>>;
+  updated: string | null;
+};
+
+/** 409 from `updateEncounter` when someone else wrote the same field first. */
+export function soapFieldConflictFrom(e: unknown): SoapFieldConflict | null {
+  const res = (e as { response?: { status?: number; data?: unknown } })?.response;
+  if (res?.status !== 409) return null;
+  const data = res.data as
+    | { code?: string; conflicts?: unknown; current?: unknown; updated?: unknown }
+    | undefined;
+  if (data?.code !== 'SOAP_FIELD_CONFLICT' || !Array.isArray(data.conflicts)) return null;
+  return {
+    conflicts: data.conflicts.filter((f): f is CoEditedSoapField => typeof f === 'string'),
+    current:
+      data.current && typeof data.current === 'object'
+        ? (data.current as Partial<Record<CoEditedSoapField, unknown>>)
+        : {},
+    updated: typeof data.updated === 'string' ? data.updated : null,
+  };
+}
+
+export async function completeEncounter(id: string): Promise<SoapEncounter> {
+  const { data } = await http.post<SoapEncounter>(
+    `/soap-encounters/${encodeURIComponent(id)}/complete`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/** Dated clinical note appended after a SOAP is signed — does not unlock S/O/A/P. */
+export type SoapAddendum = {
+  id: string;
+  soapEncounterId: string;
+  body: string;
+  created: string;
+  createdByEmployeeId: number | null;
+  createdByName: string | null;
+};
+
+export async function listSoapAddenda(encounterId: string): Promise<SoapAddendum[]> {
+  const { data } = await http.get<SoapAddendum[]>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/addenda`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function createSoapAddendum(
+  encounterId: string,
+  body: string
+): Promise<SoapAddendum> {
+  const { data } = await http.post<SoapAddendum>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/addenda`,
+    { practiceId: pid(), body }
+  );
+  return data;
+}
+
+// --- Orders (order = charge) ---
+
+export async function listOrders(encounterId: string): Promise<EncounterOrder[]> {
+  const { data } = await http.get<EncounterOrder[]>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function createOrder(
+  encounterId: string,
+  body: {
+    name: string;
+    kind?: EncounterOrderKind;
+    catalogItemId?: number;
+    catalogItemType?: EncounterOrderCatalogType;
+    qty?: number;
+    unitPrice?: number;
+    isCovered?: boolean;
+    state?: EncounterOrderState;
+    medLabel?: Record<string, unknown>;
+    dischargeInstruction?: string;
+    note?: string;
+  }
+): Promise<EncounterOrder> {
+  const { data } = await http.post<EncounterOrder>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function updateOrder(
+  encounterId: string,
+  orderId: string,
+  body: {
+    name?: string;
+    note?: string | null;
+    clientNote?: string | null;
+    microchipNumber?: string | null;
+    qty?: number;
+    unitPrice?: number;
+    isCovered?: boolean;
+  }
+): Promise<EncounterOrder> {
+  const { data } = await http.patch<EncounterOrder>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(orderId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function setOrderState(
+  encounterId: string,
+  orderId: string,
+  state: EncounterOrderState,
+  opts?: { recordOnChart?: boolean }
+): Promise<EncounterOrder> {
+  const { data } = await http.patch<EncounterOrder>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/state`,
+    { practiceId: pid(), state, ...(opts?.recordOnChart === false ? { recordOnChart: false } : {}) }
+  );
+  return data;
+}
+
+export async function deleteOrder(encounterId: string, orderId: string): Promise<void> {
+  await http.delete(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(orderId)}`,
+    { params: { practiceId: pid() } }
+  );
+}
+
+// --- What the visit produced: doses given and prescriptions written ---
+
+export type VaccineDosageType = 'booster' | 'initial';
+
+/**
+ * A dose recorded against an order. This is a real `vaccination_logs` row, the same table the
+ * eVet import fills, so it shows up in the patient chart and the vaccination certificate.
+ */
+export type OrderVaccination = {
+  id: number;
+  encounterOrderId: string | null;
+  /** Invoice line the dose was recorded on (counter vaccines have no order). */
+  visitInvoiceLineId?: string | null;
+  vaccineName: string | null;
+  dateVaccinated: string | null;
+  nextVaccinationDate: string | null;
+  lotNumber: string | null;
+  serialNumber: string | null;
+  vaccineExpiration: string | null;
+  tagNumber: string | null;
+  manufacturer: string | null;
+  vaccineType: string | null;
+  dosageType: number | null;
+  usdaLicensingMonths: number | null;
+  animalControlLicensingMonths: number | null;
+  veterinarianName: string | null;
+  veterinarianLicense: string | null;
+  /** Chosen lot balance — checkout decrements this specific lot. */
+  inventoryLotBalanceId: number | null;
+};
+
+/** A prescription written against an order. A real `prescriptions` row. */
+export type OrderPrescription = {
+  id: number;
+  encounterOrderId: string | null;
+  name: string;
+  strength: string | null;
+  instructions: string | null;
+  refill: number | null;
+  refillExpiration: string | null;
+  startDate: string | null;
+  rxNumber: number | null;
+  acuity: PrescriptionAcuity | null;
+  discontinuedAt: string | null;
+};
+
+/** A patient-scoped chronic (or any) prescription for the EMR / SOAP pin. */
+export type PatientPrescription = {
+  id: number;
+  name: string;
+  strength: string | null;
+  instructions: string | null;
+  refill: number | null;
+  refillExpiration: string | null;
+  startDate: string | null;
+  acuity: PrescriptionAcuity | null;
+  discontinuedAt: string | null;
+  /** Catalog item for future refills when the pin was matched to inventory. */
+  inventoryItemId: number | null;
+  /** Set when the Rx was written from a SOAP order. eVet rows link through a treatment item. */
+  encounterOrderId: string | null;
+  /** Set on freeform pin rows that belong to the patient directly (no order, no treatment). */
+  patientId: number | null;
+  rxNumber: number | null;
+  quantity?: number | null;
+  autoshipStartedAt?: string | null;
+};
+
+/** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */
+export function isScoutWrittenPrescription(rx: PatientPrescription): boolean {
+  return rx.encounterOrderId != null || rx.patientId != null;
+}
+
+/**
+ * The stock an order consumes, which is often not the item charged: DAPP1, DAPP3 and DAPPBOOST
+ * all draw from a single DAPPINV stock item. Read-only — nothing decrements yet.
+ */
+export type StockDraw = {
+  orderId: string;
+  inventoryItemId: number;
+  inventoryItemName: string;
+  inventoryItemCode: string | null;
+  quantity: number;
+  /** Display hint when known (provider branch / location). */
+  branchName?: string | null;
+  locationName?: string | null;
+};
+
+export type OrderClinicalDetails = {
+  vaccinations: OrderVaccination[];
+  prescriptions: OrderPrescription[];
+  /** Orders whose catalog item sits in the Vaccines category, so a dose must be recorded. */
+  vaccineOrderIds: string[];
+  stockDraws: StockDraw[];
+};
+
+export async function getOrderClinicalDetails(encounterId: string): Promise<OrderClinicalDetails> {
+  const { data } = await http.get<OrderClinicalDetails>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/order-clinical-details`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export type VaccineDefaults = {
+  /** Interval from the last time this practice gave this vaccine; null if never. */
+  nextDueMonths: number | null;
+  manufacturer: string | null;
+  vaccineType: string | null;
+  serialNumber: string | null;
+};
+
+export async function getVaccineDefaults(
+  encounterId: string,
+  orderId: string,
+  catalogItemId: number
+): Promise<VaccineDefaults> {
+  const { data } = await http.get<VaccineDefaults>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/vaccination-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+export type PrescriptionDefaults = {
+  instructions: string | null;
+  strength: string | null;
+  refill: number | null;
+  /** Applied to whichever start date the form is showing. */
+  refillExpiration: { unit: 'days' | 'months'; amount: number } | null;
+  /** ISO date, set instead of `refillExpiration` when the catalog pins a fixed date. */
+  refillExpirationDate: string | null;
+  source: 'patient-history' | 'catalog' | null;
+};
+
+export async function getPrescriptionDefaults(
+  encounterId: string,
+  orderId: string,
+  catalogItemId: number
+): Promise<PrescriptionDefaults> {
+  const { data } = await http.get<PrescriptionDefaults>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/prescription-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+export type SaveVaccinationBody = {
+  vaccineName?: string;
+  dateVaccinated?: string;
+  nextVaccinationDate: string;
+  lotNumber?: string;
+  serialNumber?: string;
+  vaccineExpiration?: string;
+  tagNumber?: string;
+  manufacturer?: string;
+  vaccineType?: string;
+  dosageType?: VaccineDosageType;
+  usdaLicensingMonths?: number;
+  animalControlLicensingMonths?: number;
+  employeeId?: number;
+  inventoryLotBalanceId?: number | null;
+  lotZeroOverrideReason?: string;
+};
+
+export async function saveOrderVaccination(
+  encounterId: string,
+  orderId: string,
+  body: SaveVaccinationBody
+): Promise<OrderVaccination> {
+  const { data } = await http.put<OrderVaccination>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/vaccination`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Dose for a vaccine sold straight off an invoice (no SOAP order behind the line). */
+export async function saveInvoiceLineVaccination(
+  invoiceId: string,
+  lineId: string,
+  body: SaveVaccinationBody
+): Promise<OrderVaccination> {
+  const { data } = await http.put<OrderVaccination>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(
+      lineId
+    )}/vaccination`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function getInvoiceLineVaccineDefaults(
+  invoiceId: string,
+  lineId: string,
+  catalogItemId: number
+): Promise<VaccineDefaults> {
+  const { data } = await http.get<VaccineDefaults>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(
+      lineId
+    )}/vaccination-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+/** Doses recorded against this invoice's lines, order-linked or not. */
+export async function getInvoiceVaccinations(invoiceId: string): Promise<OrderVaccination[]> {
+  const { data } = await http.get<OrderVaccination[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/vaccinations`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function saveOrderPrescription(
+  encounterId: string,
+  orderId: string,
+  body: {
+    name?: string;
+    strength?: string;
+    instructions?: string;
+    refill?: number;
+    refillExpiration?: string;
+    startDate?: string;
+    acuity?: PrescriptionAcuity;
+    employeeId?: number;
+  }
+): Promise<OrderPrescription> {
+  const { data } = await http.put<OrderPrescription>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/prescription`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+// --- Master Problem List ---
+
+export async function listProblems(
+  patientId: number,
+  opts?: { activeOnly?: boolean }
+): Promise<PatientProblem[]> {
+  const { data } = await http.get<PatientProblem[]>('/patient-problems', {
+    params: { practiceId: pid(), patientId, activeOnly: opts?.activeOnly },
+  });
+  return data;
+}
+
+export async function createProblem(body: {
+  patientId: number;
+  label: string;
+  kind?: PatientProblemKind;
+  status?: PatientProblemStatus;
+  acuity?: PatientProblemAcuity;
+  note?: string;
+  createdInEncounterId?: string;
+}): Promise<PatientProblem> {
+  const { data } = await http.post<PatientProblem>('/patient-problems', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+export async function updateProblem(
+  id: string,
+  body: Partial<Pick<PatientProblem, 'label' | 'kind' | 'status' | 'acuity' | 'note'>>
+): Promise<PatientProblem> {
+  const { data } = await http.patch<PatientProblem>(`/patient-problems/${encodeURIComponent(id)}`, {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+export async function deleteProblem(id: string): Promise<void> {
+  await http.delete(`/patient-problems/${encodeURIComponent(id)}`, {
+    params: { practiceId: pid() },
+  });
+}
+
+/** Chronic meds still being taken (and optionally the full patient Rx list). */
+export async function listPatientPrescriptions(
+  patientId: number,
+  opts?: { activeChronicOnly?: boolean }
+): Promise<PatientPrescription[]> {
+  const { data } = await http.get<PatientPrescription[]>('/patient-prescriptions', {
+    params: {
+      practiceId: pid(),
+      patientId,
+      activeChronicOnly: opts?.activeChronicOnly,
+    },
+  });
+  return data;
+}
+
+/** Mark a prescription as no longer taking (or clear that mark). */
+export async function updatePatientPrescription(
+  id: number,
+  body: { discontinued?: boolean }
+): Promise<PatientPrescription> {
+  const { data } = await http.patch<PatientPrescription>(
+    `/patient-prescriptions/${encodeURIComponent(String(id))}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Freeform chronic med on the patient pin (no checkout charge). */
+export async function createPatientPrescription(body: {
+  patientId: number;
+  name: string;
+  acuity?: PrescriptionAcuity;
+  inventoryItemId?: number | null;
+  instructions?: string;
+  refill?: number;
+  startDate?: string;
+  refillExpiration?: string;
+}): Promise<PatientPrescription> {
+  const { data } = await http.post<PatientPrescription>('/patient-prescriptions', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+/** Charged visit item published to the patient medical record after finalize. */
+export type PostedVisitCharge = {
+  id: string;
+  /** Invoice line the charge was billed on; in-house lab results hang off it. */
+  invoiceLineId?: string | null;
+  name: string;
+  kind: string;
+  qty: number;
+  unitPrice: number;
+  isCovered: boolean;
+  postedToRecordAt: string;
+  isVaccine: boolean;
+  isMed: boolean;
+  prescriptionPending: boolean;
+  vaccinationPending: boolean;
+  prescription: {
+    instructions: string | null;
+    strength: string | null;
+    refill: number;
+    acuity: string | null;
+    refillExpiration: string | null;
+  } | null;
+  vaccination: {
+    lotNumber: string | null;
+    nextVaccinationDate: string | null;
+    dateVaccinated: string | null;
+  } | null;
+  /** Set while the invoice that billed this charge is void. */
+  voided?: { at: string | null; reason: string | null; byName: string | null } | null;
+};
+
+export async function listPatientVisitCharges(patientId: number): Promise<PostedVisitCharge[]> {
+  const { data } = await http.get<PostedVisitCharge[]>('/patient-visit-charges', {
+    params: { practiceId: pid(), patientId },
+  });
+  return data;
+}
+
+// --- Visit invoice / checkout ---
+
+export async function getInvoiceByAppointment(appointmentId: number): Promise<VisitInvoice | null> {
+  const { data } = await http.get<VisitInvoice | null>(
+    `/visit-invoices/by-appointment/${appointmentId}`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export type CounterInvoiceLineInput = {
+  description: string;
+  qty?: number;
+  unitPrice?: number;
+  instructions?: string | null;
+  refillCount?: number | null;
+  catalogItemId?: number | null;
+  catalogItemType?: string | null;
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  isCovered?: boolean;
+  listUnitPrice?: number | null;
+  patientId?: number | null;
+  providerEmployeeId?: number | null;
+  rxApproved?: boolean;
+  /** `YYYY-MM-DD`; saved on the pet's prescription when a counter-line script is approved. */
+  refillExpiration?: string | null;
+  acuity?: PrescriptionAcuity;
+  miscCharge?: boolean;
+  bundleSaleId?: string | null;
+  sourceBundleId?: number | null;
+  sourceBundleName?: string | null;
+  /** Practice revenue only — no provider (Not Specified VSD). */
+  excludeFromProduction?: boolean;
+};
+
+export async function listClientVisitInvoices(
+  clientId: number,
+  opts?: { lite?: boolean },
+): Promise<VisitInvoice[]> {
+  const { data } = await http.get<VisitInvoice[]>(
+    `/visit-invoices/client/${encodeURIComponent(String(clientId))}`,
+    {
+      params: {
+        practiceId: pid(),
+        ...(opts?.lite ? { lite: '1' } : {}),
+      },
+    },
+  );
+  return data;
+}
+
+export type VisitInvoiceLookupHit = {
+  id: string;
+  clientId: number | null;
+  clientLabel: string | null;
+  scoutInvoiceNumber: number | null;
+  evetInvoiceNumber: number | null;
+  status: VisitInvoiceStatus;
+};
+
+export async function lookupVisitInvoices(q: string): Promise<VisitInvoiceLookupHit[]> {
+  const { data } = await http.get<VisitInvoiceLookupHit[]>('/visit-invoices/lookup', {
+    params: { practiceId: pid(), q },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function ensureCounterInvoice(opts: {
+  patientId?: number | null;
+  clientId?: number | null;
+  appointmentId?: number | null;
+}): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/counter', {
+    practiceId: pid(),
+    patientId: opts.patientId ?? undefined,
+    clientId: opts.clientId ?? undefined,
+    appointmentId: opts.appointmentId ?? undefined,
+  });
+  return data;
+}
+
+/** Negative amount = account credit; positive = paid charge on the ledger. */
+export async function postAccountAdjustment(opts: {
+  clientId: number;
+  patientId?: number | null;
+  amount: number;
+  description?: string;
+  stripePaymentIntentId?: string | null;
+  cashierEmployeeId?: number | null;
+}): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/account-adjustment', {
+    practiceId: pid(),
+    clientId: opts.clientId,
+    patientId: opts.patientId ?? undefined,
+    amount: opts.amount,
+    description: opts.description,
+    stripePaymentIntentId: opts.stripePaymentIntentId ?? undefined,
+    cashierEmployeeId: opts.cashierEmployeeId ?? undefined,
+  });
+  return data;
+}
+
+export async function patchVisitInvoice(
+  invoiceId: string,
+  body: {
+    appointmentId?: number | null;
+    inventoryBranchId?: number | null;
+    inventoryLocationId?: number | null;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function addVisitTender(
+  invoiceId: string,
+  body: {
+    method: VisitTenderMethod;
+    amount: number;
+    paymentTypeName?: string | null;
+    cashierEmployeeId?: number | null;
+    cashReceived?: number | null;
+    changeGiven?: number | null;
+    checkNumber?: string | null;
+    stripePaymentIntentId?: string | null;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function voidVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  opts?: { reason?: string; voidedByEmployeeId?: number | null }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/void`,
+    { practiceId: pid(), ...opts }
+  );
+  return data;
+}
+
+/**
+ * Correct how a posted payment was recorded — method, payment type, check
+ * number. The amount is not editable; void and re-take for that.
+ */
+export async function editVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  body: {
+    method?: VisitTenderMethod;
+    paymentTypeName?: string | null;
+    checkNumber?: string | null;
+    reason: string;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Re-credit a line on a finalized or paid invoice to a different provider. */
+export async function changeInvoiceLineProvider(
+  invoiceId: string,
+  lineId: string,
+  body: { providerEmployeeId: number; reason: string }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/provider`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function refundVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  opts?: {
+    amount?: number | null;
+    reason?: string;
+    refundedByEmployeeId?: number | null;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/refund`,
+    { practiceId: pid(), ...opts }
+  );
+  return data;
+}
+
+export type VisitRefundPeer = {
+  invoiceId: string;
+  tenderId: string;
+  refundable: number;
+  amount: number;
+  scoutInvoiceNumber: number | null;
+  isCurrent: boolean;
+};
+
+export async function listVisitRefundPeers(
+  invoiceId: string,
+  tenderId: string
+): Promise<{ paymentIntentId: string | null; peers: VisitRefundPeer[] }> {
+  const { data } = await http.get<{ paymentIntentId: string | null; peers: VisitRefundPeer[] }>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/refund-peers`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function returnVisitInvoiceLines(
+  invoiceId: string,
+  items: { lineId: string; qty: number }[],
+  opts?: {
+    cashierEmployeeId?: number | null;
+    refundViaStripe?: boolean;
+    reason?: string;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/returns`,
+    {
+      practiceId: pid(),
+      items,
+      cashierEmployeeId: opts?.cashierEmployeeId ?? null,
+      refundViaStripe: opts?.refundViaStripe === true,
+      reason: opts?.reason,
+    }
+  );
+  return data;
+}
+
+export type ClientPayLink = {
+  url: string;
+  amount: number;
+  invoiceIds: string[];
+  invoiceLabels: string[];
+};
+
+export async function createClientPayLink(
+  clientId: number,
+  opts?: { successUrl?: string; cancelUrl?: string }
+): Promise<ClientPayLink> {
+  const { data } = await http.post<ClientPayLink>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/pay-link`,
+    {
+      practiceId: pid(),
+      successUrl: opts?.successUrl,
+      cancelUrl: opts?.cancelUrl,
+    }
+  );
+  const url = data?.url?.startsWith('/')
+    ? `${apiBaseUrl.replace(/\/+$/, '')}${data.url}`
+    : data.url;
+  return { ...data, url };
+}
+
+export async function adoptEvetInvoice(evetInvoiceId: number): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/adopt-evet', {
+    practiceId: pid(),
+    evetInvoiceId,
+  });
+  return data;
+}
+
+export async function unlockVisitInvoice(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/unlock`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function addCounterInvoiceLine(
+  invoiceId: string,
+  body: CounterInvoiceLineInput
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function updateCounterInvoiceLine(
+  invoiceId: string,
+  lineId: string,
+  body: Partial<CounterInvoiceLineInput>
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function removeCounterInvoiceLine(
+  invoiceId: string,
+  lineId: string
+): Promise<VisitInvoice> {
+  const { data } = await http.delete<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function createInvoice(body: {
+  appointmentId: number;
+  clientId?: number;
+  isEuthanasiaPrepay?: boolean;
+}): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+export async function getInvoice(id: string): Promise<VisitInvoice> {
+  const { data } = await http.get<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}`, {
+    params: { practiceId: pid() },
+  });
+  return data;
+}
+
+export async function finalizeInvoice(id: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(id)}/finalize`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function voidInvoice(
+  id: string,
+  opts?: { reason: string; voidedByEmployeeId?: number | null },
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
+    practiceId: pid(),
+    reason: opts?.reason,
+    voidedByEmployeeId: opts?.voidedByEmployeeId,
+  });
+  return data;
+}
+
+/** Soft-delete an unused open invoice so it leaves the ledger. */
+export async function discardVisitInvoice(
+  id: string,
+  opts?: { deletedByEmployeeId?: number | null },
+): Promise<void> {
+  await http.delete(`/visit-invoices/${encodeURIComponent(id)}`, {
+    params: {
+      practiceId: pid(),
+      ...(opts?.deletedByEmployeeId != null
+        ? { deletedByEmployeeId: opts.deletedByEmployeeId }
+        : {}),
+    },
+  });
+}
+
+/** Undo a void — back to open so the bill can be corrected and collected. */
+export async function reopenInvoice(id: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(id)}/reopen`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+// --- Payments ---
+
+export async function createEuthanasiaSetupIntent(body: {
+  appointmentId: number;
+  clientId?: number;
+  customerEmail?: string;
+  customerName?: string;
+}): Promise<{
+  invoiceId: string;
+  setupIntentClientSecret: string;
+  stripeCustomerId: string;
+}> {
+  const { data } = await http.post('/visit-payments/euthanasia-setup', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+export async function savePaymentMethod(
+  invoiceId: string,
+  paymentMethodId: string
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/save-payment-method`,
+    { practiceId: pid(), paymentMethodId }
+  );
+  return data;
+}
+
+export type InvoiceCardOnFile = {
+  customerId: string;
+  paymentMethodId: string;
+  last4: string | null;
+  brand: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+};
+
+export type InvoiceCardOnFileLookup = {
+  card: InvoiceCardOnFile | null;
+  declinedAt: string | null;
+};
+
+export async function getInvoiceCardOnFile(
+  invoiceId: string,
+): Promise<InvoiceCardOnFileLookup> {
+  const { data } = await http.get<InvoiceCardOnFileLookup | InvoiceCardOnFile | null>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/card-on-file`,
+    { params: { practiceId: pid() } }
+  );
+  if (!data) return { card: null, declinedAt: null };
+  if ('card' in data || 'declinedAt' in data) {
+    const lookup = data as InvoiceCardOnFileLookup;
+    return { card: lookup.card ?? null, declinedAt: lookup.declinedAt ?? null };
+  }
+  return { card: data as InvoiceCardOnFile, declinedAt: null };
+}
+
+export async function chargeSavedCard(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/charge-saved-card`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export type InvoiceLineRefillOption = {
+  prescriptionId: number;
+  rxNumber: number | null;
+  name: string;
+  instructions: string | null;
+  refillsLeft: number;
+  refillThrough: string | null;
+  prescribedOn: string | null;
+  prescriberEmployeeId: number | null;
+  prescriberName: string | null;
+  eligible: boolean;
+  usedOnThisLine: boolean;
+  reason: string | null;
+  patientId: number | null;
+  patientName: string | null;
+  inventoryItemId: number | null;
+  quantity: number | null;
+};
+
+/** Refillable prescriptions on every pet in the invoice's household. */
+export async function listInvoiceRefillOptions(
+  invoiceId: string
+): Promise<InvoiceLineRefillOption[]> {
+  const { data } = await http.get<InvoiceLineRefillOption[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/refill-options`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+/** Adds the prescription's item as a locked refill line (no provider) and takes one refill off. */
+export async function addInvoiceRefillLine(
+  invoiceId: string,
+  prescriptionId: number,
+  opts?: { newScript?: boolean }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/refill-lines`,
+    { practiceId: pid(), prescriptionId, newScript: opts?.newScript === true }
+  );
+  return data;
+}
+
+export async function listInvoiceLineRefillOptions(
+  invoiceId: string,
+  lineId: string,
+): Promise<InvoiceLineRefillOption[]> {
+  const { data } = await http.get<InvoiceLineRefillOption[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/refill-options`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function applyInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+  prescriptionId: number,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/use-refill`,
+    { practiceId: pid(), prescriptionId }
+  );
+  return data;
+}
+
+export async function releaseInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/release-refill`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/** "Oct 6, 2026, 1:37 PM" — when a charge was entered on the invoice. */
+export function formatInvoiceLineEntered(created: string | null | undefined): string | null {
+  if (!created) return null;
+  const at = new Date(created);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/** Virtual terminal: charge a card keyed in while the owner reads it out. */
+export async function chargeKeyedCard(
+  invoiceId: string,
+  body: { paymentMethodId: string; saveCard?: boolean },
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/charge-keyed-card`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function authorizeSavedCard(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/authorize`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function captureAuthorization(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/capture-authorization`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function getTerminalConnectionToken(): Promise<{ secret: string }> {
+  const { data } = await http.post('/visit-payments/terminal/connection-token', {
+    practiceId: pid(),
+  });
+  return data;
+}
+
+export async function createTerminalPaymentIntent(invoiceId: string): Promise<{
+  id: string;
+  clientSecret: string;
+  invoiceId: string;
+  invoice?: VisitInvoice;
+}> {
+  const { data } = await http.post(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/payment-intent`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export type TerminalCheckoutSession = {
+  checkoutId: string;
+  invoiceId: string;
+  appointmentId: number;
+  practiceId: number;
+  paymentIntentId: string;
+  clientSecret: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  clientLabel: string | null;
+  expiresAt: string;
+  targetDeviceId: string | null;
+  invoice?: VisitInvoice;
+};
+
+export type TerminalPresence = {
+  online: boolean;
+  deviceId: string | null;
+  email: string | null;
+  lastSeen: string | null;
+};
+
+export type TerminalReaderKind = 'scout_terminal' | 'stripe_internet';
+
+export type SavedTerminalReader = {
+  kind: TerminalReaderKind;
+  deviceId?: string | null;
+  stripeReaderId?: string | null;
+  label?: string | null;
+};
+
+export type TerminalReaderOption = {
+  id: string;
+  kind: TerminalReaderKind;
+  label: string;
+  online: boolean;
+  deviceId?: string | null;
+  stripeReaderId?: string | null;
+  deviceType?: string | null;
+};
+
+export type TerminalReaderCatalog = {
+  selected: SavedTerminalReader | null;
+  selectedId: string | null;
+  readers: TerminalReaderOption[];
+};
+
+/** Scout Terminal plus registered WisePOS / internet readers, and this user's saved pick. */
+export async function getTerminalReaders(): Promise<TerminalReaderCatalog> {
+  const { data } = await http.get<TerminalReaderCatalog>(
+    `/visit-payments/terminal/readers`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
+/** Remember this reader for the signed-in user until they change it. */
+export async function selectTerminalReader(
+  reader: TerminalReaderOption
+): Promise<TerminalReaderCatalog> {
+  const { data } = await http.put<TerminalReaderCatalog>(
+    `/visit-payments/terminal/readers/selection`,
+    {
+      practiceId: pid(),
+      kind: reader.kind,
+      deviceId: reader.deviceId ?? undefined,
+      stripeReaderId: reader.stripeReaderId ?? undefined,
+      label: reader.label,
+    }
+  );
+  return data;
+}
+
+/** The signed-in staff user's live Scout Terminal phone, if any. */
+export async function getTerminalPresence(): Promise<TerminalPresence> {
+  const { data } = await http.get<TerminalPresence>(
+    `/visit-payments/terminal/presence`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
+/** Start Scout Terminal handoff: creates PI + checkout job and notifies devices. */
+export async function startTerminalCheckout(
+  invoiceId: string,
+  opts?: { targetDeviceId?: string; saveCard?: boolean }
+): Promise<TerminalCheckoutSession> {
+  const { data } = await http.post<TerminalCheckoutSession>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/checkout`,
+    {
+      practiceId: pid(),
+      targetDeviceId: opts?.targetDeviceId,
+      saveCard: opts?.saveCard === true,
+    }
+  );
+  return data;
+}
+
+export async function cancelTerminalCheckout(checkoutId: string): Promise<TerminalCheckoutSession> {
+  const { data } = await http.post<TerminalCheckoutSession>(
+    `/visit-payments/terminal/checkouts/${encodeURIComponent(checkoutId)}/cancel`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function confirmTerminalPayment(
+  invoiceId: string,
+  paymentIntentId: string
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/confirm`,
+    { practiceId: pid(), paymentIntentId }
+  );
+  return data;
+}
+
+// --- Visit lifecycle (VisitCompleted hub event) ---
+
+export async function markVisitCompleted(appointmentId: number): Promise<VisitCompletedResult> {
+  const { data } = await http.post<VisitCompletedResult>(`/visits/${appointmentId}/completed`, {
+    practiceId: pid(),
+  });
+  return data;
+}

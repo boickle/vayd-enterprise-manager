@@ -1,0 +1,27 @@
+.lab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-transform: none;
+  vertical-align: middle;
+}
+.lab-chip--waiting {
+  background: #fef3c7;
+  color: #92400e;
+}
+.lab-chip--abnormal {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.lab-chip--normal {
+  background: #e6f4ee;
+  color: #0f766e;
+}

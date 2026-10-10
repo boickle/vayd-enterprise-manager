@@ -52,11 +52,11 @@
 }
 
 /* On mobile, position dropdown lower to avoid being cut off at top of screen */
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .user-menu-dropdown {
     position: fixed;
     top: calc(
-      var(--app-nonprod-banner-height, 0px) + var(--scout-schedule-navbar-height, 120px) + 8px
+      var(--app-nonprod-banner-height, 0px) + var(--scout-schedule-navbar-height, 96px) + 8px
     );
     right: 12px;
     left: auto;
@@ -149,8 +149,8 @@
   background: var(--tab-active-bg);
 }
 
-/* Hide navigation section on desktop - tabs are shown in navbar instead */
-@media (min-width: 769px) {
+/* Hide navigation extras on desktop — tabs live in the navbar instead */
+@media (min-width: 901px) {
   .user-menu-section-label,
   .user-menu-nav-item {
     display: none;

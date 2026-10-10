@@ -1,0 +1,37 @@
+.pims-breed {
+  position: relative;
+}
+
+.pims-breed__list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 208px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+}
+
+.pims-breed__option {
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.pims-breed__option:hover {
+  background: #eff6ff;
+}

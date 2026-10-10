@@ -1,0 +1,231 @@
+.bsp-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above schedule shell navbar (100) so the modal title isn’t hidden under it. */
+  z-index: 9200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.bsp-modal {
+  width: min(560px, 100%);
+  max-height: min(calc(100dvh - 2.5rem), 720px);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+  color: #0f172a;
+}
+
+.bsp-modal__head {
+  flex: none;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 1.1rem 1.2rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.bsp-modal__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.bsp-modal__title {
+  margin: 0.15rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.bsp-modal__hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.bsp-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.bsp-icon-btn:hover {
+  background: #f1f5f9;
+}
+
+.bsp-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.85rem 1.2rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.bsp-steps {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.2rem 0.15rem;
+}
+
+.bsp-steps__dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.bsp-steps__dot.is-done {
+  background: #99f6e4;
+}
+
+.bsp-steps__dot.is-current {
+  width: 1.1rem;
+  background: #0f766e;
+}
+
+.bsp-group__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.bsp-group__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.bsp-group__meta {
+  font-size: 0.78rem;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.bsp-group__desc {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.bsp-options,
+.bsp-included {
+  list-style: none;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.bsp-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.bsp-option.is-on {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.bsp-option input {
+  margin-top: 0.15rem;
+}
+
+.bsp-included li {
+  font-size: 0.88rem;
+  color: #334155;
+  padding: 0.2rem 0;
+}
+
+.bsp-group--choice {
+  padding-bottom: 0.25rem;
+}
+
+.bsp-error {
+  margin: 0;
+  padding: 0.5rem 1.2rem 0;
+  color: #b91c1c;
+  font-size: 0.88rem;
+}
+
+.bsp-modal__foot {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.2rem 1.1rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.bsp-modal__foot-end {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.bsp-btn {
+  appearance: none;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bsp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bsp-btn--ghost {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.bsp-btn--primary {
+  background: #0f766e;
+  color: #fff;
+}
+
+.bsp-btn--primary:hover:not(:disabled) {
+  background: #0d9488;
+}

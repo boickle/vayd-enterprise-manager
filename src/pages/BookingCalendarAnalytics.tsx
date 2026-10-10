@@ -68,8 +68,9 @@ import {
   type BookingCalendarFillTone,
   type CalendarDayMetrics,
 } from '../utils/bookingCalendarMetrics';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function uniqueProviders(list: Provider[]): Provider[] {
   const out: Provider[] = [];

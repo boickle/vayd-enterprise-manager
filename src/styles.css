@@ -217,15 +217,6 @@ main.container > * {
   top: var(--app-nonprod-banner-height);
 }
 
-/* Full-width content under global header (PIMS sidebar layout). */
-main.pims-main-wrapper {
-  max-width: none;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  min-height: calc(100vh - 76px);
-}
-
 main.schedule-main-wrapper {
   max-width: none;
   width: 100%;
@@ -274,6 +265,12 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
   flex: 0 1 auto;
 }
 
+/* "Tasks" + count badges never split across lines, even at 99+. */
+.navbar-schedule-tab-label {
+  display: inline;
+  white-space: nowrap;
+}
+
 .navbar-schedule-tab-badge {
   display: inline-flex;
   align-items: center;
@@ -281,15 +278,24 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
   min-width: 1.15em;
   height: 1.15em;
   padding: 0 4px;
-  margin-left: 4px;
+  margin-left: 2px;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
   color: #fff !important;
   background: #dc2626;
   border-radius: 3px;
-  vertical-align: super;
+  /* Superscript hugging the "s": top-aligned to the line box so it rides above
+     the x-height without stretching the tab taller. */
+  vertical-align: top;
+  position: relative;
+  top: -0.15em;
   box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.navbar-schedule-tab-badge + .navbar-schedule-tab-badge {
+  margin-left: 3px;
 }
 
 .schedule-app__tab--active .navbar-schedule-tab-badge {
@@ -568,9 +574,9 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
 }
 
 .navbar-global-search {
-  flex: 0 1 300px;
-  max-width: 320px;
-  min-width: 170px;
+  flex: 0 1 560px;
+  max-width: 580px;
+  min-width: 280px;
   position: relative;
 }
 
@@ -611,8 +617,9 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
   box-sizing: border-box;
 }
 
-/* Client portal and other full-bleed mains — not schedule/PIMS shell layouts */
-main:not(.container):not(.schedule-main-wrapper):not(.pims-main-wrapper) {
+/* Client portal and other full-bleed mains — not the schedule shell layout.
+   `.soap-main` is the chart column inside that shell, not a page. */
+main:not(.container):not(.schedule-main-wrapper):not(.soap-main) {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -751,7 +758,10 @@ main.schedule-main-wrapper {
   border: 0;
   padding: 10px 14px;
   border-radius: 12px;
+  font-family: inherit;
+  font-size: inherit;
   font-weight: 700;
+  line-height: inherit;
   cursor: pointer;
   box-shadow: 0 6px 16px rgba(18, 147, 114, 0.15);
 }
@@ -761,6 +771,14 @@ main.schedule-main-wrapper {
 .btn.secondary {
   background: #e9f6f2;
   color: var(--accent-strong);
+}
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+}
+a.btn:hover {
+  text-decoration: none;
 }
 
 .hero {
@@ -1000,8 +1018,7 @@ label > .label {
   }
 
   main.container,
-  main.pims-main-wrapper,
-  main:not(.container):not(.schedule-main-wrapper):not(.pims-main-wrapper) {
+  main:not(.container):not(.schedule-main-wrapper):not(.soap-main) {
     padding-top: var(--scout-navbar-height, calc(60px + env(safe-area-inset-top, 0px)));
     box-sizing: border-box;
     flex: 1 1 auto;
@@ -1046,4 +1063,211 @@ label > .label {
   background-color: #f8d7da; /* soft red background */
   color: #721c24; /* dark red text */
   border: 1px solid #f5c6cb; /* matching border */
+}
+
+/* ─── Mobile compact nav (≤900px, schedule pages only) ─────────────────────── */
+
+/* Hidden on desktop — only shown on mobile */
+.mobile-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  /* Show the compact nav */
+  .mobile-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  /* Tiny logo: just the paw icon, no text */
+  .mobile-nav__brand {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    border-radius: 6px;
+    text-decoration: none;
+  }
+  .mobile-nav__brand img {
+    height: 32px;
+    width: auto;
+    opacity: 0.9;
+    mix-blend-mode: multiply;
+    border-radius: 4px;
+  }
+
+  /* Each menu group */
+  .mobile-nav__menu {
+    position: relative;
+  }
+
+  /* Top-level menu button */
+  .mobile-nav__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #334155;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1;
+    touch-action: manipulation;
+  }
+  .mobile-nav__btn:active,
+  .mobile-nav__menu--open .mobile-nav__btn {
+    background: rgba(17, 163, 106, 0.1);
+    color: #0d7a50;
+  }
+
+  /* Dropdown panel */
+  .mobile-nav__dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    min-width: 148px;
+    z-index: 300;
+    overflow: hidden;
+  }
+
+  .mobile-nav__dropdown button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #1e293b;
+    background: transparent;
+    border: none;
+    border-top: 1px solid #f1f5f9;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .mobile-nav__dropdown button:first-child {
+    border-top: none;
+  }
+  .mobile-nav__dropdown button:active {
+    background: #f0fdf4;
+    color: #0d7a50;
+  }
+
+  /* ── Hide desktop-only header pieces (schedule shell) ─────── */
+  .navbar--schedule-shell > .brand.brand--home-link {
+    display: none !important;
+  }
+  .navbar--schedule-shell > .navbar__center-block {
+    display: none !important;
+  }
+  .navbar--schedule-shell > .navbar-appointment-btn {
+    display: none !important;
+  }
+
+  /* Two-row mobile header: search + last viewed on top, compact nav below */
+  .navbar.navbar--schedule-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    padding: 6px 10px 8px;
+    column-gap: 6px;
+    row-gap: 6px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* Row 1: reuse the desktop search + last-viewed pair */
+  .navbar.navbar--schedule-shell > .navbar-global-search {
+    display: block !important;
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-global-search__row {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-recent {
+    flex: 0 1 128px;
+    min-width: 86px;
+    max-width: 150px;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-recent__btn {
+    padding: 7px 8px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-global-search__input-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-global-search input {
+    width: 100%;
+    min-width: 0;
+    font-size: 16px; /* iOS: avoid zoom on focus */
+    padding: 7px 10px 7px 34px; /* left room for the search icon */
+    border-radius: 8px;
+    background-position: 10px center;
+    background-size: 14px 14px;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-global-search input[type='search']::-webkit-search-decoration,
+  .navbar.navbar--schedule-shell .navbar-global-search input[type='search']::-webkit-search-results-button,
+  .navbar.navbar--schedule-shell .navbar-global-search input[type='search']::-webkit-search-results-decoration {
+    display: none;
+    -webkit-appearance: none;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-global-search__loading {
+    display: none;
+  }
+
+  .navbar.navbar--schedule-shell .navbar-recent__menu,
+  .navbar.navbar--schedule-shell .navbar-global-search__dropdown {
+    z-index: 320;
+    max-width: calc(100vw - 20px);
+    max-height: min(60vh, 420px);
+  }
+
+  /* Hamburger stays top-right */
+  .navbar.navbar--schedule-shell .user-menu-container {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  /* Hide the UserMenu built-in Settings (it goes to /admin); extras have Settings + Admin */
+  .navbar.navbar--schedule-shell .user-menu-builtin-settings,
+  .navbar.navbar--schedule-shell .user-menu-builtin-settings + .user-menu-divider {
+    display: none;
+  }
+
+  /* Row 2: Inventory / Scheduling / Tasks */
+  .navbar.navbar--schedule-shell .mobile-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex: unset;
+    width: 100%;
+  }
+
+  /* Two-row height */
+  :root {
+    --scout-schedule-navbar-height: calc(96px + env(safe-area-inset-top, 0px));
+  }
 }

@@ -1,0 +1,613 @@
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  ClipboardSignature,
+  FileInput,
+  FileText,
+  GitMerge,
+  Mail,
+  MessageSquare,
+  Phone,
+  Printer,
+  Receipt,
+  Sparkles,
+  Stethoscope,
+  Upload,
+} from 'lucide-react';
+import { recordScoutChartCommunication } from '../../api/scoutChart';
+import { PimsChartMessageComposeModal } from './PimsChartMessageComposeModal';
+import { PimsChartNoteComposeModal } from './PimsChartNoteComposeModal';
+import PimsChartCallModal from './PimsChartCallModal';
+import PimsStartSoapModal from './PimsStartSoapModal';
+import ClientCallPill from './ClientCallPill';
+import ChartSendForm from './ChartSendForm';
+import ChartPrintDocumentModal from './ChartPrintDocumentModal';
+import BriefMergePanel from '../brief/BriefMergePanel';
+import BriefClientMergePanel from '../brief/BriefClientMergePanel';
+import RecordDocumentsReview from '../records/RecordDocumentsReview';
+import { SchedulerRecordsRequestModal } from '../../pages/SchedulerRecordsRequestModal';
+import { useCan } from '../../permissions/PermissionContext';
+import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
+
+type Props = {
+  patientId: string;
+  patientName: string;
+  clientId: string | null;
+  clientName: string;
+  clientPhone: string | null;
+  practiceTz: string;
+  onSummarize: () => void;
+  onStartSoap: (appointmentId: number, patientId: string, clientId: string | null) => void;
+  onOpenMedicalNote: (appointmentId: number, patientId: string, clientId: string | null) => void;
+  onBookAppointment?: () => void;
+  onInvoice: () => void;
+  onRecordsChanged?: (result?: OutsideRecordAcceptResult) => void;
+  onTextClient?: () => void;
+  onEmailClient?: () => void;
+  clientDefaultEmail?: string | null;
+  onOpenCallSession: (sessionId: string) => void;
+  onStartCallNote: () => void;
+  launchNote?: boolean;
+  launchCommunicate?: boolean;
+  onLaunchConsumed?: () => void;
+  /** Other household pets the call can be filed to, besides the open chart. */
+  householdPatients?: { id: number; name: string }[];
+};
+
+export default function PimsChartWorkBar({
+  patientId,
+  patientName,
+  clientId,
+  clientName,
+  clientPhone,
+  practiceTz,
+  onSummarize,
+  onStartSoap,
+  onOpenMedicalNote,
+  onBookAppointment,
+  onInvoice,
+  onRecordsChanged,
+  onTextClient,
+  onEmailClient,
+  clientDefaultEmail = null,
+  onOpenCallSession,
+  onStartCallNote,
+  launchNote = false,
+  launchCommunicate = false,
+  onLaunchConsumed,
+  householdPatients = [],
+}: Props) {
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [messageOpen, setMessageOpen] = useState(false);
+  const [messagePick, setMessagePick] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [callOpen, setCallOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [soapPickOpen, setSoapPickOpen] = useState(false);
+  const [formSendOpen, setFormSendOpen] = useState(false);
+  const [printDocOpen, setPrintDocOpen] = useState(false);
+  const [recordsRequestOpen, setRecordsRequestOpen] = useState(false);
+
+  useEffect(() => {
+    if (!launchNote && !launchCommunicate) return;
+    if (launchNote) setNoteOpen(true);
+    if (launchCommunicate) setMessagePick(true);
+    onLaunchConsumed?.();
+    // Only react to the launch flags from the schedule menu, not a new callback each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchNote, launchCommunicate]);
+
+  const clientIdNum =
+    clientId != null && Number.isFinite(Number(clientId)) && Number(clientId) > 0
+      ? Number(clientId)
+      : null;
+  const patientIdNum = Number(patientId);
+
+  return (
+    <>
+      {/* Sits above the toolbar rather than inside it: a live call is status, not an action,
+          and it must not reflow the buttons when it appears mid-call. */}
+      <ClientCallPill
+        clientId={clientIdNum}
+        clientName={clientName}
+        patients={
+          householdPatients.length > 0
+            ? householdPatients
+            : Number.isFinite(patientIdNum)
+              ? [{ id: patientIdNum, name: patientName }]
+              : []
+        }
+        defaultPatientId={Number.isFinite(patientIdNum) ? patientIdNum : null}
+        pasteOpen={pasteOpen}
+        onPasteClose={() => setPasteOpen(false)}
+        onNoteFiled={(noteId) => {
+          if (noteId) onRecordsChanged?.({ scoutNoteId: noteId });
+          else onRecordsChanged?.();
+        }}
+      />
+
+      <div className="pims-chart-work" role="toolbar" aria-label="Chart actions">
+        <div className="pims-chart-work__group">
+          <span className="pims-chart-work__label">Write</span>
+          <button type="button" className="brief-btn" onClick={() => setNoteOpen(true)}>
+            <FileText size={15} aria-hidden />
+            Medical note
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Send a form or waiver for the client to sign (heartworm, consent, …)"
+            onClick={() => setFormSendOpen(true)}
+          >
+            <ClipboardSignature size={15} aria-hidden />
+            Send form
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Print a rabies certificate, vaccination certificate, Rx, death certificate, or spay/neuter certificate"
+            onClick={() => setPrintDocOpen(true)}
+          >
+            <Printer size={15} aria-hidden />
+            Print document
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={clientIdNum == null}
+            title={clientIdNum == null ? 'This pet has no client on file' : 'Text, email, call, or log a communication'}
+            onClick={() => setMessagePick(true)}
+          >
+            <MessageSquare size={15} aria-hidden />
+            Communicate
+          </button>
+          <button type="button" className="brief-btn" onClick={onInvoice}>
+            <Receipt size={15} aria-hidden />
+            Invoice
+          </button>
+          <button type="button" className="brief-btn" onClick={() => setUploadOpen(true)}>
+            <Upload size={15} aria-hidden />
+            Upload File
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Email another hospital for this pet's previous medical records"
+            onClick={() => setRecordsRequestOpen(true)}
+          >
+            <FileInput size={15} aria-hidden />
+            Request records
+          </button>
+        </div>
+        <div className="pims-chart-work__group pims-chart-work__group--end">
+          <span className="pims-chart-work__label">Visit</span>
+          <button type="button" className="brief-btn primary" onClick={onSummarize}>
+            <Sparkles size={15} aria-hidden />
+            Summarize
+          </button>
+          <button type="button" className="brief-btn" onClick={() => setSoapPickOpen(true)}>
+            <Stethoscope size={15} aria-hidden />
+            Start/Continue encounter
+          </button>
+        </div>
+      </div>
+
+      <PimsStartSoapModal
+        open={soapPickOpen}
+        onClose={() => setSoapPickOpen(false)}
+        patientId={patientId}
+        patientName={patientName}
+        clientId={clientId}
+        practiceTz={practiceTz}
+        onOpenSoap={onStartSoap}
+        onOpenMedicalNote={onOpenMedicalNote}
+        onContinueStandaloneNote={() => setNoteOpen(true)}
+        onBookAppointment={onBookAppointment}
+      />
+
+      <PimsChartCallModal
+        open={callOpen}
+        onClose={() => setCallOpen(false)}
+        patientId={patientId}
+        patientName={patientName}
+        clientId={clientIdNum}
+        onPasteTranscript={() => setPasteOpen(true)}
+        clientName={clientName}
+        clientPhone={clientPhone}
+        practiceTz={practiceTz}
+        onOpenCallSession={onOpenCallSession}
+        onStartCallNote={onStartCallNote}
+      />
+
+      {uploadOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="pims-chart-pick"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pims-upload-title"
+            >
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setUploadOpen(false)}
+              />
+              <div
+                className="pims-chart-pick__card"
+                style={{ width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
+              >
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-upload-title">Upload records · {patientName}</h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setUploadOpen(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <RecordDocumentsReview
+                  patientId={patientId}
+                  patientName={patientName}
+                  clientId={clientId}
+                  hideHeading
+                  onAccepted={(result) => {
+                    setUploadOpen(false);
+                    onRecordsChanged?.(result);
+                  }}
+                />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {noteOpen && Number.isFinite(patientIdNum) ? (
+        <PimsChartNoteComposeModal
+          patientId={patientIdNum}
+          clientId={clientIdNum}
+          patientName={patientName}
+          onClose={() => setNoteOpen(false)}
+          onWrappedUp={() => {
+            setNoteOpen(false);
+            onRecordsChanged?.();
+          }}
+        />
+      ) : null}
+
+      {messageOpen && clientIdNum != null && Number.isFinite(patientIdNum) ? (
+        <PimsChartMessageComposeModal
+          patientId={patientIdNum}
+          clientId={clientIdNum}
+          patientName={patientName}
+          clientName={clientName}
+          canText={Boolean(clientPhone)}
+          onClose={() => setMessageOpen(false)}
+          onSent={() => {
+            setMessageOpen(false);
+            onRecordsChanged?.();
+          }}
+        />
+      ) : null}
+
+      {messagePick && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-chart-msg-pick">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setMessagePick(false)}
+              />
+              <div className="pims-chart-pick__card">
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-chart-msg-pick">Communicate {clientName}</h3>
+                </div>
+                <p className="pims-chart-pick__empty">
+                  Text and email stay in your workflow unless you add them to the record. Call
+                  starts a phone session. Log saves a communication on the chart.
+                </p>
+                <div className="pims-chart-pick__foot">
+                  <button
+                    type="button"
+                    className="brief-btn primary"
+                    disabled={!onTextClient}
+                    onClick={() => {
+                      setMessagePick(false);
+                      if (onTextClient) onTextClient();
+                      else setMessageOpen(true);
+                    }}
+                  >
+                    <MessageSquare size={14} aria-hidden />
+                    Text
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={!onEmailClient}
+                    onClick={() => {
+                      setMessagePick(false);
+                      if (onEmailClient) onEmailClient();
+                      else setMessageOpen(true);
+                    }}
+                  >
+                    <Mail size={14} aria-hidden />
+                    Email
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={clientIdNum == null && !clientPhone}
+                    onClick={() => {
+                      setMessagePick(false);
+                      setCallOpen(true);
+                    }}
+                  >
+                    <Phone size={14} aria-hidden />
+                    Call
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={clientIdNum == null}
+                    onClick={() => {
+                      setMessagePick(false);
+                      setLogOpen(true);
+                    }}
+                  >
+                    <FileText size={14} aria-hidden />
+                    Log
+                  </button>
+                  <button type="button" className="brief-btn" onClick={() => setMessagePick(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {Number.isFinite(patientIdNum) ? (
+        <ChartSendForm
+          open={formSendOpen}
+          onClose={() => setFormSendOpen(false)}
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          defaultEmail={clientDefaultEmail}
+          onSent={() => onRecordsChanged?.()}
+        />
+      ) : null}
+
+      {Number.isFinite(patientIdNum) ? (
+        <ChartPrintDocumentModal
+          open={printDocOpen}
+          onClose={() => setPrintDocOpen(false)}
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          clientName={clientName}
+          clientDefaultEmail={clientDefaultEmail}
+          onFiled={() => onRecordsChanged?.()}
+        />
+      ) : null}
+
+      {recordsRequestOpen && Number.isFinite(patientIdNum) ? (
+        <SchedulerRecordsRequestModal
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          onClose={() => setRecordsRequestOpen(false)}
+        />
+      ) : null}
+
+      {logOpen && clientIdNum != null && Number.isFinite(patientIdNum)
+        ? createPortal(
+            <PimsChartCommunicationLogModal
+              patientId={patientIdNum}
+              clientId={clientIdNum}
+              clientName={clientName}
+              onClose={() => setLogOpen(false)}
+              onSaved={() => {
+                setLogOpen(false);
+                onRecordsChanged?.();
+              }}
+            />,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+function PimsChartCommunicationLogModal({
+  patientId,
+  clientId,
+  clientName,
+  onClose,
+  onSaved,
+}: {
+  patientId: number;
+  clientId: number;
+  clientName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [body, setBody] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const text = body.trim();
+    if (!text) {
+      setError('Write the communication before saving.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await recordScoutChartCommunication({
+        patientId,
+        clientId,
+        channel: 'log',
+        body: text,
+        typeLabel: 'Communication log',
+        includeOnMedicalRecord: true,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save that communication.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-chart-log">
+      <button
+        type="button"
+        className="pims-chart-pick__backdrop"
+        aria-label="Close"
+        onClick={onClose}
+      />
+      <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+        <div className="pims-chart-pick__head">
+          <h3 id="pims-chart-log">Communications</h3>
+          <button type="button" className="pims-chart-pick__close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <p className="pims-chart-pick__empty">
+          Save a communication for {clientName}. This is added to the chart.
+        </p>
+        <textarea
+          className="pims-chart-log__area"
+          rows={8}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Write the communication…"
+        />
+        {error ? <p className="pims-chart-pick__empty">{error}</p> : null}
+        <div className="pims-chart-pick__foot">
+          <button type="button" className="brief-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="brief-btn primary" disabled={saving} onClick={() => void save()}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Header Merge control — opens absorb-other-patient panel. */
+export function PimsPatientMergeButton({
+  patientId,
+  patientName,
+}: {
+  patientId: string;
+  patientName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  // A merge cannot be undone, so the control is absent rather than greyed out
+  // for people who will never have it.
+  const canMerge = useCan('patient.merge');
+  if (!canMerge) return null;
+  return (
+    <>
+      <button type="button" className="pims-detail__btn-secondary" onClick={() => setOpen(true)}>
+        <GitMerge size={14} aria-hidden />
+        Merge
+      </button>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-merge-title">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setOpen(false)}
+              />
+              <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-merge-title">Merge into {patientName}</h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+/** Header Merge control — opens absorb-other-client panel. */
+export function PimsClientMergeButton({
+  clientId,
+  clientName,
+  onMerged,
+}: {
+  clientId: string | number;
+  clientName: string;
+  onMerged?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const canMerge = useCan('client.merge');
+  if (!canMerge) return null;
+  return (
+    <>
+      <button type="button" className="pims-detail__btn-secondary" onClick={() => setOpen(true)}>
+        <GitMerge size={14} aria-hidden />
+        Merge
+      </button>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-client-merge-title">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setOpen(false)}
+              />
+              <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-client-merge-title">Merge into {clientName}</h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <BriefClientMergePanel
+                  keepClientId={clientId}
+                  keepClientName={clientName}
+                  onMerged={onMerged}
+                />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}

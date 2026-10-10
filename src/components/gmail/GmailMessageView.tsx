@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, FileInput, X } from 'lucide-react';
+import { useCan } from '../../permissions/PermissionContext';
+import GmailSaveToRecordModal from './GmailSaveToRecordModal';
+import GmailGoToRecord from './GmailGoToRecord';
 import {
   pickDefaultReplyMessage,
   type ComposeContext,
@@ -102,6 +105,19 @@ export default function GmailMessageView({
   const removableLabels = getMessageRemovableHeaderLabels(message.labelIds, labelById);
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => new Set());
   const [labelApplying, setLabelApplying] = useState(false);
+  const canSaveToRecord = useCan('client.communicate');
+  const canViewClients = useCan('client.view');
+  const fallbackEmails = useMemo(
+    () => [message.from?.email, ...(message.to ?? []).map((a) => a.email)].filter(Boolean) as string[],
+    [message.from?.email, message.to],
+  );
+  const [saveToRecordOpen, setSaveToRecordOpen] = useState(false);
+  const [recordNotice, setRecordNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSaveToRecordOpen(false);
+    setRecordNotice(null);
+  }, [message.threadId]);
 
   const labelState = useCallback(
     (labelId: string): GmailLabelCheckState =>
@@ -277,6 +293,25 @@ export default function GmailMessageView({
             variant="message"
           />
         </div>
+        {canViewClients ? (
+          <GmailGoToRecord
+            threadMessages={threadMessages}
+            threadLoading={threadLoading}
+            fallbackEmails={fallbackEmails}
+          />
+        ) : null}
+        {canSaveToRecord ? (
+          <button
+            type="button"
+            className="gmail-save-record-btn"
+            title="Save this thread to the client's communications and patients' medical records"
+            disabled={threadLoading}
+            onClick={() => setSaveToRecordOpen(true)}
+          >
+            <FileInput size={16} strokeWidth={1.75} aria-hidden />
+            <span className="gmail-save-record-btn__label">Save to record</span>
+          </button>
+        ) : null}
         <div className="gmail-message-view__toolbar-nav">
           <span className="gmail-inbox__pagination-range">{messagePositionLabel}</span>
           <button
@@ -300,7 +335,25 @@ export default function GmailMessageView({
         </div>
       </div>
 
+      {saveToRecordOpen ? (
+        <GmailSaveToRecordModal
+          mailbox={mailbox}
+          threadId={message.threadId}
+          subject={message.subject}
+          onClose={() => setSaveToRecordOpen(false)}
+          onSaved={setRecordNotice}
+        />
+      ) : null}
+
       <div className="gmail-message-view__scroll">
+        {recordNotice ? (
+          <div className="gmail-record-notice" role="status">
+            <span>{recordNotice}</span>
+            <button type="button" aria-label="Dismiss" onClick={() => setRecordNotice(null)}>
+              <X size={14} aria-hidden />
+            </button>
+          </div>
+        ) : null}
         <div className="gmail-message-view__head">
           <div className="gmail-message-view__subject-row">
             <div className="gmail-message-view__subject-block">

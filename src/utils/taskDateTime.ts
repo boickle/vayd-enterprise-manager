@@ -27,6 +27,14 @@ export function validateTaskScheduleOrder(
   return null;
 }
 
+/** Prefer the scheduled start; older rows only have `created`. */
+export function taskStartIso(task: {
+  startAt?: string | null;
+  created?: string | null;
+}): string | null {
+  return task.startAt || task.created || null;
+}
+
 export function formatTaskIso(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);

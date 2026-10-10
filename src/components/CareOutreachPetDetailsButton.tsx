@@ -8,8 +8,9 @@ import {
 } from '../utils/routingPatientHoverData';
 import './BookPatientChartButton.css';
 import './PatientChartSummary.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export function PatientMembershipHeart({
   membershipName,
@@ -170,6 +171,7 @@ export function CareOutreachPetDetailsButton({
                     error={error}
                     showAlerts
                     showHeader={false}
+                    onChanged={() => void loadSummary()}
                   />
                   {visibleOutreach.length > 0 ? (
                     <section className="care-outreach-pet-details-outreach" style={{ marginTop: 14 }}>

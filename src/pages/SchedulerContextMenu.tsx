@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { Appointment, Client } from '../api/roomLoader';
+import type { RecordsRequestPendingContact } from '../api/recordsRequests';
 import './Scheduler.css';
 
 function pickStr(v: unknown): string | null {
@@ -25,16 +26,25 @@ export type SchedulerContextMenuAction =
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
+  | { kind: 'openJot' }
+  | { kind: 'startEncounter' }
+  | { kind: 'openSoap' }
+  | { kind: 'openMedicalNote' }
   | { kind: 'onMyWayText' }
-  | { kind: 'addCharges' }
   | { kind: 'remove' }
   | { kind: 'viewChart' }
   | { kind: 'writeMedicalNote' }
   | { kind: 'addCommunication' }
   | { kind: 'call'; phone: 'phone1' | 'phone2' }
   | { kind: 'text'; phone: 'phone1' | 'phone2' }
+  | { kind: 'clientCommunicate' }
   | { kind: 'viewClientInfo' }
   | { kind: 'roomLoader' }
+  | { kind: 'euthanasiaConsent' }
+  | { kind: 'informDvmOfDeath' }
+  | { kind: 'recordsRequest' }
+  | { kind: 'recordsCall'; contact: RecordsRequestPendingContact }
+  | { kind: 'recordsEmail'; contact: RecordsRequestPendingContact }
   | { kind: 'checkout' };
 
 type OpenGroup = 'scheduling' | 'forms' | 'visit' | 'patient' | 'client';
@@ -54,14 +64,29 @@ type Props = {
   addToWaitlistDisabledTitle?: string;
   removeDisabled?: boolean;
   removeTitle?: string;
-  /** Patient visit with room-loader workflow — shows Send forms submenu */
+  /** Patient visit — shows Visit Prep submenu (Room Loader, consent, records). */
   showSendForms?: boolean;
+  showRoomLoader?: boolean;
+  showEuthanasiaConsent?: boolean;
+  showInformDvmOfDeath?: boolean;
+  showRecordsRequest?: boolean;
+  /** Hospitals still owing records on this visit — drives Call / Email rows. */
+  recordsPendingContacts?: RecordsRequestPendingContact[];
   roomLoaderMenuLabel: string;
+  euthanasiaConsentLabel?: string;
+  recordsRequestLabel?: string;
   /** Admins/superadmins only — shows "Edit Appointment" under Scheduling */
   showEditAppointment?: boolean;
   visitTimesDisabled?: boolean;
   visitTimesDisabledTitle?: string;
-  /** Progress modal: only "View Chart" (patient EMR in eVet). */
+  /** No patient (or other reason) — Jot Prep is unavailable. */
+  jotDisabled?: boolean;
+  jotDisabledTitle?: string;
+  /** True when this visit's SOAP has been signed & locked. */
+  soapLocked?: boolean;
+  /** True when this appointment already has an encounter, so the menu edits it instead of starting one. */
+  hasEncounter?: boolean;
+  /** Progress modal: only "View Chart" (Scout patient EMR). */
   patientChartOnly?: boolean;
 };
 
@@ -81,10 +106,20 @@ export function SchedulerAppointmentContextMenu({
   removeDisabled,
   removeTitle,
   showSendForms,
+  showRoomLoader = true,
+  showEuthanasiaConsent = false,
+  showInformDvmOfDeath = false,
+  showRecordsRequest = false,
+  recordsPendingContacts,
   roomLoaderMenuLabel,
+  euthanasiaConsentLabel = 'Send euthanasia consent',
+  recordsRequestLabel = 'Request records',
   showEditAppointment,
   visitTimesDisabled,
   visitTimesDisabledTitle,
+  jotDisabled,
+  jotDisabledTitle,
+  hasEncounter = false,
   patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -124,7 +159,6 @@ export function SchedulerAppointmentContextMenu({
   }, [onClose]);
 
   const phone1 = pickStr(client?.phone1);
-  const phone2 = pickStr(client?.phone2);
 
   const closeScheduling = () => setOpenGroup(null);
   const closeForms = () => setOpenGroup(null);
@@ -138,7 +172,7 @@ export function SchedulerAppointmentContextMenu({
         style={placed ? { left: placed.left, top: placed.top } : { left: -9999, top: -9999 }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <CtxSubRow label="View Chart in eVet" onPick={() => onAction({ kind: 'viewChart' })} />
+        <CtxSubRow label="View Chart" onPick={() => onAction({ kind: 'viewChart' })} />
       </div>
     );
     return createPortal(chartMenu, document.body);
@@ -207,13 +241,49 @@ export function SchedulerAppointmentContextMenu({
 
       {showSendForms ? (
         <CtxParentRow
-          label="Send forms"
+          label="Visit Prep"
           menuRootRef={rootRef}
           open={openGroup === 'forms'}
           onOpen={() => setOpenGroup('forms')}
           onCloseSub={closeForms}
         >
-          <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
+          {showRoomLoader ? (
+            <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
+          ) : null}
+          {showEuthanasiaConsent ? (
+            <CtxSubRow
+              label={euthanasiaConsentLabel}
+              onPick={() => onAction({ kind: 'euthanasiaConsent' })}
+            />
+          ) : null}
+          {showInformDvmOfDeath ? (
+            <CtxSubRow
+              label="Inform DVM of death"
+              onPick={() => onAction({ kind: 'informDvmOfDeath' })}
+            />
+          ) : null}
+          {showRecordsRequest ? (
+            <CtxSubRow
+              label={recordsRequestLabel}
+              onPick={() => onAction({ kind: 'recordsRequest' })}
+            />
+          ) : null}
+          {/* Chasing a slow practice is a phone call, so put it one click away. */}
+          {(recordsPendingContacts ?? []).map((contact) =>
+            contact.phone ? (
+              <CtxSubRow
+                key={`call-${contact.name}`}
+                label={`Call ${contact.name}`}
+                onPick={() => onAction({ kind: 'recordsCall', contact })}
+              />
+            ) : contact.email ? (
+              <CtxSubRow
+                key={`email-${contact.name}`}
+                label={`Email ${contact.name}`}
+                onPick={() => onAction({ kind: 'recordsEmail', contact })}
+              />
+            ) : null,
+          )}
         </CtxParentRow>
       ) : null}
 
@@ -225,10 +295,20 @@ export function SchedulerAppointmentContextMenu({
         onCloseSub={() => setOpenGroup(null)}
       >
         <CtxSubRow
+          label="Jot Prep"
+          disabled={Boolean(jotDisabled)}
+          title={jotDisabled ? jotDisabledTitle : undefined}
+          onPick={() => onAction({ kind: 'openJot' })}
+        />
+        <CtxSubRow
           label="Start / End Visit"
           disabled={Boolean(visitTimesDisabled)}
           title={visitTimesDisabled ? visitTimesDisabledTitle : undefined}
           onPick={() => onAction({ kind: 'visitTimes' })}
+        />
+        <CtxSubRow
+          label={hasEncounter ? 'Edit Encounter' : 'Start Encounter'}
+          onPick={() => onAction({ kind: 'startEncounter' })}
         />
         <CtxSubRow
           label="Send On My Way Text"
@@ -236,7 +316,6 @@ export function SchedulerAppointmentContextMenu({
           title={!phone1 ? 'Client has no mobile number on file.' : undefined}
           onPick={() => phone1 && onAction({ kind: 'onMyWayText' })}
         />
-        <CtxSubRow label="Add Charges" onPick={() => onAction({ kind: 'addCharges' })} />
       </CtxParentRow>
 
       <CtxParentRow
@@ -247,8 +326,14 @@ export function SchedulerAppointmentContextMenu({
         onCloseSub={() => setOpenGroup(null)}
       >
         <CtxSubRow label="View Chart" onPick={() => onAction({ kind: 'viewChart' })} />
-        <CtxSubRow label="Write Medical Note" onPick={() => onAction({ kind: 'writeMedicalNote' })} />
-        <CtxSubRow label="Add Communication" onPick={() => onAction({ kind: 'addCommunication' })} />
+        <CtxSubRow
+          label="Write Medical Note"
+          onPick={() => onAction({ kind: 'writeMedicalNote' })}
+        />
+        <CtxSubRow
+          label="Communicate"
+          onPick={() => onAction({ kind: 'addCommunication' })}
+        />
       </CtxParentRow>
 
       <CtxParentRow
@@ -259,23 +344,11 @@ export function SchedulerAppointmentContextMenu({
         onCloseSub={() => setOpenGroup(null)}
       >
         <CtxSubRow
-          label={phone1 ? `Call ${phone1}` : 'Call (no number)'}
-          disabled={!phone1}
-          onPick={() => phone1 && onAction({ kind: 'call', phone: 'phone1' })}
+          label="Communicate"
+          onPick={() => onAction({ kind: 'clientCommunicate' })}
         />
-        {phone2 ? (
-          <CtxSubRow label={`Call ${phone2}`} onPick={() => onAction({ kind: 'call', phone: 'phone2' })} />
-        ) : null}
-        <CtxSubRow
-          label={phone1 ? `Text ${phone1}` : 'Text (no number)'}
-          disabled={!phone1}
-          onPick={() => phone1 && onAction({ kind: 'text', phone: 'phone1' })}
-        />
-        {phone2 ? (
-          <CtxSubRow label={`Text ${phone2}`} onPick={() => onAction({ kind: 'text', phone: 'phone2' })} />
-        ) : null}
-        <CtxSubRow label="View Client Info" onPick={() => onAction({ kind: 'viewClientInfo' })} />
-        <CtxSubRow label="Checkout" onPick={() => onAction({ kind: 'checkout' })} />
+        <CtxSubRow label="View Client" onPick={() => onAction({ kind: 'viewClientInfo' })} />
+        <CtxSubRow label="Add/Review Charges" onPick={() => onAction({ kind: 'checkout' })} />
       </CtxParentRow>
     </div>
   );
@@ -572,5 +645,77 @@ function CtxParentRow({
           )
         : null}
     </div>
+  );
+}
+
+export type StartEncounterChoice = 'soap' | 'medicalNote';
+
+type StartEncounterModalProps = {
+  patientName: string;
+  visitLabel?: string;
+  soapLocked?: boolean;
+  onPick: (choice: StartEncounterChoice) => void;
+  onClose: () => void;
+};
+
+export function StartEncounterModal({
+  patientName,
+  visitLabel,
+  soapLocked = false,
+  onPick,
+  onClose,
+}: StartEncounterModalProps) {
+  return createPortal(
+    <div
+      className="scheduler-modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="scheduler-modal scheduler-modal--encounter"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="start-encounter-title"
+      >
+        <div className="scheduler-modal-accent" />
+        <div className="scheduler-modal-header">
+          <div className="scheduler-modal-header-text">
+            <p className="scheduler-modal-eyebrow">Start encounter</p>
+            <h2 id="start-encounter-title">{patientName}</h2>
+            {visitLabel ? <p className="scheduler-modal-encounter-visit">{visitLabel}</p> : null}
+          </div>
+          <button type="button" className="scheduler-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="scheduler-modal-encounter-choices">
+          <button
+            type="button"
+            className="scheduler-modal-encounter-choice"
+            onClick={() => onPick('soap')}
+          >
+            <span className="scheduler-modal-encounter-choice-title">
+              {soapLocked ? 'View locked SOAP' : 'SOAP'}
+            </span>
+            <span className="scheduler-modal-encounter-choice-hint">
+              Doctor exam — history, exam, assessment, and plan.
+            </span>
+          </button>
+          <button
+            type="button"
+            className="scheduler-modal-encounter-choice"
+            onClick={() => onPick('medicalNote')}
+          >
+            <span className="scheduler-modal-encounter-choice-title">Medical note</span>
+            <span className="scheduler-modal-encounter-choice-hint">
+              Tech visit write-up — history, plan, and invoice. Not a SOAP.
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }

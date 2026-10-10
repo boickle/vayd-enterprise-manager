@@ -1,0 +1,91 @@
+.client-fin__vax-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+  max-width: 52rem;
+}
+
+.client-fin__vax-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.client-fin__vax-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.875rem;
+}
+
+.client-fin__vax-label {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.client-fin__vax-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
+
+.client-fin__vax-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.client-fin__vax-stock {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11.5px;
+}
+
+.client-fin__vax-stock strong {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.client-fin__vax-editor .client-fin__btn,
+.client-fin__vax-editor .client-fin__btn-approve {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.client-fin__vax-editor .client-fin__btn-approve:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.client-fin__vax-editor .client-fin__rx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.client-fin__vax-editor .client-fin__rx-field input,
+.client-fin__vax-editor .client-fin__rx-select {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font: inherit;
+  color: #0f172a;
+}
