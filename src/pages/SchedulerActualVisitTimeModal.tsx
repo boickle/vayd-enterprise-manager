@@ -57,6 +57,8 @@ import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import {
   cancelEuthanasiaFutureAppointments,
+  coercePositiveAppointmentId,
+  earliestAppointmentStartIso,
   findFutureAppointmentsForPatients,
   inactivateEuthanasiaPatients,
   isEuthanasiaAppointment,
@@ -642,31 +644,35 @@ export function SchedulerActualVisitTimeModal({
 
   const householdFollowUpAppointmentIds = useCallback((): number[] => {
     if (householdVisits.length <= 1) {
-      return typeof appt.id === 'number' ? [appt.id] : [];
+      const id = coercePositiveAppointmentId(appt.id);
+      return id != null ? [id] : [];
     }
     const ids = [
       ...new Set(
         householdVisits
           .filter((visit) => selectedHouseholdPatientIds.has(visit.patientId))
-          .map((visit) => visit.appointmentId)
-          .filter((id) => Number.isFinite(id) && id > 0)
+          .map((visit) => coercePositiveAppointmentId(visit.appointmentId))
+          .filter((id): id is number => id != null),
       ),
     ];
     return ids.length > 0 ? ids : [];
   }, [appt.id, householdVisits, selectedHouseholdPatientIds]);
 
   const visitTimeAppointmentIds = useCallback((): number[] => {
-    if (householdVisits.length <= 1) {
-      return typeof appt.id === 'number' ? [appt.id] : [];
-    }
+    const fallback = (): number[] => {
+      const id = coercePositiveAppointmentId(appt.id);
+      return id != null ? [id] : [];
+    };
+    if (householdVisits.length <= 1) return fallback();
     const ids = [
       ...new Set(
         householdVisits
           .filter((visit) => selectedVisitTimePatientIds.has(visit.patientId))
-          .map((visit) => visit.appointmentId)
+          .map((visit) => coercePositiveAppointmentId(visit.appointmentId))
+          .filter((id): id is number => id != null),
       ),
     ];
-    return ids.length > 0 ? ids : typeof appt.id === 'number' ? [appt.id] : [];
+    return ids.length > 0 ? ids : fallback();
   }, [appt.id, householdVisits, selectedVisitTimePatientIds]);
 
   const householdVisitScheduledLabel = useCallback(
@@ -1030,22 +1036,32 @@ export function SchedulerActualVisitTimeModal({
     [appt, visitTimeAppointmentIds]
   );
 
+  const resolveEuthanasiaAppointmentsForVisitTimes = useCallback((): Appointment[] => {
+    const ids = new Set(visitTimeAppointmentIds());
+    const apptsById = new Map<number, Appointment>();
+    const anchorId = coercePositiveAppointmentId(appt.id);
+    if (anchorId != null) apptsById.set(anchorId, appt);
+    for (const a of sameCalendarDayAppointments) {
+      const id = coercePositiveAppointmentId(a.id);
+      if (id != null) apptsById.set(id, a);
+    }
+
+    const out: Appointment[] = [];
+    for (const id of ids) {
+      const row = apptsById.get(id);
+      if (!row || !isEuthanasiaAppointment(row)) continue;
+      out.push(row);
+    }
+    return out;
+  }, [appt, sameCalendarDayAppointments, visitTimeAppointmentIds]);
+
   const resolveEuthanasiaPatientsForVisitTimes = useCallback((): {
     patientId: string;
     patientName?: string | null;
   }[] => {
-    const ids = new Set(visitTimeAppointmentIds());
-    const apptsById = new Map<number, Appointment>();
-    apptsById.set(Number(appt.id), appt);
-    for (const a of sameCalendarDayAppointments) {
-      if (a.id != null) apptsById.set(Number(a.id), a);
-    }
-
     const out: { patientId: string; patientName?: string | null }[] = [];
     const seen = new Set<string>();
-    for (const id of ids) {
-      const row = apptsById.get(id);
-      if (!row || !isEuthanasiaAppointment(row)) continue;
+    for (const row of resolveEuthanasiaAppointmentsForVisitTimes()) {
       const patientId = patientIdFromAppointment(row);
       if (!patientId || seen.has(patientId)) continue;
       seen.add(patientId);
@@ -1057,7 +1073,7 @@ export function SchedulerActualVisitTimeModal({
       out.push({ patientId, patientName: name });
     }
     return out;
-  }, [appt, householdVisits, sameCalendarDayAppointments, visitTimeAppointmentIds]);
+  }, [householdVisits, resolveEuthanasiaAppointmentsForVisitTimes]);
 
   const runEuthanasiaEndSideEffects = useCallback(
     async (args: {
@@ -1265,11 +1281,17 @@ export function SchedulerActualVisitTimeModal({
 
       setCheckingEuthanasiaFuture(true);
       try {
+        // Anchor "future" to the euthanasia visit start (not wall-clock now). Ending before the
+        // scheduled start must not treat this stop as a future appointment to delete.
+        const asOfIso =
+          earliestAppointmentStartIso(resolveEuthanasiaAppointmentsForVisitTimes()) ??
+          new Date().toISOString();
         const futureRows = await findFutureAppointmentsForPatients({
           practiceId,
           practiceTz,
           patients: euthPatients,
           excludeAppointmentIds: visitTimeAppointmentIds(),
+          asOfIso,
         });
         pendingEuthanasiaEndRef.current = {
           postOpts: opts,
@@ -1303,6 +1325,7 @@ export function SchedulerActualVisitTimeModal({
       postBoth,
       practiceId,
       practiceTz,
+      resolveEuthanasiaAppointmentsForVisitTimes,
       resolveEuthanasiaPatientsForVisitTimes,
       visitTimeAppointmentIds,
     ]

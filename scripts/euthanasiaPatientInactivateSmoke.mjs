@@ -1,5 +1,5 @@
 /**
- * Smoke checks for euthanasia patient-inactivation helpers.
+ * Smoke checks for euthanasia patient-inactivation + future-cancel helpers.
  * Run: node scripts/euthanasiaPatientInactivateSmoke.mjs
  *
  * Mirrors pure helpers in src/utils/euthanasiaFutureAppointments.ts.
@@ -32,6 +32,40 @@ function resolvePatientWriteId(record, fallbackId) {
     if (resolved) return resolved;
   }
   return fallbackId;
+}
+
+function coercePositiveAppointmentId(id) {
+  if (typeof id === 'number') {
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+  if (typeof id === 'string' && id.trim()) {
+    const n = Number(id.trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+function earliestAppointmentStartIso(appointments) {
+  let best = null;
+  let bestMs = Infinity;
+  for (const a of appointments) {
+    const iso = a.appointmentStart?.trim?.() ?? (typeof a.appointmentStart === 'string' ? a.appointmentStart.trim() : '');
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) continue;
+    if (ms < bestMs) {
+      bestMs = ms;
+      best = iso;
+    }
+  }
+  return best;
+}
+
+/** Mirrors isCountableFutureAppointment time gate only (status flags omitted for unit smoke). */
+function isFutureByStart(appointmentStart, asOfMs) {
+  if (!appointmentStart?.trim()) return false;
+  const startMs = Date.parse(appointmentStart);
+  return Number.isFinite(startMs) && startMs > asOfMs;
 }
 
 let failed = 0;
@@ -79,6 +113,48 @@ assert(!looksAlreadyInactiveMessage('Validation failed'), 'unrelated message');
 
 assert(resolvePatientWriteId({ id: 42 }, 'pims-9') === '42', 'prefer internal id');
 assert(resolvePatientWriteId(null, 'pims-9') === 'pims-9', 'fallback when no record');
+
+assert(coercePositiveAppointmentId(12345) === 12345, 'numeric appointment id');
+assert(coercePositiveAppointmentId('12345') === 12345, 'string appointment id coerced');
+assert(coercePositiveAppointmentId(' 99 ') === 99, 'trimmed string appointment id');
+assert(coercePositiveAppointmentId(0) === null, 'zero id rejected');
+assert(coercePositiveAppointmentId('nope') === null, 'non-numeric id rejected');
+assert(coercePositiveAppointmentId(null) === null, 'null id rejected');
+
+const euthStart = '2026-10-11T17:30:00.000Z'; // 1:30 PM ET
+const asOfMs = Date.parse(euthStart);
+assert(
+  !isFutureByStart(euthStart, asOfMs),
+  'euthanasia visit start is not future relative to its own asOf',
+);
+assert(
+  isFutureByStart('2026-10-12T14:00:00.000Z', asOfMs),
+  'later calendar visit is future relative to euthanasia start',
+);
+assert(
+  !isFutureByStart('2026-10-11T16:00:00.000Z', asOfMs),
+  'earlier same-day visit is not future relative to euthanasia start',
+);
+
+// Ending before scheduled start (wall clock 1:00 PM) must still use visit start as asOf —
+// wall-clock now would wrongly classify the euthanasia card itself as future.
+const wallClockBeforeStart = Date.parse('2026-10-11T17:00:00.000Z');
+assert(
+  isFutureByStart(euthStart, wallClockBeforeStart),
+  'wall-clock-now asOf would wrongly treat this euthanasia as future (the bug)',
+);
+assert(
+  earliestAppointmentStartIso([{ appointmentStart: euthStart }]) === euthStart,
+  'earliestAppointmentStartIso returns the visit start',
+);
+assert(
+  earliestAppointmentStartIso([
+    { appointmentStart: '2026-10-11T19:00:00.000Z' },
+    { appointmentStart: euthStart },
+  ]) === euthStart,
+  'earliestAppointmentStartIso picks the earlier start',
+);
+assert(earliestAppointmentStartIso([]) === null, 'earliestAppointmentStartIso empty → null');
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
