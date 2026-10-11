@@ -98,12 +98,21 @@ export function clientAddressMultiline(c: Client | undefined): string | null {
 export function googleMapsUrlForAppointment(a: Appointment): string | null {
   const c = a.client;
   if (!c) return null;
-  if (typeof c.lat === 'number' && typeof c.lon === 'number') {
+  const line = clientAddressOneLine(c);
+  if (line) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+  }
+  if (
+    typeof c.lat === 'number' &&
+    typeof c.lon === 'number' &&
+    Number.isFinite(c.lat) &&
+    Number.isFinite(c.lon) &&
+    Math.abs(c.lat) > 1e-6 &&
+    Math.abs(c.lon) > 1e-6
+  ) {
     return `https://www.google.com/maps?q=${c.lat},${c.lon}`;
   }
-  const line = clientAddressOneLine(c);
-  if (!line) return null;
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+  return null;
 }
 
 export function patientBreedDisplayOnly(p: Patient): string | null {
