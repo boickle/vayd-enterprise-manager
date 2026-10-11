@@ -23,28 +23,21 @@ export function householdsInRoutingDisplayOrder<H extends MapsRoutableHousehold>
   return households;
 }
 
-/** True when coords are usable for Google Maps Directions (not missing / 0,0). */
-function hasRoutableCoords(s: Stop): boolean {
-  return (
-    Number.isFinite(s.lat) &&
-    Number.isFinite(s.lon) &&
-    Math.abs(s.lat) > 1e-6 &&
-    Math.abs(s.lon) > 1e-6
-  );
+/** Shown when a day row has no street. Do not send it to Google as a destination. */
+function isPlaceholderAddress(address: string): boolean {
+  return /^address not available$/i.test(address);
 }
 
 /**
- * Day Maps links must match Scout routing: use stored lat/lon when present.
- * Preferring address text made Google Maps fail on unmappable / stale strings while
- * Scout still scored the day from coordinates and showed no location issue.
- * Falls back to address only when coords are missing (same as single-visit Maps links).
+ * Google Maps stop text. Use the street address when Scout has one so the
+ * label matches the client record. A lat/lon pin is reverse-geocoded to the
+ * nearest house, which is often a different street or number.
+ * Coordinates are the fallback when the address is missing.
  */
 function toLocationString(s: Stop): string {
-  if (hasRoutableCoords(s)) {
-    return `${s.lat},${s.lon}`;
-  }
-  if (s.address && s.address.trim()) {
-    return s.address.trim();
+  const address = s.address?.trim() ?? '';
+  if (address && !isPlaceholderAddress(address)) {
+    return address;
   }
   return `${s.lat},${s.lon}`;
 }
