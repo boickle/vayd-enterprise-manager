@@ -4401,11 +4401,11 @@ export default function PimsPatientDetailView({
           kind="inactivate"
           acceptLabel="Accept and inactivate"
           onClose={() => setInactivateWrapUp(null)}
-          onAccepted={async () => {
+          onAccepted={async (reason) => {
             setBusy(true);
             setSaveError(null);
             try {
-              await applyWriteResult(await deactivatePatient(patientId));
+              await applyWriteResult(await deactivatePatient(patientId, reason ?? 'other'));
               setInactivateWrapUp(null);
             } catch (err) {
               setSaveError(extractPatientSaveErr(err));

@@ -247,6 +247,16 @@ export async function fetchCommunitySnapshots(opts: {
 
 export async function fetchMyRememberedPets(): Promise<RememberedPet[]> {
   const { data } = await http.get('/patients/client/mine/remembered');
+  return mapRememberedRows(data);
+}
+
+/** Memorial pets this owner hid; shown under "Show hidden pets". */
+export async function fetchMyHiddenRememberedPets(): Promise<RememberedPet[]> {
+  const { data } = await http.get('/patients/client/mine/remembered/hidden');
+  return mapRememberedRows(data);
+}
+
+function mapRememberedRows(data: unknown): RememberedPet[] {
   const rows: any[] = Array.isArray(data) ? data : [];
   return rows.map((r) => ({
     id: Number(r?.id),
@@ -270,6 +280,16 @@ export async function fetchMyRememberedPets(): Promise<RememberedPet[]> {
       : [],
     loves: normalizeLoves(r?.loves),
   }));
+}
+
+/** Hide a remembered pet from the signed-in client's memorial card. */
+export async function hideRememberedPet(petId: number): Promise<void> {
+  await http.post(`/patients/${petId}/memorial/hide`);
+}
+
+/** Show again a previously hidden remembered pet. */
+export async function showRememberedPet(petId: number): Promise<void> {
+  await http.delete(`/patients/${petId}/memorial/hide`);
 }
 
 export type PortalProvider = {

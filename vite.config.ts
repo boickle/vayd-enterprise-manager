@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+// H2: Import from vitest/config so the `test` block is typed.
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 /** Config file directory — use as root/envDir so `.env` loads even if the dev server cwd differs. */
@@ -17,6 +18,14 @@ export default defineConfig({
   root: projectRoot,
   envDir: projectRoot,
   plugins: [react()],
+  // H2: Component test setup (vitest).
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+    exclude: ['node_modules', 'dist', 'cypress'],
+  },
   server: {
     port: 5173,
     proxy: {

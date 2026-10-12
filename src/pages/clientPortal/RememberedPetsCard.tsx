@@ -1,5 +1,11 @@
-import { useState } from 'react';
-import { togglePetLove, type PetLoves, type RememberedPet } from '../../api/clientPortal';
+import { useEffect, useState } from 'react';
+import {
+  togglePetLove,
+  hideRememberedPet,
+  showRememberedPet,
+  type PetLoves,
+  type RememberedPet,
+} from '../../api/clientPortal';
 import { CardHead, Icon, PortalModal } from './PortalPrimitives';
 import { possessive } from './portalShared';
 
@@ -29,19 +35,40 @@ function lifeSpan(pet: RememberedPet): string | null {
 /**
  * Pets the family has lost. They leave the active list so reminders and
  * bookings stop, but their photos and stories stay here for the family.
+ *
+ * D4 (Oct 9 2026): owners can hide and show individual pets.
+ * API-level filtering ensures only Euthanized / Passed away pets are returned.
  */
 export default function RememberedPetsCard({
   pets,
+  initialHiddenIds = [],
   onLoves,
   onToast,
 }: {
+  /** Every memorial pet for this owner, including ones they hid. */
   pets: RememberedPet[];
+  /** Pets the owner hid earlier (from the API), so the choice survives a reload. */
+  initialHiddenIds?: number[];
   onLoves: (petId: number, loves: PetLoves) => void;
   onToast: (text: string) => void;
 }) {
   const [open, setOpen] = useState<RememberedPet | null>(null);
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState<number | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => new Set(initialHiddenIds));
+  const hiddenKey = initialHiddenIds.join(',');
+  useEffect(() => {
+    setHiddenIds(new Set(initialHiddenIds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenKey]);
+  /** Pet the owner just clicked "Hide" on — waiting for confirmation. */
+  const [confirmHide, setConfirmHide] = useState<RememberedPet | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+
+  const visible = pets.filter((p) => !hiddenIds.has(p.id));
+  const hasHidden = hiddenIds.size > 0;
+
+  if (pets.length === 0) return null;
 
   async function love(pet: RememberedPet) {
     if (busy === pet.id) return;
@@ -59,6 +86,36 @@ export default function RememberedPetsCard({
     }
   }
 
+  async function doHide(pet: RememberedPet) {
+    setConfirmHide(null);
+    setHiddenIds((prev) => new Set([...prev, pet.id]));
+    try {
+      await hideRememberedPet(pet.id);
+    } catch {
+      setHiddenIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pet.id);
+        return next;
+      });
+      onToast("Couldn't hide that — try again.");
+    }
+  }
+
+  async function doShow(petId: number) {
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      next.delete(petId);
+      return next;
+    });
+    if (hiddenIds.size - 1 === 0) setShowHidden(false);
+    try {
+      await showRememberedPet(petId);
+    } catch {
+      setHiddenIds((prev) => new Set([...prev, petId]));
+      onToast("Couldn't restore that — try again.");
+    }
+  }
+
   const current = open ? pets.find((p) => p.id === open.id) ?? open : null;
   const photos = current?.photos ?? [];
 
@@ -66,85 +123,161 @@ export default function RememberedPetsCard({
     <section className="pp-card pp-remember" aria-label="Pets we remember">
       <CardHead
         icon="🕯️"
-        title={pets.length === 1 ? `Remembering ${pets[0]!.name}` : 'Pets we remember'}
+        title={visible.length === 1 ? `Remembering ${visible[0]!.name}` : 'Pets we remember'}
         sub="Their photos and stories stay here with you, always."
       />
-      <div className="pp-remember-grid">
-        {pets.map((pet) => {
-          const primary = pet.photos.find((p) => p.isPrimary) ?? pet.photos[0] ?? null;
-          const span = lifeSpan(pet);
-          const stories = STORIES.filter((s) => pet.profile?.[s.key]);
-          return (
-            <article key={pet.id} className="pp-remember-pet">
-              <button
-                type="button"
-                className="pp-remember-photo"
-                onClick={() => {
-                  setOpen(pet);
-                  setIndex(Math.max(0, pet.photos.findIndex((p) => p.id === primary?.id)));
-                }}
-                aria-label={pet.photos.length ? `View ${possessive(pet.name)} photos` : pet.name}
-                disabled={pet.photos.length === 0}
-              >
-                {primary ? <img src={primary.url} alt={pet.name} /> : <span aria-hidden>🐾</span>}
-                {pet.photos.length > 1 ? (
-                  <span className="pp-pill">
-                    <Icon name="camera" size={13} /> {pet.photos.length}
-                  </span>
-                ) : null}
-              </button>
-              <div className="pp-remember-body">
-                <h3>
-                  {pet.name}
-                  {pet.nickname ? <span className="pp-remember-aka"> “{pet.nickname}”</span> : null}
-                </h3>
-                <p className="pp-muted pp-remember-meta">
-                  {[pet.species, pet.breed].filter(Boolean).join(' • ')}
-                  {span ? ` · ${span}` : ''}
-                </p>
-                {pet.primaryProviderName ? (
-                  <p className="pp-muted pp-remember-meta">Cared for by Dr. {pet.primaryProviderName}</p>
-                ) : null}
-                {stories.length > 0 ? (
-                  <ul className="pp-remember-stories">
-                    {stories.slice(0, 3).map((s) => (
-                      <li key={s.key}>
-                        <span aria-hidden>{s.icon}</span> <strong>{s.label}:</strong> {pet.profile![s.key]}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                <div className="pp-remember-actions">
-                  <button
-                    type="button"
-                    className={`pp-chip pp-love${pet.loves.mine ? ' pp-love--on' : ''}`}
-                    onClick={() => void love(pet)}
-                    aria-pressed={pet.loves.mine}
-                    disabled={busy === pet.id}
-                  >
-                    <span className="pp-chip-icon" aria-hidden>
-                      {pet.loves.mine ? '❤️' : '🤍'}
+
+      {visible.length > 0 ? (
+        <div className="pp-remember-grid">
+          {visible.map((pet) => {
+            const primary = pet.photos.find((p) => p.isPrimary) ?? pet.photos[0] ?? null;
+            const span = lifeSpan(pet);
+            const stories = STORIES.filter((s) => pet.profile?.[s.key]);
+            return (
+              <article key={pet.id} className="pp-remember-pet">
+                <button
+                  type="button"
+                  className="pp-remember-photo"
+                  onClick={() => {
+                    setOpen(pet);
+                    setIndex(Math.max(0, pet.photos.findIndex((p) => p.id === primary?.id)));
+                  }}
+                  aria-label={pet.photos.length ? `View ${possessive(pet.name)} photos` : pet.name}
+                  disabled={pet.photos.length === 0}
+                >
+                  {primary ? <img src={primary.url} alt={pet.name} /> : <span aria-hidden>🐾</span>}
+                  {pet.photos.length > 1 ? (
+                    <span className="pp-pill">
+                      <Icon name="camera" size={13} /> {pet.photos.length}
                     </span>
-                    {pet.loves.count ? pet.loves.count : ''} {pet.loves.mine ? 'Loved' : 'Love'}
-                  </button>
-                  {pet.photos.length > 0 ? (
+                  ) : null}
+                </button>
+                <div className="pp-remember-body">
+                  <h3>
+                    {pet.name}
+                    {pet.nickname ? <span className="pp-remember-aka"> "{pet.nickname}"</span> : null}
+                  </h3>
+                  <p className="pp-muted pp-remember-meta">
+                    {[pet.species, pet.breed].filter(Boolean).join(' • ')}
+                    {span ? ` · ${span}` : ''}
+                  </p>
+                  {pet.primaryProviderName ? (
+                    <p className="pp-muted pp-remember-meta">Cared for by Dr. {pet.primaryProviderName}</p>
+                  ) : null}
+                  {stories.length > 0 ? (
+                    <ul className="pp-remember-stories">
+                      {stories.slice(0, 3).map((s) => (
+                        <li key={s.key}>
+                          <span aria-hidden>{s.icon}</span> <strong>{s.label}:</strong> {pet.profile![s.key]}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="pp-remember-actions">
                     <button
                       type="button"
-                      className="pp-link-btn"
-                      onClick={() => {
-                        setOpen(pet);
-                        setIndex(0);
-                      }}
+                      className={`pp-chip pp-love${pet.loves.mine ? ' pp-love--on' : ''}`}
+                      onClick={() => void love(pet)}
+                      aria-pressed={pet.loves.mine}
+                      disabled={busy === pet.id}
                     >
-                      View photos
+                      <span className="pp-chip-icon" aria-hidden>
+                        {pet.loves.mine ? '❤️' : '🤍'}
+                      </span>
+                      {pet.loves.count ? pet.loves.count : ''} {pet.loves.mine ? 'Loved' : 'Love'}
                     </button>
-                  ) : null}
+                    {pet.photos.length > 0 ? (
+                      <button
+                        type="button"
+                        className="pp-link-btn"
+                        onClick={() => {
+                          setOpen(pet);
+                          setIndex(0);
+                        }}
+                      >
+                        View photos
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="pp-link-btn pp-remember-hide-btn"
+                      onClick={() => setConfirmHide(pet)}
+                      aria-label={`Hide ${pet.name} from this card`}
+                    >
+                      Hide
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="pp-muted" style={{ padding: '0 1rem 0.5rem' }}>
+          All remembered pets are hidden.
+        </p>
+      )}
+
+      {hasHidden ? (
+        <div className="pp-remember-hidden-bar">
+          {!showHidden ? (
+            <button
+              type="button"
+              className="pp-link-btn pp-remember-show-hidden"
+              onClick={() => setShowHidden(true)}
+            >
+              Show hidden pets
+            </button>
+          ) : (
+            <>
+              {pets.filter((p) => hiddenIds.has(p.id)).map((p) => (
+                <span key={p.id} className="pp-remember-hidden-item">
+                  {p.name}
+                  <button
+                    type="button"
+                    className="pp-link-btn"
+                    onClick={() => void doShow(p.id)}
+                  >
+                    Show again
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                className="pp-link-btn"
+                onClick={() => setShowHidden(false)}
+              >
+                Done
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {confirmHide ? (
+        <PortalModal onClose={() => setConfirmHide(null)} className="pp-confirm">
+          <p>
+            Hide <strong>{confirmHide.name}</strong> from your memorial? You can bring it back
+            any time.
+          </p>
+          <div className="pp-confirm-actions">
+            <button
+              type="button"
+              className="pp-btn pp-btn--danger"
+              onClick={() => void doHide(confirmHide)}
+            >
+              Yes, hide it
+            </button>
+            <button
+              type="button"
+              className="pp-btn"
+              onClick={() => setConfirmHide(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </PortalModal>
+      ) : null}
 
       {current && photos.length > 0 ? (
         <PortalModal onClose={() => setOpen(null)} className="pp-lightbox" wide>

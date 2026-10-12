@@ -3,10 +3,8 @@ import { http } from './http';
 /**
  * Scout client writes.
  *
- * `POST /clients` and `POST /clients/upsert` are deliberately not wrapped here — both are
- * eVet-import entry points keyed on (pimsId, practice). Creating a client through them
- * would hand ownership to eVet. Use `createClientScout` instead. Deactivate rather than
- * delete so appointment and billing history survives.
+ * Create with `createClientScout`; the API has no raw save, upsert or delete routes for
+ * clients. Deactivate rather than delete so appointment and billing history survives.
  */
 
 /**

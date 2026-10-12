@@ -8,6 +8,10 @@ import {
   type DeathWrapUpPreview,
 } from '../../utils/deathWrapUp';
 import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
+import {
+  INACTIVATION_REASON_OPTIONS,
+  type PatientInactivationReason,
+} from '../../api/patients';
 import './DeathWrapUpModal.css';
 
 type Props = {
@@ -17,8 +21,13 @@ type Props = {
   lead?: string;
   acceptLabel?: string;
   practiceId?: number;
+  /**
+   * Staff must pick why the pet is leaving (D4). Defaults to on for `kind="inactivate"`.
+   * End Visit after euthanasia already knows the reason and turns it off.
+   */
+  reasonRequired?: boolean;
   onClose: () => void;
-  onAccepted: () => void | Promise<void>;
+  onAccepted: (reason?: PatientInactivationReason) => void | Promise<void>;
 };
 
 function reminderLabel(description: string | null | undefined, dueDate?: string | null): string {
@@ -168,14 +177,19 @@ export default function DeathWrapUpModal({
   lead,
   acceptLabel,
   practiceId = VISIT_WORKFLOW_PRACTICE_ID,
+  reasonRequired,
   onClose,
   onAccepted,
 }: Props) {
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState<PatientInactivationReason | ''>('');
   const many = previews.length > 1;
+  const needsReason = reasonRequired ?? kind === 'inactivate';
+  const blockedByReason = needsReason && !reason;
 
   const accept = async () => {
+    if (blockedByReason) return;
     setAccepting(true);
     setError(null);
     try {
@@ -184,7 +198,7 @@ export default function DeathWrapUpModal({
         setError(result.errors.join(' '));
         return;
       }
-      await onAccepted();
+      await onAccepted(needsReason ? (reason as PatientInactivationReason) : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not finish these cancellations.');
     } finally {
@@ -216,6 +230,25 @@ export default function DeathWrapUpModal({
 
         <p className="death-wrapup-lead">{lead ?? defaultLead(kind, previews)}</p>
 
+        {needsReason ? (
+          <label className="death-wrapup-reason">
+            <span>Reason for inactivating</span>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value as PatientInactivationReason | '')}
+              disabled={accepting}
+              aria-label="Reason for inactivating"
+            >
+              <option value="">Choose a reason…</option>
+              {INACTIVATION_REASON_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         {previews.map((preview) => (
           <PetActions
             key={preview.patientId}
@@ -226,12 +259,20 @@ export default function DeathWrapUpModal({
         ))}
 
         {error ? <div className="soap-error">{error}</div> : null}
+        {blockedByReason ? (
+          <p className="death-wrapup-hint">Choose a reason to continue.</p>
+        ) : null}
 
         <div className="soap-modal-actions death-wrapup-actions">
           <button type="button" className="soap-btn ghost" onClick={onClose} disabled={accepting}>
             Cancel
           </button>
-          <button type="button" className="soap-btn" onClick={() => void accept()} disabled={accepting}>
+          <button
+            type="button"
+            className="soap-btn"
+            onClick={() => void accept()}
+            disabled={accepting || blockedByReason}
+          >
             {accepting ? 'Working…' : acceptLabel ?? 'Accept'}
           </button>
         </div>

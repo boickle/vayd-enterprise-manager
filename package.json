@@ -16,7 +16,9 @@
     "test:setup": "cp cypress.env.example.json cypress.env.json || echo '⚠️  cypress.env.json already exists. Edit it manually if needed.'",
     "generate-icons": "node generate-icons.js",
     "prepare": "husky",
-    "postinstall": "node scripts/patch-jsx-a11y-minimatch.cjs"
+    "postinstall": "node scripts/patch-jsx-a11y-minimatch.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -42,6 +44,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/jspdf": "^1.3.3",
     "@types/luxon": "^3.7.1",
     "@types/react": "^19.2.17",
@@ -57,11 +62,13 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "husky": "^9.1.7",
+    "jsdom": "^29.1.1",
     "prettier": "^3.6.2",
     "sharp": "^0.35.5",
     "typescript": "^5.6.2",
     "typescript-eslint": "^8.43.0",
-    "vite": "^7.3.0"
+    "vite": "^7.3.0",
+    "vitest": "^5.0.3"
   },
   "overrides": {
     "qs": "^6.16.0",

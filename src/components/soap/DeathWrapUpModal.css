@@ -90,3 +90,23 @@
   gap: 8px;
   margin-top: 16px;
 }
+
+.death-wrapup-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.death-wrapup-reason select {
+  font-weight: 400;
+  padding: 6px 8px;
+}
+
+.death-wrapup-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #7a5b00;
+}

@@ -2820,12 +2820,12 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           }`}
           acceptLabel="Accept and inactivate"
           onClose={() => setInactivateWrapUp(null)}
-          onAccepted={async () => {
+          onAccepted={async (reason) => {
             setBusy(true);
             setActionError(null);
             try {
               for (const preview of inactivateWrapUp) {
-                await deactivatePatient(preview.patientId);
+                await deactivatePatient(preview.patientId, reason ?? 'other');
               }
               await applyWriteResult(await deactivateClient(clientId));
               setInactivateWrapUp(null);

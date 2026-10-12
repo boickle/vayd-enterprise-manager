@@ -11,6 +11,7 @@ import {
   fetchClientInfo,
   fetchPortalProviders,
   fetchMyRememberedPets,
+  fetchMyHiddenRememberedPets,
   togglePetLove,
   updateMyPetProfile,
   getClientRoomLoaderPdfHref,
@@ -97,6 +98,7 @@ export default function ClientPortal() {
   const [error, setError] = useState<string | null>(null);
   const [pets, setPets] = useState<PetWithWellness[]>([]);
   const [rememberedPets, setRememberedPets] = useState<RememberedPet[]>([]);
+  const [hiddenRememberedIds, setHiddenRememberedIds] = useState<number[]>([]);
   const [chronicByPet, setChronicByPet] = useState<Record<string, PatientPrescription[]>>({});
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
   const [rawApptsData, setRawApptsData] = useState<any[]>([]);
@@ -271,9 +273,14 @@ export default function ClientPortal() {
         setPets(petsWithWellness);
 
         // Pets the family has lost — shown in a quiet remembrance section. Best-effort.
-        void fetchMyRememberedPets()
-          .then((rows) => {
-            if (alive) setRememberedPets(rows);
+        void Promise.all([
+          fetchMyRememberedPets(),
+          fetchMyHiddenRememberedPets().catch(() => [] as RememberedPet[]),
+        ])
+          .then(([shown, hidden]) => {
+            if (!alive) return;
+            setRememberedPets([...shown, ...hidden]);
+            setHiddenRememberedIds(hidden.map((p) => p.id));
           })
           .catch(() => undefined);
 
@@ -1236,6 +1243,7 @@ export default function ClientPortal() {
         {!loading && rememberedPets.length > 0 ? (
           <RememberedPetsCard
             pets={rememberedPets}
+            initialHiddenIds={hiddenRememberedIds}
             onLoves={(id, loves) =>
               setRememberedPets((prev) => prev.map((p) => (p.id === id ? { ...p, loves } : p)))
             }

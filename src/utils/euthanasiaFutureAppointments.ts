@@ -347,6 +347,7 @@ export async function inactivateEuthanasiaPatients(
     try {
       await patchPatient(writeId, {
         isActive: false,
+        inactivationReason: 'euthanized',
         ...(byEmployeeId != null ? { inactivatedByEmployeeId: byEmployeeId } : {}),
       });
       inactivatedIds.push(writeId);

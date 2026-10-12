@@ -2041,6 +2041,7 @@ export function SchedulerActualVisitTimeModal({
               : `Accept will cancel the items below for ${euthanasiaWrapUp[0]?.patientName ?? 'this patient'}, then mark them inactive.`
           }
           acceptLabel="Accept and end visit"
+          reasonRequired={false}
           practiceId={practiceId}
           onClose={() => {
             if (saving) return;

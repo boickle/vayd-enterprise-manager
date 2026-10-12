@@ -515,20 +515,6 @@ export async function getLatestModifiedPatient() {
   return http.get('/patients/latest-modified');
 }
 
-// ---------------------------
-// Create / Upsert / Save
-// ---------------------------
-
-// // Upsert one or many patients
-// export async function upsertPatients(patients: PatientDto | PatientDto[]) {
-//   return http.post('/patients/upsert', patients);
-// }
-
-// // Save (insert/update) one or many patients
-// export async function savePatients(patients: PatientDto | PatientDto[]) {
-//   return http.post('/patients', patients);
-// }
-
 /**
  * Fields accepted by the Scout patient write endpoints. Anything not listed here is
  * eVet-owned chart data and is not editable in Scout.
@@ -548,6 +534,8 @@ export type ScoutPatientWrite = {
   alerts?: string | null;
   primaryProviderId?: number | null;
   isActive?: boolean;
+  /** Required when isActive is false. */
+  inactivationReason?: PatientInactivationReason;
   /** When setting isActive false after euthanasia — who performed it. */
   inactivatedByEmployeeId?: number | null;
   clientIds?: number[];
@@ -578,9 +566,34 @@ export async function createPatientScout(
   return data;
 }
 
-/** POST /patients/:id/deactivate — soft deactivate, keeps medical history. */
-export async function deactivatePatient(id: number | string): Promise<unknown> {
-  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/deactivate`);
+export type PatientInactivationReason =
+  | 'euthanized'
+  | 'passed_away'
+  | 'rehomed'
+  | 'moved_or_changed_vets'
+  | 'duplicate_record'
+  | 'other';
+
+export const INACTIVATION_REASON_OPTIONS: Array<{
+  value: PatientInactivationReason;
+  label: string;
+}> = [
+  { value: 'euthanized', label: 'Euthanized' },
+  { value: 'passed_away', label: 'Passed away' },
+  { value: 'rehomed', label: 'Rehomed' },
+  { value: 'moved_or_changed_vets', label: 'Moved or changed vets' },
+  { value: 'duplicate_record', label: 'Duplicate record' },
+  { value: 'other', label: 'Other' },
+];
+
+/** POST /patients/:id/deactivate — soft deactivate, keeps medical history. Reason is required. */
+export async function deactivatePatient(
+  id: number | string,
+  reason: PatientInactivationReason,
+): Promise<unknown> {
+  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/deactivate`, {
+    reason,
+  });
   return data;
 }
 
