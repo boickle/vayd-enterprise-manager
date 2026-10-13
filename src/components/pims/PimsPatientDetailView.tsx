@@ -189,6 +189,7 @@ import { listPatientLabResults, type LabResult } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
 import './detail/PimsDetailKit.css';
+import { ClientUploadedRecordsList } from '../ClientUploadedRecordsList';
 import './PimsPatientDetailView.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
@@ -2996,6 +2997,13 @@ export default function PimsPatientDetailView({
           ]}
         />
       </div>
+
+      {/^\d+$/.test(patientId) ? (
+        <ClientUploadedRecordsList
+          patientId={Number(patientId)}
+          practiceId={PIMS_DETAIL_PRACTICE_ID}
+        />
+      ) : null}
 
       <section className="pims-patient-detail__mr" aria-labelledby="pims-mr-heading">
         <h2 id="pims-mr-heading" className="pims-patient-detail__mr-heading">

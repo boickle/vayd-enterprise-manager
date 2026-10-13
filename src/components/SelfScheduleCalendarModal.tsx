@@ -119,6 +119,8 @@ interface Props {
   visitPets?: RoutingVisitPetInput[];
   /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
   patientIds?: number[];
+  /** New client chose to upload records — calendar uses the existing-client lead time. */
+  clientUploadedRecords?: boolean;
   /**
    * Urgent and Soon limit the routing search to that timeframe.
    * Flexible and "I'm not sure" stay open-ended.
@@ -222,6 +224,7 @@ type MonthAvailabilityFetchArgs = {
   serviceMinutes?: number;
   visitPets?: RoutingVisitPetInput[];
   patientIds?: number[];
+  clientUploadedRecords?: boolean;
   doctorId: string | number;
   /** Search these doctors in one routing request. Falls back to doctorId. */
   doctorIds?: Array<string | number>;
@@ -306,6 +309,7 @@ async function fetchAvailabilityRange(
       : {}),
     ...(args.appointmentTypeId != null ? { appointmentTypeId: args.appointmentTypeId } : {}),
     ...(args.patientIds?.length ? { patientIds: args.patientIds } : {}),
+    ...(args.clientUploadedRecords ? { clientUploadedRecords: true } : {}),
   });
 
   if (args.isNewPatientRequest && args.rawVeterinarians && args.rawVeterinarians.length > 0) {
@@ -810,6 +814,7 @@ export function SelfScheduleCalendarModal({
   slotPickerError,
   visitPets,
   patientIds,
+  clientUploadedRecords = false,
   howSoon,
   searchAllDoctors = false,
   selectedAppointmentStart,
@@ -841,14 +846,34 @@ export function SelfScheduleCalendarModal({
   );
 
   const earliestCalendarDate = useMemo(() => {
+    const pets =
+      visitPets && visitPets.length > 0
+        ? visitPets
+        : appointmentTypeId != null
+          ? [
+              {
+                appointmentTypeId,
+                isNewPatient: isNewPatientRequest || newPatientCount > 0,
+              },
+            ]
+          : visitPets;
     const leadTimeHours = resolveOnlineBookingLeadTimeHours(
       autoBookSettings,
-      visitPets,
+      pets,
       isNewPatientRequest,
+      { clientUploadedRecords },
     );
     const today = DateTime.now().setZone(practiceTz).toISODate() as string;
     return bumpStartDateForLeadTime(today, leadTimeHours, practiceTz);
-  }, [autoBookSettings, visitPets, isNewPatientRequest, practiceTz]);
+  }, [
+    autoBookSettings,
+    visitPets,
+    isNewPatientRequest,
+    practiceTz,
+    appointmentTypeId,
+    newPatientCount,
+    clientUploadedRecords,
+  ]);
 
   const howSoonSearchEnd = useMemo(
     () => onlineBookingHowSoonSearchEnd(howSoon, practiceTz),
@@ -1111,6 +1136,7 @@ export function SelfScheduleCalendarModal({
     lon,
     appointmentTypeId,
     isNewPatientRequest,
+    clientUploadedRecords ? '1' : '0',
     (patientIds ?? []).join(','),
     (visitPets ?? []).map((p) => `${p.appointmentTypeId}:${p.isNewPatient ? 1 : 0}`).join(','),
   ].join('|');
@@ -1201,6 +1227,7 @@ export function SelfScheduleCalendarModal({
         serviceMinutes: serviceMinutesRef.current,
         visitPets,
         patientIds,
+        clientUploadedRecords,
         doctorId,
         doctorIds: fleetIds && fleetIds.length > 1 ? fleetIds : undefined,
         appointmentTypeId,
@@ -1298,6 +1325,7 @@ export function SelfScheduleCalendarModal({
       lon,
       visitPets,
       patientIds,
+      clientUploadedRecords,
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,

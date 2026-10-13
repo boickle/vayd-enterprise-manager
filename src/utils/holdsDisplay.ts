@@ -23,7 +23,12 @@ function stripOnlineBookingStatusLead(text: string): string {
 export function parseOnlineBookingHoldDescription(
   text: string
 ): ParsedOnlineBookingHoldDescription | null {
-  const trimmed = stripOnlineBookingStatusLead(text.trim());
+  const trimmed = stripOnlineBookingStatusLead(
+    text
+      .trim()
+      .replace(/^RECORDS UPLOADED BY CLIENT\s*\n?/, '')
+      .trim(),
+  );
   if (!/^Online Booking/i.test(trimmed)) return null;
 
   // "Online Booking - Deirdre Frey (Current client) for Floofy"

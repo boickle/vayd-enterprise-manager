@@ -54,6 +54,8 @@ import {
   requestDataPrimaryProviderSummary,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
+  requestDataWantsEarlierAppointment,
+  EARLIER_APPOINTMENT_REQUEST_LABEL,
   appointmentRequestListTabForSubmission,
   fetchClientPimsIdLookup,
   resolveClientPimsIdForRequest,
@@ -2624,6 +2626,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           <dd className="appt-request-meta-value">{howSoon}</dd>
                         </div>
                       ) : null}
+                      {requestDataWantsEarlierAppointment(rd) ? (
+                        <div className="appt-request-meta-line">
+                          <dt className="appt-request-meta-label">Earlier appointment</dt>
+                          <dd className="appt-request-meta-value">{EARLIER_APPOINTMENT_REQUEST_LABEL}</dd>
+                        </div>
+                      ) : null}
                       {preferredDoctor ? (
                         <div className="appt-request-meta-line">
                           <dt className="appt-request-meta-label">Preferred doctor</dt>
@@ -2912,6 +2920,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       practiceTz={practiceTz}
                       clientPimsId={clientPimsId}
                       linkedAppointment={linkedAppointment}
+                      submissionId={item.kind === 'abandoned' ? null : item.id}
                     />
                   </div>
                 ) : null}

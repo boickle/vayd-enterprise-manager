@@ -13,6 +13,8 @@ import {
   requestDataPreferredDoctor,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
+  requestDataWantsEarlierAppointment,
+  EARLIER_APPOINTMENT_REQUEST_LABEL,
   requestPetChartPatientId,
   requestPetIsNewOnForm,
 } from './appointmentRequestDisplay';
@@ -544,6 +546,12 @@ export function buildAppointmentRequestDetailSections(
   if (hospitals) veterinaryHistory.push(asRow('Other hospitals', hospitals, 'note'));
   const mayAsk = pickYesNo(requestData.mayWeAskForRecords);
   if (mayAsk) veterinaryHistory.push({ label: 'May we ask for records', value: mayAsk });
+  const recordsDelivery = pickStr(requestData.recordsDelivery);
+  if (recordsDelivery === 'upload') {
+    veterinaryHistory.push({ label: 'Records', value: 'Client will upload' });
+  } else if (recordsDelivery === 'request') {
+    veterinaryHistory.push({ label: 'Records', value: 'Please request from previous vet' });
+  }
   const prevPractices =
     pickStr(requestData.previousVeterinaryPractices) ??
     pickStr(requestData.previousVeterinaryPracticesExisting);
@@ -574,6 +582,12 @@ export function buildAppointmentRequestDetailSections(
   else {
     const timePrefs = formatTimePreferences(requestData, tz);
     if (timePrefs) scheduling.push(asRow('Preferred times', timePrefs, 'note'));
+  }
+  if (requestDataWantsEarlierAppointment(requestData)) {
+    scheduling.push({
+      label: 'Earlier appointment',
+      value: EARLIER_APPOINTMENT_REQUEST_LABEL,
+    });
   }
 
   if (requestData.noneOfWorkForMe === true) {
