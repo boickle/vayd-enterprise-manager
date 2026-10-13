@@ -2911,6 +2911,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       practiceTz={practiceTz}
                       clientPimsId={clientPimsId}
                       linkedAppointment={linkedAppointment}
+                      submissionId={item.kind === 'abandoned' ? null : item.id}
                     />
                   </div>
                 ) : null}

@@ -217,10 +217,13 @@ export function resolveOnlineBookingLeadTimeHours(
   settings: OnlineBookingAutoBookSettings,
   visitPets?: readonly RoutingVisitPetInput[],
   isNewPatientRequest?: boolean,
+  options?: { clientUploadedRecords?: boolean },
 ): number {
+  const uploadedRecords = options?.clientUploadedRecords === true;
   if (
-    isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest) ||
-    visitNeedsCalmingLeadTime(visitPets)
+    visitNeedsCalmingLeadTime(visitPets) ||
+    (!uploadedRecords &&
+      isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest))
   ) {
     return resolveNewClientLeadTimeHours(settings, visitPets);
   }

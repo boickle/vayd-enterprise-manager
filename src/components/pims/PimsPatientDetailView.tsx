@@ -38,6 +38,7 @@ import {
 import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeCommunicationHtml';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
+import { ClientUploadedRecordsList } from '../ClientUploadedRecordsList';
 import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import { evetPatientLink } from '../../utils/evet';
 import { patientSexDisplayFromRecord } from '../../utils/schedulerVisitDisplay';
@@ -1167,6 +1168,13 @@ export default function PimsPatientDetailView({
         patientId={patientId}
         patientRecord={record}
       />
+
+      {/^\d+$/.test(patientId) ? (
+        <ClientUploadedRecordsList
+          patientId={Number(patientId)}
+          practiceId={PIMS_DETAIL_PRACTICE_ID}
+        />
+      ) : null}
 
       <section className="pims-patient-detail__mr" aria-labelledby="pims-mr-heading">
         <div className="pims-patient-detail__mr-head">

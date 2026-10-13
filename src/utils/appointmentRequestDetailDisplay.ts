@@ -532,6 +532,12 @@ export function buildAppointmentRequestDetailSections(
   if (hospitals) veterinaryHistory.push(asRow('Other hospitals', hospitals, 'note'));
   const mayAsk = pickYesNo(requestData.mayWeAskForRecords);
   if (mayAsk) veterinaryHistory.push({ label: 'May we ask for records', value: mayAsk });
+  const recordsDelivery = pickStr(requestData.recordsDelivery);
+  if (recordsDelivery === 'upload') {
+    veterinaryHistory.push({ label: 'Records', value: 'Client will upload' });
+  } else if (recordsDelivery === 'request') {
+    veterinaryHistory.push({ label: 'Records', value: 'Please request from previous vet' });
+  }
   const prevPractices =
     pickStr(requestData.previousVeterinaryPractices) ??
     pickStr(requestData.previousVeterinaryPracticesExisting);

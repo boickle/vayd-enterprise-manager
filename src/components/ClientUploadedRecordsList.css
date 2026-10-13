@@ -1,0 +1,128 @@
+.client-uploaded-records {
+  margin-top: 16px;
+}
+
+.client-uploaded-records__title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.client-uploaded-records__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.client-uploaded-records__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 8px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.client-uploaded-records__item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.client-uploaded-records__preview {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f1f5f9;
+}
+
+.client-uploaded-records__meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.client-uploaded-records__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.client-uploaded-records__sub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.client-uploaded-records__open {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f766e;
+}
+
+.client-uploaded-records__attach {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  position: relative;
+}
+
+.client-uploaded-records__attach input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.client-uploaded-records__results {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.client-uploaded-records__results button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.client-uploaded-records__results button:hover {
+  background: #f0fdfa;
+}
+
+.client-uploaded-records__muted,
+.client-uploaded-records__error {
+  font-size: 13px;
+  margin: 0;
+}
+
+.client-uploaded-records__muted {
+  color: #64748b;
+}
+
+.client-uploaded-records__error {
+  color: #b91c1c;
+}
+
+.pims-patient-detail .client-uploaded-records {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 16px 0;
+}
