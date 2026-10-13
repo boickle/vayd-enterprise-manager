@@ -15,10 +15,15 @@ export type OnlineBookingAutoBookSettings = {
   newClientLeadTimeHours: number;
   existingClientLeadTimeHours: number;
   /**
-   * Hours before the first bookable slot, keyed by appointment type id.
+   * Existing-client hours before the first bookable slot, keyed by appointment type id.
    * Missing types use `existingClientLeadTimeHours`.
    */
   leadTimeHoursByAppointmentTypeId: Record<string, number>;
+  /**
+   * New-client hours before the first bookable slot, keyed by appointment type id.
+   * Missing types use `newClientLeadTimeHours`.
+   */
+  newClientLeadTimeHoursByAppointmentTypeId: Record<string, number>;
 };
 
 export function defaultOnlineBookingAutoBookSettings(): OnlineBookingAutoBookSettings {
@@ -28,6 +33,7 @@ export function defaultOnlineBookingAutoBookSettings(): OnlineBookingAutoBookSet
     newClientLeadTimeHours: 24,
     existingClientLeadTimeHours: 0,
     leadTimeHoursByAppointmentTypeId: {},
+    newClientLeadTimeHoursByAppointmentTypeId: {},
   };
 }
 
@@ -98,6 +104,9 @@ export function parseOnlineBookingAutoBookSettings(
     leadTimeHoursByAppointmentTypeId: parseLeadTimeHoursByAppointmentTypeId(
       obj.leadTimeHoursByAppointmentTypeId,
     ),
+    newClientLeadTimeHoursByAppointmentTypeId: parseLeadTimeHoursByAppointmentTypeId(
+      obj.newClientLeadTimeHoursByAppointmentTypeId,
+    ),
   };
 }
 
@@ -128,17 +137,50 @@ export function visitNeedsCalmingLeadTime(
   );
 }
 
-/** Lead time for one type, or the existing-client default when that type has none. */
-export function leadTimeHoursForAppointmentType(
-  settings: OnlineBookingAutoBookSettings,
+function leadHoursForType(
+  byType: Record<string, number>,
+  fallbackHours: number,
   appointmentTypeId: number | null | undefined,
 ): number {
   const id = Number(appointmentTypeId);
   if (Number.isFinite(id) && id > 0) {
-    const override = settings.leadTimeHoursByAppointmentTypeId[String(id)];
+    const override = byType[String(id)];
     if (override != null) return override;
   }
-  return settings.existingClientLeadTimeHours;
+  return fallbackHours;
+}
+
+/**
+ * Longest lead time among the visit's appointment types.
+ * Types with no entry use `fallbackHours`.
+ */
+function resolveVisitLeadTimeHours(
+  byType: Record<string, number>,
+  fallbackHours: number,
+  visitPets?: readonly { appointmentTypeId?: number }[],
+): number {
+  const pets = (visitPets ?? []).filter((pet) => {
+    const id = Number(pet.appointmentTypeId);
+    return Number.isFinite(id) && id > 0;
+  });
+  if (pets.length === 0) return fallbackHours;
+  return Math.max(
+    ...pets.map((pet) =>
+      leadHoursForType(byType, fallbackHours, Number(pet.appointmentTypeId)),
+    ),
+  );
+}
+
+/** Existing-client lead time for one type, or the existing-client default when unset. */
+export function leadTimeHoursForAppointmentType(
+  settings: OnlineBookingAutoBookSettings,
+  appointmentTypeId: number | null | undefined,
+): number {
+  return leadHoursForType(
+    settings.leadTimeHoursByAppointmentTypeId,
+    settings.existingClientLeadTimeHours,
+    appointmentTypeId,
+  );
 }
 
 /**
@@ -149,15 +191,25 @@ export function resolveExistingClientLeadTimeHours(
   settings: OnlineBookingAutoBookSettings,
   visitPets?: readonly { appointmentTypeId?: number }[],
 ): number {
-  const pets = (visitPets ?? []).filter((pet) => {
-    const id = Number(pet.appointmentTypeId);
-    return Number.isFinite(id) && id > 0;
-  });
-  if (pets.length === 0) return settings.existingClientLeadTimeHours;
-  return Math.max(
-    ...pets.map((pet) =>
-      leadTimeHoursForAppointmentType(settings, Number(pet.appointmentTypeId)),
-    ),
+  return resolveVisitLeadTimeHours(
+    settings.leadTimeHoursByAppointmentTypeId,
+    settings.existingClientLeadTimeHours,
+    visitPets,
+  );
+}
+
+/**
+ * New-client lead time for a visit. Uses each pet's appointment type, and
+ * the longest of those when the visit includes more than one type.
+ */
+export function resolveNewClientLeadTimeHours(
+  settings: OnlineBookingAutoBookSettings,
+  visitPets?: readonly { appointmentTypeId?: number }[],
+): number {
+  return resolveVisitLeadTimeHours(
+    settings.newClientLeadTimeHoursByAppointmentTypeId,
+    settings.newClientLeadTimeHours,
+    visitPets,
   );
 }
 
@@ -166,14 +218,13 @@ export function resolveOnlineBookingLeadTimeHours(
   visitPets?: readonly RoutingVisitPetInput[],
   isNewPatientRequest?: boolean,
 ): number {
-  const typeLead = resolveExistingClientLeadTimeHours(settings, visitPets);
   if (
     isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest) ||
     visitNeedsCalmingLeadTime(visitPets)
   ) {
-    return Math.max(settings.newClientLeadTimeHours, typeLead);
+    return resolveNewClientLeadTimeHours(settings, visitPets);
   }
-  return typeLead;
+  return resolveExistingClientLeadTimeHours(settings, visitPets);
 }
 
 /**

@@ -144,28 +144,38 @@ export default function RoutingScoreThresholdsPage() {
 
   /** Types clients can request online, plus any type that already has a lead-time override. */
   const leadTimeTypes = useMemo(() => {
-    const overrides = autoBookSettings.leadTimeHoursByAppointmentTypeId;
+    const existing = autoBookSettings.leadTimeHoursByAppointmentTypeId;
+    const newer = autoBookSettings.newClientLeadTimeHoursByAppointmentTypeId;
     return types.filter(
       (t) =>
         t.showInApptRequestForm === true ||
         t.allowOnlineBooking === true ||
-        overrides[String(t.id)] != null,
+        existing[String(t.id)] != null ||
+        newer[String(t.id)] != null,
     );
-  }, [types, autoBookSettings.leadTimeHoursByAppointmentTypeId]);
+  }, [
+    types,
+    autoBookSettings.leadTimeHoursByAppointmentTypeId,
+    autoBookSettings.newClientLeadTimeHoursByAppointmentTypeId,
+  ]);
 
-  const setTypeLeadTimeHours = (typeId: number, raw: string) => {
+  const setTypeLeadTimeHours = (
+    typeId: number,
+    field: 'leadTimeHoursByAppointmentTypeId' | 'newClientLeadTimeHoursByAppointmentTypeId',
+    raw: string,
+  ) => {
     const key = String(typeId);
     const trimmed = raw.trim();
     setAutoBookSettings((prev) => {
-      const next = { ...prev.leadTimeHoursByAppointmentTypeId };
+      const next = { ...prev[field] };
       if (!trimmed) {
         delete next[key];
-        return { ...prev, leadTimeHoursByAppointmentTypeId: next };
+        return { ...prev, [field]: next };
       }
       const hours = parseOptionalScore(trimmed);
       if (hours == null) return prev;
       next[key] = hours;
-      return { ...prev, leadTimeHoursByAppointmentTypeId: next };
+      return { ...prev, [field]: next };
     });
   };
 
@@ -732,8 +742,8 @@ export default function RoutingScoreThresholdsPage() {
               Controls how long online auto-book blocks on the schedule and how soon clients can
               book. Duration uses these practice settings instead of each doctor&apos;s 30-day
               appointment averages. Lead time is enforced on the server for every offered slot.
-              Set a lead time on each appointment type below; a visit with more than one type uses
-              the longest of those times.
+              Set an existing-client and a new-client lead time on each appointment type below. A
+              visit with more than one type uses the longest of those times.
             </p>
 
             <div className="settings-grid" style={{ maxWidth: 520 }}>
@@ -823,44 +833,48 @@ export default function RoutingScoreThresholdsPage() {
             </div>
 
             <p className="settings-section-description" style={{ maxWidth: 760, marginTop: 12 }}>
-              Defaults: 45 min single, 30 min per pet for multi-pet, 24 hours lead for new
-              clients/patients, 0 hours for existing clients when a type has no lead time of its
-              own (same-day allowed).
+              Defaults when a type is left blank: 45 min single, 30 min per pet for multi-pet,{' '}
+              {autoBookSettings.newClientLeadTimeHours} hours for new clients/patients,{' '}
+              {autoBookSettings.existingClientLeadTimeHours} hours for existing clients.
             </p>
 
             <h4 style={{ marginTop: 20, marginBottom: 8 }}>Lead time by appointment type</h4>
             <p className="settings-section-description" style={{ marginTop: 0, maxWidth: 760 }}>
               Hours of notice before a client can auto-book that type. Leave a cell blank to use
-              the existing-client lead time ({autoBookSettings.existingClientLeadTimeHours} hours).
-              For example, euthanasia can be 12, wellness 4, and quality of life 24. New clients,
-              new patients, and visits that need calming medication or extra handling still wait at
-              least the new-client lead time ({autoBookSettings.newClientLeadTimeHours} hours), or
-              the type&apos;s lead time when that is longer.
+              the default above ({autoBookSettings.existingClientLeadTimeHours} hours for existing
+              clients, {autoBookSettings.newClientLeadTimeHours} hours for new clients). For
+              example, an existing-client wellness can be 4 hours while a new-client wellness is
+              12. Visits that need calming medication or extra handling use the new-client hours
+              for that type.
             </p>
 
-            <div style={{ overflowX: 'auto', maxWidth: 640 }}>
+            <div style={{ overflowX: 'auto', maxWidth: 720 }}>
               <table className="settings-table">
                 <thead>
                   <tr>
                     <th style={{ textAlign: 'left' }}>Appointment type</th>
-                    <th style={{ textAlign: 'left' }}>Lead time (hours)</th>
+                    <th style={{ textAlign: 'left' }}>Existing clients (hours)</th>
+                    <th style={{ textAlign: 'left' }}>New clients (hours)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {leadTimeTypes.length === 0 ? (
                     <tr>
-                      <td colSpan={2} style={{ opacity: 0.7 }}>
+                      <td colSpan={3} style={{ opacity: 0.7 }}>
                         No request-form appointment types.
                       </td>
                     </tr>
                   ) : (
                     leadTimeTypes.map((type) => {
                       const key = String(type.id);
-                      const hours = autoBookSettings.leadTimeHoursByAppointmentTypeId[key];
+                      const existingHours = autoBookSettings.leadTimeHoursByAppointmentTypeId[key];
+                      const newClientHours =
+                        autoBookSettings.newClientLeadTimeHoursByAppointmentTypeId[key];
+                      const label = typeLabel(type);
                       return (
                         <tr key={type.id}>
                           <td>
-                            <div style={{ fontWeight: 500 }}>{typeLabel(type)}</div>
+                            <div style={{ fontWeight: 500 }}>{label}</div>
                             <div style={{ fontSize: 12, opacity: 0.65 }}>#{type.id}</div>
                           </td>
                           <td>
@@ -871,10 +885,36 @@ export default function RoutingScoreThresholdsPage() {
                               min={0}
                               step={1}
                               style={{ width: 96 }}
-                              aria-label={`${typeLabel(type)} lead time in hours`}
+                              aria-label={`${label} existing client lead time in hours`}
                               placeholder={String(autoBookSettings.existingClientLeadTimeHours)}
-                              value={hours != null ? String(hours) : ''}
-                              onChange={(e) => setTypeLeadTimeHours(type.id, e.target.value)}
+                              value={existingHours != null ? String(existingHours) : ''}
+                              onChange={(e) =>
+                                setTypeLeadTimeHours(
+                                  type.id,
+                                  'leadTimeHoursByAppointmentTypeId',
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              id={`ob-lead-type-new-${type.id}`}
+                              className="settings-input"
+                              type="number"
+                              min={0}
+                              step={1}
+                              style={{ width: 96 }}
+                              aria-label={`${label} new client lead time in hours`}
+                              placeholder={String(autoBookSettings.newClientLeadTimeHours)}
+                              value={newClientHours != null ? String(newClientHours) : ''}
+                              onChange={(e) =>
+                                setTypeLeadTimeHours(
+                                  type.id,
+                                  'newClientLeadTimeHoursByAppointmentTypeId',
+                                  e.target.value,
+                                )
+                              }
                             />
                           </td>
                         </tr>
