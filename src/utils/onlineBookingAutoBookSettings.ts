@@ -14,6 +14,11 @@ export type OnlineBookingAutoBookSettings = {
   multiPetPerPetMinutes: number;
   newClientLeadTimeHours: number;
   existingClientLeadTimeHours: number;
+  /**
+   * Hours before the first bookable slot, keyed by appointment type id.
+   * Missing types use `existingClientLeadTimeHours`.
+   */
+  leadTimeHoursByAppointmentTypeId: Record<string, number>;
 };
 
 export function defaultOnlineBookingAutoBookSettings(): OnlineBookingAutoBookSettings {
@@ -22,6 +27,7 @@ export function defaultOnlineBookingAutoBookSettings(): OnlineBookingAutoBookSet
     multiPetPerPetMinutes: 30,
     newClientLeadTimeHours: 24,
     existingClientLeadTimeHours: 0,
+    leadTimeHoursByAppointmentTypeId: {},
   };
 }
 
@@ -35,6 +41,23 @@ function parseNonNegativeHours(value: unknown, fallback: number): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.round(n);
+}
+
+/** Appointment-type id → hours. Invalid entries are dropped. */
+export function parseLeadTimeHoursByAppointmentTypeId(
+  value: unknown,
+): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const id = Number(key);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    if (raw == null || raw === '') continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) continue;
+    out[String(id)] = Math.round(n);
+  }
+  return out;
 }
 
 export function parseOnlineBookingAutoBookSettings(
@@ -72,6 +95,9 @@ export function parseOnlineBookingAutoBookSettings(
       obj.existingClientLeadTimeHours,
       defaults.existingClientLeadTimeHours,
     ),
+    leadTimeHoursByAppointmentTypeId: parseLeadTimeHoursByAppointmentTypeId(
+      obj.leadTimeHoursByAppointmentTypeId,
+    ),
   };
 }
 
@@ -102,15 +128,52 @@ export function visitNeedsCalmingLeadTime(
   );
 }
 
+/** Lead time for one type, or the existing-client default when that type has none. */
+export function leadTimeHoursForAppointmentType(
+  settings: OnlineBookingAutoBookSettings,
+  appointmentTypeId: number | null | undefined,
+): number {
+  const id = Number(appointmentTypeId);
+  if (Number.isFinite(id) && id > 0) {
+    const override = settings.leadTimeHoursByAppointmentTypeId[String(id)];
+    if (override != null) return override;
+  }
+  return settings.existingClientLeadTimeHours;
+}
+
+/**
+ * Existing-client lead time for a visit. Uses each pet's appointment type, and
+ * the longest of those when the visit includes more than one type.
+ */
+export function resolveExistingClientLeadTimeHours(
+  settings: OnlineBookingAutoBookSettings,
+  visitPets?: readonly { appointmentTypeId?: number }[],
+): number {
+  const pets = (visitPets ?? []).filter((pet) => {
+    const id = Number(pet.appointmentTypeId);
+    return Number.isFinite(id) && id > 0;
+  });
+  if (pets.length === 0) return settings.existingClientLeadTimeHours;
+  return Math.max(
+    ...pets.map((pet) =>
+      leadTimeHoursForAppointmentType(settings, Number(pet.appointmentTypeId)),
+    ),
+  );
+}
+
 export function resolveOnlineBookingLeadTimeHours(
   settings: OnlineBookingAutoBookSettings,
   visitPets?: readonly RoutingVisitPetInput[],
   isNewPatientRequest?: boolean,
 ): number {
-  return isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest) ||
+  const typeLead = resolveExistingClientLeadTimeHours(settings, visitPets);
+  if (
+    isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest) ||
     visitNeedsCalmingLeadTime(visitPets)
-    ? settings.newClientLeadTimeHours
-    : settings.existingClientLeadTimeHours;
+  ) {
+    return Math.max(settings.newClientLeadTimeHours, typeLead);
+  }
+  return typeLead;
 }
 
 /**

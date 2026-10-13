@@ -841,14 +841,32 @@ export function SelfScheduleCalendarModal({
   );
 
   const earliestCalendarDate = useMemo(() => {
+    const pets =
+      visitPets && visitPets.length > 0
+        ? visitPets
+        : appointmentTypeId != null
+          ? [
+              {
+                appointmentTypeId,
+                isNewPatient: isNewPatientRequest || newPatientCount > 0,
+              },
+            ]
+          : visitPets;
     const leadTimeHours = resolveOnlineBookingLeadTimeHours(
       autoBookSettings,
-      visitPets,
+      pets,
       isNewPatientRequest,
     );
     const today = DateTime.now().setZone(practiceTz).toISODate() as string;
     return bumpStartDateForLeadTime(today, leadTimeHours, practiceTz);
-  }, [autoBookSettings, visitPets, isNewPatientRequest, practiceTz]);
+  }, [
+    autoBookSettings,
+    visitPets,
+    isNewPatientRequest,
+    practiceTz,
+    appointmentTypeId,
+    newPatientCount,
+  ]);
 
   const howSoonSearchEnd = useMemo(
     () => onlineBookingHowSoonSearchEnd(howSoon, practiceTz),
