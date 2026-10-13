@@ -12,6 +12,8 @@ import {
   requestDataPreferredDoctor,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
+  requestDataWantsEarlierAppointment,
+  EARLIER_APPOINTMENT_REQUEST_LABEL,
   requestPetChartPatientId,
   requestPetIsUnlinkedInEvet,
 } from './appointmentRequestDisplay';
@@ -568,6 +570,12 @@ export function buildAppointmentRequestDetailSections(
   else {
     const timePrefs = formatTimePreferences(requestData, tz);
     if (timePrefs) scheduling.push(asRow('Preferred times', timePrefs, 'note'));
+  }
+  if (requestDataWantsEarlierAppointment(requestData)) {
+    scheduling.push({
+      label: 'Earlier appointment',
+      value: EARLIER_APPOINTMENT_REQUEST_LABEL,
+    });
   }
 
   if (requestData.noneOfWorkForMe === true) {

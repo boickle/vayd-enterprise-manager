@@ -297,6 +297,16 @@ export function requestDataUsesAlternateVisitAddress(
   return pickStr(requestData.isThisTheAddressWhereWeWillCome) === 'No';
 }
 
+/** Client booked a time and asked to be contacted if a sooner cancellation opens. */
+export function requestDataWantsEarlierAppointment(
+  requestData: Record<string, unknown>,
+): boolean {
+  return requestData.joinWaitlistIfSooner === true;
+}
+
+export const EARLIER_APPOINTMENT_REQUEST_LABEL =
+  'Wants an earlier time if a cancellation opens. Keep the booked time.';
+
 export function requestDataHowSoon(requestData: Record<string, unknown>): string | null {
   return (
     pickStr(requestData.howSoon) ??
