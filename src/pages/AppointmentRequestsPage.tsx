@@ -54,6 +54,8 @@ import {
   requestDataPrimaryProviderSummary,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
+  requestDataWantsEarlierAppointment,
+  EARLIER_APPOINTMENT_REQUEST_LABEL,
   appointmentRequestListTabForSubmission,
   fetchClientPimsIdLookup,
   resolveClientPimsIdForRequest,
@@ -2621,6 +2623,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         <div className="appt-request-meta-line">
                           <dt className="appt-request-meta-label">Timing</dt>
                           <dd className="appt-request-meta-value">{howSoon}</dd>
+                        </div>
+                      ) : null}
+                      {requestDataWantsEarlierAppointment(rd) ? (
+                        <div className="appt-request-meta-line">
+                          <dt className="appt-request-meta-label">Earlier appointment</dt>
+                          <dd className="appt-request-meta-value">{EARLIER_APPOINTMENT_REQUEST_LABEL}</dd>
                         </div>
                       ) : null}
                       {preferredDoctor ? (
