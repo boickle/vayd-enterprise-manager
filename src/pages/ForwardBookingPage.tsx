@@ -4,13 +4,16 @@ import dayjs from 'dayjs';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
-  fetchForwardBookings,
   finishForwardBookingFollowUp,
   clearForwardBookingBookAfterDate,
   patchForwardBooking,
   removeForwardBooking,
   type ForwardBookingEntry,
 } from '../api/forwardBooking';
+import {
+  FORWARD_BOOKING_HISTORY_PAGE_SIZE,
+  fetchForwardBookingPageRows,
+} from '../utils/forwardBookingQueueLoad';
 import { ClientContactLogEditor } from '../components/ClientContactLogEditor';
 import { ClientContactComposeModal } from '../components/ClientContactComposeModal';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
@@ -555,6 +558,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   );
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ForwardBookingEntry[]>([]);
+  const historyLimitRef = useRef(FORWARD_BOOKING_HISTORY_PAGE_SIZE);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoadedLimit, setHistoryLoadedLimit] = useState(FORWARD_BOOKING_HISTORY_PAGE_SIZE);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const includeHistory = !isOnHoldView && !isBookedView;
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const [loading, setLoading] = useState(true);
@@ -716,12 +724,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     }
     try {
       const careOutreachRange = careOutreachChipCountFetchRange();
-      const [types, rawList, unscheduledReminders] = await Promise.all([
+      const requestedHistoryLimit = historyLimitRef.current;
+      const [types, pageRows, unscheduledReminders] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
-        fetchForwardBookings({
+        fetchForwardBookingPageRows({
           practiceId: PRACTICE_ID,
-          limit: 2000,
-          includeRemoved: true,
+          historyLimit: includeHistory ? requestedHistoryLimit : undefined,
         }),
         fetchUnscheduledReminders({
           practiceId: PRACTICE_ID,
@@ -734,8 +742,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       setPatientReminderOutreachIndex(outreachByPatient);
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
       typeCatalogRef.current = catalog;
+      setHistoryHasMore(pageRows.historyHasMore);
+      setHistoryLoadedLimit(requestedHistoryLimit);
       let list = mergeForwardBookingsWithLocalLinks(
-        await enrichForwardBookingsSourceDates(rawList, PRACTICE_ID)
+        await enrichForwardBookingsSourceDates(pageRows.rows, PRACTICE_ID)
       );
 
       list = await persistLocalForwardBookingLinks(list);
@@ -810,7 +820,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       if (!silent) setLoading(false);
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [practiceTz, isOnHoldView]);
+  }, [practiceTz, isOnHoldView, includeHistory]);
 
   const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed' | 'onHold') => {
     setExitingRows((prev) => new Map(prev).set(entryId, kind));
@@ -876,11 +886,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         try {
           let refreshed = mergeForwardBookingsWithLocalLinks(
             await enrichForwardBookingsSourceDates(
-              await fetchForwardBookings({
-                practiceId: PRACTICE_ID,
-                limit: 2000,
-                includeRemoved: true,
-              }),
+              (
+                await fetchForwardBookingPageRows({
+                  practiceId: PRACTICE_ID,
+                  historyLimit: includeHistory ? historyLimitRef.current : undefined,
+                })
+              ).rows,
               PRACTICE_ID,
             ),
           );
@@ -1107,10 +1118,29 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     })().finally(() => {
       postBookReturnProcessingRef.current = false;
     });
-  }, [loading, practiceTz, statusFilter, navigate, beginRowExit, canAccessGmailInbox, bookedApptMeta]);
+  }, [
+    loading,
+    practiceTz,
+    statusFilter,
+    navigate,
+    beginRowExit,
+    canAccessGmailInbox,
+    bookedApptMeta,
+    includeHistory,
+  ]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  const loadMoreHistory = useCallback(async () => {
+    historyLimitRef.current += FORWARD_BOOKING_HISTORY_PAGE_SIZE;
+    setHistoryLoadingMore(true);
+    try {
+      await load({ silent: true });
+    } finally {
+      setHistoryLoadingMore(false);
+    }
   }, [load]);
 
   useEffect(() => {
@@ -2602,6 +2632,34 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         ) : null}
         </>
       )}
+
+      {!loading &&
+      includeHistory &&
+      historyHasMore &&
+      (searchActive || statusFilter === 'removed' || statusFilter === 'complete') ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            marginTop: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <p className="settings-muted" style={{ margin: 0 }}>
+            Removed and Complete show the {historyLoadedLimit.toLocaleString()} most recently
+            changed rows. Older rows are not loaded{searchActive ? ' or searched' : ''}.
+          </p>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={historyLoadingMore}
+            onClick={() => void loadMoreHistory()}
+          >
+            {historyLoadingMore ? 'Loading…' : 'Load older'}
+          </button>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <CreateForwardBookingModal
