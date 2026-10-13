@@ -70,6 +70,8 @@ export type AvailabilityRequest = {
   visitPets?: RoutingVisitPetInput[];
   /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
   patientIds?: number[];
+  /** New client is uploading records — server uses the existing-client lead time. */
+  clientUploadedRecords?: boolean;
 };
 
 export type RoutingVisitPetInput = {

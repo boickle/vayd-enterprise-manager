@@ -1,0 +1,165 @@
+.client-record-upload {
+  margin-top: 8px;
+  margin-bottom: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #d1d5db;
+}
+
+.client-record-upload__label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #111827;
+  font-size: 14px;
+}
+
+.client-record-upload__hint {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.client-record-upload__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.client-record-upload__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.client-record-upload__choice--selected {
+  border-color: #10b981;
+  background: #f0fdf4;
+}
+
+.client-record-upload__choice input {
+  margin-top: 3px;
+}
+
+.client-record-upload__choice-title {
+  display: block;
+  font-weight: 600;
+  color: #111827;
+  font-size: 14px;
+}
+
+.client-record-upload__choice-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 400;
+}
+
+.client-record-upload__files {
+  margin-top: 14px;
+}
+
+.client-record-upload__pet {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.client-record-upload__pet select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.client-record-upload__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-record-upload__btn {
+  appearance: none;
+  border: 1px solid #10b981;
+  background: #fff;
+  color: #047857;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.client-record-upload__btn:hover {
+  background: #f0fdf4;
+}
+
+.client-record-upload__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.client-record-upload__file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.client-record-upload__thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f3f4f6;
+  flex-shrink: 0;
+}
+
+.client-record-upload__file-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.client-record-upload__file-name {
+  font-size: 14px;
+  color: #111827;
+  word-break: break-word;
+}
+
+.client-record-upload__file-pet {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.client-record-upload__remove {
+  border: 0;
+  background: transparent;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.client-record-upload__error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 8px;
+}

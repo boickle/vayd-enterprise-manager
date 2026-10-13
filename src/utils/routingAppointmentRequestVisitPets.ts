@@ -154,11 +154,19 @@ function buildPatchesFromPetSources(
       globalDescription,
       requestData,
     );
+    const baseDescription = globalDescription?.trim() || pet.clientDetails?.trim() || '';
+    const uploadedRecords = requestData?.recordsDelivery === 'upload';
+    const description =
+      uploadedRecords && !baseDescription.startsWith('RECORDS UPLOADED BY CLIENT')
+        ? baseDescription
+          ? `RECORDS UPLOADED BY CLIENT\n${baseDescription}`
+          : 'RECORDS UPLOADED BY CLIENT'
+        : baseDescription;
     patches.push({
       patientId: pet.patientId?.trim() || chipId,
       patientName: chip.name,
       appointmentTypeId: typeId,
-      description: globalDescription?.trim() || pet.clientDetails?.trim() || '',
+      description,
       instructions,
     });
   }

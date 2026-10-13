@@ -14,6 +14,7 @@ import {
   type LinkedAppointmentEvetIds,
 } from '../utils/appointmentRequestLinkedEvet';
 import { AppointmentRequestAlternateAddressCallout } from './AppointmentRequestAlternateAddressCallout';
+import { ClientUploadedRecordsList } from './ClientUploadedRecordsList';
 import { EvetNameLink } from './EvetNameLink';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 
@@ -147,12 +148,14 @@ export function AppointmentRequestDetailPanel({
   practiceTz,
   clientPimsId = null,
   linkedAppointment = null,
+  submissionId = null,
 }: {
   requestData: Record<string, unknown>;
   practiceId: number;
   practiceTz: string;
   clientPimsId?: string | null;
   linkedAppointment?: LinkedAppointmentEvetIds | null;
+  submissionId?: number | null;
 }) {
   const sections = buildAppointmentRequestDetailSections(requestData, practiceTz);
   const pets = enrichPetDetailsFromLinkedAppointment(sections.pets, linkedAppointment);
@@ -168,7 +171,7 @@ export function AppointmentRequestDetailPanel({
     sections.scheduling.length > 0 ||
     sections.other.length > 0;
 
-  if (!hasContent) {
+  if (!hasContent && submissionId == null) {
     return (
       <div className="appt-request-detail-panel appt-request-detail-panel--empty settings-muted">
         No additional request details were saved.
@@ -240,6 +243,15 @@ export function AppointmentRequestDetailPanel({
         <SectionBlock title="Veterinary history" rows={sections.veterinaryHistory} />
         <SectionBlock title="Additional notes" rows={sections.other} />
       </div>
+
+      {submissionId != null ? (
+        <ClientUploadedRecordsList
+          submissionId={submissionId}
+          practiceId={practiceId}
+          allowAttach
+          expectedUpload={requestData.recordsDelivery === 'upload'}
+        />
+      ) : null}
     </div>
   );
 }
