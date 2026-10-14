@@ -153,13 +153,30 @@ export type ForwardBookingEntry = {
   updatedAt?: string | null;
 };
 
+export type ForwardBookingListSort = 'targetDueDate' | 'recent';
+
 export type FetchForwardBookingsParams = {
   practiceId: number;
   /** ISO datetime — hide entries whose booked visit start is before this (default server now). */
   asOf?: string;
+  /** Omit to get every matching row. */
   limit?: number;
-  /** When true, include rows with `status: removed` (for the Removed tab). */
+  offset?: number;
+  /** When true, include rows with `status: removed` (for the Removed tab). Ignored when `statuses` is set. */
   includeRemoved?: boolean;
+  /** `booked` only returns rows whose booked visit has not started yet. */
+  statuses?: readonly ForwardBookingStatus[];
+  createdVia?: readonly ForwardBookingCreatedVia[];
+  excludeCreatedVia?: readonly ForwardBookingCreatedVia[];
+  clientId?: number;
+  patientId?: number;
+  sort?: ForwardBookingListSort;
+};
+
+export type ForwardBookingListPage = {
+  items: ForwardBookingEntry[];
+  /** True when `limit` was set and the server has more matching rows. */
+  hasMore: boolean;
 };
 
 function pickIso(v: unknown): string | null {
@@ -256,8 +273,29 @@ function unwrapEntry(raw: unknown): ForwardBookingEntry {
 export async function fetchForwardBookings(
   params: FetchForwardBookingsParams
 ): Promise<ForwardBookingEntry[]> {
-  const { data } = await http.get<unknown>('/forward-bookings', { params });
-  return unwrapList(data);
+  return (await fetchForwardBookingsPage(params)).items;
+}
+
+function forwardBookingListQueryParams(
+  params: FetchForwardBookingsParams
+): Record<string, unknown> {
+  const { statuses, createdVia, excludeCreatedVia, ...rest } = params;
+  const out: Record<string, unknown> = { ...rest };
+  if (statuses?.length) out.statuses = statuses.join(',');
+  if (createdVia?.length) out.createdVia = createdVia.join(',');
+  if (excludeCreatedVia?.length) out.excludeCreatedVia = excludeCreatedVia.join(',');
+  return out;
+}
+
+export async function fetchForwardBookingsPage(
+  params: FetchForwardBookingsParams
+): Promise<ForwardBookingListPage> {
+  const { data } = await http.get<unknown>('/forward-bookings', {
+    params: forwardBookingListQueryParams(params),
+  });
+  const hasMore =
+    !!data && typeof data === 'object' && (data as Record<string, unknown>).hasMore === true;
+  return { items: unwrapList(data), hasMore };
 }
 
 /** Lightweight practice-wide index for Scout calendar badge + Start/End Visit modal. */

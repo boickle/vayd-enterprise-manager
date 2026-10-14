@@ -1,11 +1,16 @@
 import type { NavigateFunction } from 'react-router';
 import { DateTime } from 'luxon';
 import type { HoldListItem } from '../api/holds';
-import { fetchAppointmentById } from '../api/appointments';
+import {
+  fetchAppointmentById,
+  fetchAppointmentsRangeForLocalDay,
+} from '../api/appointments';
 import { fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
 import {
   buildRoutingRescheduleIntentFromAppointment,
+  collectSameDayHouseholdVisits,
   writeRoutingRescheduleIntent,
+  type RescheduleSameDayVisit,
 } from './routingRescheduleIntent';
 import { fetchAndCacheRescheduleSourcePlacementSnapshot } from './routingRescheduleScoreCompare';
 import { writeSchedulerCalendarHandoff } from './schedulerCalendarHandoff';
@@ -26,6 +31,83 @@ import {
   writeSchedulerFocusSession,
 } from './schedulerFocusAppointment';
 import type { HoldVisitSlotGroup } from './holdsHousehold';
+
+/** Convert Holds-board rows into reschedule visit targets (chip → appointment id). */
+export function holdListItemsToRescheduleVisits(
+  holds: readonly HoldListItem[]
+): RescheduleSameDayVisit[] {
+  const byPatient = new Map<string, RescheduleSameDayVisit>();
+  const noPatient: RescheduleSameDayVisit[] = [];
+
+  for (const h of holds) {
+    if (typeof h.id !== 'number' || !Number.isFinite(h.id) || h.id <= 0) continue;
+    if (h.allDay) continue;
+    const patientId = h.patient?.id != null ? String(h.patient.id) : '';
+    const typeRaw = h.appointmentType?.id;
+    const appointmentTypeId =
+      typeRaw != null && Number.isFinite(Number(typeRaw)) ? Number(typeRaw) : undefined;
+    const appointmentTypeName =
+      h.appointmentType?.prettyName?.trim() ||
+      h.appointmentType?.name?.trim() ||
+      undefined;
+    const visit: RescheduleSameDayVisit = {
+      appointmentId: h.id,
+      patientId,
+      patientName: h.patient?.name?.trim() || undefined,
+      appointmentTypeId,
+      appointmentTypeName,
+      description: h.description ?? null,
+    };
+    if (!patientId) {
+      noPatient.push(visit);
+      continue;
+    }
+    if (!byPatient.has(patientId)) byPatient.set(patientId, visit);
+  }
+
+  const out = [...byPatient.values()].sort((a, b) =>
+    (a.patientName ?? a.patientId).localeCompare(b.patientName ?? b.patientId, undefined, {
+      sensitivity: 'base',
+    })
+  );
+  const seenAppt = new Set(out.map((v) => v.appointmentId));
+  for (const v of noPatient) {
+    if (seenAppt.has(v.appointmentId)) continue;
+    seenAppt.add(v.appointmentId);
+    out.push(v);
+  }
+  return out;
+}
+
+/** Merge visit lists, keeping the first entry per patient id. */
+export function mergeRescheduleSameDayVisits(
+  ...lists: ReadonlyArray<ReadonlyArray<RescheduleSameDayVisit>>
+): RescheduleSameDayVisit[] {
+  const byPatient = new Map<string, RescheduleSameDayVisit>();
+  const noPatient: RescheduleSameDayVisit[] = [];
+  const seenNoPatientAppt = new Set<number>();
+
+  for (const list of lists) {
+    for (const v of list) {
+      const patientId = String(v.patientId ?? '').trim();
+      if (!patientId) {
+        if (seenNoPatientAppt.has(v.appointmentId)) continue;
+        seenNoPatientAppt.add(v.appointmentId);
+        noPatient.push(v);
+        continue;
+      }
+      if (!byPatient.has(patientId)) byPatient.set(patientId, v);
+    }
+  }
+
+  const out = [...byPatient.values()].sort((a, b) =>
+    (a.patientName ?? a.patientId).localeCompare(b.patientName ?? b.patientId, undefined, {
+      sensitivity: 'base',
+    })
+  );
+  out.push(...noPatient);
+  return out;
+}
 
 /** Parse submission id from online-submission-hold pimsIds when the API row omits it. */
 export function submissionIdFromOnlineHoldPimsId(
@@ -206,23 +288,50 @@ export type BeginHoldRescheduleResult =
  * Holds board → routing reschedule flow. Loads the hold's calendar appointment,
  * writes the routing reschedule intent + calendar handoff, then navigates to
  * `/schedule/routing` (same path the scheduler uses for reschedule).
+ *
+ * Pass `householdHolds` (all holds for this client on the board, any date) so
+ * selecting those pets in Routing moves every matching hold — not only the
+ * clicked row. Same-day calendar siblings are merged when available.
  */
 export async function beginHoldReschedule(args: {
   hold: HoldListItem;
+  /** All holds for this household on the board (cross-day siblings included). */
+  householdHolds?: readonly HoldListItem[];
   navigate: NavigateFunction;
   practiceTz: string;
   practiceId: number;
   /** Where "Dismiss" in the reschedule workspace should return (the Holds board). */
   returnPath?: string;
 }): Promise<BeginHoldRescheduleResult> {
-  const { hold, navigate, practiceTz, practiceId, returnPath } = args;
+  const { hold, householdHolds, navigate, practiceTz, practiceId, returnPath } = args;
   const appt = await fetchAppointmentById(hold.id, { practiceId });
   if (!appt) {
     return { ok: false, reason: 'Could not load this hold to reschedule.' };
   }
+
+  const startLocal = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
+  const dateIso = startLocal.isValid ? startLocal.toISODate() : null;
+  const providerId = appt.primaryProvider?.id;
+
+  let sameCalendarDayAppointments: Awaited<ReturnType<typeof fetchAppointmentsRangeForLocalDay>> =
+    [];
+  if (dateIso && providerId != null) {
+    try {
+      sameCalendarDayAppointments = await fetchAppointmentsRangeForLocalDay({
+        dateIso,
+        practiceTimeZone: practiceTz,
+        primaryProviderId: providerId,
+        practiceId,
+      });
+    } catch {
+      /* hold-list siblings below still cover multi-pet holds */
+    }
+  }
+
   const intent = buildRoutingRescheduleIntentFromAppointment(appt, {
     practiceTz,
     allowAddressOnly: true,
+    sameCalendarDayAppointments,
   });
   if (!intent) {
     return {
@@ -230,17 +339,34 @@ export async function beginHoldReschedule(args: {
       reason: 'This hold cannot be rescheduled (needs a linked client or a visit address).',
     };
   }
-  writeRoutingRescheduleIntent({
+
+  const holdVisits = holdListItemsToRescheduleVisits(
+    householdHolds && householdHolds.length > 0 ? householdHolds : [hold]
+  );
+  const calendarVisits =
+    sameCalendarDayAppointments.length > 0
+      ? collectSameDayHouseholdVisits(appt, sameCalendarDayAppointments, practiceTz)
+      : (intent.sameDayVisits ?? []);
+  const sameDayVisits = mergeRescheduleSameDayVisits(holdVisits, calendarVisits);
+  const moveHousehold = sameDayVisits.length > 1;
+
+  const nextIntent = {
     ...intent,
+    sameDayVisits,
+    rescheduleScope: moveHousehold
+      ? ('household_day' as const)
+      : ('selected_pet' as const),
     ...(returnPath?.trim() ? { returnPath: returnPath.trim() } : {}),
-  });
-  void fetchAndCacheRescheduleSourcePlacementSnapshot(intent);
+  };
+
+  writeRoutingRescheduleIntent(nextIntent);
+  void fetchAndCacheRescheduleSourcePlacementSnapshot(nextIntent);
   writeSchedulerCalendarHandoff({
-    anchorDate: intent.practiceDateKey?.trim() || '',
+    anchorDate: nextIntent.practiceDateKey?.trim() || '',
     view: 'week',
-    providerFilter: intent.primaryProviderInternalId?.trim() || '',
-    routingDoctorPimsId: intent.primaryDoctorPimsId,
-    routingDoctorLabel: intent.primaryDoctorDisplayName,
+    providerFilter: nextIntent.primaryProviderInternalId?.trim() || '',
+    routingDoctorPimsId: nextIntent.primaryDoctorPimsId,
+    routingDoctorLabel: nextIntent.primaryDoctorDisplayName,
   });
   navigate('/schedule/routing');
   return { ok: true };

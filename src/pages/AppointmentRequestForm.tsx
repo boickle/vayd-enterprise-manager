@@ -142,12 +142,6 @@ const SHOW_TIME_SLOTS = false;
 /** Set to true to show the manual promo code entry field on the submit step. Promotions via URL token (?promo=) still work. */
 const SHOW_PROMO_CODE_FIELD = true;
 
-const EMERGENT_HOW_SOON_VALUES = new Set([
-  'Emergent – today',
-  'Emergent - Today',
-  'Emergency - today',
-]);
-
 const URGENT_HOW_SOON_VALUES = new Set([
   'Urgent – within 24–48 hours',
   'Urgent - within 24-48 hours',
@@ -207,8 +201,8 @@ function mapAppointmentRequestPetWeightForApi<T extends { weight?: string | numb
 
 function isManualSchedulingHowSoon(howSoon?: string): boolean {
   if (!howSoon) return false;
-  // Emergent and free-text "Other" stay with Client Liaison; urgent + not sure can self-book.
-  return EMERGENT_HOW_SOON_VALUES.has(howSoon) || howSoon === 'Other';
+  // Free-text "Other" stays with Client Liaison. Every other how-soon answer can self-book.
+  return howSoon === 'Other';
 }
 
 /** Membership plans are offered by age, so the answer must be one Scout can read. */
@@ -2627,8 +2621,8 @@ export default function AppointmentRequestForm() {
     });
     
     // For request-visit-continued, do routing automatically if:
-    // - howSoon allows self-scheduling (not Emergent / Other)
-    // - For Emergent / Other, show liaison banner (no routing needed)
+    // - howSoon allows self-scheduling (not free-text Other)
+    // - For Other, show liaison banner (no routing needed)
     // - Skip routing if euthanasia pet is selected (no slots shown)
     // For euthanasia-continued, skip routing (no slots shown, just text field)
     const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
@@ -2642,7 +2636,7 @@ export default function AppointmentRequestForm() {
       providers.length > 0 &&
       !hasEuthanasiaPet && // Don't do routing if euthanasia pet is selected
       isRoutingPage && // request-visit-continued or intro for new clients
-      isNotUrgentTimeframe; // Only if not urgent/emergent
+      isNotUrgentTimeframe; // Skip only free-text Other
     
     if (shouldDoRouting) {
       console.log('[AppointmentForm] Calling findAvailableSlots');
@@ -8614,53 +8608,17 @@ export default function AppointmentRequestForm() {
                   : undefined;
 
               const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
-              const emergentHowSoon = EMERGENT_HOW_SOON_VALUES.has(formData.howSoon || '');
-              const emergentBlocked =
-                isNewPatientRequest ||
-                petsInVisitWithHandlingQuestion.some(hasSpecialHandlingNeeds) ||
-                formData.selectedPetIds.some(
-                  (petId) =>
-                    formData.petSpecificData?.[petId]?.needsCalmingMedications === 'Yes',
-                );
-              const emergentSelfSchedule =
-                emergentHowSoon && !emergentBlocked && onlineBookingOffered;
               const preloadSchedulePicker =
                 !formData.howSoon &&
                 onlineBookingOffered &&
                 !onlineBookingAvailabilityPending;
 
               if (formData.howSoon) {
-              // Emergent for new clients or special handling, and Other → contact / liaison
-              if (isManualScheduling && !emergentSelfSchedule) {
+              // Free-text "Other" stays with Client Liaison. Every other answer uses the calendar.
+              if (isManualScheduling) {
                 return (
                   <div style={{ marginBottom: '20px' }}>
-                    {emergentHowSoon ? (
-                      <div
-                        style={{
-                          marginBottom: '16px',
-                          padding: '14px 16px',
-                          backgroundColor: '#fef3c7',
-                          border: '1px solid #d97706',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          color: '#92400e',
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        Emergent online booking is for existing clients only, and not when a pet needs
-                        calming meds, a muzzle, or extra handling. Please{' '}
-                        <a href="tel:+12075368387" style={{ color: '#92400e', fontWeight: 700 }}>
-                          call
-                        </a>{' '}
-                        or{' '}
-                        <a href="sms:+12075368387" style={{ color: '#92400e', fontWeight: 700 }}>
-                          text
-                        </a>{' '}
-                        us at (207) 536-8387 and we&apos;ll look at the schedule together to try to fit you in.
-                      </div>
-                    ) : (
-                      renderManualSchedulingLiaisonBanner()
-                    )}
+                    {renderManualSchedulingLiaisonBanner()}
                     {renderSchedulingNotesField(schedulingNotesStyle)}
                   </div>
                 );
@@ -8851,8 +8809,6 @@ export default function AppointmentRequestForm() {
                       setSelfScheduleSlotError(null);
                     }}
                     onRequestPreferences={focusSchedulingNotes}
-                    howSoon={formData.howSoon || undefined}
-                    searchAllDoctors={emergentSelfSchedule}
                     selectedAppointmentStart={confirmedSlot?.appointmentStart ?? null}
                   />
                 ) : null;

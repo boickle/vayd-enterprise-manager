@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchUnscheduledReminders } from '../api/careOutreach';
-import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchActiveForwardBookings } from '../utils/forwardBookingQueueLoad';
 import { fetchSlotOffers } from '../api/slotOffers';
 import { fetchWaitlist } from '../api/waitlist';
 import { listRecordsRequests, recordsRequestNeedsReview } from '../api/recordsRequests';
@@ -93,7 +93,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         receivedRecords,
       ] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
-        fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
+        fetchActiveForwardBookings(PRACTICE_ID),
         fetchUnscheduledReminders({
           practiceId: PRACTICE_ID,
           dueDateFrom: careRange.from,

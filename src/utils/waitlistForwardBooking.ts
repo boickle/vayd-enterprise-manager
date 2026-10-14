@@ -1,10 +1,10 @@
 import {
   createForwardBooking,
-  fetchForwardBookings,
   normalizeForwardBookingCreatedVia,
   patchForwardBooking,
   type ForwardBookingEntry,
 } from '../api/forwardBooking';
+import { fetchPendingForwardBookingsForPatient } from './forwardBookingQueueLoad';
 import type { WaitlistEntry } from '../api/waitlist';
 import { careOutreachForwardBookingIntervalForDueDate } from './careOutreachForwardBooking';
 import { buildCreateForwardBookingPayloadFromPatient } from './forwardBookingFromAppointment';
@@ -33,10 +33,11 @@ async function findPendingWaitlistForwardBooking(
   patientId: number,
   practiceId: number,
 ): Promise<ForwardBookingEntry | null> {
-  const list = await fetchForwardBookings({
+  const list = await fetchPendingForwardBookingsForPatient({
     practiceId,
-    limit: 500,
-    includeRemoved: false,
+    clientId,
+    patientId,
+    createdVia: 'waitlist',
   });
   const matches = list.filter(
     (e) =>

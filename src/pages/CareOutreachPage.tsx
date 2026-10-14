@@ -49,7 +49,7 @@ import {
   type CareOutreachPriorityChipCounts,
 } from '../utils/careOutreachPriorityFilters';
 import { careOutreachReminderIsHidden } from '../utils/careOutreachReminderVisibility';
-import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchActiveForwardBookings } from '../utils/forwardBookingQueueLoad';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import SchedulingToolsListPagination, {
   paginateSchedulingToolsList,
@@ -533,7 +533,7 @@ export default function CareOutreachPage() {
       const chipCountRange = careOutreachChipCountFetchRange();
       const [types, forwardBookings, rawList, chipCountRawList] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
-        fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
+        fetchActiveForwardBookings(PRACTICE_ID),
         fetchUnscheduledReminders({
           dueDateFrom: effectiveDueRange.from,
           dueDateTo: effectiveDueRange.to,

@@ -509,7 +509,9 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         const payload = interception.request.body;
         
         expect(payload.howSoon).to.equal('Emergent – today');
-        expect(payload.selectedDateTimePreferences).to.be.null;
+        if (payload.selectedDateTimePreferences) {
+          expect(payload.selectedDateTimePreferences).to.be.an('array');
+        }
         expect(payload.appointmentType).to.equal('Wellness exam / check-up');
       });
     });

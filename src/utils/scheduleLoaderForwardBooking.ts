@@ -1,10 +1,10 @@
 import {
   createForwardBooking,
-  fetchForwardBookings,
   normalizeForwardBookingCreatedVia,
   patchForwardBooking,
   type ForwardBookingEntry,
 } from '../api/forwardBooking';
+import { fetchPendingForwardBookingsForPatient } from './forwardBookingQueueLoad';
 import type { FillDayCandidate, FillDayReminder } from '../api/routing';
 import {
   careOutreachForwardBookingIntervalForDueDate,
@@ -109,10 +109,11 @@ async function findPendingScheduleLoaderForwardBooking(
   patientId: number,
   practiceId: number
 ): Promise<ForwardBookingEntry | null> {
-  const list = await fetchForwardBookings({
+  const list = await fetchPendingForwardBookingsForPatient({
     practiceId,
-    limit: 500,
-    includeRemoved: false,
+    clientId,
+    patientId,
+    createdVia: 'schedule_loader',
   });
   const matches = list.filter(
     (e) =>
