@@ -23,6 +23,12 @@ import { NewClientSpeciesPicker, type NewClientSpeciesChoice } from '../componen
 import { PetVisitQuestionsBlock } from '../components/PetVisitQuestionsBlock';
 import { PetSexSelect, spayedNeuteredFromPetSex, type PetSexOption } from '../components/PetSexSelect';
 import {
+  ClientRecordUploadFields,
+  type ClientRecordPetOption,
+  type PendingClientRecordFile,
+} from '../components/ClientRecordUploadFields';
+import { uploadAppointmentRequestRecord } from '../api/clientRecordUploads';
+import {
   PetHandlingNeedsPicker,
   hasHandlingNeedsAnswer,
   hasSpecialHandlingNeeds,
@@ -534,6 +540,8 @@ type FormData = {
   newMailingAddress?: AddressFields;
   hadVetCareElsewhere?: 'Yes' | 'No' | '';
   mayWeAskForRecords?: 'Yes' | 'No' | '';
+  /** Client uploads records now, or asks staff to request them. */
+  recordsDelivery?: 'upload' | 'request' | '';
   haveWeSeenPetBefore?: 'Yes' | 'No' | '';
   newPetInfo?: string;
   previousVeterinaryPracticesExisting?: string;
@@ -786,6 +794,7 @@ export default function AppointmentRequestForm() {
     differentMailingAddress: '',
     hadVetCareElsewhere: '',
     mayWeAskForRecords: '',
+    recordsDelivery: '',
     previousVeterinaryHospitals: '',
     haveWeSeenPetBefore: '',
     okayToContactPreviousVets: '',
@@ -801,6 +810,8 @@ export default function AppointmentRequestForm() {
   };
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pendingRecordFiles, setPendingRecordFiles] = useState<PendingClientRecordFile[]>([]);
+  const [recordUploadNotice, setRecordUploadNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [recommendedSlots, setRecommendedSlots] = useState<Array<{ date: string; time: string; display: string; iso: string }>>([]);
@@ -2179,6 +2190,23 @@ export default function AppointmentRequestForm() {
     }
   }, [onlineBookingOffered]);
 
+  const recordsDeliveryForBookingRef = useRef(formData.recordsDelivery);
+  useEffect(() => {
+    const previous = recordsDeliveryForBookingRef.current;
+    recordsDeliveryForBookingRef.current = formData.recordsDelivery;
+    if (
+      previous !== 'upload' ||
+      formData.recordsDelivery === 'upload' ||
+      !isNewPatientRequest
+    ) {
+      return;
+    }
+    setFormData((prev) => {
+      if (!prev.selfScheduledSlot) return prev;
+      return { ...prev, selfScheduledSlot: null };
+    });
+  }, [formData.recordsDelivery, isNewPatientRequest]);
+
   // Convert raw veterinarian data to PublicProvider format
   const mapRawVeterinarianToPublicProvider = (vet: any): PublicProvider => {
     const id = vet.id ?? vet.pimsId ?? vet.employeeId;
@@ -2356,6 +2384,7 @@ export default function AppointmentRequestForm() {
         autoBookSettings,
         routingVisitPets,
         isNewPatientRequest,
+        { clientUploadedRecords: formData.recordsDelivery === 'upload' },
       );
       startDate = bumpStartDateForLeadTime(startDate, leadTimeHours, DEFAULT_PRACTICE_TIMEZONE);
       const earliestBookable = computeEarliestOnlineBookingDateTime(
@@ -2483,6 +2512,9 @@ export default function AppointmentRequestForm() {
         }
         if (primaryAppointmentTypeId != null) {
           availabilityRequest.appointmentTypeId = primaryAppointmentTypeId;
+        }
+        if (formData.recordsDelivery === 'upload') {
+          availabilityRequest.clientUploadedRecords = true;
         }
 
         console.log('[AppointmentForm] Calling /public/appointments/availability with payload:', availabilityRequest);
@@ -4179,6 +4211,17 @@ export default function AppointmentRequestForm() {
     });
   }, []);
 
+  const validateRecordsDelivery = (newErrors: Record<string, string>, required: boolean) => {
+    if (!required) return;
+    if (formData.recordsDelivery !== 'upload' && formData.recordsDelivery !== 'request') {
+      newErrors.recordsDelivery = 'Please choose how we should get records';
+      return;
+    }
+    if (formData.recordsDelivery === 'upload' && pendingRecordFiles.length === 0) {
+      newErrors.recordFiles = 'Add a photo or PDF of the records';
+    }
+  };
+
   const validatePage = (page: Page): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -4206,12 +4249,14 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client-pet-info':
         validateNewClientPetInfo(newErrors);
+        validateRecordsDelivery(newErrors, true);
         validateRequestVisitContinued(newErrors);
         break;
       case 'existing-client':
         if (isLoggedIn) {
           validateExistingClientIntro(newErrors);
           validateExistingClientPets(newErrors);
+          validateRecordsDelivery(newErrors, formData.hadVetCareElsewhere === 'Yes');
           validateRequestVisitContinued(newErrors);
         }
         break;
@@ -4528,6 +4573,59 @@ export default function AppointmentRequestForm() {
     })();
   };
 
+  const buildRecordPetOptions = (source: 'new' | 'existing'): ClientRecordPetOption[] => {
+    if (source === 'new') {
+      return (formData.newClientPets ?? []).map((pet) => ({
+        id: pet.id,
+        name: pet.name?.trim() || 'Pet',
+      }));
+    }
+    const selected = pets
+      .filter((pet) => formData.selectedPetIds.includes(pet.id))
+      .map((pet) => ({
+        id: pet.id,
+        name: pet.name,
+        patientId:
+          pet.dbId != null && /^\d+$/.test(String(pet.dbId)) ? Number(pet.dbId) : undefined,
+      }));
+    const added = filterCompletedAppointmentRequestPets(formData.existingClientNewPets ?? []).map(
+      (pet) => ({
+        id: pet.id,
+        name: pet.name?.trim() || 'Pet',
+      }),
+    );
+    return [...selected, ...added];
+  };
+
+  const renderRecordsFields = (source: 'new' | 'existing') => (
+    <ClientRecordUploadFields
+      delivery={formData.recordsDelivery || ''}
+      onDeliveryChange={(value) => {
+        updateFormData('recordsDelivery', value);
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next.recordsDelivery;
+          delete next.recordFiles;
+          return next;
+        });
+      }}
+      files={pendingRecordFiles}
+      onFilesChange={(files) => {
+        setPendingRecordFiles(files);
+        if (files.length > 0 && errors.recordFiles) {
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next.recordFiles;
+            return next;
+          });
+        }
+      }}
+      pets={buildRecordPetOptions(source)}
+      deliveryError={errors.recordsDelivery}
+      filesError={errors.recordFiles}
+    />
+  );
+
   const handleSubmit = async () => {
     pruneAbandonedExistingClientNewPetStubs();
     if (!(await ensureVisitZoneInService())) {
@@ -4842,7 +4940,14 @@ export default function AppointmentRequestForm() {
         // that sentence is the answer, so it is 'Yes' for new and existing alike.
         okayToContactPreviousVets: 'Yes',
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
-        mayWeAskForRecords: formData.mayWeAskForRecords || undefined,
+        mayWeAskForRecords:
+          formData.recordsDelivery === 'request'
+            ? 'Yes'
+            : formData.mayWeAskForRecords || undefined,
+        recordsDelivery:
+          formData.recordsDelivery === 'upload' || formData.recordsDelivery === 'request'
+            ? formData.recordsDelivery
+            : undefined,
         
         // Pet Behavior & Handling - keep legacy fields for backward compatibility
         petBehaviorAtPreviousVisits: formData.petBehaviorAtPreviousVisits || formData.petBehaviorAtPreviousVisitsExisting || undefined,
@@ -5072,6 +5177,46 @@ export default function AppointmentRequestForm() {
       // Send to API endpoint
       const { data: submitResponse } = await http.post('/public/appointments/form', finalPayload);
       const responseMessage = extractApiResponseMessage(submitResponse?.message);
+
+      if (formData.recordsDelivery === 'upload' && pendingRecordFiles.length > 0) {
+        const uploadToken =
+          typeof submitResponse?.recordUploadToken === 'string'
+            ? submitResponse.recordUploadToken
+            : '';
+        if (!uploadToken) {
+          setRecordUploadNotice(
+            'Your request was sent, but the records could not be attached. Please reply to your confirmation with the files.',
+          );
+        } else {
+          const petOptions = buildRecordPetOptions(isLoggedIn ? 'existing' : 'new');
+          let failed = 0;
+          for (const item of pendingRecordFiles) {
+            const pet = petOptions.find((option) => option.id === item.formPetId) ?? petOptions[0];
+            try {
+              await uploadAppointmentRequestRecord({
+                uploadToken,
+                file: item.file,
+                formPetId: pet?.id ?? item.formPetId,
+                petName: pet?.name?.trim() || 'Pet',
+                patientId: pet?.patientId,
+              });
+            } catch {
+              failed += 1;
+            }
+          }
+          if (failed === 0) {
+            setRecordUploadNotice('We received the records you uploaded.');
+          } else if (failed === pendingRecordFiles.length) {
+            setRecordUploadNotice(
+              'Your request was sent, but the records did not upload. Please reply to your confirmation with the files.',
+            );
+          } else {
+            setRecordUploadNotice(
+              'Your request was sent. Some record files did not upload. Please reply to your confirmation with the rest.',
+            );
+          }
+        }
+      }
       
       // Track successful form submission
       const petCount = isLoggedIn 
@@ -6492,6 +6637,7 @@ export default function AppointmentRequestForm() {
                 {renderOtherHowSoonDateTimeField()}
               </div>
 
+              {renderRecordsFields('new')}
               {renderPage({ page: 'request-visit-continued', embedded: true })}
             </div>
           );
@@ -7048,6 +7194,7 @@ export default function AppointmentRequestForm() {
               />
               {renderOtherHowSoonDateTimeField()}
             </div>
+            {renderRecordsFields('new')}
             {!embedded && renderPage({ page: 'request-visit-continued', embedded: true })}
           </div>
         );
@@ -7422,6 +7569,8 @@ export default function AppointmentRequestForm() {
                     (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
                   )}
                 </div>
+
+                {renderRecordsFields('existing')}
               </>
             )}
 
@@ -8571,6 +8720,7 @@ export default function AppointmentRequestForm() {
                     newPatientCount={newPatientCount}
                     isNewPatientRequest={isNewPatientRequest}
                     visitPets={routingVisitPets}
+                    clientUploadedRecords={formData.recordsDelivery === 'upload'}
                     patientIds={
                       onlineBookingPatientIds.length > 0
                         ? onlineBookingPatientIds
@@ -9214,6 +9364,9 @@ export default function AppointmentRequestForm() {
               ? ' We’ll also reach out if an earlier time opens up.'
               : ''}
           </p>
+          {recordUploadNotice ? (
+            <p style={{ fontSize: '15px', color: '#374151', marginBottom: '16px' }}>{recordUploadNotice}</p>
+          ) : null}
           <style>{`
             .appt-form-view-pricing-btn:hover {
               transform: scale(1.02);
