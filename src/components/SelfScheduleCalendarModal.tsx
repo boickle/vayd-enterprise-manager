@@ -38,7 +38,6 @@ import { fetchPublicOnlineBookingAutoBookSettings } from '../api/onlineBookingAu
 import {
   bumpStartDateForLeadTime,
   defaultOnlineBookingAutoBookSettings,
-  onlineBookingHowSoonSearchEnd,
   resolveOnlineBookingLeadTimeHours,
   type OnlineBookingAutoBookSettings,
 } from '../utils/onlineBookingAutoBookSettings';
@@ -121,12 +120,7 @@ interface Props {
   patientIds?: number[];
   /** New client chose to upload records — calendar uses the existing-client lead time. */
   clientUploadedRecords?: boolean;
-  /**
-   * Urgent and Soon limit the routing search to that timeframe.
-   * Flexible and "I'm not sure" stay open-ended.
-   */
-  howSoon?: string;
-  /** Emergent: one search across every online-bookable doctor, next 24 hours. */
+  /** One search across every online-bookable doctor instead of the selected doctor. */
   searchAllDoctors?: boolean;
   /** Slot the client already chose. Highlighted until they submit the form. */
   selectedAppointmentStart?: string | null;
@@ -233,24 +227,8 @@ type MonthAvailabilityFetchArgs = {
   rawVeterinarians?: VeterinarianWithAppointmentTypes[];
 };
 
-function doctorMonthCacheKey(
-  doctorId: string | number,
-  month: DateTime,
-  boundEndDate?: string | null,
-): string {
-  return `${doctorId}|${month.toFormat('yyyy-MM')}|${boundEndDate ?? 'open'}`;
-}
-
-function slotsThroughHowSoonEnd(
-  candidates: MonthAvailabilityCandidate[],
-  end: { endDate: string; endMillis: number } | null,
-): MonthAvailabilityCandidate[] {
-  if (!end) return candidates;
-  return candidates.filter((c) => {
-    if (c.date > end.endDate) return false;
-    const ms = DateTime.fromISO(c.suggestedStartIso || c.iso).toMillis();
-    return Number.isFinite(ms) && ms <= end.endMillis;
-  });
+function doctorMonthCacheKey(doctorId: string | number, month: DateTime): string {
+  return `${doctorId}|${month.toFormat('yyyy-MM')}`;
 }
 
 function storeCandidatesByMonth(
@@ -259,7 +237,6 @@ function storeCandidatesByMonth(
   candidates: MonthAvailabilityCandidate[],
   rangeStart: DateTime,
   rangeEnd: DateTime,
-  boundEndDate?: string | null,
 ) {
   const byMonth = new Map<string, MonthAvailabilityCandidate[]>();
   for (const c of candidates) {
@@ -272,7 +249,7 @@ function storeCandidatesByMonth(
   const last = rangeEnd.startOf('month');
   while (cursor <= last) {
     const ym = cursor.toFormat('yyyy-MM');
-    cache.set(doctorMonthCacheKey(doctorId, cursor, boundEndDate), byMonth.get(ym) ?? []);
+    cache.set(doctorMonthCacheKey(doctorId, cursor), byMonth.get(ym) ?? []);
     cursor = cursor.plus({ months: 1 });
   }
 }
@@ -815,7 +792,6 @@ export function SelfScheduleCalendarModal({
   visitPets,
   patientIds,
   clientUploadedRecords = false,
-  howSoon,
   searchAllDoctors = false,
   selectedAppointmentStart,
 }: Props) {
@@ -874,11 +850,6 @@ export function SelfScheduleCalendarModal({
     newPatientCount,
     clientUploadedRecords,
   ]);
-
-  const howSoonSearchEnd = useMemo(
-    () => onlineBookingHowSoonSearchEnd(howSoon, practiceTz),
-    [howSoon, practiceTz],
-  );
 
   useEffect(() => {
     let alive = true;
@@ -962,7 +933,6 @@ export function SelfScheduleCalendarModal({
   const timesSectionRef = useRef<HTMLDivElement>(null);
 
   const [soonestAvailabilityNote, setSoonestAvailabilityNote] = useState<string | null>(null);
-  const [howSoonWindowEmpty, setHowSoonWindowEmpty] = useState(false);
 
   const resolveRoutingAppointmentType = useCallback(
     (key: string) => {
@@ -1176,26 +1146,25 @@ export function SelfScheduleCalendarModal({
         setMonthCandidates(candidates);
       };
 
-      const boundEndDate = howSoonSearchEnd?.endDate ?? null;
-      const allowAutoAdvance = Boolean(opts?.autoAdvance) && !boundEndDate;
-      const cachedStart = cache.get(doctorMonthCacheKey(cacheDoctorId, startMonth, boundEndDate));
+      const allowAutoAdvance = Boolean(opts?.autoAdvance);
+      const cachedStart = cache.get(doctorMonthCacheKey(cacheDoctorId, startMonth));
       let resumeFrom: DateTime | null = null;
       if (cachedStart) {
-        const cachedVisible = slotsThroughHowSoonEnd(
-          candidatesInCalendarMonth(cachedStart, startMonth, earliestCalendarDate),
-          howSoonSearchEnd,
+        const cachedVisible = candidatesInCalendarMonth(
+          cachedStart,
+          startMonth,
+          earliestCalendarDate,
         );
         if (
           !allowAutoAdvance ||
           monthHasBookableCandidates(cachedStart, startMonth, earliestCalendarDate)
         ) {
-          setHowSoonWindowEmpty(Boolean(howSoonSearchEnd) && cachedVisible.length === 0);
           applyMonth(startMonth, cachedVisible, false);
           return;
         }
         for (let i = 1; i < 12; i++) {
           const later = startMonth.plus({ months: i });
-          const cachedLater = cache.get(doctorMonthCacheKey(cacheDoctorId, later, boundEndDate));
+          const cachedLater = cache.get(doctorMonthCacheKey(cacheDoctorId, later));
           if (!cachedLater) {
             resumeFrom = later;
             break;
@@ -1212,7 +1181,6 @@ export function SelfScheduleCalendarModal({
       }
 
       setLoadingMonth(true);
-      setHowSoonWindowEmpty(false);
       setAvailabilityError(null);
       setSelectedDay(null);
       setDayCandidates([]);
@@ -1245,26 +1213,15 @@ export function SelfScheduleCalendarModal({
         if (windowStart < earliestDay) {
           windowStart = earliestDay;
         }
-        const boundedEnd = howSoonSearchEnd
-          ? DateTime.fromISO(howSoonSearchEnd.endDate, { zone: practiceTz }).startOf('day')
-          : null;
-        if (boundedEnd && windowStart > boundedEnd) {
-          if (key !== monthFetchKey.current) return;
-          setMonthCandidates([]);
-          setHowSoonWindowEmpty(true);
-          setLoadingMonth(false);
-          return;
-        }
         let scanMonth = startMonth;
         let candidates: MonthAvailabilityCandidate[] = [];
 
-        const windowCount = opts?.autoAdvance && !boundedEnd ? MAX_AUTO_ADVANCE_WINDOWS : 1;
+        const windowCount = opts?.autoAdvance ? MAX_AUTO_ADVANCE_WINDOWS : 1;
         for (let attempt = 0; attempt < windowCount; attempt++) {
-          let windowEnd = windowStart.plus({ days: AVAILABILITY_MAX_DAYS - 1 });
-          if (boundedEnd && boundedEnd < windowEnd) windowEnd = boundedEnd;
+          const windowEnd = windowStart.plus({ days: AVAILABILITY_MAX_DAYS - 1 });
           const fetched = await fetchAvailabilityRange(windowStart, windowEnd, fetchArgs);
           if (key !== monthFetchKey.current) return;
-          storeCandidatesByMonth(cache, cacheDoctorId, fetched, windowStart, windowEnd, boundEndDate);
+          storeCandidatesByMonth(cache, cacheDoctorId, fetched, windowStart, windowEnd);
 
           if (!opts?.autoAdvance) {
             candidates = candidatesInCalendarMonth(
@@ -1280,7 +1237,7 @@ export function SelfScheduleCalendarModal({
           for (let i = 0; i < 12; i++) {
             const m = startMonth.plus({ months: i });
             if (m.startOf('day') > windowEnd) break;
-            const monthSlots = cache.get(doctorMonthCacheKey(cacheDoctorId, m, boundEndDate));
+            const monthSlots = cache.get(doctorMonthCacheKey(cacheDoctorId, m));
             if (monthSlots && monthHasBookableCandidates(monthSlots, m, earliestCalendarDate)) {
               found = m;
               candidates = candidatesInCalendarMonth(monthSlots, m, earliestCalendarDate);
@@ -1295,9 +1252,7 @@ export function SelfScheduleCalendarModal({
         }
 
         if (key !== monthFetchKey.current) return;
-        candidates = slotsThroughHowSoonEnd(candidates, howSoonSearchEnd);
-        setHowSoonWindowEmpty(Boolean(howSoonSearchEnd) && candidates.length === 0);
-        applyMonth(scanMonth, candidates, Boolean(opts?.autoAdvance) && !howSoonSearchEnd);
+        applyMonth(scanMonth, candidates, Boolean(opts?.autoAdvance));
       } catch (err: unknown) {
         if (key !== monthFetchKey.current) return;
         const ax = err as { response?: { status?: number; data?: { message?: string } } };
@@ -1331,7 +1286,6 @@ export function SelfScheduleCalendarModal({
       rawVeterinarians,
       earliestCalendarDate,
       practiceTz,
-      howSoonSearchEnd,
       searchAllDoctors,
       doctors,
     ],
@@ -1438,7 +1392,6 @@ export function SelfScheduleCalendarModal({
   };
 
   const handleNextMonth = () => {
-    if (isNextDisabled) return;
     manualMonthNavRef.current = true;
     setSoonestAvailabilityNote(null);
     setCurrentMonth(currentMonth.plus({ months: 1 }));
@@ -1517,9 +1470,6 @@ export function SelfScheduleCalendarModal({
     chartPrimaryProviderId != null && displayDoctors.length > 1;
 
   const isPrevDisabled = currentMonth <= DateTime.now().startOf('month');
-  const isNextDisabled = howSoonSearchEnd
-    ? currentMonth.endOf('month').toISODate()! >= howSoonSearchEnd.endDate
-    : false;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1595,7 +1545,7 @@ export function SelfScheduleCalendarModal({
           {showPreferencesPanel
             ? 'Select a doctor, then share your preferred days and times below.'
             : searchAllDoctors
-              ? 'These times are from every available doctor for the next 24 hours.'
+              ? 'These times are from every available doctor.'
               : 'Select a doctor, then choose a day and time that works for you.'}
         </p>
 
@@ -1837,32 +1787,6 @@ export function SelfScheduleCalendarModal({
               </div>
             )}
 
-            {howSoonWindowEmpty && !loadingMonth ? (
-              <div
-                style={{
-                  padding: '14px 16px',
-                  background: amberLight,
-                  border: `1px solid ${amber}`,
-                  borderRadius: 8,
-                  fontSize: 14,
-                  color: amberDark,
-                  lineHeight: 1.5,
-                }}
-              >
-                We don&apos;t have a standard opening
-                {howSoon ? ` for “${howSoon}.”` : ' in that timeframe.'} Please{' '}
-                <a href="tel:+12075368387" style={{ color: amberDark, fontWeight: 700 }}>
-                  call
-                </a>{' '}
-                or{' '}
-                <a href="sms:+12075368387" style={{ color: amberDark, fontWeight: 700 }}>
-                  text
-                </a>{' '}
-                us at (207) 536-8387 and we&apos;ll look at the schedule together to try to fit you
-                in. You can also tell us your preferred times below.
-              </div>
-            ) : (
-            <>
             {/* Instruction: how to read the calendar + that days are clickable */}
             {!loadingMonth && (
               <div
@@ -1915,8 +1839,6 @@ export function SelfScheduleCalendarModal({
               <div style={{ fontSize: 11, color: grey400, textAlign: 'center', marginTop: 6 }}>
                 Showing from this month forward
               </div>
-            )}
-            </>
             )}
           </>
         )}

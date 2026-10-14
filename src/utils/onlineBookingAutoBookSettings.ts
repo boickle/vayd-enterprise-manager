@@ -230,40 +230,6 @@ export function resolveOnlineBookingLeadTimeHours(
   return resolveExistingClientLeadTimeHours(settings, visitPets);
 }
 
-/**
- * Urgent and Soon limit the online calendar to that timeframe.
- * Other how-soon answers keep the open-ended search.
- */
-export function onlineBookingHowSoonSearchEnd(
-  howSoon: string | undefined,
-  practiceTz?: string,
-  now: DateTime = DateTime.now(),
-): { endDate: string; endMillis: number } | null {
-  const raw = howSoon?.trim();
-  if (!raw) return null;
-  const n = raw.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
-  const zoned = now.setZone(practiceTimeZoneOrDefault(practiceTz));
-  if (n.includes('emergent') || n.includes('emergency')) {
-    const end = zoned.plus({ hours: 24 });
-    const endDate = end.toISODate();
-    if (!endDate) return null;
-    return { endDate, endMillis: end.toMillis() };
-  }
-  if (n.includes('urgent')) {
-    const end = zoned.plus({ hours: 48 });
-    const endDate = end.toISODate();
-    if (!endDate) return null;
-    return { endDate, endMillis: end.toMillis() };
-  }
-  if (n.startsWith('soon') || n.includes('this week') || n.includes('next few days')) {
-    const end = zoned.endOf('week');
-    const endDate = end.toISODate();
-    if (!endDate) return null;
-    return { endDate, endMillis: end.toMillis() };
-  }
-  return null;
-}
-
 export function computeEarliestOnlineBookingDateTime(
   leadTimeHours: number,
   practiceTz?: string,
