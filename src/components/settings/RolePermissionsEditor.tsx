@@ -206,9 +206,9 @@ export default function RolePermissionsEditor({ practiceId, role, onMessage }: P
                       {entry.requiresLicense && (
                         <span
                           className="emp-access-tag"
-                          title="The person also needs this licence, whatever their role says."
+                          title="The person also needs this license, whatever their role says."
                         >
-                          {entry.requiresLicense === 'veterinarian' ? 'DVM licence' : 'licence'}
+                          {entry.requiresLicense === 'veterinarian' ? 'DVM license' : 'license'}
                         </span>
                       )}
                       {entry.note && <div className="perm-editor-note">{entry.note}</div>}

@@ -5,6 +5,17 @@
   border-top: 1px solid #d1d5db;
 }
 
+.client-record-upload--combined {
+  margin-top: 14px;
+  margin-bottom: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.client-record-upload__hint--combined {
+  margin-top: 0;
+}
+
 .client-record-upload__label {
   display: block;
   margin-bottom: 6px;

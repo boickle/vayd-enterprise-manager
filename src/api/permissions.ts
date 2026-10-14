@@ -62,7 +62,7 @@ export type PermissionCatalogEntry = {
   roles: Partial<Record<RoleSlug, PermissionScope>>;
   /** Requires a typed reason, which is written to the audit log. */
   reason: boolean;
-  /** Licence class required no matter what the role or grant says. */
+  /** License class required no matter what the role or grant says. */
   requiresLicense: 'any' | 'veterinarian' | null;
   /** False when the permission can never be handed out or re-tuned. */
   grantable: boolean;
@@ -254,7 +254,7 @@ export async function removeEmployeePermissionGrant(
   );
 }
 
-/** The licence — not the role — is what allows signing and locking records. */
+/** The license — not the role — is what allows signing and locking records. */
 export async function saveEmployeeLicense(
   practiceId: number,
   employeeId: number,

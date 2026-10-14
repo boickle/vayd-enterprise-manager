@@ -18,16 +18,18 @@ export type PendingClientRecordFile = {
   formPetId: string;
 };
 
-type Delivery = 'upload' | 'request' | '';
+type Delivery = 'upload' | 'request' | 'holdoff' | '';
 
 type Props = {
   delivery: Delivery;
-  onDeliveryChange: (value: 'upload' | 'request') => void;
+  onDeliveryChange: (value: 'upload' | 'request' | 'holdoff') => void;
   files: PendingClientRecordFile[];
   onFilesChange: (files: PendingClientRecordFile[]) => void;
   pets: ClientRecordPetOption[];
   deliveryError?: string;
   filesError?: string;
+  /** Shown under the previous-practice picker (no separate section heading). */
+  variant?: 'standalone' | 'combined';
 };
 
 function petLabel(pets: ClientRecordPetOption[], formPetId: string): string {
@@ -63,6 +65,7 @@ export function ClientRecordUploadFields({
   pets,
   deliveryError,
   filesError,
+  variant = 'standalone',
 }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
@@ -105,31 +108,64 @@ export function ClientRecordUploadFields({
     onFilesChange(files.filter((file) => file.localId !== localId));
   };
 
+  const combined = variant === 'combined';
+  const choiceOptions: {
+    value: 'upload' | 'request' | 'holdoff';
+    title: string;
+    detail: string;
+  }[] = [
+    {
+      value: 'upload',
+      title: combined ? "I'll upload them now" : "I'll upload them",
+      detail: canTakePhoto
+        ? 'Take a photo with your phone, or upload photos or a PDF.'
+        : 'Upload photos or a PDF.',
+    },
+    {
+      value: 'request',
+      title: 'Please request them',
+      detail: combined
+        ? 'We will contact the practice(s) listed above to obtain your pet\u2019s prior medical records.'
+        : 'We will contact the hospital you listed.',
+    },
+  ];
+  if (combined) {
+    choiceOptions.push({
+      value: 'holdoff',
+      title:
+        'Please hold off — I would rather you did not contact these practices for now.',
+      detail: 'You can always ask us later.',
+    });
+  }
+
   return (
-    <div className="client-record-upload" data-form-field="recordsDelivery">
-      <span className="client-record-upload__label">
-        How should we get your pet&apos;s records? <span style={{ color: '#ef4444' }}>*</span>
-      </span>
-      <p className="client-record-upload__hint">
-        Uploading photos or a PDF yourself can get your pet seen sooner. You can also ask us to request them from the previous hospital.
-      </p>
+    <div
+      className={
+        combined
+          ? 'client-record-upload client-record-upload--combined'
+          : 'client-record-upload'
+      }
+      data-form-field="recordsDelivery"
+    >
+      {combined ? (
+        <p className="client-record-upload__hint client-record-upload__hint--combined">
+          Having their history before the visit means we are not guessing at past illnesses,
+          medications, or vaccine due dates. How should we get records from these practices?{' '}
+          <span style={{ color: '#ef4444' }}>*</span>
+        </p>
+      ) : (
+        <>
+          <span className="client-record-upload__label">
+            How should we get your pet&apos;s records? <span style={{ color: '#ef4444' }}>*</span>
+          </span>
+          <p className="client-record-upload__hint">
+            Uploading photos or a PDF yourself can get your pet seen sooner. You can also ask us to
+            request them from the previous hospital.
+          </p>
+        </>
+      )}
       <div className="client-record-upload__choices">
-        {(
-          [
-            {
-              value: 'upload' as const,
-              title: "I'll upload them",
-              detail: canTakePhoto
-                ? 'Take a photo with your phone, or upload photos or a PDF.'
-                : 'Upload photos or a PDF.',
-            },
-            {
-              value: 'request' as const,
-              title: 'Please request them',
-              detail: 'We will contact the hospital you listed.',
-            },
-          ]
-        ).map((option) => (
+        {choiceOptions.map((option) => (
           <label
             key={option.value}
             className={

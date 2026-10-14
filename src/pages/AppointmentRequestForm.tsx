@@ -39,6 +39,10 @@ import {
   filterCompletedAppointmentRequestPets,
   isAbandonedAppointmentRequestPetStub,
 } from '../utils/appointmentRequestPetCompleteness';
+import {
+  appointmentRequestPetWeightError,
+  parseAppointmentRequestPetWeightLbs,
+} from '../utils/appointmentRequestPetWeight';
 import { parseAgeStringToYears } from '../utils/membershipAge';
 import PetAgeInput from '../components/PetAgeInput';
 import { appointmentTypeIsCalmingPremed, findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
@@ -194,6 +198,11 @@ function resolveSpeciesFromChoice(
     return { speciesId: match?.id, species: match?.prettyName || match?.name || 'Cat' };
   }
   return { speciesId: undefined, species: 'Other' };
+}
+
+function mapAppointmentRequestPetWeightForApi<T extends { weight?: string | number }>(pet: T) {
+  const lbs = parseAppointmentRequestPetWeightLbs(pet.weight);
+  return lbs != null ? { ...pet, weight: lbs } : pet;
 }
 
 function isManualSchedulingHowSoon(howSoon?: string): boolean {
@@ -541,7 +550,7 @@ type FormData = {
   hadVetCareElsewhere?: 'Yes' | 'No' | '';
   mayWeAskForRecords?: 'Yes' | 'No' | '';
   /** Client uploads records now, or asks staff to request them. */
-  recordsDelivery?: 'upload' | 'request' | '';
+  recordsDelivery?: 'upload' | 'request' | 'holdoff' | '';
   haveWeSeenPetBefore?: 'Yes' | 'No' | '';
   newPetInfo?: string;
   previousVeterinaryPracticesExisting?: string;
@@ -1853,50 +1862,6 @@ export default function AppointmentRequestForm() {
     formData.newClientPets,
     formData.existingClientNewPets,
   ]);
-
-  /**
-   * Records go out automatically when the form is submitted, so the client needs
-   * a way to say no. Framed as an opt-out rather than a permission question: the
-   * default that helps the pet should be the one that takes no effort.
-   */
-  const renderRecordsOptOut = (hasPicks: boolean) => (
-    <>
-      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
-        We will contact the practice(s) listed above to obtain your pet&apos;s prior medical
-        records. Having their history before the visit means we are not guessing at past
-        illnesses, medications, or vaccine due dates.
-      </p>
-      {hasPicks && (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '8px',
-            marginTop: '10px',
-            padding: '10px 12px',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            background: '#fafafa',
-            cursor: 'pointer',
-            fontSize: '13px',
-            color: '#4b5563',
-            lineHeight: 1.5,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={formData.optOutOfRecordsRequest === true}
-            onChange={(e) => updateFormData('optOutOfRecordsRequest', e.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span>
-            Please hold off — I would rather you did not contact these practices for now.
-            You can always ask us later.
-          </span>
-        </label>
-      )}
-    </>
-  );
 
   const speciesAllowOnlineScheduling = useMemo(
     () => petsSpeciesAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
@@ -4002,6 +3967,8 @@ export default function AppointmentRequestForm() {
           }
           const ageError = petAgeError(pet.age);
           if (ageError) newErrors[`newClientPet.${pet.id}.age`] = ageError;
+          const weightError = appointmentRequestPetWeightError(pet.weight);
+          if (weightError) newErrors[`newClientPet.${pet.id}.weight`] = weightError;
           if (!hasHandlingNeedsAnswer(pet)) {
             newErrors[`newClientPet.${pet.id}.handlingNeeds`] = 'Please select at least one option';
           }
@@ -4105,6 +4072,8 @@ export default function AppointmentRequestForm() {
         }
         const ageError = petAgeError(pet.age);
         if (ageError) newErrors[`existingClientNewPet.${pet.id}.age`] = ageError;
+        const weightError = appointmentRequestPetWeightError(pet.weight);
+        if (weightError) newErrors[`existingClientNewPet.${pet.id}.weight`] = weightError;
         if (!hasHandlingNeedsAnswer(pet)) {
           newErrors[`existingClientNewPet.${pet.id}.handlingNeeds`] = 'Please select at least one option';
         }
@@ -4211,13 +4180,18 @@ export default function AppointmentRequestForm() {
     });
   }, []);
 
-  const validateRecordsDelivery = (newErrors: Record<string, string>, required: boolean) => {
-    if (!required) return;
-    if (formData.recordsDelivery !== 'upload' && formData.recordsDelivery !== 'request') {
+  const validateRecordsDelivery = (
+    newErrors: Record<string, string>,
+    required: boolean,
+    hasPreviousPractices: boolean,
+  ) => {
+    if (!required || !hasPreviousPractices) return;
+    const delivery = formData.recordsDelivery;
+    if (delivery !== 'upload' && delivery !== 'request' && delivery !== 'holdoff') {
       newErrors.recordsDelivery = 'Please choose how we should get records';
       return;
     }
-    if (formData.recordsDelivery === 'upload' && pendingRecordFiles.length === 0) {
+    if (delivery === 'upload' && pendingRecordFiles.length === 0) {
       newErrors.recordFiles = 'Add a photo or PDF of the records';
     }
   };
@@ -4249,14 +4223,22 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client-pet-info':
         validateNewClientPetInfo(newErrors);
-        validateRecordsDelivery(newErrors, true);
+        validateRecordsDelivery(
+          newErrors,
+          true,
+          (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
+        );
         validateRequestVisitContinued(newErrors);
         break;
       case 'existing-client':
         if (isLoggedIn) {
           validateExistingClientIntro(newErrors);
           validateExistingClientPets(newErrors);
-          validateRecordsDelivery(newErrors, formData.hadVetCareElsewhere === 'Yes');
+          validateRecordsDelivery(
+            newErrors,
+            formData.hadVetCareElsewhere === 'Yes',
+            (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
+          );
           validateRequestVisitContinued(newErrors);
         }
         break;
@@ -4597,18 +4579,52 @@ export default function AppointmentRequestForm() {
     return [...selected, ...added];
   };
 
-  const renderRecordsFields = (source: 'new' | 'existing') => (
+  const recordsDeliveryChoice = (): 'upload' | 'request' | 'holdoff' | '' => {
+    if (formData.recordsDelivery === 'holdoff') return 'holdoff';
+    if (
+      formData.optOutOfRecordsRequest === true &&
+      formData.recordsDelivery !== 'upload' &&
+      formData.recordsDelivery !== 'request'
+    ) {
+      return 'holdoff';
+    }
+    return formData.recordsDelivery === 'upload' || formData.recordsDelivery === 'request'
+      ? formData.recordsDelivery
+      : '';
+  };
+
+  const setRecordsDeliveryChoice = (value: 'upload' | 'request' | 'holdoff') => {
+    if (value === 'holdoff') {
+      updateFormData('recordsDelivery', 'holdoff');
+      updateFormData('optOutOfRecordsRequest', true);
+    } else {
+      updateFormData('recordsDelivery', value);
+      updateFormData('optOutOfRecordsRequest', false);
+    }
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.recordsDelivery;
+      delete next.recordFiles;
+      return next;
+    });
+  };
+
+  const clearRecordsChoiceIfNoPractices = () => {
+    updateFormData('recordsDelivery', '');
+    updateFormData('optOutOfRecordsRequest', false);
+    setPendingRecordFiles([]);
+  };
+
+  const renderRecordsFields = (
+    source: 'new' | 'existing',
+    opts?: { combined?: boolean; show?: boolean },
+  ) => {
+    if (opts?.combined && !opts.show) return null;
+    return (
     <ClientRecordUploadFields
-      delivery={formData.recordsDelivery || ''}
-      onDeliveryChange={(value) => {
-        updateFormData('recordsDelivery', value);
-        setErrors((prev) => {
-          const next = { ...prev };
-          delete next.recordsDelivery;
-          delete next.recordFiles;
-          return next;
-        });
-      }}
+      variant={opts?.combined ? 'combined' : 'standalone'}
+      delivery={recordsDeliveryChoice()}
+      onDeliveryChange={setRecordsDeliveryChoice}
       files={pendingRecordFiles}
       onFilesChange={(files) => {
         setPendingRecordFiles(files);
@@ -4624,7 +4640,8 @@ export default function AppointmentRequestForm() {
       deliveryError={errors.recordsDelivery}
       filesError={errors.recordFiles}
     />
-  );
+    );
+  };
 
   const handleSubmit = async () => {
     pruneAbandonedExistingClientNewPetStubs();
@@ -4832,30 +4849,34 @@ export default function AppointmentRequestForm() {
                     formData.selectedPetIds.includes(p.id) &&
                     !isAbandonedAppointmentRequestPetStub(p),
                 )
-                .map(p => ({
-                  id: p.id,
-                  name: p.name,
-                  species: p.species,
-                  age: p.age,
-                  spayedNeutered: p.spayedNeutered,
-                  sex: p.sex,
-                  breed: p.breed,
-                  color: p.color,
-                  weight: p.weight,
-                  behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
-                  needsCalmingMedications: p.needsCalmingMedications,
-                  hasCalmingMedications: p.hasCalmingMedications,
-                  needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
-                  needsExtraHandling: p.needsExtraHandling,
-                  new: true, // Mark as new pet for existing client
-                }))
+                .map((p) =>
+                  mapAppointmentRequestPetWeightForApi({
+                    id: p.id,
+                    name: p.name,
+                    species: p.species,
+                    age: p.age,
+                    spayedNeutered: p.spayedNeutered,
+                    sex: p.sex,
+                    breed: p.breed,
+                    color: p.color,
+                    weight: p.weight,
+                    behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
+                    needsCalmingMedications: p.needsCalmingMedications,
+                    hasCalmingMedications: p.hasCalmingMedications,
+                    needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
+                    needsExtraHandling: p.needsExtraHandling,
+                    new: true, // Mark as new pet for existing client
+                  }),
+                )
             ]
           : undefined,
         
         // Pet information for non-logged-in users
         petInfoText: !isLoggedIn && !formData.newClientPets?.length ? (formData.whatPets || formData.petInfo) : undefined,
         newClientPets: (() => {
-          const pets = filterCompletedAppointmentRequestPets(formData.newClientPets);
+          const pets = filterCompletedAppointmentRequestPets(formData.newClientPets).map(
+            mapAppointmentRequestPetWeightForApi,
+          );
           return pets.length > 0 ? pets : undefined;
         })(),
         existingClientNewPets: (() => {
@@ -4863,7 +4884,7 @@ export default function AppointmentRequestForm() {
             (formData.existingClientNewPets || []).filter((p) =>
               formData.selectedPetIds.includes(p.id),
             ),
-          );
+          ).map(mapAppointmentRequestPetWeightForApi);
           return pets.length > 0 ? pets : undefined;
         })(),
         newPetInfo: formData.newPetInfo || undefined,
@@ -4902,24 +4923,26 @@ export default function AppointmentRequestForm() {
                 };
               }) : []),
               // New pets added by existing client (omit abandoned blank stubs)
-              ...filterCompletedAppointmentRequestPets(formData.existingClientNewPets || []).map(p => ({
-                id: p.id,
-                name: p.name,
-                species: p.species,
-                age: p.age,
-                spayedNeutered: p.spayedNeutered,
-                sex: p.sex,
-                breed: p.breed,
-                color: p.color,
-                weight: p.weight,
-                behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
-                needsCalmingMedications: p.needsCalmingMedications,
-                hasCalmingMedications: p.hasCalmingMedications,
-                needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
-                needsExtraHandling: p.needsExtraHandling,
-                isSelected: formData.selectedPetIds.includes(p.id),
-                new: true, // Mark as new pet for existing client
-              }))
+              ...filterCompletedAppointmentRequestPets(formData.existingClientNewPets || []).map((p) =>
+                mapAppointmentRequestPetWeightForApi({
+                  id: p.id,
+                  name: p.name,
+                  species: p.species,
+                  age: p.age,
+                  spayedNeutered: p.spayedNeutered,
+                  sex: p.sex,
+                  breed: p.breed,
+                  color: p.color,
+                  weight: p.weight,
+                  behaviorAtPreviousVisits: p.behaviorAtPreviousVisits,
+                  needsCalmingMedications: p.needsCalmingMedications,
+                  hasCalmingMedications: p.hasCalmingMedications,
+                  needsMuzzleOrSpecialHandling: p.needsMuzzleOrSpecialHandling,
+                  needsExtraHandling: p.needsExtraHandling,
+                  isSelected: formData.selectedPetIds.includes(p.id),
+                  new: true, // Mark as new pet for existing client
+                }),
+              )
             ]
           : undefined,
         otherPersonsOnAccount: formData.otherPersonsOnAccount || undefined,
@@ -4934,7 +4957,10 @@ export default function AppointmentRequestForm() {
         previousVeterinaryHospitalsPicked: formData.previousVeterinaryHospitalsPicked?.length
           ? formData.previousVeterinaryHospitalsPicked
           : undefined,
-        optOutOfRecordsRequest: formData.optOutOfRecordsRequest === true ? true : undefined,
+        optOutOfRecordsRequest:
+          formData.recordsDelivery === 'holdoff' || formData.optOutOfRecordsRequest === true
+            ? true
+            : undefined,
         // We no longer ask permission, we state it: the form tells every client
         // "we will contact the practice(s) listed above". Naming a practice under
         // that sentence is the answer, so it is 'Yes' for new and existing alike.
@@ -6500,7 +6526,7 @@ export default function AppointmentRequestForm() {
                         data-form-field={`newClientPet.${pet.id}.weight`}
                       >
                         <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                          Weight
+                          Weight <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
                           type="text"
@@ -6510,11 +6536,16 @@ export default function AppointmentRequestForm() {
                           style={{
                             width: '100%',
                             padding: newClientInputPadding,
-                            border: '1px solid #d1d5db',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                             borderRadius: newClientInputRadius,
                             fontSize: '14px',
                           }}
                         />
+                        {errors[`newClientPet.${pet.id}.weight`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.weight`]}
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ marginBottom: petFieldMb }} data-form-field={`newClientPet.${pet.id}.sex`}>
@@ -6610,11 +6641,13 @@ export default function AppointmentRequestForm() {
                         'previousVeterinaryPractices',
                         pickedHospitalsToText(picked, recordsPetOptions),
                       );
+                      if (!picked.length) clearRecordsChoiceIfNoPractices();
                     }}
                   />
-                  {renderRecordsOptOut(
-                    (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
-                  )}
+                  {renderRecordsFields('new', {
+                    combined: true,
+                    show: (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
+                  })}
                 </div>
 
               {/* How soon — shown in compact new-client-pet-info page */}
@@ -6637,7 +6670,6 @@ export default function AppointmentRequestForm() {
                 {renderOtherHowSoonDateTimeField()}
               </div>
 
-              {renderRecordsFields('new')}
               {renderPage({ page: 'request-visit-continued', embedded: true })}
             </div>
           );
@@ -6766,9 +6798,12 @@ export default function AppointmentRequestForm() {
                         </div>
                       </div>
 
-                      <div style={{ marginBottom: petFieldMb, maxWidth: isMobile ? '100%' : 200 }}>
+                      <div
+                        style={{ marginBottom: petFieldMb, maxWidth: isMobile ? '100%' : 200 }}
+                        data-form-field={`newClientPet.${pet.id}.weight`}
+                      >
                         <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                          Weight
+                          Weight <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
                           type="text"
@@ -6777,12 +6812,17 @@ export default function AppointmentRequestForm() {
                           placeholder="e.g. 45 lbs"
                           style={{
                             padding: '8px',
-                            border: '1px solid #d1d5db',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                             borderRadius: '6px',
                             fontSize: '14px',
                             width: '100%',
                           }}
                         />
+                        {errors[`newClientPet.${pet.id}.weight`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.weight`]}
+                          </div>
+                        )}
                       </div>
 
                       {/* Calming medications & muzzle */}
@@ -7563,14 +7603,14 @@ export default function AppointmentRequestForm() {
                         'previousVeterinaryHospitals',
                         pickedHospitalsToText(picked, recordsPetOptions),
                       );
+                      if (!picked.length) clearRecordsChoiceIfNoPractices();
                     }}
                   />
-                  {renderRecordsOptOut(
-                    (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
-                  )}
+                  {renderRecordsFields('existing', {
+                    combined: true,
+                    show: (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
+                  })}
                 </div>
-
-                {renderRecordsFields('existing')}
               </>
             )}
 
@@ -8069,7 +8109,7 @@ export default function AppointmentRequestForm() {
                               fontSize: '14px',
                             }}
                           >
-                            Weight
+                            Weight <span style={{ color: '#ef4444' }}>*</span>
                           </label>
                           <input
                             type="text"
@@ -8079,11 +8119,16 @@ export default function AppointmentRequestForm() {
                             style={{
                               width: '100%',
                               padding: ecInputPadding,
-                              border: '1px solid #d1d5db',
+                              border: `1px solid ${errors[`existingClientNewPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                               borderRadius: ecInputRadius,
                               fontSize: '14px',
                             }}
                           />
+                          {errors[`existingClientNewPet.${pet.id}.weight`] && (
+                            <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                              {errors[`existingClientNewPet.${pet.id}.weight`]}
+                            </div>
+                          )}
                         </div>
 
                         <div style={{ marginBottom: ecFieldMb }} data-form-field={`existingClientNewPet.${pet.id}.sex`}>

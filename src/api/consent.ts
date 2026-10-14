@@ -171,13 +171,14 @@ export type EuthanasiaConsentForm = {
   } | null;
   /**
    * The plan already on the estimate, for the family to confirm. No aftercare
-   * charge is treated as home burial. `unresolved` is only set when the quote
-   * has two different aftercare plans — the form stops rather than guessing.
+   * charge is treated as home burial. `unresolved` is set when the quote has
+   * two different plans, or a cremation charge not marked as aftercare in
+   * Catalog — the form stops rather than guessing.
    */
   aftercare: {
     type: AftercareItemType | null;
     label: string | null;
-    unresolved: 'missing' | 'conflict' | null;
+    unresolved: 'missing' | 'conflict' | 'unmarked' | null;
   };
   client: { firstName: string; lastName: string; email: string };
   visitAddress?: ConsentAddress | null;
@@ -231,15 +232,17 @@ export type EuthanasiaConsentStatus = {
   isEuthanasia: boolean;
   /**
    * The aftercare item on this visit's estimate — what the family will be asked
-   * to confirm. No aftercare charge is home burial. `unresolved` is only set
-   * when two different plans are quoted.
+   * to confirm. No aftercare charge is home burial. `unresolved` is set when
+   * two different plans are quoted, or a cremation charge is not marked as
+   * aftercare in Catalog.
    */
   quotedAftercare: {
     type: AftercareItemType | null;
     label: string | null;
     itemName: string | null;
-    unresolved: 'missing' | 'conflict' | null;
+    unresolved: 'missing' | 'conflict' | 'unmarked' | null;
     conflictingItems?: string[];
+    unmarkedItems?: string[];
     assumed?: boolean;
   } | null;
   invite: {

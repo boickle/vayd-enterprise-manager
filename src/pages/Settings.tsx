@@ -3235,7 +3235,7 @@ export default function Settings() {
             <h2 className="settings-section-title">Permission Audit Log</h2>
             <p className="settings-section-description">
               Every use of a controlled permission — voids, refunds, price changes, reopened
-              invoices, post-close corrections — and every change to roles, grants, and licences,
+              invoices, post-close corrections — and every change to roles, grants, and licenses,
               with who did it and the reason they gave.
             </p>
             <SettingsPermissionAudit practiceId={practiceId} />

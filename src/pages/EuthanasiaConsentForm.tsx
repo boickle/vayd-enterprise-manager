@@ -179,7 +179,7 @@ export default function EuthanasiaConsentForm() {
   // The plan is whatever staff quoted. Nothing on this page can change it.
   const aftercare: AftercareItemType | '' = form?.aftercare?.type ?? '';
   const aftercareLabel = form?.aftercare?.label ?? '';
-  const aftercareUnresolved: 'missing' | 'conflict' | null = !form
+  const aftercareUnresolved: 'missing' | 'conflict' | 'unmarked' | null = !form
     ? null
     : form.aftercare?.type
       ? null

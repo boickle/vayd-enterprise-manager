@@ -355,7 +355,9 @@ export default function EuthanasiaEstimateModal({
                   ? aftercarePlanLabel
                   : quotedAftercare?.unresolved === 'conflict'
                     ? `Two plans quoted: ${(quotedAftercare.conflictingItems ?? []).join(', ')}`
-                    : 'Waiting on the estimate'}
+                    : quotedAftercare?.unresolved === 'unmarked'
+                      ? `Not marked as aftercare in Catalog: ${(quotedAftercare.unmarkedItems ?? []).join(', ')}`
+                      : 'Waiting on the estimate'}
               </strong>
               {aftercareReady &&
               quotedAftercare?.itemName &&
@@ -410,6 +412,12 @@ export default function EuthanasiaEstimateModal({
           {total > 0 && !loading && !aftercareReady && quotedAftercare?.unresolved === 'conflict' && (
             <p className="euth-estimate-hint">
               This estimate quotes more than one aftercare plan. Remove the ones that do not apply.
+            </p>
+          )}
+          {total > 0 && !loading && !aftercareReady && quotedAftercare?.unresolved === 'unmarked' && (
+            <p className="euth-estimate-hint">
+              The family would be told they are burying their pet at home. In Catalog, open the
+              cremation item, check &ldquo;This is an aftercare item&rdquo;, and choose the plan.
             </p>
           )}
           {total > 0 && aftercareReady && (

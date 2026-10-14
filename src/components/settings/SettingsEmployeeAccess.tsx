@@ -1,5 +1,5 @@
 // src/components/settings/SettingsEmployeeAccess.tsx
-// The Access tab of the employee hub: licence, what this person can do today,
+// The Access tab of the employee hub: license, what this person can do today,
 // and the individual grants layered on top of their roles.
 //
 // Grants are additive only. There is no "deny" row, because once you can take
@@ -114,11 +114,11 @@ export default function SettingsEmployeeAccess({ employeeId, employeeName, onMes
     setSavingLicense(true);
     try {
       await saveEmployeeLicense(practiceId, employeeId, { isLicensed, licenseType });
-      onMessage?.('Licence updated', 'success');
+      onMessage?.('License updated', 'success');
       if (isSelf) reloadOwnPermissions();
       load();
     } catch (err) {
-      onMessage?.(err instanceof Error ? err.message : 'Could not update licence', 'error');
+      onMessage?.(err instanceof Error ? err.message : 'Could not update license', 'error');
     } finally {
       setSavingLicense(false);
     }
@@ -173,16 +173,16 @@ export default function SettingsEmployeeAccess({ employeeId, employeeName, onMes
   return (
     <div className="emp-access">
       <div className="settings-card">
-        <h3 className="settings-card-title">Licence</h3>
+        <h3 className="settings-card-title">License</h3>
         <p className="settings-card-subtitle">
-          Signing and locking a medical record requires a licence, so a licensed technician can sign
+          Signing and locking a medical record requires a license, so a licensed technician can sign
           and a veterinary assistant cannot. Prescriptions and refill authorizations additionally
-          require a veterinary licence — no role or grant substitutes for either.
+          require a veterinary license — no role or grant substitutes for either.
         </p>
         <PermissionGate
           permission="staff.license.manage"
           mode="disable"
-          hint="Only a practice admin or medical director can set someone's licence"
+          hint="Only a practice admin or medical director can set someone's license"
         >
           <div className="emp-access-license">
             {(['veterinarian', 'technician'] as const).map((type) => (
