@@ -605,12 +605,13 @@ export default function HoldsPage() {
   );
 
   const openReschedule = useCallback(
-    (hold: HoldListItem, groupKey: string) => {
+    (hold: HoldListItem, group: HoldHouseholdGroup) => {
       setError(null);
       setNotice(null);
-      setBusyGroupKey(groupKey);
+      setBusyGroupKey(group.key);
       void beginHoldReschedule({
         hold,
+        householdHolds: group.holds,
         navigate,
         practiceTz: PRACTICE_TZ,
         practiceId: PRACTICE_ID,
@@ -1455,7 +1456,7 @@ export default function HoldsPage() {
                               type="button"
                               className="btn secondary"
                               disabled={busy}
-                              onClick={() => openReschedule(slotHold, group.key)}
+                              onClick={() => openReschedule(slotHold, group)}
                             >
                               Reschedule
                             </button>
