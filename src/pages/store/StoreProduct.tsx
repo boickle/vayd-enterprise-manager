@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
+  formatBackInStock,
   publicStoreProduct,
   publicStoreProducts,
   storeListingImageUrl,
+  storeVariantOrderable,
   type StoreListing,
 } from '../../api/onlineStore';
 import { enhanceStoreDescriptionHtml, storeListingIdFromHref } from '../../utils/storeDescriptionLinks';
@@ -125,7 +127,14 @@ export default function StoreProduct() {
   if (!item) return <p>Loading…</p>;
 
   const bottle = Boolean(selected?.pack?.startsWith('Bottle'));
-  const safeQty = Math.max(1, Math.floor(Number(qty) || 1));
+  const stockStatus = selected?.availability?.status ?? 'available';
+  const orderable = storeVariantOrderable(selected);
+  const maxQty =
+    stockStatus === 'available' && selected?.availability?.available != null
+      ? Math.max(1, selected.availability.available)
+      : null;
+  const backBy = formatBackInStock(selected?.availability?.backInStockDate);
+  const safeQty = Math.min(maxQty ?? Infinity, Math.max(1, Math.floor(Number(qty) || 1)));
   const listedPrice = selected?.onlineStorePrice ?? item.priceFromWas ?? item.priceFrom;
   const tierPrice = selected
     ? storeUnitPrice(selected.onlineStorePrice, selected.priceBreaks, safeQty)
@@ -185,6 +194,18 @@ export default function StoreProduct() {
         </p>
         {saleOn && formatSaleEnds(item.saleEndsAt) ? (
           <p className="vayd-store__sale-ends">Sale ends {formatSaleEnds(item.saleEndsAt)}</p>
+        ) : null}
+        {stockStatus === 'out_of_stock' ? (
+          <p className="vayd-store__stock is-out">
+            Out of stock{backBy ? ` — expected back ${backBy}` : ''}
+          </p>
+        ) : stockStatus === 'backorder' ? (
+          <p className="vayd-store__stock is-backorder">
+            Backordered — order now and we’ll ship it when it’s back in stock
+            {backBy ? ` (expected ${backBy})` : ''}.
+          </p>
+        ) : maxQty != null && maxQty <= 5 ? (
+          <p className="vayd-store__stock is-low">Only {maxQty} left</p>
         ) : null}
         {item.approvalTag === 'needs_doctor_approval' ? (
           <div className="vayd-store__note">
@@ -276,13 +297,17 @@ export default function StoreProduct() {
             <input
               type="number"
               min={1}
-              value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+              max={maxQty ?? undefined}
+              value={safeQty}
+              onChange={(e) =>
+                setQty(Math.min(maxQty ?? Infinity, Math.max(1, Number(e.target.value) || 1)))
+              }
             />
             <button
               type="button"
               aria-label="Increase quantity"
-              onClick={() => setQty((n) => n + 1)}
+              disabled={maxQty != null && safeQty >= maxQty}
+              onClick={() => setQty((n) => Math.min(maxQty ?? Infinity, n + 1))}
             >
               +
             </button>
@@ -393,9 +418,9 @@ export default function StoreProduct() {
           <button
             type="button"
             className="primary"
-            disabled={!selected?.inventoryItemId}
+            disabled={!selected?.inventoryItemId || !orderable}
             onClick={() => {
-              if (!selected?.inventoryItemId) return;
+              if (!selected?.inventoryItemId || !orderable) return;
               addToStoreCart({
                 inventoryItemId: selected.inventoryItemId,
                 name: selected.name,
@@ -426,7 +451,13 @@ export default function StoreProduct() {
               window.setTimeout(() => setAdded(false), 1800);
             }}
           >
-            {added ? 'Added to cart' : 'Add to cart'}
+            {!orderable
+              ? 'Out of stock'
+              : added
+                ? 'Added to cart'
+                : stockStatus === 'backorder'
+                  ? 'Add to cart (backorder)'
+                  : 'Add to cart'}
           </button>
         </div>
       </div>

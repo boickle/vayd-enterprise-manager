@@ -315,7 +315,7 @@ export default function MoveItemsPage() {
         quantityNum: Number(l.quantity),
       }));
 
-      await transferBatch(practiceId, Number(fromBranchId), {
+      const moved = await transferBatch(practiceId, Number(fromBranchId), {
         fromBranchLocationId: Number(fromLoc),
         toBranchLocationId: Number(toLoc),
         lines: movedLines.map((l) => ({
@@ -331,12 +331,18 @@ export default function MoveItemsPage() {
         (l) =>
           `Move of ${l.quantityNum} ${l.name} from ${fromLocName} to ${toLocName}.`
       );
+      const warnings = (moved ?? [])
+        .map((m) => m.negativeWarning)
+        .filter((w): w is string => Boolean(w));
       setToast(
-        crossOffice
-          ? `${confirmations.join(' ')} (${fromOfficeName} → ${toOfficeName})`
-          : confirmations.join(' ')
+        [
+          crossOffice
+            ? `${confirmations.join(' ')} (${fromOfficeName} → ${toOfficeName})`
+            : confirmations.join(' '),
+          ...warnings,
+        ].join(' ')
       );
-      window.setTimeout(() => setToast(null), 6000);
+      window.setTimeout(() => setToast(null), warnings.length ? 12000 : 6000);
     } catch (e: unknown) {
       setError(apiErrorMessage(e));
     } finally {

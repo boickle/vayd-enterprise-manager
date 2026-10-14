@@ -29,6 +29,9 @@ export type StaffCountLocation = {
   lotNumber?: string | null;
   expirationDate?: string | null;
   actualQty: number | null;
+  /** Gross weight in the line's weight unit, when the bottles were weighed. */
+  actualWeight?: number | null;
+  bottleCount?: number | null;
   counted: boolean;
 };
 
@@ -37,6 +40,8 @@ export type StaffCountLine = {
   inventoryItemId: number;
   name: string | null;
   code: string | null;
+  measure?: 'volume' | 'weight' | 'both';
+  weightUnit?: 'g' | 'oz';
   aliases?: string[];
   requireExpirationOnLots?: boolean;
   requireLotNumber?: boolean;
@@ -127,6 +132,8 @@ export async function patchCountLine(
     lotNumber?: string | null;
     expirationDate?: string | null;
     actualQty: number | null;
+    actualWeight?: number | null;
+    bottleCount?: number | null;
   }[]
 ): Promise<StaffCountLine> {
   const { data } = await http.patch<StaffCountLine>(

@@ -105,7 +105,7 @@ export default function WasteAdjustPage() {
     setBusy(true);
     setError(null);
     try {
-      await recordWaste(practiceId, {
+      const saved = await recordWaste(practiceId, {
         branchId: Number(branchId),
         inventoryItemId: item.id,
         fromBranchLocationId: Number(fromLoc),
@@ -116,13 +116,17 @@ export default function WasteAdjustPage() {
         lotNumber: lot.trim() || null,
         inventoryLotBalanceId: lotId,
       });
-      setToast('Adjustment recorded');
+      setToast(
+        saved?.negativeWarning
+          ? `Adjustment recorded. ${saved.negativeWarning}`
+          : 'Adjustment recorded'
+      );
       setItem(null);
       setQty('1');
       setNotes('');
       setLot('');
       setLotId(null);
-      window.setTimeout(() => setToast(null), 2500);
+      window.setTimeout(() => setToast(null), saved?.negativeWarning ? 10000 : 2500);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to record');
     } finally {

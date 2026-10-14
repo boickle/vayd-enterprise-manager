@@ -26,6 +26,8 @@ type DraftCell = {
   lotNumber: string;
   expirationDate: string;
   actualQty: string;
+  actualWeight: string;
+  bottleCount: string;
   lockedLot: boolean;
 };
 
@@ -66,6 +68,8 @@ function cellsFromLine(line: StaffCountLine): DraftCell[] {
     lotNumber: loc.lotNumber ?? '',
     expirationDate: dateInputValue(loc.expirationDate),
     actualQty: loc.actualQty == null ? '' : String(loc.actualQty),
+    actualWeight: loc.actualWeight == null ? '' : String(loc.actualWeight),
+    bottleCount: loc.bottleCount == null ? '' : String(loc.bottleCount),
     lockedLot: loc.inventoryLotBalanceId != null,
   }));
 }
@@ -91,7 +95,12 @@ function lineHasCountedCells(line: StaffCountLine): boolean {
 function draftReadyToSave(cells: DraftCell[]): boolean {
   let counted = 0;
   for (const cell of cells) {
-    if (cell.actualQty.trim() === '') continue;
+    const weight = parseQty(cell.actualWeight);
+    if (Number.isNaN(weight)) return false;
+    if (cell.actualQty.trim() === '') {
+      if (weight != null) counted += 1;
+      continue;
+    }
     const qty = parseQty(cell.actualQty);
     if (qty == null || Number.isNaN(qty)) return false;
     counted += 1;
@@ -216,13 +225,24 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         throw new Error(`${line.name ?? 'Item'} must have a number 0 or greater`);
       }
       const lotNumber = cell.lotNumber.trim();
+      const weighs = line.measure === 'weight' || line.measure === 'both';
+      const weight = weighs ? parseQty(cell.actualWeight) : null;
+      if (Number.isNaN(weight)) {
+        throw new Error(`${line.name ?? 'Item'} weight must be a number 0 or greater`);
+      }
+      const bottles = cell.bottleCount.trim() === '' ? 1 : Number(cell.bottleCount);
+      if (weight != null && (!Number.isInteger(bottles) || bottles < 1)) {
+        throw new Error(`${line.name ?? 'Item'} bottles must be a whole number of 1 or more`);
+      }
       return {
         ...(cell.id != null ? { id: cell.id } : {}),
         branchLocationId: cell.branchLocationId,
         inventoryLotBalanceId: cell.inventoryLotBalanceId,
         lotNumber: lotNumber || null,
         expirationDate: cell.expirationDate.trim() || null,
-        actualQty: raw === '' ? null : qty,
+        // Weight-only items: the server works out mL from the weight.
+        actualQty: raw === '' || (line.measure === 'weight' && weight != null) ? null : qty,
+        ...(weight != null ? { actualWeight: weight, bottleCount: bottles } : {}),
       };
     });
   }
@@ -254,6 +274,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             lotNumber: '',
             expirationDate: '',
             actualQty: '',
+            actualWeight: '',
+            bottleCount: '',
             lockedLot: false,
           },
         ],
@@ -611,19 +633,63 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                       </td>
                       <td>
                         {editing && draft ? (
-                          <input
-                            className="settings-input par-levels-input"
-                            inputMode="decimal"
-                            disabled={busy || savingId === line.id}
-                            value={draft.actualQty}
-                            onChange={(e) =>
-                              updateCell(line.id, draft.key, { actualQty: e.target.value })
-                            }
-                            placeholder="—"
-                            aria-label={`${line.name ?? 'Item'} ${locName(locId)} count`}
-                          />
+                          <>
+                            {line.measure !== 'weight' ? (
+                              <input
+                                className="settings-input par-levels-input"
+                                inputMode="decimal"
+                                disabled={busy || savingId === line.id}
+                                value={draft.actualQty}
+                                onChange={(e) =>
+                                  updateCell(line.id, draft.key, { actualQty: e.target.value })
+                                }
+                                placeholder={line.measure === 'both' ? 'mL' : '—'}
+                                aria-label={`${line.name ?? 'Item'} ${locName(locId)} count`}
+                              />
+                            ) : null}
+                            {line.measure === 'weight' || line.measure === 'both' ? (
+                              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                                <input
+                                  className="settings-input par-levels-input"
+                                  inputMode="decimal"
+                                  disabled={busy || savingId === line.id}
+                                  value={draft.actualWeight}
+                                  onChange={(e) =>
+                                    updateCell(line.id, draft.key, {
+                                      actualWeight: e.target.value,
+                                    })
+                                  }
+                                  placeholder={`Weight (${line.weightUnit ?? 'g'})`}
+                                  aria-label={`${line.name ?? 'Item'} ${locName(locId)} weight`}
+                                />
+                                <input
+                                  className="settings-input par-levels-input"
+                                  inputMode="numeric"
+                                  disabled={busy || savingId === line.id}
+                                  value={draft.bottleCount}
+                                  onChange={(e) =>
+                                    updateCell(line.id, draft.key, { bottleCount: e.target.value })
+                                  }
+                                  placeholder="1"
+                                  title="Bottles weighed together"
+                                  aria-label={`${line.name ?? 'Item'} ${locName(locId)} bottles weighed`}
+                                  style={{ width: 44 }}
+                                />
+                              </div>
+                            ) : null}
+                          </>
                         ) : saved?.actualQty != null ? (
-                          displayQty(saved.actualQty)
+                          <>
+                            {displayQty(saved.actualQty)}
+                            {saved.actualWeight != null ? (
+                              <div className="settings-muted" style={{ fontSize: 12 }}>
+                                weighed {saved.actualWeight} {line.weightUnit ?? 'g'}
+                                {saved.bottleCount && saved.bottleCount > 1
+                                  ? ` · ${saved.bottleCount} bottles`
+                                  : ''}
+                              </div>
+                            ) : null}
+                          </>
                         ) : (
                           <span className="settings-muted" title="Enter what you count on the shelf">
                             enter count

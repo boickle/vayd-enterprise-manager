@@ -196,8 +196,14 @@ export default function ParTransferModal({
       return;
     }
     if (quantity > onHand) {
-      setError(`Only ${onHand} on hand at the source`);
-      return;
+      const ok = await appConfirm({
+        title: 'More than the source shows on hand',
+        message: `Only ${onHand} on hand at the source. Moving ${quantity} will leave it below zero — move anyway?`,
+        confirmLabel: 'Move anyway',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
     }
     const sourceShort = fromLoc ? shortQty(fromLoc.quantityOnHand, fromLoc.parLevel) : null;
     const officeShort = fromLocations.some((l) => shortQty(l.quantityOnHand, l.parLevel) != null);

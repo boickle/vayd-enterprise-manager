@@ -19,6 +19,8 @@ const ACTION_LABELS: Record<string, string> = {
   adjustment_increase: 'Adjusted up',
   adjustment_decrease: 'Adjusted down',
   expired: 'Wasted / expired',
+  opening_increase: 'First count (opening balance)',
+  opening_decrease: 'First count (opening balance)',
 };
 
 function actorLabel(row: InventoryStockMovement): string {

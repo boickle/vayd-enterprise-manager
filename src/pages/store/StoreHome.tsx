@@ -203,6 +203,15 @@ export default function StoreHome() {
                     : `$${Number(item.priceFrom).toFixed(2)}`
                   : 'See details'}
               </div>
+              {item.variants.length > 0 &&
+              item.variants.every((variant) => variant.availability?.status === 'out_of_stock') ? (
+                <div className="vayd-store__badge vayd-store__badge--out">Out of stock</div>
+              ) : item.variants.length > 0 &&
+                item.variants.every(
+                  (variant) => (variant.availability?.status ?? 'available') !== 'available',
+                ) ? (
+                <div className="vayd-store__badge vayd-store__badge--out">Backordered</div>
+              ) : null}
               {item.featuredOnHome ? (
                 <div className="vayd-store__badge vayd-store__badge--on">Featured</div>
               ) : null}

@@ -28,6 +28,11 @@ type ClinicalDraft = {
   isVaccine: boolean;
   dispenseNote: string;
   isControlled: boolean;
+  controlledMeasure: 'volume' | 'weight' | 'both';
+  weightUnit: 'g' | 'oz';
+  gramsPerMl: string;
+  /** In the draft's weight unit. */
+  emptyBottleWeight: string;
   isMicrochip: boolean;
   hasClientNotes: boolean;
   clientNote: string;
@@ -100,6 +105,8 @@ const FLAG_HELP: Record<string, string> = {
   autoshipOffered: 'Clients can set a renewal frequency when they order this item.',
 };
 
+const GRAMS_PER_OZ = 28.349523125;
+
 function numOrNull(s: string): number | null {
   const t = s.trim();
   if (!t) return null;
@@ -129,6 +136,22 @@ function fromItem(item: InventoryItem): ClinicalDraft {
     isVaccine: item.isVaccine === true,
     dispenseNote: strField(item.dispenseNote),
     isControlled: item.isControlled === true,
+    controlledMeasure:
+      item.controlledMeasure === 'weight' || item.controlledMeasure === 'both'
+        ? item.controlledMeasure
+        : 'volume',
+    weightUnit: item.weightUnit === 'oz' ? 'oz' : 'g',
+    gramsPerMl: strField(item.gramsPerMl),
+    emptyBottleWeight:
+      item.emptyBottleWeightGrams != null && item.emptyBottleWeightGrams !== ''
+        ? String(
+            Math.round(
+              (Number(item.emptyBottleWeightGrams) /
+                (item.weightUnit === 'oz' ? GRAMS_PER_OZ : 1)) *
+                1000
+            ) / 1000
+          )
+        : '',
     isMicrochip: item.isMicrochip === true,
     hasClientNotes: item.hasClientNotes === true,
     clientNote: strField(item.clientNote),
@@ -373,6 +396,17 @@ export default function CatalogInventoryClinicalFields({
           ? draft.dispenseNote.trim() || null
           : null,
         isControlled: draft.isControlled,
+        ...(draft.isControlled
+          ? {
+              controlledMeasure: draft.controlledMeasure,
+              weightUnit: draft.weightUnit,
+              gramsPerMl: numOrNull(draft.gramsPerMl),
+              emptyBottleWeightGrams: (() => {
+                const n = numOrNull(draft.emptyBottleWeight);
+                return n == null ? null : n * (draft.weightUnit === 'oz' ? GRAMS_PER_OZ : 1);
+              })(),
+            }
+          : {}),
         isMicrochip: draft.isMicrochip,
         hasClientNotes: draft.hasClientNotes,
         clientNote: draft.hasClientNotes ? draft.clientNote.trim() || null : null,
@@ -756,9 +790,13 @@ export default function CatalogInventoryClinicalFields({
               checked={draft.isControlled}
               label="Controlled"
               help={FLAG_HELP.isControlled}
-              onChange={(checked) =>
-                setDraft((d) => ({ ...d, isControlled: checked }))
-              }
+          onChange={(checked) =>
+            setDraft((d) => ({
+              ...d,
+              isControlled: checked,
+              ...(checked ? { trackLots: true, requireLotNumber: true } : {}),
+            }))
+          }
             />
             <FlagCheckbox
               checked={draft.isMicrochip}
@@ -874,6 +912,74 @@ export default function CatalogInventoryClinicalFields({
                 <option value="yearly">Yearly</option>
               </select>
             </label>
+      ) : null}
+
+      {draft.isControlled ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12,
+            marginBottom: 12,
+          }}
+        >
+          <label className="settings-label">
+            Track by
+            <FlagHelp text="How staff count this drug. Stock is always kept in mL; a weight is converted using grams per mL and the empty-bottle weight. Both shows both boxes and flags when they disagree." />
+            <select
+              className="settings-input"
+              value={draft.controlledMeasure}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  controlledMeasure: e.target.value as ClinicalDraft['controlledMeasure'],
+                }))
+              }
+            >
+              <option value="volume">Volume (mL)</option>
+              <option value="weight">Weight</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          {draft.controlledMeasure !== 'volume' ? (
+            <>
+              <label className="settings-label">
+                Weigh in
+                <select
+                  className="settings-input"
+                  value={draft.weightUnit}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, weightUnit: e.target.value as 'g' | 'oz' }))
+                  }
+                >
+                  <option value="g">Grams</option>
+                  <option value="oz">Ounces</option>
+                </select>
+              </label>
+              <label className="settings-label">
+                Grams per mL
+                <FlagHelp text="VetSnap's mass-to-quantity conversion. Weigh the bottle, draw 10 mL, weigh again: grams lost ÷ 10. Leave blank for 1 (water)." />
+                <input
+                  className="settings-input"
+                  inputMode="decimal"
+                  placeholder="1"
+                  value={draft.gramsPerMl}
+                  onChange={(e) => setDraft((d) => ({ ...d, gramsPerMl: e.target.value }))}
+                />
+              </label>
+              <label className="settings-label">
+                Typical empty bottle ({draft.weightUnit})
+                <FlagHelp text="Used only for bottles with no weight recorded on their lot (for example, stock already on the shelf at go-live). Bottles weighed at Receive use their own weight." />
+                <input
+                  className="settings-input"
+                  inputMode="decimal"
+                  value={draft.emptyBottleWeight}
+                  onChange={(e) => setDraft((d) => ({ ...d, emptyBottleWeight: e.target.value }))}
+                />
+              </label>
+            </>
+          ) : null}
+        </div>
           ) : null}
 
           {draft.hasClientNotes && (

@@ -307,7 +307,7 @@ a.pims-clients__petname:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 16px 20px;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -329,7 +329,7 @@ a.pims-clients__petname:hover {
 }
 
 .pims-add-client-modal__form {
-  padding: 16px;
+  padding: 20px;
   overflow-x: hidden;
   overflow-y: auto;
   min-height: 0;
@@ -518,14 +518,19 @@ a.pims-clients__petname:hover {
 }
 
 .pims-add-client-modal__ask {
-  padding: 4px 0 8px;
+  padding: 20px 20px 24px;
 }
 
 .pims-add-client-modal__ask p {
-  margin: 0 0 16px;
+  margin: 0 0 20px;
   font-size: 15px;
-  line-height: 1.45;
-  color: #1c1917;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.pims-add-client-modal__ask .pims-add-client-modal__actions {
+  margin-top: 0;
+  padding-top: 4px;
 }
 
 .pims-add-patient__mode {

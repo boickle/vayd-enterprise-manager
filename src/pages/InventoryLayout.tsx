@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
+import { useCan } from '../permissions/PermissionContext';
 import { isInventoryOpsNavPath } from '../utils/catalogInventoryNav';
 import './Settings.css';
 
@@ -99,6 +100,8 @@ export default function InventoryLayout({
   basePath = '/schedule/inventory',
 }: Props) {
   const isAdmin = useIsInventoryAdmin();
+  const canBaselineCount = useCan('inventory.count.baseline', 'all');
+  const canManagePars = useCan('inventory.par.manage', 'all');
   const location = useLocation();
 
   const onAdminPath =
@@ -138,7 +141,16 @@ export default function InventoryLayout({
     );
   const countItems: NavItem[] = [
     { to: `${basePath}/par-levels`, label: 'Par Levels' },
+    ...(canManagePars
+      ? [
+          { to: `${basePath}/par-review`, label: 'Par review' },
+          { to: `${basePath}/par-seed`, label: 'Set par levels (bulk)' },
+        ]
+      : []),
     { to: `${basePath}/counts`, label: 'Weekly count list' },
+    ...(canBaselineCount
+      ? [{ to: `${basePath}/first-counts`, label: 'First / annual counts' }]
+      : []),
     ...(isAdmin
       ? [
           { to: `${basePath}/count-report`, label: 'Count report' },

@@ -31,6 +31,13 @@ export type InventoryItem = {
   shippable?: boolean;
   autoshipRecommendedFrequency?: string | null;
   requiresDoctorApproval?: boolean;
+  /** Mail order lines default to "ordered on another site" (drop-shipped). */
+  passThroughByDefault?: boolean;
+  /** Online store availability; `stock` follows the online-store fulfillment location. */
+  storeAvailability?: 'always' | 'out_of_stock' | 'stock';
+  storeBackInStockDate?: string | null;
+  storeAllowBackorder?: boolean;
+  storeStockBuffer?: number;
   prohibitedCarriers?: string[] | null;
   /** S3 key for catalog image (display via GET …/image). */
   imageUrl?: string | null;
@@ -54,6 +61,11 @@ export type InventoryItem = {
   isDispensable?: boolean;
   dispenseNote?: string | null;
   isControlled?: boolean;
+  controlledMeasure?: 'volume' | 'weight' | 'both' | null;
+  weightUnit?: 'g' | 'oz' | null;
+  /** Grams per 1 mL. Null = 1. */
+  gramsPerMl?: number | string | null;
+  emptyBottleWeightGrams?: number | string | null;
   isMicrochip?: boolean;
   hasClientNotes?: boolean;
   clientNote?: string | null;

@@ -42,6 +42,8 @@ export type InventoryShipmentLine = {
   costPerUnit: number | string | null;
   lotNumber: string | null;
   expirationDate: string | null;
+  /** One sealed bottle, for controlled items counted by weight. */
+  fullBottleWeightGrams?: number | string | null;
   toBranchLocationId: number;
   vendorSku: string | null;
   barcodeScanned: string | null;
@@ -370,7 +372,7 @@ export async function transferBatch(
     note?: string | null;
   }
 ) {
-  const { data } = await http.post(
+  const { data } = await http.post<{ id: number; negativeWarning?: string | null }[]>(
     `/practice/${practiceId}/branches/${branchId}/inventory-transfers/batch`,
     body
   );
@@ -433,7 +435,7 @@ export async function recordWaste(
     inventoryLotBalanceId?: number | null;
   }
 ) {
-  const { data } = await http.post(
+  const { data } = await http.post<{ id: number; negativeWarning?: string | null }>(
     `/practice/${practiceId}/inventory-waste/events`,
     body
   );

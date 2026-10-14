@@ -65,6 +65,8 @@ function revokeInvoicePagePreviews(pages: InvoicePageDraft[]) {
   }
 }
 
+const GRAMS_PER_OZ = 28.349523125;
+
 type DraftLine = InventoryShipmentLine;
 
 function invoiceQtyOf(line: ParsedInvoiceLine): number {
@@ -223,7 +225,10 @@ export default function ReceiveShipmentPage() {
     requireLotNumber?: boolean;
     sellUnitType?: string | null;
     sellUnitTypeDetail?: string | null;
+    /** Set when this controlled item is counted by weight. */
+    weightUnit?: 'g' | 'oz' | null;
   } | null>(null);
+  const [editBottleWeight, setEditBottleWeight] = useState('');
 
   const headerReady =
     branchId !== '' &&
@@ -1079,17 +1084,29 @@ export default function ReceiveShipmentPage() {
     setEditLot(line.lotNumber ?? '');
     setEditLotId(null);
     setEditExp(line.expirationDate ? String(line.expirationDate).slice(0, 10) : '');
+    setEditBottleWeight('');
     setEditCostMode('perUnit');
     setEditCost(line.costPerUnit != null ? String(line.costPerUnit) : '');
     setEditItemMeta(null);
     try {
       const item = await loadInventoryItem(practiceId, line.inventoryItemId);
+      const weighs =
+        item.isControlled === true &&
+        (item.controlledMeasure === 'weight' || item.controlledMeasure === 'both');
+      const weightUnit = item.weightUnit === 'oz' ? 'oz' : 'g';
       setEditItemMeta({
         trackLots: item.trackLots === true,
         requireLotNumber: item.requireLotNumber === true,
         sellUnitType: item.sellUnitType ?? null,
         sellUnitTypeDetail: item.sellUnitTypeDetail ?? null,
+        weightUnit: weighs ? weightUnit : null,
       });
+      if (weighs && line.fullBottleWeightGrams != null) {
+        const grams = Number(line.fullBottleWeightGrams);
+        setEditBottleWeight(
+          String(Math.round((weightUnit === 'oz' ? grams / GRAMS_PER_OZ : grams) * 1000) / 1000)
+        );
+      }
     } catch {
       setEditItemMeta({});
     }
@@ -1125,6 +1142,17 @@ export default function ReceiveShipmentPage() {
       setError('Could not calculate cost per unit');
       return;
     }
+    let fullBottleWeightGrams: number | null | undefined;
+    if (editItemMeta?.weightUnit) {
+      const raw = editBottleWeight.trim();
+      const n = raw === '' ? null : Number(raw);
+      if (n != null && (!Number.isFinite(n) || n <= 0)) {
+        setError('Full bottle weight must be a positive number');
+        return;
+      }
+      fullBottleWeightGrams =
+        n == null ? null : editItemMeta.weightUnit === 'oz' ? n * GRAMS_PER_OZ : n;
+    }
 
     setBusy(true);
     setError(null);
@@ -1136,6 +1164,7 @@ export default function ReceiveShipmentPage() {
         lotNumber: editLot.trim() || null,
         expirationDate: editExp.trim() || null,
         toBranchLocationId: line.toBranchLocationId,
+        ...(fullBottleWeightGrams !== undefined ? { fullBottleWeightGrams } : {}),
       });
       await refreshLines(shipment.id);
       cancelEditLine();
@@ -2229,6 +2258,21 @@ export default function ReceiveShipmentPage() {
                             />
                           </div>
                         ) : null}
+                          {editItemMeta?.weightUnit ? (
+                            <label className="settings-label" style={{ maxWidth: 260 }}>
+                              Full bottle weight ({editItemMeta.weightUnit})
+                              <input
+                                className="settings-input"
+                                inputMode="decimal"
+                                value={editBottleWeight}
+                                onChange={(e) => setEditBottleWeight(e.target.value)}
+                                placeholder="Weigh one sealed bottle"
+                              />
+                              <span className="settings-muted" style={{ fontSize: 12 }}>
+                                Used to work out the empty bottle so counts by weight convert to mL.
+                              </span>
+                            </label>
+                          ) : null}
                         <div style={{ gridColumn: '1 / -1' }}>
                           <div className="settings-label" style={{ marginBottom: 6 }}>
                             Cost (from invoice) *

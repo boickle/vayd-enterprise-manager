@@ -340,6 +340,19 @@
   font-weight: 600;
   color: #b45309;
 }
+.vayd-store__stock {
+  margin: -4px 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.vayd-store__stock.is-out { color: #b91c1c; }
+.vayd-store__stock.is-backorder,
+.vayd-store__stock.is-low { color: #b45309; }
+.vayd-store__badge.vayd-store__badge--out {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
 .vayd-store__card-body { padding: 12px 14px 16px; }
 .vayd-store__card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
 .vayd-store__price { font-weight: 700; color: rgb(15, 118, 110); }

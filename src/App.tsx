@@ -60,6 +60,9 @@ import WasteAdjustPage from './pages/WasteAdjustPage';
 import InventoryActivityPage from './pages/InventoryActivityPage';
 import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
 import InventoryCountsPage from './pages/InventoryCountsPage';
+import FirstCountsPage from './pages/FirstCountsPage';
+import ParSeedPage from './pages/ParSeedPage';
+import ParReviewPage from './pages/ParReviewPage';
 import InventoryCountReportPage from './pages/InventoryCountReportPage';
 import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
 import InventoryExpiringReportPage from './pages/InventoryExpiringReportPage';
@@ -813,8 +816,11 @@ export default function App() {
                         element={<Navigate to="/schedule/analytics/inventory-totals" replace />}
                       />
                       <Route path="par-levels" element={<InventoryParLevelsPage />} />
+                      <Route path="par-seed" element={<ParSeedPage />} />
+                      <Route path="par-review" element={<ParReviewPage />} />
                       <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
                       <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
+                      <Route path="first-counts" element={<FirstCountsPage />} />
                       <Route path="count-report" element={<InventoryCountReportPage />} />
                       <Route path="expiring" element={<InventoryExpiringReportPage />} />
                       <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />

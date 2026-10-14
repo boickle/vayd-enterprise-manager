@@ -294,6 +294,20 @@
   background: var(--surface);
 }
 
+/** Long entry tables: scroll the body, keep column headers visible. */
+.settings-table-container--sticky-head {
+  overflow: auto;
+  max-height: min(72vh, 720px);
+}
+
+.settings-table-container--sticky-head .settings-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fdfa;
+  box-shadow: 0 1px 0 var(--border);
+}
+
 .settings-table {
   width: 100%;
   border-collapse: collapse;

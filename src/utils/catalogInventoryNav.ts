@@ -5,7 +5,10 @@ export const INVENTORY_HOME = '/schedule/inventory/par-levels';
 
 const PHARMACY_SEGMENTS = new Set([
   'par-levels',
+  'par-seed',
+  'par-review',
   'counts',
+  'first-counts',
   'full-count',
   'count-report',
   'expiring',

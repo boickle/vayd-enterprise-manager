@@ -94,7 +94,49 @@ export type StoreVariant = {
   approvalTag?: 'approved' | 'needs_doctor_approval';
   tagalongs?: StoreTagalongPreview[];
   reminderCadence?: StoreReminderCadence | null;
+  availability?: StoreVariantAvailability;
 };
+
+export type StoreAvailabilityMode = 'always' | 'out_of_stock' | 'stock';
+
+export type StoreVariantAvailability = {
+  /** `backorder` = unavailable but clients may still order. */
+  status: 'available' | 'out_of_stock' | 'backorder';
+  /** Units left to sell; null = unlimited. */
+  available: number | null;
+  backInStockDate: string | null;
+};
+
+export type StoreAvailabilityDetail = StoreVariantAvailability & {
+  mode: StoreAvailabilityMode;
+  /** Only when tied to stock: counts at the online-store fulfillment location. */
+  onHand: number | null;
+  reserved: number | null;
+  buffer: number;
+  locationName: string | null;
+  /** Tied to stock, but the shelf hasn't had its first count: sold as always available. */
+  notYetCounted?: boolean;
+};
+
+export async function getStoreItemAvailability(practiceId: number, inventoryItemId: number) {
+  const { data } = await http.get<StoreAvailabilityDetail | null>(
+    `/practice/${practiceId}/online-store/items/${inventoryItemId}/availability`,
+  );
+  return data ?? null;
+}
+
+/** Variant can go in the cart (available, or unavailable with backorder allowed). */
+export function storeVariantOrderable(variant?: Pick<StoreVariant, 'availability'> | null): boolean {
+  return variant?.availability?.status !== 'out_of_stock';
+}
+
+export function formatBackInStock(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const d = new Date(`${date.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime())
+    ? null
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 export type StoreReminderCadence = {
   dueAt: number;
@@ -165,7 +207,8 @@ export type MailApprovalNote = {
     | 'sig'
     | 'contacted'
     | 'thanks'
-    | 'check_override';
+    | 'check_override'
+    | 'passed_through';
   notes?: string | null;
   actorName?: string | null;
   assignedToName?: string | null;
@@ -210,7 +253,26 @@ export type MailOrderLine = {
   checkedAt?: string | null;
   checkedByEmployeeId?: number | null;
   checkedByName?: string | null;
+  /** `external` = passed through: ordered on another site that drop-ships to the client. Null until filled. */
+  fulfillmentSource?: MailFulfillmentSource | null;
+  externalVendor?: string | null;
+  /** Order number on the other site. */
+  externalOrderRef?: string | null;
+  externalOrderedAt?: string | null;
+  externalOrderedByName?: string | null;
+  /** Catalog item is usually drop-shipped; pre-selects "ordered on another site" at fill. */
+  passThroughByDefault?: boolean;
+  defaultExternalVendor?: string | null;
+  /** Unfilled line whose store item is marked out of stock, or the mail order shelf can't cover open orders. */
+  stockFlag?: 'out_of_stock' | 'short' | null;
+  stockBackInStockDate?: string | null;
 };
+
+export type MailFulfillmentSource = 'stock' | 'external';
+
+export function mailLinePassedThrough(line: Pick<MailOrderLine, 'fulfillmentSource'>): boolean {
+  return line.fulfillmentSource === 'external';
+}
 
 export type MailPharmacyStage =
   | 'needs_approval'
@@ -878,6 +940,12 @@ export async function pharmacyMailAction(
       lineId: number;
       inventoryLotBalanceId?: number | null;
       lotNumber?: string | null;
+    }>;
+    lineSources?: Array<{
+      lineId: number;
+      fulfillmentSource: MailFulfillmentSource;
+      externalVendor?: string | null;
+      externalOrderRef?: string | null;
     }>;
   },
 ) {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  getUncountedShelfLot,
   listInventoryLots,
   type InventoryLotBalance,
 } from '../../api/branchInventory';
@@ -95,6 +96,8 @@ export default function StockLotPicker({
   const [newLot, setNewLot] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [shelfLot, setShelfLot] = useState<{ id: number; lotNumber: string } | null>(null);
+  const [shelfLotError, setShelfLotError] = useState<string | null>(null);
 
   useEffect(() => {
     if (inventoryItemId == null) {
@@ -149,8 +152,7 @@ export default function StockLotPicker({
     const exp = dateInputValue(expirationDate);
     if (!exp) return;
     const match = lots.find(
-      (lot) =>
-        (lot.lotNumber ?? '').trim() === '' && dateInputValue(lot.expirationDate) === exp
+      (lot) => (lot.lotNumber ?? '').trim() === '' && dateInputValue(lot.expirationDate) === exp
     );
     if (!match) return;
     setNewLot(false);
@@ -188,6 +190,12 @@ export default function StockLotPicker({
   const showEditableLotFields =
     allowNew && (newLot || (selectedLotId == null && lotNumber.trim() !== ''));
   const canAddLot = allowAddLot && !allowNew && !disabled;
+  const offerShelfStock =
+    !allowNew && !requireLotNumber && locationId != null && !loading && lots.length === 0;
+  // The no-lot bucket sits at 0 or below, so the lot list (on-hand only) leaves it out.
+  const shelfLotId =
+    shelfLot?.id ?? (selectedLotId != null && lotNumber === 'UNASSIGNED' ? selectedLotId : null);
+  const shelfLotShown = shelfLotId != null && !byId.has(shelfLotId);
 
   return (
     <div className={className}>
@@ -214,6 +222,19 @@ export default function StockLotPicker({
         required={required && !allowNew}
         onChange={(e) => {
           const value = e.target.value;
+          if (value === 'shelf') {
+            if (locationId == null) return;
+            setShelfLotError(null);
+            void getUncountedShelfLot(practiceId, inventoryItemId, locationId)
+              .then((lot) => {
+                setShelfLot({ id: lot.id, lotNumber: lot.lotNumber });
+                onChange({ lotId: lot.id, lotNumber: lot.lotNumber, expirationDate: null });
+              })
+              .catch((err: unknown) =>
+                setShelfLotError(err instanceof Error ? err.message : 'Could not use shelf stock')
+              );
+            return;
+          }
           if (value === 'new') {
             setNewLot(true);
             onChange({
@@ -227,6 +248,10 @@ export default function StockLotPicker({
           const id = value ? Number(value) : null;
           if (id == null || !Number.isFinite(id)) {
             onChange({ lotId: null, lotNumber: '', expirationDate: null });
+            return;
+          }
+          if (id === shelfLotId && !byId.has(id)) {
+            onChange({ lotId: id, lotNumber: 'UNASSIGNED', expirationDate: null });
             return;
           }
           const lot = byId.get(id);
@@ -255,8 +280,18 @@ export default function StockLotPicker({
             {lotLabel(lot, showLocation)}
           </option>
         ))}
+        {shelfLotShown ? (
+          <option value={shelfLotId}>Existing stock (no lot recorded)</option>
+        ) : offerShelfStock ? (
+          <option value="shelf">Existing stock — shelf not counted yet</option>
+        ) : null}
         {allowNew ? <option value="new">New lot…</option> : null}
       </select>
+      {shelfLotError ? (
+        <p className="settings-muted" style={{ color: '#b45309', margin: '4px 0 0' }}>
+          {shelfLotError}
+        </p>
+      ) : null}
       {showEditableLotFields ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
           <label className="settings-label" style={{ marginBottom: 0 }}>

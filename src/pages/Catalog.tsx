@@ -33,6 +33,9 @@ import {
   createOnlineStoreProduct,
   createStoreCategory,
   getCatalogStoreListing,
+  getStoreItemAvailability,
+  type StoreAvailabilityDetail,
+  type StoreAvailabilityMode,
   listStoreCategories,
   patchOnlineStoreItem,
   patchOnlineStoreListing,
@@ -835,6 +838,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
 
+  const [storeStock, setStoreStock] = useState<StoreAvailabilityDetail | null>(null);
   const [catalogSaving, setCatalogSaving] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [unitsSaving, setUnitsSaving] = useState(false);
@@ -844,6 +848,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     shippable: false,
     showOnOnlineStore: false,
     requiresDoctorApproval: false,
+    passThroughByDefault: false,
+    storeAvailability: 'always' as StoreAvailabilityMode,
+    storeBackInStockDate: '',
+    storeAllowBackorder: false,
+    storeStockBuffer: '0',
     autoshipOffered: false,
     autoshipFrequency: 'monthly',
     onlineStorePrice: '',
@@ -1038,6 +1047,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       shippable: false,
       showOnOnlineStore: false,
       requiresDoctorApproval: false,
+      passThroughByDefault: false,
+      storeAvailability: 'always',
+      storeBackInStockDate: '',
+      storeAllowBackorder: false,
+      storeStockBuffer: '0',
       autoshipOffered: false,
       autoshipFrequency: 'monthly',
       onlineStorePrice:
@@ -1096,6 +1110,21 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }, [detail, practiceId, selected?.itemId]);
 
   useEffect(() => {
+    setStoreStock(null);
+    if (!detail || detail.itemType !== 'inventory' || !selected?.itemId) return;
+    if (((detail.item as InventoryItem).storeAvailability || 'always') !== 'stock') return;
+    let cancelled = false;
+    void getStoreItemAvailability(practiceId, selected.itemId)
+      .then((row) => {
+        if (!cancelled) setStoreStock(row);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [detail, practiceId, selected?.itemId]);
+
+  useEffect(() => {
     if (!detail || detail.itemType !== 'inventory') return;
     const item = detail.item as InventoryItem;
     const raw = item.showOnOnlineStore as unknown;
@@ -1105,6 +1134,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       shippable: shipRaw === true || shipRaw === 'true' || shipRaw === 1 || shipRaw === '1',
       showOnOnlineStore: raw === true || raw === 'true' || raw === 1 || raw === '1',
       requiresDoctorApproval: item.requiresDoctorApproval === true,
+      passThroughByDefault: item.passThroughByDefault === true,
+      storeAvailability: item.storeAvailability || 'always',
+      storeBackInStockDate: (item.storeBackInStockDate || '').slice(0, 10),
+      storeAllowBackorder: item.storeAllowBackorder === true,
+      storeStockBuffer: String(item.storeStockBuffer ?? 0),
       autoshipOffered: Boolean(item.autoshipRecommendedFrequency),
       autoshipFrequency: item.autoshipRecommendedFrequency || 'monthly',
       onlineStorePrice:
@@ -1953,8 +1987,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         barcode: createForm.barcode.trim() || null,
         defaultQuantity: optionalNumber(createForm.defaultQuantity),
         requireExpirationOnLots: true,
-        requireLotNumber: createForm.isVaccine ? true : createForm.requireLotNumber,
-        trackLots: createForm.isVaccine ? true : createForm.trackLots,
+        requireLotNumber:
+          createForm.isVaccine || createForm.isControlled ? true : createForm.requireLotNumber,
+        trackLots: createForm.isVaccine || createForm.isControlled ? true : createForm.trackLots,
         isVaccine: createForm.isVaccine,
         isDispensable: createForm.isMedication,
         dispenseNote: createForm.isMedication
@@ -2123,6 +2158,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           shippable: catalogDraft.shippable,
           showOnOnlineStore: catalogDraft.showOnOnlineStore,
           requiresDoctorApproval: catalogDraft.requiresDoctorApproval,
+          passThroughByDefault: catalogDraft.passThroughByDefault,
+          storeAvailability: catalogDraft.storeAvailability,
+          storeBackInStockDate: catalogDraft.storeBackInStockDate || null,
+          storeAllowBackorder: catalogDraft.storeAllowBackorder,
+          storeStockBuffer: Math.max(0, Math.floor(Number(catalogDraft.storeStockBuffer) || 0)),
           autoshipRecommendedFrequency: catalogDraft.autoshipOffered
             ? catalogDraft.autoshipFrequency || 'monthly'
             : null,
@@ -2131,6 +2171,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               ? null
               : Number(catalogDraft.onlineStorePrice),
         });
+        if (catalogDraft.storeAvailability === 'stock') {
+          void getStoreItemAvailability(practiceId, selected.itemId)
+            .then(setStoreStock)
+            .catch(() => undefined);
+        } else {
+          setStoreStock(null);
+        }
         await patchOnlineStoreItem(practiceId, selected.itemId, {
           listed: catalogDraft.showOnOnlineStore,
           storeCategory: catalogDraft.storeCategory.trim() || null,
@@ -3204,6 +3251,19 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   requireLotNumber={
                     (detail.item as InventoryItem).requireLotNumber === true
                   }
+                        weightUnit={(() => {
+                          const it = detail.item as InventoryItem;
+                          return it.isControlled === true &&
+                            (it.controlledMeasure === 'weight' || it.controlledMeasure === 'both')
+                            ? it.weightUnit === 'oz'
+                              ? 'oz'
+                              : 'g'
+                            : null;
+                        })()}
+                        bottleMl={(() => {
+                          const n = Number((detail.item as InventoryItem).unitsPerPackage);
+                          return Number.isFinite(n) && n > 0 ? n : null;
+                        })()}
                   onLotsChanged={() => {
                     if (stockItemId != null) void loadBranchStock(stockItemId, branches);
                     void reloadMovements();
@@ -4089,6 +4149,142 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                             />
                             Autoship
                           </label>
+                                <label
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    marginBottom: 12,
+                                    cursor: 'pointer',
+                                    fontSize: 14,
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={catalogDraft.passThroughByDefault}
+                                    onChange={(e) =>
+                                      setCatalogDraft((d) => ({
+                                        ...d,
+                                        passThroughByDefault: e.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  Usually drop-shipped from another site (mail orders start as
+                                  “Ordered on another site”)
+                                </label>
+                                <label className="settings-label" style={{ marginBottom: 12 }}>
+                                  Store availability
+                                  <select
+                                    className="settings-input"
+                                    value={catalogDraft.storeAvailability}
+                                    onChange={(e) =>
+                                      setCatalogDraft((d) => ({
+                                        ...d,
+                                        storeAvailability: e.target.value as StoreAvailabilityMode,
+                                      }))
+                                    }
+                                  >
+                                    <option value="always">Always available</option>
+                                    <option value="out_of_stock">Out of stock</option>
+                                    <option value="stock">Tied to mail order stock</option>
+                                  </select>
+                                </label>
+                                {catalogDraft.storeAvailability === 'stock' ? (
+                                  <>
+                                    <p
+                                      className="settings-muted"
+                                      style={{ margin: '0 0 8px', fontSize: 13 }}
+                                    >
+                                      Uses on-hand at the online-store fulfillment location only,
+                                      less anything on open mail orders that haven’t been filled
+                                      yet.
+                                    </p>
+                                    {storeStock?.mode === 'stock' && storeStock.notYetCounted ? (
+                                      <p style={{ margin: '0 0 8px', fontSize: 13 }}>
+                                        <strong>
+                                          {storeStock.locationName || 'Fulfillment location'}:
+                                        </strong>{' '}
+                                        not counted yet, so the store sells it as always available
+                                        until its first count.
+                                      </p>
+                                    ) : storeStock?.mode === 'stock' ? (
+                                      <p style={{ margin: '0 0 8px', fontSize: 13 }}>
+                                        <strong>
+                                          {storeStock.locationName || 'Fulfillment location'}:
+                                        </strong>{' '}
+                                        {storeStock.onHand ?? 0} on hand ·{' '}
+                                        {storeStock.reserved ?? 0} on open orders
+                                        {storeStock.buffer
+                                          ? ` · ${storeStock.buffer} held back`
+                                          : ''}{' '}
+                                        ·{' '}
+                                        <strong>
+                                          {storeStock.status === 'available'
+                                            ? `${storeStock.available} available online`
+                                            : storeStock.status === 'backorder'
+                                              ? 'showing as backordered'
+                                              : 'showing as out of stock'}
+                                        </strong>
+                                      </p>
+                                    ) : null}
+                                    <label className="settings-label" style={{ marginBottom: 12 }}>
+                                      Hold back (show out of stock at or below)
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        className="settings-input"
+                                        value={catalogDraft.storeStockBuffer}
+                                        onChange={(e) =>
+                                          setCatalogDraft((d) => ({
+                                            ...d,
+                                            storeStockBuffer: e.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+                                  </>
+                                ) : null}
+                                {catalogDraft.storeAvailability !== 'always' ? (
+                                  <>
+                                    <label className="settings-label" style={{ marginBottom: 12 }}>
+                                      Expected back (optional, shown to clients)
+                                      <input
+                                        type="date"
+                                        className="settings-input"
+                                        value={catalogDraft.storeBackInStockDate}
+                                        onChange={(e) =>
+                                          setCatalogDraft((d) => ({
+                                            ...d,
+                                            storeBackInStockDate: e.target.value,
+                                          }))
+                                        }
+                                      />
+                                    </label>
+                                    <label
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        marginBottom: 12,
+                                        cursor: 'pointer',
+                                        fontSize: 14,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={catalogDraft.storeAllowBackorder}
+                                        onChange={(e) =>
+                                          setCatalogDraft((d) => ({
+                                            ...d,
+                                            storeAllowBackorder: e.target.checked,
+                                          }))
+                                        }
+                                      />
+                                      Allow backorders while out of stock
+                                    </label>
+                                  </>
+                                ) : null}
                           {catalogDraft.autoshipOffered ? (
                             <label className="settings-label" style={{ marginBottom: 12 }}>
                               Autoship frequency
@@ -4705,6 +4901,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         setCreateForm((f) => ({
                           ...f,
                           [key]: checked,
+                              ...(key === 'isControlled' && checked
+                                ? { trackLots: true, requireLotNumber: true }
+                                : {}),
                           ...(key === 'isVaccine' && checked
                             ? {
                                 trackLots: true,

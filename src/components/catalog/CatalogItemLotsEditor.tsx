@@ -4,6 +4,7 @@ import {
   addInventoryLot,
   listInventoryBranchLocations,
   listInventoryLots,
+  setLotBottleWeight,
   updateInventoryLot,
   type InventoryBranchLocation,
   type InventoryLotBalance,
@@ -21,6 +22,10 @@ type Props = {
   /** Expiration is always required. Kept so older callers still type-check. */
   requireExpirationOnLots?: boolean;
   requireLotNumber?: boolean;
+  /** Set when this controlled item is counted by weight; lots then carry a bottle weight. */
+  weightUnit?: 'g' | 'oz' | null;
+  /** mL in a full bottle (the item's units per package). */
+  bottleMl?: number | null;
   /** Lot quantities move branch counts, so the parent can refresh them. */
   onLotsChanged?: () => void;
   /** Open the inventory SKU that actually holds lots and counts. */
@@ -35,6 +40,8 @@ export default function CatalogItemLotsEditor({
   stockItemName,
   trackLots,
   requireLotNumber,
+  weightUnit,
+  bottleMl,
   onLotsChanged,
   onOpenStockItem,
 }: Props) {
@@ -53,6 +60,8 @@ export default function CatalogItemLotsEditor({
   const [serialNumber, setSerialNumber] = useState('');
   const [expirationDate, setExpirationDate] = useState('');
   const [quantity, setQuantity] = useState('0');
+  const [fullBottleWeight, setFullBottleWeight] = useState('');
+  const [fillMl, setFillMl] = useState('');
 
   const isEdit = editing !== null && editing !== 'new';
 
@@ -115,6 +124,8 @@ export default function CatalogItemLotsEditor({
     setSerialNumber('');
     setExpirationDate('');
     setQuantity('0');
+    setFullBottleWeight('');
+    setFillMl(bottleMl != null ? String(bottleMl) : '');
     setEditing('new');
   }
 
@@ -126,6 +137,8 @@ export default function CatalogItemLotsEditor({
     setSerialNumber(lot.serialNumber ?? '');
     setExpirationDate(lot.expirationDate?.slice(0, 10) ?? '');
     setQuantity(String(lot.quantityOnHand ?? 0));
+    setFullBottleWeight('');
+    setFillMl(bottleMl != null ? String(bottleMl) : '');
     setEditing(lot);
   }
 
@@ -142,18 +155,30 @@ export default function CatalogItemLotsEditor({
       setError('An expiration date is required');
       return;
     }
+    const weight = fullBottleWeight.trim() === '' ? null : Number(fullBottleWeight);
+    const ml = fillMl.trim() === '' ? null : Number(fillMl);
+    if (weight != null && (!Number.isFinite(weight) || weight <= 0)) {
+      setError('Full bottle weight must be a positive number');
+      return;
+    }
+    if (weight != null && (ml == null || !Number.isFinite(ml) || ml <= 0)) {
+      setError('Enter how many mL a full bottle holds');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
+      let lotId: number | null = null;
       if (isEdit) {
-        await updateInventoryLot(practiceId, (editing as InventoryLotBalance).id, {
+        lotId = (editing as InventoryLotBalance).id;
+        await updateInventoryLot(practiceId, lotId, {
           lotNumber: lotNumber.trim(),
           serialNumber: serialNumber.trim() || null,
           expirationDate: expirationDate || null,
           quantityOnHand: Number(quantity) || 0,
         });
       } else {
-        await addInventoryLot(practiceId, {
+        const created = await addInventoryLot(practiceId, {
           inventoryItemId: lotItemId,
           branchId: Number(branchId),
           branchLocationId: Number(locationId),
@@ -162,6 +187,10 @@ export default function CatalogItemLotsEditor({
           expirationDate: expirationDate || null,
           quantityOnHand: Number(quantity) || 0,
         });
+        lotId = created.id;
+      }
+      if (weight != null && lotId != null) {
+        await setLotBottleWeight(practiceId, lotId, { fullBottleWeight: weight, bottleMl: ml });
       }
       setEditing(null);
       await reload();
@@ -243,6 +272,7 @@ export default function CatalogItemLotsEditor({
               <th>Serial</th>
               <th>Expires</th>
               <th>QOH</th>
+              {weightUnit ? <th>Empty bottle</th> : null}
               {trackLots && <th />}
             </tr>
           </thead>
@@ -258,6 +288,19 @@ export default function CatalogItemLotsEditor({
                 <td>{lot.serialNumber || '—'}</td>
                 <td>{lot.expirationDate?.slice(0, 10) || '—'}</td>
                 <td>{lot.quantityOnHand}</td>
+                {weightUnit ? (
+                  <td>
+                    {lot.emptyBottleWeightGrams != null
+                      ? `${
+                          Math.round(
+                            (weightUnit === 'oz'
+                              ? lot.emptyBottleWeightGrams / 28.349523125
+                              : lot.emptyBottleWeightGrams) * 100
+                          ) / 100
+                        } ${weightUnit}`
+                      : '—'}
+                  </td>
+                ) : null}
                 {trackLots && (
                   <td style={{ textAlign: 'right' }}>
                     <button
@@ -395,6 +438,37 @@ export default function CatalogItemLotsEditor({
                   Changing the quantity records a count adjustment against the branch.
                 </p>
               )}
+              {weightUnit ? (
+                <>
+                  <label className="settings-label">
+                    Full bottle weight ({weightUnit})
+                    <input
+                      className="settings-input"
+                      inputMode="decimal"
+                      value={fullBottleWeight}
+                      onChange={(e) => setFullBottleWeight(e.target.value)}
+                      placeholder={
+                        isEdit && (editing as InventoryLotBalance).emptyBottleWeightGrams != null
+                          ? 'Leave blank to keep'
+                          : 'One sealed bottle, as received'
+                      }
+                    />
+                  </label>
+                  <label className="settings-label">
+                    mL per full bottle
+                    <input
+                      className="settings-input"
+                      inputMode="decimal"
+                      value={fillMl}
+                      onChange={(e) => setFillMl(e.target.value)}
+                    />
+                  </label>
+                  <p className="settings-muted" style={{ margin: 0, fontSize: 12 }}>
+                    Scout subtracts the liquid to get the empty bottle, so counts by weight convert
+                    to mL. Use the receive weight VetSnap recorded for this lot.
+                  </p>
+                </>
+              ) : null}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => setEditing(null)}>

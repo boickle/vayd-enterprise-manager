@@ -40,6 +40,11 @@ export type InventoryItemCatalogPatch = {
   shippable?: boolean;
   autoshipRecommendedFrequency?: string | null;
   requiresDoctorApproval?: boolean;
+  passThroughByDefault?: boolean;
+  storeAvailability?: 'always' | 'out_of_stock' | 'stock';
+  storeBackInStockDate?: string | null;
+  storeAllowBackorder?: boolean;
+  storeStockBuffer?: number;
   prohibitedCarriers?: string[] | null;
   /** Set null to clear; prefer uploadInventoryItemImage for files. */
   imageUrl?: string | null;
@@ -68,6 +73,10 @@ export type InventoryItemCatalogPatch = {
   isDispensable?: boolean;
   dispenseNote?: string | null;
   isControlled?: boolean;
+  controlledMeasure?: 'volume' | 'weight' | 'both' | null;
+  weightUnit?: 'g' | 'oz' | null;
+  gramsPerMl?: number | null;
+  emptyBottleWeightGrams?: number | null;
   isMicrochip?: boolean;
   hasClientNotes?: boolean;
   clientNote?: string | null;

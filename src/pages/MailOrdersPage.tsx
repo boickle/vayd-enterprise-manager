@@ -9,7 +9,10 @@ import {
   listMailOrders,
   refundMailLabel,
   resolveMailOrderCancellation,
+  formatBackInStock,
   mailCancelPending,
+  mailLinePassedThrough,
+  type MailFulfillmentSource,
   MAIL_CANCEL_REASON_LABELS,
   type MailCancelResolution,
   type MailParcelType,
@@ -160,7 +163,20 @@ function mailFillDone(order: MailOrder): boolean {
   );
 }
 
+/** Every line was ordered on another site, so nothing ships or gets picked up from us. */
+function mailAllPassedThrough(order: MailOrder): boolean {
+  const lines = order.lines || [];
+  return lines.length > 0 && lines.every(mailLinePassedThrough);
+}
+
+function passedThroughSummary(line: MailOrderLine): string {
+  return `Ordered on ${line.externalVendor || 'another site'}${
+    line.externalOrderRef ? ` #${line.externalOrderRef}` : ''
+  }`;
+}
+
 function mailShipDone(order: MailOrder): boolean {
+  if (mailAllPassedThrough(order)) return true;
   if (isPickupOrder(order)) {
     return Boolean(
       order.packagedAt ||
@@ -201,8 +217,12 @@ function lineNeedsApproval(line: MailOrderLine): boolean {
   );
 }
 
-/** Lot-tracked lines are filled once a lot is picked; others follow the order fill stamp. */
+/**
+ * Passed-through lines are filled once ordered on the other site; lot-tracked lines once a
+ * lot is picked; others follow the order fill stamp.
+ */
 function lineIsFilled(line: MailOrderLine, order: MailOrder): boolean {
+  if (mailLinePassedThrough(line)) return Boolean(line.externalOrderedAt);
   if (line.trackLots) {
     return Boolean(line.inventoryLotBalanceId || line.lotNumber);
   }
@@ -1192,6 +1212,11 @@ function OrderDetail({
   const [fillLots, setFillLots] = useState<
     Record<number, { lotId: number | null; lotNumber: string }>
   >({});
+  const [fillSources, setFillSources] = useState<
+    Record<number, { source: MailFulfillmentSource; vendor: string; orderRef: string }>
+  >({});
+  const passesThrough = (line: MailOrderLine) =>
+    (fillSources[line.id]?.source ?? line.fulfillmentSource) === 'external';
   const [texting, setTexting] = useState(false);
   const [textedAt, setTextedAt] = useState<string | null>(null);
   const [emailing, setEmailing] = useState(false);
@@ -1317,6 +1342,22 @@ function OrderDetail({
   }, [fillBranchId, fillLocationId, open.id]);
 
   useEffect(() => {
+    const next: Record<
+      number,
+      { source: MailFulfillmentSource; vendor: string; orderRef: string }
+    > = {};
+    for (const line of open.lines || []) {
+      next[line.id] = {
+        source:
+          line.fulfillmentSource ?? (line.passThroughByDefault ? 'external' : 'stock'),
+        vendor: line.externalVendor ?? line.defaultExternalVendor ?? '',
+        orderRef: line.externalOrderRef ?? '',
+      };
+    }
+    setFillSources(next);
+  }, [open.id]);
+
+  useEffect(() => {
     void fetchAllEmployees().then((rows) => {
       const active = rows.filter((row) => row.isActive !== false && !row.isDeleted);
       setStaff(active);
@@ -1406,6 +1447,7 @@ function OrderDetail({
     if (stepDone(step) && step === 'needs_payment') return 'Paid';
     if (stepDone(step) && step === 'fill') return 'Filled';
     if (stepDone(step) && (step === 'ship' || step === 'ready_for_pickup')) {
+      if (mailAllPassedThrough(open)) return 'Drop-shipped';
       return pickup ? 'Pickup ready' : 'Label printed';
     }
     if (stepDone(step) && step === 'check') return 'Checked';
@@ -1641,7 +1683,9 @@ function OrderDetail({
               <p className="settings-muted" style={{ marginTop: 0 }}>
                 Mark this filled whenever the bag is ready, and choose the office and
                 location you took stock from (defaults to the online-store fulfillment
-                location). Ship and check stay locked until then.
+                location). Ship and check stay locked until then. For items we don’t
+                stock, choose <strong>Ordered on another site</strong> on the item and
+                enter that site’s order number.
               </p>
               <div
                 style={{
@@ -1695,7 +1739,7 @@ function OrderDetail({
                   </select>
                 </label>
               </div>
-              {(open.lines || []).some((line) => line.trackLots) ? (
+              {(open.lines || []).some((line) => line.trackLots && !passesThrough(line)) ? (
                 <p className="settings-muted" style={{ margin: '0 0 12px' }}>
                   Pick the lot on each item below.
                 </p>
@@ -1710,18 +1754,27 @@ function OrderDetail({
                 />
               </label>
               {(() => {
-                const missingLot = (open.lines || []).some(
-                  (line) => line.trackLots && !fillLots[line.id]?.lotId,
+                const lines = open.lines || [];
+                const fromStock = lines.some((line) => !passesThrough(line));
+                const missingLot = lines.some(
+                  (line) => !passesThrough(line) && line.trackLots && !fillLots[line.id]?.lotId,
+                );
+                const missingOrderRef = lines.some(
+                  (line) => passesThrough(line) && !fillSources[line.id]?.orderRef.trim(),
                 );
                 const fillBlocked = !employeeId
                   ? 'Sign in as staff to mark filled.'
-                  : !fillBranchId
-                    ? 'Choose the office you filled from.'
-                    : !fillLocationId
-                      ? 'Choose the location you took stock from.'
-                      : missingLot
-                        ? 'Choose a lot for each item (or receive stock at this location first).'
-                        : null;
+                  : missingOrderRef
+                    ? 'Enter the other site’s order number for each item ordered there.'
+                    : !fromStock
+                      ? null
+                      : !fillBranchId
+                        ? 'Choose the office you filled from.'
+                        : !fillLocationId
+                          ? 'Choose the location you took stock from.'
+                          : missingLot
+                            ? 'Choose a lot for each item (or receive stock at this location first).'
+                            : null;
                 return (
                   <div className="mail-queue__actions">
                     {fillBlocked ? (
@@ -1740,13 +1793,25 @@ function OrderDetail({
                           pharmacyMailAction(practiceId, open.id, {
                             action: 'fill',
                             checkNotes,
-                            fillBranchId: Number(fillBranchId),
-                            fillLocationId: Number(fillLocationId),
-                            lineLots: (open.lines || []).map((line) => ({
+                            fillBranchId: fillBranchId === '' ? undefined : Number(fillBranchId),
+                            fillLocationId:
+                              fillLocationId === '' ? undefined : Number(fillLocationId),
+                            lineLots: lines.map((line) => ({
                               lineId: line.id,
                               inventoryLotBalanceId: fillLots[line.id]?.lotId ?? null,
                               lotNumber: fillLots[line.id]?.lotNumber || null,
                             })),
+                            lineSources: lines.map((line) => {
+                              const pick = fillSources[line.id];
+                              return passesThrough(line)
+                                ? {
+                                    lineId: line.id,
+                                    fulfillmentSource: 'external' as const,
+                                    externalVendor: pick?.vendor.trim() || null,
+                                    externalOrderRef: pick?.orderRef.trim() || null,
+                                  }
+                                : { lineId: line.id, fulfillmentSource: 'stock' as const };
+                            }),
                           }).catch((e) => {
                             setFillError(apiErrorMessage(e));
                             throw e;
@@ -1797,6 +1862,10 @@ function OrderDetail({
                     </>
                   ) : null}
                 </p>
+              ) : mailAllPassedThrough(open) ? (
+                <p className="settings-muted">
+                  Every item was ordered on another site and ships from there — no label from us.
+                </p>
               ) : pickup ? (
                 <p className="settings-muted">Office pickup — no shipping label.</p>
               ) : null}
@@ -1817,7 +1886,13 @@ function OrderDetail({
                       <div style={{ flex: '1 1 160px', minWidth: 120 }}>
                         <strong style={{ fontSize: 13 }}>{label}</strong>
                         <div className="mail-queue__meta-line" style={{ marginTop: 2 }}>
-                          {group.lines.map((line) => line.name).join(' · ')}
+                          {group.lines
+                            .map((line) =>
+                              mailLinePassedThrough(line)
+                                ? `${line.name} (${passedThroughSummary(line)})`
+                                : line.name,
+                            )
+                            .join(' · ')}
                         </div>
                         {done ? (
                           <div className="mail-queue__meta-line" style={{ marginTop: 2 }}>
@@ -1950,7 +2025,14 @@ function OrderDetail({
             </>
           )}
 
-          {(viewStep === 'ship' || viewStep === 'ready_for_pickup') && (
+          {(viewStep === 'ship' || viewStep === 'ready_for_pickup') && mailAllPassedThrough(open) && (
+            <p className="settings-muted" style={{ marginTop: 0 }}>
+              Every item was ordered on another site that ships straight to the client, so
+              there’s nothing to {viewStep === 'ship' ? 'ship' : 'hand over'} from here.
+            </p>
+          )}
+
+          {(viewStep === 'ship' || viewStep === 'ready_for_pickup') && !mailAllPassedThrough(open) && (
             <>
               {viewStep === 'ship' && (open.labelUrl || open.trackingCode) && (
                 <>
@@ -2450,6 +2532,24 @@ function OrderDetail({
                       {lineBadge.label}
                     </span>
                   ) : null}
+                  {passesThrough(line) ? (
+                    <span className="mail-queue__badge is-wait">Passed through</span>
+                  ) : line.stockFlag === 'out_of_stock' ? (
+                    <span
+                      className="mail-queue__badge is-warn"
+                      title="This item is set to out of stock in the online store."
+                    >
+                      Out of stock
+                      {line.stockBackInStockDate ? ` · back ${formatBackInStock(line.stockBackInStockDate)}` : ''}
+                    </span>
+                  ) : line.stockFlag === 'short' ? (
+                    <span
+                      className="mail-queue__badge is-warn"
+                      title="The mail order shelf doesn't have enough on hand for every open order."
+                    >
+                      Short on shelf
+                    </span>
+                  ) : null}
                 </div>
                 <ul className="mail-queue__line-facts">
                   <li>
@@ -2495,6 +2595,12 @@ function OrderDetail({
                       ? `, expires ${new Date(line.refillExpiresAt).toLocaleDateString()}`
                       : ''}
                   </li>
+                  {mailLinePassedThrough(line) && line.externalOrderedAt ? (
+                    <li>
+                      {passedThroughSummary(line)}
+                      {line.externalOrderedByName ? ` by ${line.externalOrderedByName}` : ''}
+                    </li>
+                  ) : null}
                 </ul>
 
                 <div className="mail-queue__section">
@@ -2709,19 +2815,97 @@ function OrderDetail({
                     >
                       {savingScriptId === line.id ? 'Saving…' : 'Save directions'}
                     </button>
-                    <MailOrderFillLabels
-                      className="mail-queue__btn"
-                      order={open}
-                      line={{
-                        ...line,
-                        scriptText: currentScript,
-                      }}
-                      checkNotes={checkNotes}
-                    />
+                    {passesThrough(line) ? null : (
+                      <MailOrderFillLabels
+                        className="mail-queue__btn"
+                        order={open}
+                        line={{
+                          ...line,
+                          scriptText: currentScript,
+                        }}
+                        checkNotes={checkNotes}
+                      />
+                    )}
                   </div>
                 </div>
 
-                {viewStep === 'fill' && line.trackLots ? (
+                {viewStep === 'fill' ? (
+                  <div className="mail-queue__section">
+                    <p className="mail-queue__section-label">Fulfilled by</p>
+                    <div className="mail-queue__row mail-queue__row--center">
+                      {(
+                        [
+                          ['stock', 'From our stock'],
+                          ['external', 'Ordered on another site'],
+                        ] as const
+                      ).map(([source, label]) => (
+                        <label key={source} className="mail-queue__check">
+                          <input
+                            type="radio"
+                            name={`fulfillment-${line.id}`}
+                            checked={(fillSources[line.id]?.source ?? 'stock') === source}
+                            onChange={() =>
+                              setFillSources((prev) => ({
+                                ...prev,
+                                [line.id]: {
+                                  ...(prev[line.id] ?? {
+                                    vendor: line.defaultExternalVendor ?? '',
+                                    orderRef: '',
+                                  }),
+                                  source,
+                                },
+                              }))
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    {passesThrough(line) ? (
+                      <div className="mail-queue__row" style={{ marginTop: 8 }}>
+                        <label className="settings-label">
+                          Site / vendor
+                          <input
+                            className="settings-input"
+                            value={fillSources[line.id]?.vendor ?? ''}
+                            placeholder="e.g. Chewy"
+                            onChange={(e) =>
+                              setFillSources((prev) => ({
+                                ...prev,
+                                [line.id]: {
+                                  source: 'external',
+                                  orderRef: prev[line.id]?.orderRef ?? '',
+                                  vendor: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-label">
+                          Their order #
+                          <input
+                            className="settings-input"
+                            value={fillSources[line.id]?.orderRef ?? ''}
+                            placeholder="Required"
+                            required
+                            onChange={(e) =>
+                              setFillSources((prev) => ({
+                                ...prev,
+                                [line.id]: {
+                                  source: 'external',
+                                  vendor: prev[line.id]?.vendor ?? '',
+                                  orderRef: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {viewStep === 'fill' && line.trackLots && !passesThrough(line) ? (
                   <div
                     key={`${fillBranchId}:${fillLocationId}`}
                     className="mail-queue__section mail-queue__lot"
@@ -2925,7 +3109,9 @@ function OrderDetail({
                                   ? 'Thanks email'
                                   : note.kind === 'check_override'
                                     ? 'Second-person check overridden'
-                                    : 'Note'}
+                                    : note.kind === 'passed_through'
+                                      ? 'Ordered on another site'
+                                      : 'Note'}
                   </strong>
                   {note.actorName ? ` · ${note.actorName}` : ''}
                   {note.assignedToName ? ` → ${note.assignedToName}` : ''}
