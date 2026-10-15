@@ -4727,7 +4727,18 @@ export default function AppointmentRequestForm() {
         // Veterinary History
         previousVeterinaryPractices: formData.previousVeterinaryPractices || formData.previousVeterinaryPracticesExisting || undefined,
         previousVeterinaryHospitals: formData.previousVeterinaryHospitals || undefined,
-        okayToContactPreviousVets: !isLoggedIn ? 'Yes' : (formData.okayToContactPreviousVets || formData.okayToContactPreviousVetsExisting || undefined),
+        // "Please request them" already sets mayWeAskForRecords=Yes (and recordsDelivery=request).
+        // Do not also stamp okayToContactPreviousVets=Yes — staff email / Scout showed both as redundant.
+        okayToContactPreviousVets: (() => {
+          const explicit =
+            formData.okayToContactPreviousVets ||
+            formData.okayToContactPreviousVetsExisting ||
+            '';
+          if (explicit === 'Yes' || explicit === 'No') return explicit;
+          if (formData.recordsDelivery === 'request') return undefined;
+          if (!isLoggedIn) return 'Yes';
+          return undefined;
+        })(),
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
         mayWeAskForRecords:
           formData.recordsDelivery === 'request'
