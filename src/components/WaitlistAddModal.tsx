@@ -7,10 +7,12 @@ import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import { extractActivePatientsFromClientStaffRecord } from '../utils/routingPatientHoverData';
 import {
   createWaitlistEntry,
+  patchWaitlistEntry,
   waitlistConflictExistingId,
   type WaitlistEntry,
   type WaitlistPreferredWindow,
 } from '../api/waitlist';
+import { waitlistClientDisplayName } from '../utils/waitlistMatch';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { WAITLIST_WINDOW_OPTIONS } from '../utils/waitlistMatch';
 import type { WaitlistAddPrefill } from '../utils/waitlistAddPrefillFromAppointment';
@@ -23,6 +25,9 @@ type Props = {
   onCreated: (entry: WaitlistEntry) => void;
   /** When set (e.g. schedule right-click), skip search and prefill client / pets / type / doctor. */
   prefill?: WaitlistAddPrefill | null;
+  /** Existing waiting row. Client stays fixed; pets, type, doctor, window, and notes can change. */
+  editing?: WaitlistEntry | null;
+  onUpdated?: (entry: WaitlistEntry) => void;
 };
 
 type PetPick = { id: number; name: string };
@@ -44,13 +49,13 @@ function patientName(row: PatientSearchRow): string {
   return (pickStr(row.name) ?? pickStr(r.patientName) ?? joined) || 'Patient';
 }
 
-function errMsg(e: unknown): string {
+function errMsg(e: unknown, fallback: string): string {
   const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
   const m = ax?.response?.data?.message;
   if (Array.isArray(m)) return m.join(', ');
   if (typeof m === 'string' && m.trim()) return m;
   if (ax?.message) return ax.message;
-  return 'Could not add to waitlist.';
+  return fallback;
 }
 
 export function WaitlistAddModal({
@@ -58,8 +63,11 @@ export function WaitlistAddModal({
   onClose,
   onCreated,
   prefill = null,
+  editing = null,
+  onUpdated,
 }: Props) {
-  const [query, setQuery] = useState(prefill?.clientLabel ?? '');
+  const editingClientLabel = editing ? waitlistClientDisplayName(editing) : '';
+  const [query, setQuery] = useState(editing ? editingClientLabel : (prefill?.clientLabel ?? ''));
   const [searching, setSearching] = useState(false);
   const [clientHits, setClientHits] = useState<ClientSearchRow[]>([]);
   const [patientHits, setPatientHits] = useState<PatientSearchRow[]>([]);
@@ -69,9 +77,11 @@ export function WaitlistAddModal({
   const prefillApplied = useRef(false);
 
   const [selectedClient, setSelectedClient] = useState<{ id: number; label: string } | null>(
-    prefill
-      ? { id: prefill.clientId, label: prefill.clientLabel }
-      : null,
+    editing
+      ? { id: editing.clientId, label: editingClientLabel }
+      : prefill
+        ? { id: prefill.clientId, label: prefill.clientLabel }
+        : null,
   );
   const [pets, setPets] = useState<PetPick[]>([]);
   const [selectedPetIds, setSelectedPetIds] = useState<Set<number>>(new Set());
@@ -79,14 +89,24 @@ export function WaitlistAddModal({
 
   const [types, setTypes] = useState<AppointmentType[]>([]);
   const [appointmentTypeId, setAppointmentTypeId] = useState(
-    prefill?.appointmentTypeId != null ? String(prefill.appointmentTypeId) : '',
+    editing?.appointmentTypeId != null
+      ? String(editing.appointmentTypeId)
+      : prefill?.appointmentTypeId != null
+        ? String(prefill.appointmentTypeId)
+        : '',
   );
   const [providers, setProviders] = useState<Provider[]>([]);
   const [preferredProviderId, setPreferredProviderId] = useState(
-    prefill?.preferredProviderId != null ? String(prefill.preferredProviderId) : '',
+    editing?.preferredProviderId != null
+      ? String(editing.preferredProviderId)
+      : prefill?.preferredProviderId != null
+        ? String(prefill.preferredProviderId)
+        : '',
   );
-  const [preferredWindow, setPreferredWindow] = useState<WaitlistPreferredWindow>('asap');
-  const [notes, setNotes] = useState('');
+  const [preferredWindow, setPreferredWindow] = useState<WaitlistPreferredWindow>(
+    editing?.preferredWindow ?? 'asap',
+  );
+  const [notes, setNotes] = useState(editing?.notes ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,6 +153,56 @@ export function WaitlistAddModal({
       }
     })();
   }, [prefill]);
+
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+    void (async () => {
+      setPetsLoading(true);
+      try {
+        const payload = await fetchClientByIdStaff(editing.clientId);
+        const next: PetPick[] = extractActivePatientsFromClientStaffRecord(payload)
+          .map((row) => {
+            const id = Number(row.id);
+            if (!Number.isFinite(id) || id <= 0) return null;
+            return { id, name: row.name?.trim() || `Patient ${id}` };
+          })
+          .filter((p): p is PetPick => p != null);
+        const byId = new Map(next.map((p) => [p.id, p]));
+        for (const p of editing.patients ?? []) {
+          const id = Number(p.id);
+          if (!Number.isFinite(id) || id <= 0 || byId.has(id)) continue;
+          byId.set(id, { id, name: p.name?.trim() || `Patient ${id}` });
+        }
+        if (cancelled) return;
+        setPets([...byId.values()]);
+        const selected = (editing.patientIds ?? []).filter((id) => byId.has(id));
+        setSelectedPetIds(new Set(selected.length > 0 ? selected : [...byId.keys()]));
+      } catch {
+        if (cancelled) return;
+        const fallback = (editing.patients ?? [])
+          .map((p) => {
+            const id = Number(p.id);
+            if (!Number.isFinite(id) || id <= 0) return null;
+            return { id, name: p.name?.trim() || `Patient ${id}` };
+          })
+          .filter((p): p is PetPick => p != null);
+        setPets(fallback);
+        setSelectedPetIds(
+          new Set(
+            (editing.patientIds ?? []).length > 0
+              ? editing.patientIds
+              : fallback.map((p) => p.id),
+          ),
+        );
+      } finally {
+        if (!cancelled) setPetsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editing]);
 
   useEffect(() => {
     const q = query.trim();
@@ -233,6 +303,26 @@ export function WaitlistAddModal({
       const typeId = appointmentTypeId.trim() ? Number(appointmentTypeId) : undefined;
       const providerId = preferredProviderId.trim() ? Number(preferredProviderId) : undefined;
       const type = bookableTypes.find((t) => Number(t.id) === typeId);
+      const resolvedTypeId = typeId != null && Number.isFinite(typeId) ? typeId : null;
+      const serviceMinutes =
+        type?.defaultDuration != null && Number.isFinite(Number(type.defaultDuration))
+          ? Math.max(1, Math.round(Number(type.defaultDuration)))
+          : undefined;
+      if (editing) {
+        const keepExistingMinutes =
+          serviceMinutes == null && (editing.appointmentTypeId ?? null) === resolvedTypeId;
+        const updated = await patchWaitlistEntry(editing.id, {
+          practiceId,
+          patientIds,
+          appointmentTypeId: resolvedTypeId,
+          preferredProviderId: providerId != null && Number.isFinite(providerId) ? providerId : null,
+          preferredWindow,
+          serviceMinutes: keepExistingMinutes ? (editing.serviceMinutes ?? null) : (serviceMinutes ?? null),
+          notes: notes.trim(),
+        });
+        onUpdated?.(updated);
+        return;
+      }
       const entry = await createWaitlistEntry({
         practiceId,
         clientId: selectedClient.id,
@@ -240,9 +330,7 @@ export function WaitlistAddModal({
         ...(typeId != null && Number.isFinite(typeId) ? { appointmentTypeId: typeId } : {}),
         ...(providerId != null && Number.isFinite(providerId) ? { preferredProviderId: providerId } : {}),
         preferredWindow,
-        ...(type?.defaultDuration != null && Number.isFinite(Number(type.defaultDuration))
-          ? { serviceMinutes: Math.max(1, Math.round(Number(type.defaultDuration))) }
-          : {}),
+        ...(serviceMinutes != null ? { serviceMinutes } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
       onCreated(entry);
@@ -251,7 +339,10 @@ export function WaitlistAddModal({
       setError(
         existing
           ? 'This client is already on the waitlist. Open that card to update notes or pets.'
-          : errMsg(e),
+          : errMsg(
+            e,
+            editing ? 'Could not save waitlist changes.' : 'Could not add to waitlist.',
+          ),
       );
     } finally {
       setBusy(false);
@@ -269,20 +360,24 @@ export function WaitlistAddModal({
       onClick={onClose}
     >
       <div className="waitlist-modal" onClick={(e) => e.stopPropagation()}>
-        <h3 id="waitlist-add-title">Add to waitlist</h3>
+        <h3 id="waitlist-add-title">{editing ? 'Edit waitlist' : 'Add to waitlist'}</h3>
         <p className="settings-muted" style={{ marginTop: 0 }}>
-          {prefill
-            ? 'Client and pets are filled from the schedule visit. Choose how soon they can come in, then save.'
-            : 'Use when the schedule is full. CLs can recommend a slot and text the household when a cancellation opens.'}
+          {editing
+            ? 'Update pets, visit type, doctor, and how soon they can come in. The client stays the same.'
+            : prefill
+              ? 'Client and pets are filled from the schedule visit. Choose how soon they can come in, then save.'
+              : 'Use when the schedule is full. CLs can recommend a slot and text the household when a cancellation opens.'}
         </p>
 
         <label className="waitlist-field">
-          <span>Client or pet</span>
+          <span>{editing ? 'Client' : 'Client or pet'}</span>
           <div ref={wrapRef} style={{ position: 'relative' }}>
             <input
               className="settings-input"
               value={query}
+              readOnly={editing != null}
               onChange={(e) => {
+                if (editing) return;
                 setQuery(e.target.value);
                 setSelectedClient(null);
               }}
@@ -361,6 +456,12 @@ export function WaitlistAddModal({
             onChange={(e) => setAppointmentTypeId(e.target.value)}
           >
             <option value="">Any / decide when booking</option>
+            {editing?.appointmentTypeId != null &&
+            !bookableTypes.some((t) => Number(t.id) === Number(editing.appointmentTypeId)) ? (
+              <option value={String(editing.appointmentTypeId)}>
+                {editing.appointmentTypeName || `Visit type #${editing.appointmentTypeId}`}
+              </option>
+            ) : null}
             {bookableTypes.map((t) => (
               <option key={t.id} value={String(t.id)}>
                 {t.name || t.prettyName}
@@ -377,6 +478,17 @@ export function WaitlistAddModal({
             onChange={(e) => setPreferredProviderId(e.target.value)}
           >
             <option value="">Any doctor</option>
+            {editing?.preferredProviderId != null &&
+            !providers.some((p) => Number(p.id) === Number(editing.preferredProviderId)) ? (
+              <option value={String(editing.preferredProviderId)}>
+                {editing.preferredProvider?.name ||
+                  [editing.preferredProvider?.firstName, editing.preferredProvider?.lastName]
+                    .filter(Boolean)
+                    .join(' ')
+                    .trim() ||
+                  `Doctor #${editing.preferredProviderId}`}
+              </option>
+            ) : null}
             {providers.map((p) => (
               <option key={String(p.id)} value={String(p.id)}>
                 {p.name}
@@ -423,7 +535,7 @@ export function WaitlistAddModal({
             Cancel
           </button>
           <button type="button" className="btn" onClick={() => void submit()} disabled={busy}>
-            {busy ? 'Adding…' : 'Add to waitlist'}
+            {busy ? 'Saving…' : editing ? 'Save' : 'Add to waitlist'}
           </button>
         </div>
       </div>

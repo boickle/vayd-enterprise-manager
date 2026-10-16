@@ -417,10 +417,15 @@ export type PatchForwardBookingBody = {
   status?: ForwardBookingStatus;
   /** `yyyy-MM-dd` or ISO date — defer to Book later until this day; send `null` to return to Needs booking. */
   bookAfterDate?: string | null;
+  /** With `intervalUnit`, recomputes the target date. Pending and booked rows only. */
+  intervalAmount?: number;
+  intervalUnit?: ForwardBookingIntervalUnit;
+  /** Send `null` to clear. Pending and booked rows only. */
+  primaryProviderId?: number | null;
 };
 
 /**
- * PATCH /forward-bookings/:id — update `note`, `bookingNotes`, and/or `status`.
+ * PATCH /forward-bookings/:id — notes, status, book-later date, interval, and provider.
  */
 export async function patchForwardBooking(
   forwardBookingId: number,
