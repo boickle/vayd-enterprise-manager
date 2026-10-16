@@ -1,5 +1,10 @@
 import { createPortal } from 'react-dom';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import {
+  ComposeCloseButton,
+  UnsentComposeConfirm,
+  useUnsentComposeClose,
+} from './unsentComposeClose';
 
 type Props = {
   open: boolean;
@@ -43,6 +48,7 @@ export function ClientSmsComposeModal({
   messageHint,
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
+  const { confirming, requestClose, keepEditing, discard } = useUnsentComposeClose(open, onClose);
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -51,7 +57,6 @@ export function ClientSmsComposeModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="client-sms-compose-title"
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
@@ -97,6 +102,7 @@ export function ClientSmsComposeModal({
               </p>
             ) : null}
           </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <button
             type="button"
             className="btn-link"
@@ -115,6 +121,8 @@ export function ClientSmsComposeModal({
           >
             Messages history
           </button>
+          <ComposeCloseButton onClick={requestClose} disabled={sending} />
+          </div>
         </div>
 
         {sendError ? (
@@ -176,8 +184,12 @@ export function ClientSmsComposeModal({
           ) : null}
         </label>
 
+        {confirming ? (
+          <UnsentComposeConfirm kind="text" onKeep={keepEditing} onDiscard={discard} />
+        ) : null}
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn secondary" onClick={onClose} disabled={sending}>
+          <button type="button" className="btn secondary" onClick={requestClose} disabled={sending}>
             Cancel
           </button>
           {allowOverride ? (
