@@ -821,6 +821,70 @@ export function isFlexBlockItem(item: { blockLabel?: string; title?: string } | 
   return label === 'flex block';
 }
 
+function typeWindowMinutes(at: unknown): {
+  before: number | null | undefined;
+  after: number | null | undefined;
+} | null {
+  if (!at || typeof at !== 'object') return null;
+  const o = at as {
+    windowBeforeMinutes?: number | null;
+    windowAfterMinutes?: number | null;
+  };
+  return { before: o.windowBeforeMinutes, after: o.windowAfterMinutes };
+}
+
+/**
+ * Stand-in-place time with a real arrival window (Lunch Block ±60), not a pinned 0/0 Personal Block.
+ * The block may slide inside that window so a visit booked at the same clock time can follow it.
+ */
+export function personalBlockHasOpenFlexWindow(item: unknown): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const row = item as {
+    effectiveWindow?: { startIso?: string; endIso?: string } | null;
+    startIso?: string | null;
+    endIso?: string | null;
+    windowStartIso?: string | null;
+    windowEndIso?: string | null;
+    appointmentType?: unknown;
+    primary?: unknown;
+  };
+  const primary =
+    row.primary && typeof row.primary === 'object'
+      ? (row.primary as {
+          appointmentType?: unknown;
+          effectiveWindow?: { startIso?: string; endIso?: string } | null;
+        })
+      : null;
+  const windows =
+    typeWindowMinutes(row.appointmentType) ??
+    typeWindowMinutes(primary?.appointmentType);
+  const before = windows?.before;
+  const after = windows?.after;
+  if (before === 0 && after === 0) return false;
+  if (
+    (typeof before === 'number' && before > 0) ||
+    (typeof after === 'number' && after > 0)
+  ) {
+    return true;
+  }
+  const ew =
+    row.effectiveWindow ??
+    primary?.effectiveWindow ??
+    (row.windowStartIso && row.windowEndIso
+      ? { startIso: row.windowStartIso, endIso: row.windowEndIso }
+      : null);
+  if (!ew?.startIso || !ew?.endIso) return false;
+  const ws = DateTime.fromISO(ew.startIso);
+  const we = DateTime.fromISO(ew.endIso);
+  if (!ws.isValid || !we.isValid) return false;
+  const windowMin = we.diff(ws, 'minutes').minutes;
+  const bs = row.startIso ? DateTime.fromISO(row.startIso) : null;
+  const be = row.endIso ? DateTime.fromISO(row.endIso) : null;
+  const bookedMin =
+    bs?.isValid && be?.isValid ? Math.max(0, be.diff(bs, 'minutes').minutes) : 0;
+  return windowMin > bookedMin + 1;
+}
+
 /** Label for a block entry: blockLabel ?? title ?? 'Personal Block'. Never use client/patient name for blocks. */
 export function blockDisplayLabel(item: { blockLabel?: string; title?: string } | null | undefined): string {
   if (!item) return 'Personal Block';

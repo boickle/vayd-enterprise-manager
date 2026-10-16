@@ -30,6 +30,7 @@ import {
   patchAppointment,
   putAppointmentAlternateAddress,
   isFlexBlockItem,
+  personalBlockHasOpenFlexWindow,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
   previewRoutingAppointmentLabel,
@@ -1792,7 +1793,12 @@ function schedulerHouseholdFixedTimeApprox(h: {
   primary?: unknown;
   patients?: { type?: string | null }[];
 }): boolean {
-  if (h.isPersonalBlock && !isFlexBlockItem(h.primary as { blockLabel?: string; title?: string })) return true;
+  if (
+    h.isPersonalBlock &&
+    !isFlexBlockItem(h.primary as { blockLabel?: string; title?: string }) &&
+    !personalBlockHasOpenFlexWindow(h)
+  )
+    return true;
   const primary = h.primary as Record<string, unknown> | undefined;
   const at = primary?.appointmentType as { name?: string; prettyName?: string } | undefined;
   const nested = at && typeof at === 'object' ? String(at.name ?? at.prettyName ?? '').toLowerCase() : '';

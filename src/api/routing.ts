@@ -71,8 +71,10 @@ export function etaHouseholdArrivalWindowPayload(args: {
   if (isBlock) {
     return {
       isPersonalBlock: true,
-      windowStartIso: startIso ?? null,
-      windowEndIso: endIso ?? null,
+      // Type windows let ETA treat Lunch Block (±N) as a flex barrier, not a pinned hold.
+      ...(appointmentType ? { appointmentType } : {}),
+      windowStartIso: effectiveWindow?.startIso ?? startIso ?? null,
+      windowEndIso: effectiveWindow?.endIso ?? endIso ?? null,
     };
   }
 
