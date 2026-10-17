@@ -29,6 +29,7 @@ const CLPerformanceAnalyticsPage = React.lazy(() => import('./pages/CLPerformanc
 const VsdPaymentsMatchAnalyticsPage = React.lazy(
   () => import('./pages/VsdPaymentsMatchAnalytics')
 );
+const InventoryTotalsPage = React.lazy(() => import('./pages/InventoryTotalsPage'));
 const BookingCalendarAnalyticsPage = React.lazy(() => import('./pages/BookingCalendarAnalytics'));
 const ForwardBookingAnalyticsPage = React.lazy(() => import('./pages/ForwardBookingAnalytics'));
 
@@ -84,6 +85,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     role: ['employee', 'admin', 'superadmin'],
   },
   { path: 'memberships', label: 'Memberships', element: <MembershipPurchasesAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'inventory-totals',
+    label: 'Inventory Totals',
+    element: <InventoryTotalsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   {
     path: 'patient-dormancy',
     label: 'Patient Dormancy',

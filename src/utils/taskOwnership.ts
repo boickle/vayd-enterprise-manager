@@ -180,7 +180,7 @@ export function navTasksBadgeCount(items: TaskListItem[], employeeIds: number[],
 /** Red nav badge: assigned open tasks (active + upcoming + expired). */
 export function navAssignedBadgeCountFromSummary(summary: TaskSummaryResponse): number {
   const a = summary.assigned;
-  return a.active + a.upcoming + a.expired;
+  return a.active + a.expired;
 }
 
 /** Purple nav badge: watching tasks visible today (due/start day reached). */
@@ -192,20 +192,14 @@ export function navWatchingBadgeCountFromTasks(items: TaskListItem[], now = Date
   return filterVisibleWatchingTasks(items, now).length;
 }
 
-export type AssignedTasksTab = 'active' | 'expired';
+export type AssignedTasksTab = 'active' | 'expired' | 'upcoming';
 
 export function filterMyOpenTasksByAssignedTab(
   items: TaskListItem[],
   tab: AssignedTasksTab,
   now = Date.now()
 ): TaskListItem[] {
-  if (tab === 'expired') {
-    return items.filter((t) => classifyOpenTaskByDue(t, now) === 'expired');
-  }
-  return items.filter((t) => {
-    const bucket = classifyOpenTaskByDue(t, now);
-    return bucket === 'active' || bucket === 'upcoming';
-  });
+  return items.filter((t) => classifyOpenTaskByDue(t, now) === tab);
 }
 
 export function filterMyOpenTasksByBucket(items: TaskListItem[], bucket: TaskDueBucket, now = Date.now()): TaskListItem[] {

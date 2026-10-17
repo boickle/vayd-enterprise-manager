@@ -11,8 +11,9 @@ import type { AppointmentRequestBookedApptSummary } from '../utils/appointmentRe
 import { resolveHoldSubmissionId } from '../utils/holdsOpenInScheduler';
 import type { AppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
 import { useAppointmentRequestGmailThreadLabels } from './useAppointmentRequestGmailThreadLabels';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const SUBMISSION_FETCH_CONCURRENCY = 6;
 
 async function fetchSubmissionsByIds(

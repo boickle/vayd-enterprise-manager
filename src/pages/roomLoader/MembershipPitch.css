@@ -1,0 +1,146 @@
+/* src/pages/roomLoader/MembershipPitch.css */
+/* Mobile-first: the pitch is a full-width card so the savings headline is the first
+   thing a client sees on the summary, with the full comparison behind a disclosure. */
+
+.rl-pitch {
+  margin: 0 0 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #ecfdf5 0%, #f7fffb 100%);
+  border: 2px solid #166534;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(22, 101, 52, 0.12);
+  box-sizing: border-box;
+}
+
+.rl-pitch__headline {
+  margin: 0;
+  color: #14532d;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.rl-pitch__subhead {
+  margin-top: 6px;
+  color: #166534;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.rl-pitch__savings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.rl-pitch__savingsAmount {
+  color: #166534;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.rl-pitch__savingsLabel {
+  color: #14532d;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rl-pitch__rows {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid #a7d8bf;
+}
+
+.rl-pitch__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid #d3eede;
+  font-size: 15px;
+  color: #212529;
+}
+
+.rl-pitch__rowName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rl-pitch__rowPrices {
+  flex-shrink: 0;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rl-pitch__was {
+  margin-right: 8px;
+  color: #6b7f72;
+  font-weight: 600;
+  text-decoration: line-through;
+}
+
+.rl-pitch__now {
+  color: #166534;
+}
+
+.rl-pitch__more {
+  margin: 8px 0 0;
+  color: #166534;
+  font-size: 14px;
+}
+
+.rl-pitch__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 14px;
+  padding: 12px 16px;
+  background-color: #166534;
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rl-pitch__toggle:disabled {
+  background-color: #9bb5a5;
+  cursor: default;
+}
+
+.rl-pitch__caret {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.rl-pitch__panel {
+  margin-top: 14px;
+}
+
+@media (min-width: 720px) {
+  .rl-pitch {
+    padding: 22px 24px;
+  }
+
+  .rl-pitch__headline {
+    font-size: 23px;
+  }
+
+  .rl-pitch__savingsAmount {
+    font-size: 36px;
+  }
+
+  .rl-pitch__toggle {
+    width: auto;
+    min-width: 280px;
+  }
+}

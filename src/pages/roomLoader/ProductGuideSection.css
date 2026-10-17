@@ -1,0 +1,99 @@
+/* Prevention guide on the summary page. The table scrolls sideways on a phone rather
+   than squeezing four columns into 360px. */
+
+.rl-guide {
+  margin: 1rem 0;
+  border: 1px solid #dbe7e0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.rl-guide__summary {
+  padding: 0.85rem 1rem;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+  color: #1f2e27;
+  list-style: none;
+  touch-action: manipulation;
+}
+.rl-guide__summary::-webkit-details-marker {
+  display: none;
+}
+.rl-guide__summary::after {
+  content: '';
+  margin-left: auto;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #4b7c6a;
+  border-bottom: 2px solid #4b7c6a;
+  transform: rotate(45deg);
+  transition: transform 150ms ease;
+}
+.rl-guide[open] .rl-guide__summary::after {
+  transform: rotate(-135deg);
+}
+
+.rl-guide__body {
+  padding: 0 1rem 1rem;
+}
+
+.rl-guide__table-block + .rl-guide__table-block {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #eef4f1;
+}
+
+.rl-guide__heading {
+  margin: 0 0 0.5rem;
+  font-size: 0.98rem;
+  color: #1f2e27;
+}
+
+.rl-guide__note,
+.rl-guide__footer {
+  font-size: 0.86rem;
+  color: #4a5c53;
+}
+.rl-guide__note {
+  margin-bottom: 0.75rem;
+}
+.rl-guide__footer {
+  margin-top: 0.75rem;
+}
+
+.rl-guide__scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.rl-guide__table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  color: #35443d;
+}
+.rl-guide__table th,
+.rl-guide__table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid #eef4f1;
+}
+.rl-guide__table thead th {
+  border-bottom: 2px solid #cfe0d7;
+  color: #1f2e27;
+  white-space: nowrap;
+}
+.rl-guide__table tbody th {
+  font-weight: 700;
+  color: #1f2e27;
+  white-space: nowrap;
+}
+.rl-guide__table tbody tr:last-child th,
+.rl-guide__table tbody tr:last-child td {
+  border-bottom: none;
+}

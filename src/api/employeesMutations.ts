@@ -29,6 +29,7 @@ export type EmployeeDto = Record<string, unknown> & {
   practice?: { id: number; name?: string } | null;
   isActive?: boolean;
   isDeleted?: boolean;
+  taskForwarderEmployeeId?: number | null;
 };
 
 export type UpsertEmployeesResponse = { ok: boolean; upserted: number };

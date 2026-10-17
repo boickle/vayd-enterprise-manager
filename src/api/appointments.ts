@@ -11,6 +11,7 @@ import {
   clientAddressFromRecord,
   compareVisitAddressToClientHome,
 } from '../utils/addressMatchCore';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type RangeAppointment = Appointment;
 
@@ -682,7 +683,7 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
   });
 }
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 /** UTC bounds for one local calendar day (same shape as scheduler range queries). */
 export function localDayUtcRange(

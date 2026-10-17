@@ -7,24 +7,30 @@ import {
   useUnsentComposeClose,
 } from './unsentComposeClose';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { fetchGmailMailboxes, fetchGmailSendAsAlias, gmailErrorMessage } from '../api/gmail';
 import type { GmailSendAsAlias } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
+import { defaultSharedMailbox, NO_SHARED_GMAIL_MESSAGE } from '../utils/practiceGmailMailboxes';
 import {
   careOutreachSmsToEmail,
   forwardBookingSmsToEmail,
 } from '../utils/clientOutreachEmailMessage';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
 import {
-  buildComposeSendBodies,
+  composeBodiesFromUserContent,
   defaultFromAlias,
   extractEmail,
   formatFromAlias,
+  isEmailBodyEmpty,
   loadSendAsAliases,
   signatureHtmlForFromAlias,
   submitCompose,
 } from './gmail/gmailCompose';
+import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
+import MessageTemplateHtmlEditor from './messageTemplates/MessageTemplateHtmlEditor';
+import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
 import './gmail/GmailComposeModal.css';
 
 type Channel = 'text' | 'email';
@@ -47,6 +53,7 @@ type Props = {
   markInboxDone?: boolean;
   /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
   smsSource?: string;
+  mergeValues?: MergeValues;
   /** Called after a successful text or email, before the modal closes. */
   onSent?: () => void;
 };
@@ -75,6 +82,7 @@ export function ClientContactComposeModal({
   smsFromLine,
   markInboxDone,
   smsSource,
+  mergeValues,
   onSent,
 }: Props) {
   const { allowed: canEmail, loading: gmailAccessLoading } = useGmailInboxAccess();
@@ -96,6 +104,7 @@ export function ClientContactComposeModal({
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [userBody, setUserBody] = useState('');
+  const [doNotSms, setDoNotSms] = useState(false);
 
   const showText = canText;
   const showEmail = canEmail;
@@ -122,7 +131,23 @@ export function ClientContactComposeModal({
     setSmsMessage(initialSmsMessage);
     setSendError(null);
     setChannel(canText ? 'text' : canEmail ? 'email' : 'text');
+    setDoNotSms(false);
   }, [open, initialSmsMessage, canText, canEmail]);
+
+  useEffect(() => {
+    if (!open || clientId == null) return;
+    let cancelled = false;
+    void fetchClientByIdStaff(clientId)
+      .then((raw) => {
+        if (!cancelled) setDoNotSms(clientDoNotSmsFromRecord(raw));
+      })
+      .catch(() => {
+        if (!cancelled) setDoNotSms(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId]);
 
   useEffect(() => {
     if (!open || channel !== 'email' || clientId == null || !canEmail) return;
@@ -149,15 +174,9 @@ export function ClientContactComposeModal({
         }
         setTo(emails.join(', '));
 
-        const connected = (mailboxesRes.mailboxes ?? []).filter((mb) => mb.connected);
-        const sendMailbox =
-          connected.find((mb) => mb.email.toLowerCase() === 'info@vetatyourdoor.com')?.email ??
-          connected[0]?.email ??
-          null;
+        const sendMailbox = defaultSharedMailbox(mailboxesRes.mailboxes)?.email ?? null;
         if (!sendMailbox) {
-          throw new Error(
-            'No Gmail mailboxes are connected. Open Scout Email — shared inboxes connect automatically when configured; personal mailboxes still need OAuth once.',
-          );
+          throw new Error(NO_SHARED_GMAIL_MESSAGE);
         }
 
         const aliases = await loadSendAsAliases(sendMailbox);
@@ -231,13 +250,15 @@ export function ClientContactComposeModal({
   const canSendText = showText && Boolean(clientId && smsMessage.trim()) && !sending;
   const canSendEmail =
     showEmail &&
-    Boolean(mailbox && from.trim() && to.trim() && subject.trim() && userBody.trim()) &&
+    Boolean(mailbox && from.trim() && to.trim() && subject.trim() && !isEmailBodyEmpty(userBody)) &&
     !sending &&
     !emailLoading &&
     !emailLoadError;
 
   const handleSendText = async (overrideNonProd: boolean) => {
     if (!clientId || !canSendText) return;
+    const proceed = await confirmSendDespiteDoNotSms(doNotSms);
+    if (!proceed) return;
     setSending(true);
     setSendError(null);
     try {
@@ -263,10 +284,9 @@ export function ClientContactComposeModal({
     setSending(true);
     setSendError(null);
     try {
-      const { bodyText, bodyHtml } = buildComposeSendBodies({
-        userText: userBody,
+      const { bodyText, bodyHtml } = composeBodiesFromUserContent({
+        userContent: userBody,
         signatureHtml,
-        quotedSuffix: '',
       });
       await submitCompose({
         mailbox,
@@ -443,8 +463,27 @@ export function ClientContactComposeModal({
           </p>
         ) : null}
 
+        {channel === 'text' && showText && doNotSms ? (
+          <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
+            Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
+          </p>
+        ) : null}
+
         {channel === 'text' && showText ? (
           <label style={{ display: 'block', marginBottom: 20 }}>
+            <MessageTemplatePicker
+              channel="sms"
+              mergeValues={
+                mergeValues ??
+                mergeValuesFromNames({
+                  clientFullName: clientLabel,
+                  doctorLastName: providerLastName,
+                })
+              }
+              disabled={sending}
+              currentBody={smsMessage}
+              onApply={({ body }) => setSmsMessage(body)}
+            />
             <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Message</span>
             <textarea
               value={smsMessage}
@@ -524,6 +563,23 @@ export function ClientContactComposeModal({
                   )}
                 </label>
 
+                <MessageTemplatePicker
+                  channel="email"
+                  mergeValues={
+                    mergeValues ??
+                    mergeValuesFromNames({
+                      clientFullName: clientLabel,
+                      doctorLastName: providerLastName,
+                    })
+                  }
+                  disabled={sending}
+                  currentSubject={subject}
+                  currentBody={userBody}
+                  onApply={({ subject: nextSubject, body }) => {
+                    if (nextSubject.trim()) setSubject(nextSubject);
+                    setUserBody(body);
+                  }}
+                />
                 <label style={{ display: 'block', marginBottom: 14 }}>
                   <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Subject</span>
                   <input
@@ -538,24 +594,11 @@ export function ClientContactComposeModal({
 
                 <label style={{ display: 'block', marginBottom: 20 }}>
                   <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Message</span>
-                  <textarea
+                  <MessageTemplateHtmlEditor
                     value={userBody}
-                    onChange={(e) => setUserBody(e.target.value)}
                     disabled={sending}
-                    rows={10}
-                    style={{
-                      width: '100%',
-                      padding: 12,
-                      background: '#f9fafb',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: signatureHtml ? '8px 8px 0 0' : 8,
-                      fontSize: 14,
-                      lineHeight: 1.6,
-                      resize: 'vertical',
-                      fontFamily: 'inherit',
-                      boxSizing: 'border-box',
-                    }}
                     placeholder="Enter your message…"
+                    onChange={setUserBody}
                   />
                   {signatureHtml ? (
                     <div

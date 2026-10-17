@@ -1,8 +1,16 @@
 // src/api/http.ts
 import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
+import { leaveImpersonation, readImpersonation } from '../auth/impersonationSession';
 
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const baseURL = apiBaseUrl;
+
+/** The API picks the practice from this host (e.g. acme.scoutpims.com) when there is no token. */
+export const PRACTICE_HOST_HEADER = 'X-Scout-Host';
+
+export function practiceHostHeaders(): Record<string, string> {
+  return typeof window === 'undefined' ? {} : { [PRACTICE_HOST_HEADER]: window.location.host };
+}
 
 // Initialize token from localStorage on module load
 // Support both old token format and new accessToken format for migration
@@ -145,6 +153,11 @@ function clearAutoLogout() {
 }
 
 async function attemptTokenRefresh(): Promise<boolean> {
+  // View-as tokens can't be refreshed; expiry returns the superadmin to their own sign-in.
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return false;
+  }
   console.log('[Token Refresh] 🔄 attemptTokenRefresh() called', new Error().stack?.split('\n')[2]?.trim());
   
   // Check if a refresh is already in progress - if so, wait for it instead of starting a new one
@@ -259,6 +272,10 @@ export function setLogoutHandler(fn: () => void) {
   logoutHandler = fn;
 }
 export function forceLogout() {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return;
+  }
   const stack = new Error().stack;
   const caller = stack?.split('\n')[2]?.trim() || 'unknown';
   const fullStack = stack?.split('\n').slice(0, 10).join('\n') || 'no stack';
@@ -302,7 +319,7 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
     const response = await axios.post(
       `${baseURL}/auth/refresh`,
       { refreshToken },
-      { withCredentials: false }
+      { withCredentials: false, headers: practiceHostHeaders() }
     );
     console.log('[Token Refresh] 🔐 Refresh response received:', {
       hasAccessToken: !!response.data?.accessToken,
@@ -384,6 +401,10 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
 
 // Refresh access token with deduplication - in-tab (single promise) and cross-tab (localStorage lock).
 async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promise<string | null> {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return null;
+  }
   const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
   console.log(`[Token Refresh] 🔄 refreshAccessToken() called from: ${caller}, shouldLogoutOnFailure: ${shouldLogoutOnFailure}`);
   console.log(`[Token Refresh] 🔄 Current state: refreshPromise=${!!refreshPromise}`);
@@ -523,6 +544,9 @@ http.interceptors.request.use((config) => {
   if (!headers.has('Authorization') && currentToken) {
     headers.set('Authorization', `Bearer ${currentToken}`);
   }
+  for (const [name, value] of Object.entries(practiceHostHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
 
   config.headers = headers as AxiosRequestHeaders;
   return config;
@@ -610,4 +634,12 @@ http.interceptors.response.use(
 export function postWithToken<T = any>(path: string, data: any, tokenOverride: string) {
   const headers = new AxiosHeaders({ Authorization: `Bearer ${tokenOverride}` });
   return http.post<T>(path, data, { headers });
+}
+
+export function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (typeof message === 'string' && message.trim()) return message;
+  return e instanceof Error ? e.message : 'Request failed';
 }

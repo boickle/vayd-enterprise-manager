@@ -1,0 +1,275 @@
+.renewal-review {
+  max-width: 560px;
+  margin: 40px auto;
+  padding: 0 20px 64px;
+  color: #1b4d3e;
+  font-family: inherit;
+  line-height: 1.55;
+}
+
+.renewal-review__logo {
+  display: block;
+  width: 160px;
+  margin: 0 auto 24px;
+}
+
+.renewal-review h1 {
+  font-size: 1.6rem;
+  margin: 0 0 12px;
+}
+
+.renewal-review h2 {
+  font-size: 1.15rem;
+  margin: 0 0 8px;
+}
+
+.renewal-review__card {
+  border: 1px solid #d5e4db;
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: #f7fbf8;
+  margin: 18px 0;
+}
+
+.renewal-review__card dl {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.renewal-review__card dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5b7468;
+}
+
+.renewal-review__card dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+.renewal-review__muted {
+  color: #5b7468;
+}
+
+.renewal-review__error {
+  color: #9b2c2c;
+}
+
+.renewal-review__stay {
+  font-weight: 600;
+}
+
+.renewal-review__cancel-link {
+  margin-top: 28px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #5b7468;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.renewal-review__cancel {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid #e8c4c4;
+  border-radius: 12px;
+  background: #fff8f8;
+  display: grid;
+  gap: 12px;
+}
+
+.renewal-review__cancel label {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.renewal-review__cancel input,
+.renewal-review__cancel textarea {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d0d0d0;
+  font: inherit;
+}
+
+.renewal-review__check {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+
+.renewal-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.renewal-review__actions button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #c5d5cc;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.renewal-review__actions .is-danger {
+  background: #9b2c2c;
+  color: #fff;
+  border-color: #9b2c2c;
+}
+
+.renewal-review__actions .is-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.renewal-review__move {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #d5e4db;
+  border-radius: 14px;
+  background: #f7fbf8;
+  display: grid;
+  gap: 14px;
+}
+
+.renewal-review__move label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.renewal-review__move input:not([type='radio']) {
+  padding: 10px 12px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.renewal-review__plans {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.renewal-review__plans legend {
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.renewal-review__move .renewal-review__plan {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d5e4db;
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.renewal-review__plan.is-selected {
+  border-color: #4fb128;
+  box-shadow: 0 0 0 1px #4fb128;
+}
+
+.renewal-review__plan-summary {
+  display: block;
+  font-size: 14px;
+}
+
+.renewal-review__plan-price {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.renewal-review__badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e3f4da;
+  color: #2f6b1a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.renewal-review__interval {
+  display: flex;
+  gap: 8px;
+}
+
+.renewal-review__interval button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.renewal-review__interval button.is-selected {
+  border-color: #4fb128;
+  background: #e3f4da;
+  font-weight: 650;
+}
+
+.renewal-review__interval button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.renewal-review__card-input {
+  padding: 12px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.renewal-review__primary {
+  padding: 12px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #4fb128;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.renewal-review__primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.renewal-review__change-plan {
+  display: block;
+  margin: 4px 0 16px;
+  padding: 10px 16px;
+  border: 1px solid #4fb128;
+  border-radius: 8px;
+  background: #fff;
+  color: #2f6b1a;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.renewal-review__comparison h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.renewal-review__comparison ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}

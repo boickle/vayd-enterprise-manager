@@ -1,0 +1,111 @@
+import { useEffect, useRef } from 'react';
+import { Bold } from 'lucide-react';
+import {
+  looksLikeHtmlFragment,
+  preserveInlineNewlines,
+  sanitizeSoapHtml,
+  soapHtmlToPlainText,
+} from '../../utils/sanitizeCommunicationHtml';
+
+type Props = {
+  value: string;
+  onChange: (htmlOrText: string) => void;
+  /** Called with the latest editor value so parents never save a stale React state. */
+  onBlur: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
+  /** Prefer taller document-view editors. */
+  minHeightPx?: number;
+  /** SoapEncounter column this edits, so live co-editing can tell the room where you are. */
+  dataField?: string;
+};
+
+/** Turn plain SOAP notes into editable HTML while preserving line breaks. */
+export function soapTextToEditorHtml(value: string): string {
+  const raw = value ?? '';
+  if (!raw.trim()) return '';
+  if (looksLikeHtmlFragment(raw)) return sanitizeSoapHtml(preserveInlineNewlines(raw));
+  return sanitizeSoapHtml(
+    raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+  );
+}
+
+/**
+ * Lightweight rich-text field for SOAP Document view: bold toolbar + contentEditable.
+ * Stores sanitized HTML (or plain text if the doctor never used formatting).
+ */
+export default function SoapRichTextField({
+  value,
+  onChange,
+  onBlur,
+  disabled,
+  placeholder,
+  className,
+  minHeightPx = 220,
+  dataField,
+}: Props) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const next = soapTextToEditorHtml(value);
+    if (el.innerHTML !== next) el.innerHTML = next;
+  }, [value]);
+
+  function emitFromDom(): string {
+    const el = rootRef.current;
+    if (!el) return value ?? '';
+    const html = sanitizeSoapHtml(el.innerHTML);
+    const plain = soapHtmlToPlainText(html);
+    // Keep plain storage when there's no formatting — easier for copy/paste & older consumers.
+    const next = /<(strong|b)\b/i.test(html) ? html : plain;
+    onChange(next);
+    return next;
+  }
+
+  function runBold() {
+    if (disabled) return;
+    rootRef.current?.focus();
+    document.execCommand('bold', false);
+    emitFromDom();
+  }
+
+  return (
+    <div
+      className={`soap-rich${disabled ? ' is-disabled' : ''}${className ? ` ${className}` : ''}`}
+      data-soap-field={dataField}
+    >
+      <div className="soap-rich__bar" role="toolbar" aria-label="SOAP formatting">
+        <button
+          type="button"
+          className="soap-rich__btn"
+          disabled={disabled}
+          title="Bold significant / abnormal findings"
+          onClick={runBold}
+        >
+          <Bold size={14} /> Bold
+        </button>
+      </div>
+      <div
+        ref={rootRef}
+        className="soap-rich__editor"
+        style={{ minHeight: minHeightPx }}
+        contentEditable={!disabled}
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        role="textbox"
+        aria-multiline="true"
+        onInput={emitFromDom}
+        onBlur={() => {
+          onBlur(emitFromDom());
+        }}
+      />
+    </div>
+  );
+}

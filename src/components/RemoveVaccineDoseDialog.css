@@ -1,0 +1,59 @@
+.vax-remove__effects {
+  margin: 4px 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.vax-remove__effects li + li {
+  margin-top: 4px;
+}
+
+.vax-remove__warn {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.vax-remove__warn svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.vax-remove__reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.vax-remove__reason {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vax-remove__reason input {
+  margin: 0;
+}
+
+.vax-remove__reason.is-on {
+  border-color: #b91c1c;
+  background: #fef2f2;
+  color: #7f1d1d;
+}

@@ -1,0 +1,41 @@
+.catalog-tagalongs {
+  margin-bottom: 20px;
+}
+
+.catalog-tagalongs__table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.catalog-tagalongs__table th,
+.catalog-tagalongs__table td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.catalog-tagalongs__form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  max-width: 720px;
+  margin-top: 12px;
+}
+
+.catalog-tagalongs__search {
+  grid-column: 1 / -1;
+}
+
+.catalog-tagalongs__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.catalog-tagalongs__store {
+  grid-column: 1 / -1;
+  align-items: center;
+}

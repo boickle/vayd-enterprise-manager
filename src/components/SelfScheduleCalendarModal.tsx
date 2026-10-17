@@ -1160,6 +1160,9 @@ export function SelfScheduleCalendarModal({
           monthHasBookableCandidates(cachedStart, startMonth, earliestCalendarDate)
         ) {
           applyMonth(startMonth, cachedVisible, false);
+          // A search this one replaced may have turned the spinner on, and it
+          // only turns it off for the newest search.
+          setLoadingMonth(false);
           return;
         }
         for (let i = 1; i < 12; i++) {
@@ -1175,6 +1178,7 @@ export function SelfScheduleCalendarModal({
               candidatesInCalendarMonth(cachedLater, later, earliestCalendarDate),
               true,
             );
+            setLoadingMonth(false);
             return;
           }
         }
@@ -1829,6 +1833,26 @@ export function SelfScheduleCalendarModal({
             {soonestAvailabilityNote && !loadingMonth ? (
               <div style={{ fontSize: 12, color: tealDark, textAlign: 'center', marginTop: 8 }}>
                 {soonestAvailabilityNote}
+              </div>
+            ) : null}
+
+            {!loadingMonth && availableDays.size === 0 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  background: grey50,
+                  border: `1px solid ${grey200}`,
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: grey700,
+                  lineHeight: 1.5,
+                  textAlign: 'center',
+                }}
+              >
+                No pre-approved online times are open this month for this doctor at
+                your address. Use the arrows to look at other months, or tell us
+                your preferred times below and we&apos;ll find a visit.
               </div>
             ) : null}
 

@@ -16,8 +16,9 @@ import { waitlistClientDisplayName } from '../utils/waitlistMatch';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { WAITLIST_WINDOW_OPTIONS } from '../utils/waitlistMatch';
 import type { WaitlistAddPrefill } from '../utils/waitlistAddPrefillFromAppointment';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type Props = {
   practiceId?: number;

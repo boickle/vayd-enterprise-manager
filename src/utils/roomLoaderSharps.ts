@@ -7,7 +7,14 @@ export function labCodeRequiresSharpsDisposal(code: string | null | undefined): 
   return !SHARPS_EXEMPT_LAB_CODES.has(c);
 }
 
-export function inventoryCategoryRequiresSharpsDisposal(categoryName: string | null | undefined): boolean {
-  const n = (categoryName ?? '').trim();
-  return n === 'Vaccines' || n === 'Injections';
+/** Inventory categories that mean a needle was used — Room Loader + SOAP checkout both use this. */
+export function inventoryCategoryRequiresSharpsDisposal(
+  categoryName: string | null | undefined
+): boolean {
+  const n = (categoryName ?? '').trim().toLowerCase();
+  return n === 'vaccines' || n === 'injections' || n === 'injectable' || n === 'injectables';
+}
+
+export function isVaccineInventoryCategory(categoryName: string | null | undefined): boolean {
+  return (categoryName ?? '').trim().toLowerCase() === 'vaccines';
 }

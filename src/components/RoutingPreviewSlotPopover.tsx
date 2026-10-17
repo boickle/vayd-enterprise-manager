@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
 import { X } from 'lucide-react';
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
@@ -41,6 +42,11 @@ type Props = {
   confirmLabel?: string;
   onBook: () => void;
   onDismiss: () => void;
+  /** Phone: move the calendar ghost to the previous or next result without leaving the preview. */
+  onPrevious?: () => void;
+  onNext?: () => void;
+  /** Phone: hide this card and scroll the results list back into view. */
+  onShowResults?: () => void;
   /** Shown for Optimize: leave the calendar preview and return to the Optimize list. */
   onBack?: () => void;
   backLabel?: string;
@@ -103,6 +109,9 @@ export function RoutingPreviewSlotPopover({
   confirmLabel,
   onBook,
   onDismiss,
+  onPrevious,
+  onNext,
+  onShowResults,
   onBack,
   backLabel,
   onAddAlternative,
@@ -159,6 +168,16 @@ export function RoutingPreviewSlotPopover({
         : null;
   const scoreLineIsUnavailable =
     scoreLine === 'No previous routing score available for this visit.';
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)');
+    const sync = () => setNarrow(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  const showSlotNav = narrow && !isOptimize && (onPrevious || onNext || onShowResults);
+
   const primaryLabel = showOptimizeChooser
     ? 'Reschedule'
     : confirmLabel ??
@@ -248,6 +267,20 @@ export function RoutingPreviewSlotPopover({
           )}
         </div>
       </div>
+
+      {showSlotNav ? (
+        <div className="scheduler-edit-preview-popover-nav">
+          <button type="button" className="btn secondary" onClick={onPrevious} disabled={!onPrevious}>
+            Prev
+          </button>
+          <button type="button" className="btn secondary" onClick={onNext} disabled={!onNext}>
+            Next slot
+          </button>
+          <button type="button" className="btn secondary" onClick={onShowResults}>
+            Results
+          </button>
+        </div>
+      ) : null}
 
       <div className="scheduler-edit-preview-popover-actions">
         {showOptimizeChooser ? (

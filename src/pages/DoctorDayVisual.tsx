@@ -79,9 +79,10 @@ import {
 } from '../utils/practiceTimezone';
 import './DoctorDay.css';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 import type { DoctorDayVisualPdfAppointmentPayload, DoctorDayVisualPdfRow } from './DoctorDayVisualPdf';
 import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 // ===== Vertical scale: match My Week column density =====
 const PPM = 1.1;

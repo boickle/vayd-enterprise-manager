@@ -6,6 +6,20 @@ export function looksLikeHtmlFragment(s: string): boolean {
   return /<[a-z][\s\S]*>/i.test(s);
 }
 
+/**
+ * Turn newlines into breaks when a fragment has no structure of its own.
+ *
+ * A client recap comes back as prose with <strong> on the action items and paragraphs
+ * separated by blank lines, nothing more. That counts as HTML, so it skips the
+ * plain-text escaping path, and the newlines then collapse into spaces and the whole
+ * letter renders as one block. Once the markup carries its own breaks or blocks the
+ * newlines are just source formatting, so leave them be.
+ */
+export function preserveInlineNewlines(html: string): string {
+  if (/<(br|p|div|ul|ol|li|table|h[1-6])\b/i.test(html)) return html;
+  return html.replace(/\n/g, '<br>');
+}
+
 /** Strip tags for one-line summaries and collapsed previews (safe, no script execution). */
 export function htmlToPlainText(html: string): string {
   if (typeof document !== 'undefined') {
@@ -31,4 +45,83 @@ export function sanitizeCommunicationHtml(html: string): string {
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#)/i,
   });
+}
+
+/** Tight allow-list for SOAP Document view (bold abnormals + line breaks). */
+export function sanitizeSoapHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['strong', 'b', 'em', 'i', 'br', 'p', 'div', 'ul', 'ol', 'li', 'span'],
+    ALLOWED_ATTR: [],
+  });
+}
+
+/** Product descriptions: formatting plus internal/external links. */
+export function sanitizeStoreDescriptionHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'span'],
+    ALLOWED_ATTR: ['href', 'rel', 'target'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#)/i,
+  });
+}
+
+/**
+ * Client form templates (waiver paragraphs, headings, checkbox copy).
+ * Plain text keeps newlines as breaks; HTML markup is allow-listed (no scripts).
+ * Practice-logo merge may inject a data:image <img>.
+ */
+export function sanitizeFormTemplateHtml(raw: string): string {
+  const input = raw ?? '';
+  if (!input) return '';
+  if (!looksLikeHtmlFragment(input)) {
+    return escapePlainTextAsHtml(input);
+  }
+  return DOMPurify.sanitize(input, {
+    ALLOWED_TAGS: [
+      'p',
+      'br',
+      'strong',
+      'b',
+      'em',
+      'i',
+      'u',
+      'ul',
+      'ol',
+      'li',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'div',
+      'span',
+      'a',
+      'img',
+    ],
+    ALLOWED_ATTR: ['href', 'rel', 'target', 'src', 'alt', 'style'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|data:image\/|\/|#)/i,
+  });
+}
+
+function escapePlainTextAsHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+/** Plain text for clipboard / consumers that cannot render SOAP HTML. */
+export function soapHtmlToPlainText(html: string): string {
+  if (!html) return '';
+  if (!looksLikeHtmlFragment(html)) return html;
+  if (typeof document !== 'undefined') {
+    const d = document.createElement('div');
+    d.innerHTML = sanitizeSoapHtml(html);
+    const withBreaks = d.innerHTML
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n');
+    d.innerHTML = withBreaks;
+    return (d.textContent ?? d.innerText ?? '').replace(/\n{3,}/g, '\n\n').trimEnd();
+  }
+  return htmlToPlainText(html);
 }

@@ -1,0 +1,104 @@
+/* src/permissions/PermissionGate.css */
+
+/* Case 2 of the convention: the action is normally theirs, just not here. */
+.perm-blocked {
+  display: inline-flex;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.perm-blocked > * {
+  pointer-events: none;
+}
+
+.perm-denied {
+  margin: 24px auto;
+  max-width: 460px;
+  padding: 20px 22px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  text-align: center;
+}
+.perm-denied-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #1f2937);
+}
+.perm-denied-body {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7280);
+}
+
+/* Reason prompt: the gate for actions that are allowed but must be explained. */
+.perm-reason-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+}
+.perm-reason-modal {
+  width: min(460px, calc(100vw - 32px));
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+}
+.perm-reason-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #1f2937);
+}
+.perm-reason-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+.perm-reason-modal textarea {
+  margin-top: 12px;
+  width: 100%;
+  min-height: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d9e0ea);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.perm-reason-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.perm-reason-preset {
+  padding: 4px 10px;
+  border: 1px solid var(--border, #d9e0ea);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text, #374151);
+  cursor: pointer;
+}
+.perm-reason-preset:hover {
+  background: var(--surface-hover, #f3f6fa);
+}
+.perm-reason-preset.is-selected {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+.perm-reason-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.perm-reason-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--danger, #b42318);
+}
