@@ -23,6 +23,7 @@ import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
 import { ForwardBookingBookLaterModal } from '../components/ForwardBookingBookLaterModal';
 import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import { EditForwardBookingModal } from '../components/EditForwardBookingModal';
 import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
@@ -602,6 +603,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const [removing, setRemoving] = useState<Record<number, boolean>>({});
   const [removeError, setRemoveError] = useState<Record<number, string | null>>({});
   const [bookLaterEntry, setBookLaterEntry] = useState<ForwardBookingEntry | null>(null);
+  const [editEntry, setEditEntry] = useState<ForwardBookingEntry | null>(null);
   const [bookLaterUpdating, setBookLaterUpdating] = useState<Record<number, boolean>>({});
   const [bookLaterError, setBookLaterError] = useState<Record<number, string | null>>({});
   const [bookedApptPoints, setBookedApptPoints] = useState<Map<number, number> | null>(null);
@@ -2432,6 +2434,15 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                       alignSelf: 'center',
                     }}
                   >
+                    {!isRemoved && !isComplete ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setEditEntry(entry)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
                     {isRemoved ? (
                       hasLinked ? (
                         <button
@@ -2715,6 +2726,19 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           practiceTz={practiceTz}
           onClose={() => setBookLaterEntry(null)}
           onSaved={mergeBookLaterEntry}
+        />
+      ) : null}
+
+      {editEntry ? (
+        <EditForwardBookingModal
+          entry={editEntry}
+          practiceId={PRACTICE_ID}
+          practiceTz={practiceTz}
+          onClose={() => setEditEntry(null)}
+          onSaved={(updated) => {
+            mergeEntry(updated);
+            setNotice('Forward booking updated.');
+          }}
         />
       ) : null}
 

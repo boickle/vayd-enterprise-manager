@@ -10,6 +10,7 @@ import {
   isBlockEntry,
   blockDisplayLabel,
   isFlexBlockItem,
+  personalBlockHasOpenFlexWindow,
   type DoctorDayAppt,
   type DoctorDayResponse,
   type Depot,
@@ -295,7 +296,10 @@ function weekHouseholdIsClientFixedTime(h: WeekHousehold): boolean {
 
 /** Fixed chip / hover isFixedTime: non-flex personal blocks or client Fixed Time. */
 function weekHouseholdIsFixedTimeAppointment(h: WeekHousehold): boolean {
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  const flexBlock = Boolean(
+    h.isPersonalBlock &&
+      (isFlexBlockItem(h.primary) || personalBlockHasOpenFlexWindow(h)),
+  );
   if (h.isPersonalBlock && !flexBlock) return true;
   return weekHouseholdIsClientFixedTime(h);
 }
@@ -312,7 +316,10 @@ function weekHouseholdUsesDoctorDayClockForLayout(
 ): boolean {
   if (!showByDriveTime) return true;
   if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
+  const flexBlock = Boolean(
+    h.isPersonalBlock &&
+      (isFlexBlockItem(h.primary) || personalBlockHasOpenFlexWindow(h))
+  );
   if (h.isPersonalBlock && !flexBlock) return true;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
@@ -655,6 +662,8 @@ export function computeMyWeekDayColumnLayout(
   const displayTimeline = order && order.length === tl.length ? order.map((i) => tl[i]) : tl;
   const ds = dayData.driveSeconds ?? [];
   const bufferMinAfterStopK = (k: number) => {
+    const hk = displayHouseholds[k];
+    if (hk?.isPersonalBlock === true && !appointmentIsCalendarOnlyStaffItem(hk.primary)) return 0;
     const v = displayTimeline[k]?.bufferAfterMinutes;
     if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
     return Math.max(0, bufferMin);
@@ -804,6 +813,8 @@ export function buildMyWeekDriveSegmentsFromLayout(
   const { topMinByIdx, durMinByIdx, driveOffsets, ds, N, displayHouseholds, displayTimeline } = layout;
   const apptBufDefault = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
   const bufferMinAfterStop = (i: number) => {
+    const hk = displayHouseholds[i];
+    if (hk?.isPersonalBlock === true && !appointmentIsCalendarOnlyStaffItem(hk.primary)) return 0;
     const v = displayTimeline[i]?.bufferAfterMinutes;
     if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
     return Math.max(0, apptBufDefault);
@@ -1365,7 +1376,83 @@ export function buildMyWeekDriveSegmentsFromLayout(
     }
   }
 
-  return segs;
+  return relocateDriveOffProtectedBlocks(segs, protectedBlockIntervalsMinFromLayout(layout));
+}
+
+/** Lunch and other stand-in-place blocks: nothing is painted on top of them. */
+function protectedBlockIntervalsMinFromLayout(layout: MyWeekDayColumnLayout): { startMin: number; endMin: number }[] {
+  const out: { startMin: number; endMin: number }[] = [];
+  for (let i = 0; i < layout.N; i++) {
+    const h = layout.displayHouseholds[i];
+    if (h?.isPersonalBlock !== true || appointmentIsCalendarOnlyStaffItem(h.primary)) continue;
+    const startMin = layout.topMinByIdx[i] + layout.driveOffsets[i];
+    const endMin = startMin + layout.durMinByIdx[i];
+    if (endMin > startMin) out.push({ startMin, endMin });
+  }
+  return out;
+}
+
+/**
+ * Drive may sit before a protected block, after it, or be split around it.
+ * Minutes that would paint during the block are moved to after the block.
+ * Buffer that would land on the block is dropped (no buffer after stand-in-place time).
+ */
+function relocateDriveOffProtectedBlocks(
+  segs: { top: number; height: number; title: string; kind: MyWeekDriveSegmentKind }[],
+  barriers: { startMin: number; endMin: number }[],
+): { top: number; height: number; title: string; kind: MyWeekDriveSegmentKind }[] {
+  if (barriers.length === 0) return segs;
+  const ordered = [...barriers].sort((a, b) => a.startMin - b.startMin);
+  const out: { top: number; height: number; title: string; kind: MyWeekDriveSegmentKind }[] = [];
+  for (const seg of segs) {
+    const segStart = seg.top / PPM;
+    const segEnd = segStart + seg.height / PPM;
+    const hitsBarrier = ordered.some(
+      (b) => segStart < b.endMin - 1e-6 && segEnd > b.startMin + 1e-6,
+    );
+    if (!hitsBarrier) {
+      out.push(seg);
+      continue;
+    }
+    let pieces: { start: number; end: number }[] = [{ start: segStart, end: segEnd }];
+    for (const barrier of ordered) {
+      const next: { start: number; end: number }[] = [];
+      for (const piece of pieces) {
+        if (piece.end <= barrier.startMin + 1e-6 || piece.start >= barrier.endMin - 1e-6) {
+          next.push(piece);
+          continue;
+        }
+        const beforeEnd = Math.min(piece.end, barrier.startMin);
+        const afterStart = Math.max(piece.start, barrier.endMin);
+        const overlapMin = Math.max(0, Math.min(piece.end, barrier.endMin) - Math.max(piece.start, barrier.startMin));
+        if (seg.kind !== 'drive') {
+          if (beforeEnd - piece.start > 1e-6) next.push({ start: piece.start, end: beforeEnd });
+          if (piece.end - afterStart > 1e-6) next.push({ start: afterStart, end: piece.end });
+          continue;
+        }
+        if (beforeEnd - piece.start > 1e-6) next.push({ start: piece.start, end: beforeEnd });
+        let cursor = barrier.endMin;
+        if (overlapMin > 1e-6) {
+          next.push({ start: cursor, end: cursor + overlapMin });
+          cursor += overlapMin;
+        }
+        const afterMin = piece.end - afterStart;
+        if (afterMin > 1e-6) next.push({ start: cursor, end: cursor + afterMin });
+      }
+      pieces = next;
+    }
+    for (const piece of pieces) {
+      const hMin = piece.end - piece.start;
+      if (hMin * PPM < 2) continue;
+      out.push({
+        top: Math.max(0, piece.start) * PPM,
+        height: Math.max(4, hMin * PPM),
+        title: seg.title,
+        kind: seg.kind,
+      });
+    }
+  }
+  return out;
 }
 
 /** Transparent red diagonal hash where hatched drive overlaps a visit / personal block (drive intrudes on scheduled time). */

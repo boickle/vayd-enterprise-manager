@@ -5072,10 +5072,18 @@ export default function AppointmentRequestForm() {
           formData.recordsDelivery === 'holdoff' || formData.optOutOfRecordsRequest === true
             ? true
             : undefined,
-        // We no longer ask permission, we state it: the form tells every client
-        // "we will contact the practice(s) listed above". Naming a practice under
-        // that sentence is the answer, so it is 'Yes' for new and existing alike.
-        okayToContactPreviousVets: 'Yes',
+        // "Please request them" already sets mayWeAskForRecords=Yes (and recordsDelivery=request).
+        // Do not also stamp okayToContactPreviousVets=Yes — staff email / Scout showed both as redundant.
+        okayToContactPreviousVets: (() => {
+          const explicit =
+            formData.okayToContactPreviousVets ||
+            formData.okayToContactPreviousVetsExisting ||
+            '';
+          if (explicit === 'Yes' || explicit === 'No') return explicit;
+          if (formData.recordsDelivery === 'request') return undefined;
+          if (!isLoggedIn) return 'Yes';
+          return undefined;
+        })(),
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
         mayWeAskForRecords:
           formData.recordsDelivery === 'request'

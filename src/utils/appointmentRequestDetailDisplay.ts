@@ -545,12 +545,14 @@ export function buildAppointmentRequestDetailSections(
   const hospitals = pickStr(requestData.previousVeterinaryHospitals);
   if (hospitals) veterinaryHistory.push(asRow('Other hospitals', hospitals, 'note'));
   const mayAsk = pickYesNo(requestData.mayWeAskForRecords);
-  if (mayAsk) veterinaryHistory.push({ label: 'May we ask for records', value: mayAsk });
   const recordsDelivery = pickStr(requestData.recordsDelivery);
+  // Prefer recordsDelivery wording; fall back to legacy mayAsk when delivery was not saved.
   if (recordsDelivery === 'upload') {
     veterinaryHistory.push({ label: 'Records', value: 'Client will upload' });
   } else if (recordsDelivery === 'request') {
     veterinaryHistory.push({ label: 'Records', value: 'Please request from previous vet' });
+  } else if (mayAsk) {
+    veterinaryHistory.push({ label: 'May we ask for records', value: mayAsk });
   }
   const prevPractices =
     pickStr(requestData.previousVeterinaryPractices) ??
@@ -559,9 +561,12 @@ export function buildAppointmentRequestDetailSections(
     veterinaryHistory.push(asRow('Previous veterinary practices', prevPractices, 'note'));
   }
   const okayContact =
-    pickStr(requestData.okayToContactPreviousVets) ??
-    pickStr(requestData.okayToContactPreviousVetsExisting);
-  if (okayContact) {
+    pickYesNo(requestData.okayToContactPreviousVets) ??
+    pickYesNo(requestData.okayToContactPreviousVetsExisting);
+  // New-client "request records" payloads often also had okayToContact=Yes; hide the duplicate.
+  const contactRedundantWithRecordsAsk =
+    okayContact === 'Yes' && (mayAsk === 'Yes' || recordsDelivery === 'request');
+  if (okayContact && !contactRedundantWithRecordsAsk) {
     veterinaryHistory.push({ label: 'OK to contact previous vets', value: okayContact });
   }
 

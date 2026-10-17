@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import type { DayData } from '../pages/MyWeek';
+import { personalBlockHasOpenFlexWindow } from '../api/appointments';
 import { appointmentIsCalendarOnlyStaffItem } from './calendarOnlyStaffAppointment';
 import {
   clientVisitUsesDoctorDayClockForDriveLayout,
@@ -41,7 +42,10 @@ export function schedulerHouseholdIsFixedTimeAppointment(
   h: HouseholdLike,
   isFlexBlock: (primary: unknown) => boolean
 ): boolean {
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlock(h.primary));
+  const flexBlock = Boolean(
+    h.isPersonalBlock &&
+      (isFlexBlock(h.primary) || personalBlockHasOpenFlexWindow(h)),
+  );
   if (h.isPersonalBlock && !flexBlock) return true;
   return schedulerHouseholdIsClientFixedTime(h);
 }
@@ -79,7 +83,10 @@ export function schedulerHouseholdUsesDoctorDayClockForLayout(
 ): boolean {
   if (!showByDriveTime) return true;
   if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
-  const flexBlock = Boolean(h.isPersonalBlock && isFlexBlock(h.primary));
+  const flexBlock = Boolean(
+    h.isPersonalBlock &&
+      (isFlexBlock(h.primary) || personalBlockHasOpenFlexWindow(h)),
+  );
   if (h.isPersonalBlock && !flexBlock) return true;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??

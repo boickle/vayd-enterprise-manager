@@ -102,6 +102,7 @@ export default function WaitlistPage() {
   const [search, setSearch] = useState('');
   const [listPage, setListPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
+  const [editEntry, setEditEntry] = useState<WaitlistEntry | null>(null);
   const [notesDraft, setNotesDraft] = useState<Record<number, string>>({});
   const notesTimers = useRef<Record<number, number>>({});
   const [notesSaving, setNotesSaving] = useState<Record<number, boolean>>({});
@@ -733,6 +734,22 @@ export default function WaitlistPage() {
                     <button
                       type="button"
                       className="btn secondary"
+                      onClick={() => {
+                        if (notesTimers.current[entry.id]) {
+                          window.clearTimeout(notesTimers.current[entry.id]);
+                          delete notesTimers.current[entry.id];
+                        }
+                        setEditEntry({
+                          ...entry,
+                          notes: notesDraft[entry.id] ?? entry.notes,
+                        });
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
                       disabled={removingId === entry.id}
                       onClick={() => void removeEntry(entry)}
                     >
@@ -760,6 +777,20 @@ export default function WaitlistPage() {
             setStatus('waiting');
             setHighlightId(entry.id);
             void load('waiting');
+            notifySchedulingToolsNavCountsRefresh();
+          }}
+        />
+      ) : null}
+
+      {editEntry ? (
+        <WaitlistAddModal
+          editing={editEntry}
+          onClose={() => setEditEntry(null)}
+          onCreated={() => setEditEntry(null)}
+          onUpdated={(entry) => {
+            setEditEntry(null);
+            setEntries((prev) => prev.map((row) => (row.id === entry.id ? { ...row, ...entry } : row)));
+            setNotesDraft((prev) => ({ ...prev, [entry.id]: entry.notes ?? '' }));
             notifySchedulingToolsNavCountsRefresh();
           }}
         />

@@ -115,21 +115,33 @@ function canonicalAddressKey(raw: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-/** Drop duplicate map stops: same rounded coords and/or same canonical address. */
-function dedupeStopsForMapsUrl(stops: Stop[]): Stop[] {
-  const seen = new Set<string>();
-  const out: Stop[] = [];
-  for (const s of stops) {
-    const tags: string[] = [];
-    const pair = roundedCoordPair(Number(s.lat), Number(s.lon), 5);
-    if (pair) tags.push(`c:${pair}`);
-    const addrRaw = s.address?.trim();
-    if (addrRaw) tags.push(`a:${canonicalAddressKey(addrRaw)}`);
-    if (tags.length === 0) tags.push(`f:${toLocationString(s)}`);
+/** Identity tags for one stop. Placeholder text is not an address match. */
+function stopIdentityTags(s: Stop): string[] {
+  const tags: string[] = [];
+  const pair = roundedCoordPair(Number(s.lat), Number(s.lon), 5);
+  if (pair) tags.push(`c:${pair}`);
+  const addrRaw = s.address?.trim();
+  if (addrRaw && !isPlaceholderAddress(addrRaw)) tags.push(`a:${canonicalAddressKey(addrRaw)}`);
+  if (tags.length === 0) tags.push(`f:${toLocationString(s)}`);
+  return tags;
+}
 
-    if (tags.some((t) => seen.has(t))) continue;
-    for (const t of tags) seen.add(t);
+function tagsShareIdentity(a: string[], b: string[]): boolean {
+  return a.some((t) => b.includes(t));
+}
+
+/**
+ * Collapse only the next copy of a stop (ungrouped multi-pet, Rd vs Road,
+ * geocodes a meter apart). A later return to the same house stays on the route.
+ */
+function dedupeStopsForMapsUrl(stops: Stop[]): Stop[] {
+  const out: Stop[] = [];
+  let prev: string[] | null = null;
+  for (const s of stops) {
+    const tags = stopIdentityTags(s);
+    if (prev && tagsShareIdentity(tags, prev)) continue;
     out.push(s);
+    prev = tags;
   }
   return out;
 }
@@ -146,17 +158,18 @@ function waypointSegmentDedupeKey(segment: string): string {
   return `a:${canonicalAddressKey(segment)}`;
 }
 
+/** Drop only a waypoint that repeats the one immediately before it. */
 function dedupePipeWaypoints(waypoints: string): string {
   if (!waypoints) return '';
   const parts = waypoints.split('|');
-  const seen = new Set<string>();
   const out: string[] = [];
+  let prevKey: string | null = null;
   for (const p of parts) {
     const t = p.trim();
     if (!t) continue;
     const k = waypointSegmentDedupeKey(t);
-    if (seen.has(k)) continue;
-    seen.add(k);
+    if (k === prevKey) continue;
+    prevKey = k;
     out.push(t);
   }
   return out.join('|');

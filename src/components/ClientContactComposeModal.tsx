@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { sendClientSms } from '../api/clientSms';
+import {
+  ComposeCloseButton,
+  UnsentComposeConfirm,
+  useUnsentComposeClose,
+} from './unsentComposeClose';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { fetchGmailMailboxes, fetchGmailSendAsAlias, gmailErrorMessage } from '../api/gmail';
@@ -82,6 +87,7 @@ export function ClientContactComposeModal({
 }: Props) {
   const { allowed: canEmail, loading: gmailAccessLoading } = useGmailInboxAccess();
   const allowSmsOverride = smsAllowsProductionOverride();
+  const { confirming, requestClose, keepEditing, discard } = useUnsentComposeClose(open, onClose);
 
   const [channel, setChannel] = useState<Channel>('text');
   const [smsMessage, setSmsMessage] = useState('');
@@ -309,7 +315,6 @@ export function ClientContactComposeModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="client-contact-compose-title"
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
@@ -360,6 +365,7 @@ export function ClientContactComposeModal({
               </p>
             ) : null}
           </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
             {onOpenMessagesHistory && showText ? (
               <button
@@ -399,6 +405,8 @@ export function ClientContactComposeModal({
                 Email history
               </button>
             ) : null}
+          </div>
+          <ComposeCloseButton onClick={requestClose} disabled={sending} />
           </div>
         </div>
 
@@ -616,8 +624,16 @@ export function ClientContactComposeModal({
           </p>
         ) : null}
 
+        {confirming ? (
+          <UnsentComposeConfirm
+            kind={channel === 'email' ? 'email' : 'text'}
+            onKeep={keepEditing}
+            onDiscard={discard}
+          />
+        ) : null}
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn secondary" onClick={onClose} disabled={sending}>
+          <button type="button" className="btn secondary" onClick={requestClose} disabled={sending}>
             Cancel
           </button>
           {channel === 'text' && showText ? (
