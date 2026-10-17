@@ -245,6 +245,11 @@ export type EuthanasiaConsentStatus = {
     unmarkedItems?: string[];
     assumed?: boolean;
   } | null;
+  /** What the family picked on the online booking form, if they booked online. */
+  requestedAftercare?: {
+    text: string;
+    type: AftercareItemType | 'unsure' | null;
+  } | null;
   invite: {
     id: number;
     sentAt: string | null;
@@ -322,6 +327,8 @@ export async function sendEuthanasiaConsent(body: {
   skipEmail?: boolean;
   /** Deliver the link by email or text. Ignored when skipEmail is true. */
   channel?: 'email' | 'sms';
+  /** Staff confirmed the family changed their aftercare since booking. */
+  confirmAftercareChange?: boolean;
 }): Promise<{
   inviteId: number;
   sentTo: string;

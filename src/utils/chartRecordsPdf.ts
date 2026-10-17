@@ -4,12 +4,18 @@ import type { ChartRow } from './patientChartFromMedicalRecord';
 /** Billing adjustments are not part of a medical record. */
 const NOT_RECORD = /\bdiscount\b|\bpay link\b|\bgift card\b|\bstore credit\b/i;
 
-/** Timeline rows that belong in a records PDF, newest first, each once. */
-export function chartRecordRows(rows: ChartRow[]): ChartRow[] {
+/**
+ * Timeline rows that belong in a records PDF, newest first, each once. Removed entries are left
+ * out unless staff chose to include them (they print labelled as removed).
+ */
+export function chartRecordRows(
+  rows: ChartRow[],
+  opts: { includeRemoved?: boolean } = {}
+): ChartRow[] {
   const seenFiles = new Set<number>();
   const seenRows = new Set<string>();
   const list = rows.filter((row) => {
-    if (row.removed || seenRows.has(row.id)) return false;
+    if ((row.removed && !opts.includeRemoved) || seenRows.has(row.id)) return false;
     if (row.source === 'visitCharge' && NOT_RECORD.test(row.description)) return false;
     if (row.source === 'mailOrder' || row.source === 'roomLoader') return false;
     if (isFileRow(row)) {

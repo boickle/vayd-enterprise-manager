@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { apiErrorMessage } from '../api/http';
 import {
   ArrowLeft,
-  BellRing,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -33,14 +33,10 @@ import {
   persistClientRecapDraft,
   prefetchClientRecap,
   recordClientEmailDecision,
-  type PastDueReminder,
   type VisitReminderPet,
   type VisitWrapUp,
   type VisitWrapUpPet,
 } from '../api/visitWrapUp';
-import { declineReminder, formatDeclinedDate } from '../api/declinedTreatments';
-import { patchReminder } from '../api/careOutreach';
-import { appConfirm, appPrompt } from '../utils/appDialog';
 import { createTask } from '../api/tasks';
 import { listPracticeBranches } from '../api/branchInventory';
 import {
@@ -75,6 +71,15 @@ import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChron
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 import { useAuth } from '../auth/useAuth';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
+import { formatDeclinedDate } from '../api/declinedTreatments';
+
+function startOfLocalDay(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
 
 /** `Name <a@b.com>` → `a@b.com`, for the address we hand back to the recorder. */
 function bareAddress(value: string): string {
@@ -126,24 +131,22 @@ export default function VisitWrapUpPage() {
   const clientIdParam = searchParams.get('clientId');
 
   const [encounterId, setEncounterId] = useState<string | null>(null);
+  /** Start of the visit day — declines before it are from an earlier visit. */
+  const [visitDayStart, setVisitDayStart] = useState<number | null>(null);
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Per-pet card expand state
   const [expandedSoaps, setExpandedSoaps] = useState<Set<number>>(new Set());
-  const [expandedReminders, setExpandedReminders] = useState<Set<number>>(new Set());
-
   // Inline SOAP editing — keyed by patientId
   type SoapDraft = { S: string; O: string; A: string; P: string };
   const [soapDrafts, setSoapDrafts] = useState<Map<number, SoapDraft>>(new Map());
   const [soapSaving, setSoapSaving] = useState<Set<number>>(new Set());
   const [soapSaveError, setSoapSaveError] = useState<Map<number, string>>(new Map());
 
-  // Reminder data (past-due, proposed, declined items) — one fetch covers the household
+  // Declined items for each pet — one fetch covers the household
   const [reminderPets, setReminderPets] = useState<VisitReminderPet[]>([]);
-  const [pastDueBusyId, setPastDueBusyId] = useState<number | null>(null);
-  const [reminderError, setReminderError] = useState<string | null>(null);
 
   // Email state
   const [selectedPetIds, setSelectedPetIds] = useState<Set<number>>(new Set());
@@ -203,6 +206,7 @@ export default function VisitWrapUpPage() {
         });
         if (canceled) return;
         setEncounterId(enc.id);
+        setVisitDayStart(startOfLocalDay(enc.created));
         // Load reminder data in parallel — past-due, proposed, declined items
         void getVisitReminders(enc.id)
           .then(({ pets: rp }) => { if (!canceled) setReminderPets(rp); })
@@ -390,15 +394,6 @@ export default function VisitWrapUpPage() {
     });
   }, []);
 
-  const toggleReminders = useCallback((patientId: number) => {
-    setExpandedReminders((prev) => {
-      const next = new Set(prev);
-      if (next.has(patientId)) next.delete(patientId);
-      else next.add(patientId);
-      return next;
-    });
-  }, []);
-
   const saveSoapField = useCallback(
     async (pet: VisitWrapUpPet, field: 'S' | 'O' | 'A' | 'P', value: string) => {
       if (!encounterId) return;
@@ -434,63 +429,6 @@ export default function VisitWrapUpPage() {
     },
     [encounterId, loadWrapUp]
   );
-
-  const handleDeclinePastDue = useCallback(async (reminder: PastDueReminder) => {
-    const proceed = await appConfirm({
-      title: 'Owner declined this?',
-      message: `Record "${reminder.description}" under Declined on the chart.`,
-      confirmLabel: 'Record decline',
-      cancelLabel: 'Cancel',
-    });
-    if (!proceed) return;
-    const note = await appPrompt({
-      title: 'Decline note (optional)',
-      message: 'Why was this declined?',
-      placeholder: 'Optional',
-      confirmLabel: 'Save',
-      cancelLabel: 'Skip note',
-    });
-    setPastDueBusyId(reminder.id);
-    setReminderError(null);
-    try {
-      await declineReminder(reminder.id, note);
-      setReminderPets((prev) =>
-        prev.map((p) => ({
-          ...p,
-          pastDueReminders: (p.pastDueReminders ?? []).filter((r) => r.id !== reminder.id),
-        }))
-      );
-    } catch (e) {
-      setReminderError(e instanceof Error ? e.message : 'Could not decline that reminder.');
-    } finally {
-      setPastDueBusyId(null);
-    }
-  }, []);
-
-  const handleDeletePastDue = useCallback(async (reminder: PastDueReminder) => {
-    const proceed = await appConfirm({
-      title: 'Remove this reminder?',
-      message: `"${reminder.description}" will leave the reminder list (not recorded as declined).`,
-      confirmLabel: 'Remove',
-      cancelLabel: 'Cancel',
-    });
-    if (!proceed) return;
-    setPastDueBusyId(reminder.id);
-    setReminderError(null);
-    try {
-      await patchReminder(reminder.id, { isHidden: true });
-      setReminderPets((prev) =>
-        prev.map((p) => ({
-          ...p,
-          pastDueReminders: (p.pastDueReminders ?? []).filter((r) => r.id !== reminder.id),
-        }))
-      );
-    } catch (e) {
-      setReminderError(e instanceof Error ? e.message : 'Could not remove that reminder.');
-    } finally {
-      setPastDueBusyId(null);
-    }
-  }, []);
 
   const backToSoap = (pet: VisitWrapUpPet) => {
     const qs = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
@@ -678,7 +616,7 @@ export default function VisitWrapUpPage() {
       }
       await loadWrapUp(encounterId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not sign the medical record.');
+      setError(apiErrorMessage(e) || 'Could not sign the medical record.');
     } finally {
       setCompleting(false);
     }
@@ -774,12 +712,15 @@ export default function VisitWrapUpPage() {
         {pets.map((pet) => {
           const remPet = reminderPets.find((r) => r.patientId === pet.patientId);
           const soapOpen = expandedSoaps.has(pet.patientId);
-          const remOpen = expandedReminders.has(pet.patientId);
-          const pastDues = remPet?.pastDueReminders ?? [];
-          const goingIn = (remPet?.reminders ?? []).filter((r) => !r.removed);
           const declinedItems = (remPet?.declinedItems ?? []).filter(
             (d) => d.onChart !== false
           );
+          const declinedEarlier = (d: (typeof declinedItems)[number]) => {
+            const at = d.declinedAt ? new Date(d.declinedAt).getTime() : NaN;
+            return visitDayStart != null && Number.isFinite(at) && at < visitDayStart;
+          };
+          const declinedThisVisit = declinedItems.filter((d) => !declinedEarlier(d));
+          const declinedBefore = declinedItems.filter(declinedEarlier);
 
           return (
             <section key={pet.patientId} className="soap-wrapup-section soap-wrapup-pet-card">
@@ -907,11 +848,11 @@ export default function VisitWrapUpPage() {
               <WrapUpChronicReview pets={[pet]} noWrapper />
 
               {/* ── Declined this visit ── */}
-              {declinedItems.length > 0 && (
+              {declinedThisVisit.length > 0 && (
                 <div className="soap-wrapup-pet-row">
                   <span className="soap-wrapup-pet-sub-label">Declined this visit</span>
                   <div className="soap-wrapup-pet-chips">
-                    {declinedItems.map((d) => (
+                    {declinedThisVisit.map((d) => (
                       <span key={d.id} className="soap-wrapup-pet-chip soap-wrapup-pet-chip--declined">
                         {d.label}
                       </span>
@@ -919,80 +860,28 @@ export default function VisitWrapUpPage() {
                   </div>
                 </div>
               )}
-
-              {/* ── Past-due reminders that won't be cleared ── */}
-              {pastDues.length > 0 && (
-                <div className="soap-wrapup-pet-row soap-wrapup-pet-row--pastdue">
-                  <span className="soap-wrapup-pet-sub-label soap-wrapup-pet-sub-label--warn">
-                    ⚠ Past-due — won&apos;t be cleared
-                  </span>
-                  {reminderError && <div className="soap-error">{reminderError}</div>}
-                  {pastDues.map((reminder) => {
-                    const busy = pastDueBusyId === reminder.id;
-                    return (
-                      <div key={reminder.id} className="soap-wrapup-rem-pastdue-row">
-                        <div className="soap-wrapup-rem-pastdue-text">
-                          <strong>{reminder.description}</strong>
-                          <span>
-                            Due{' '}
-                            {reminder.dueDate ? formatDeclinedDate(reminder.dueDate) : '—'}
-                          </span>
-                        </div>
-                        <div className="soap-wrapup-rem-pastdue-actions">
-                          <button
-                            type="button"
-                            className="soap-btn ghost small"
-                            disabled={Boolean(busy || allLocked)}
-                            title="Owner declined — stays on the chart as declined"
-                            onClick={() => void handleDeclinePastDue(reminder)}
-                          >
-                            🚫 Decline
-                          </button>
-                          <button
-                            type="button"
-                            className="soap-btn ghost small danger"
-                            disabled={Boolean(busy || allLocked)}
-                            title="Remove from the reminder list only"
-                            onClick={() => void handleDeletePastDue(reminder)}
-                          >
-                            <X size={13} /> Remove
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+              {declinedBefore.length > 0 && (
+                <div className="soap-wrapup-pet-row">
+                  <span className="soap-wrapup-pet-sub-label">Still declined from an earlier visit</span>
+                  <div className="soap-wrapup-pet-chips">
+                    {declinedBefore.map((d) => (
+                      <span
+                        key={d.id}
+                        className="soap-wrapup-pet-chip soap-wrapup-pet-chip--declined-before"
+                        title={
+                          d.declinedByName
+                            ? `Declined ${formatDeclinedDate(d.declinedAt)} · ${d.declinedByName}`
+                            : `Declined ${formatDeclinedDate(d.declinedAt)}`
+                        }
+                      >
+                        {d.label} · {formatDeclinedDate(d.declinedAt)}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {/* ── Reminders going in — collapsed summary, expandable ── */}
-              {goingIn.length > 0 && (
-                <div className="soap-wrapup-pet-row soap-wrapup-pet-row--accordion">
-                  <button
-                    type="button"
-                    className="soap-wrapup-pet-accordion-toggle soap-wrapup-pet-accordion-toggle--minor"
-                    onClick={() => toggleReminders(pet.patientId)}
-                  >
-                    {remOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    <BellRing size={13} />
-                    <span>Reminders going in ({goingIn.length})</span>
-                  </button>
-                  {remOpen && (
-                    <ul className="soap-wrapup-pet-rem-list">
-                      {goingIn.map((r) => (
-                        <li key={r.key}>
-                          <Syringe size={11} className="soap-wrapup-pet-rem-icon" />
-                          <span>{r.description}</span>
-                          {r.dueDate && (
-                            <span className="soap-wrapup-chart-meta">
-                              {' '}— due {formatDeclinedDate(r.dueDate)}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
+              {/* Reminders are reviewed at checkout; they follow the invoice, not the SOAP. */}
 
               {/* ── Callbacks ── */}
               {encounterId && (

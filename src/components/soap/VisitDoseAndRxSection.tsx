@@ -15,6 +15,7 @@ import {
   getVaccineDefaults,
   saveOrderPrescription,
   saveOrderVaccination,
+  removeOrderVaccination,
   updateOrder,
   type EncounterOrder,
   type OrderPrescription,
@@ -29,6 +30,8 @@ import {
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import VaccineLotPicker from './VaccineLotPicker';
+import { askRemoveVaccineDose } from '../RemoveVaccineDoseDialog';
+import { apiErrorMessage } from '../../api/http';
 import RxLabelModal, { type RxLabelPrescriptionInput } from './RxLabelModal';
 import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
@@ -300,6 +303,14 @@ export default function VisitDoseAndRxSection({
             if (forceOpenOrderId == null) setExpanded(null);
             onClinicalRecorded?.();
           }}
+          onRemoved={() => {
+            setVaccinations((prev) => {
+              const next = { ...prev };
+              delete next[order.id];
+              return next;
+            });
+            onClinicalRecorded?.();
+          }}
         />
       ))}
 
@@ -484,6 +495,7 @@ function VaccineRow({
   onToggle,
   onQtyChange,
   onSaved,
+  onRemoved,
 }: {
   encounterId: string;
   order: EncounterOrder;
@@ -500,6 +512,7 @@ function VaccineRow({
   onToggle: () => void;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
   onSaved: (saved: OrderVaccination) => void;
+  onRemoved: () => void;
 }) {
   const [lotNumber, setLotNumber] = useState('');
   const [lotBalanceId, setLotBalanceId] = useState<number | null>(null);
@@ -629,6 +642,27 @@ function VaccineRow({
     }
   };
 
+  const removeDose = async () => {
+    if (!recorded) return;
+    const removal = await askRemoveVaccineDose({
+      vaccineName: recorded.vaccineName ?? order.name,
+      tagNumber: recorded.tagNumber,
+      dateVaccinated: recorded.dateVaccinated,
+      wasSigned: null,
+    });
+    if (!removal) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await removeOrderVaccination(encounterId, order.id, removal);
+      onRemoved();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const summary = recorded
     ? `Lot ${recorded.lotNumber || '—'} · next due ${toDateInput(recorded.nextVaccinationDate) || '—'}`
     : 'Needs lot & expiration';
@@ -747,6 +781,16 @@ function VaccineRow({
             >
               {saving ? 'Saving…' : recorded ? 'Update dose' : 'Record dose'}
             </button>
+            {recorded ? (
+              <button
+                type="button"
+                className="soap-btn small"
+                disabled={saving}
+                onClick={() => void removeDose()}
+              >
+                Remove dose
+              </button>
+            ) : null}
             <DymoLink label="Send treatment label to DYMO" />
           </div>
         </div>

@@ -49,6 +49,11 @@ export function patientPhotoSrc(
   // No stored image key / URL → no photo.
   if (!raw) return null;
   const base = apiBase.replace(/\/+$/, '');
+  // The API proxy rejects requests without its signed `t` token, which only
+  // the server can mint — keep a URL that already carries one.
+  if (/\/patients\/\d+\/image(s\/\d+\/file)?\?(.*&)?t=/.test(raw)) {
+    return /^https?:\/\//i.test(raw) ? raw : `${base}${raw.startsWith('/') ? '' : '/'}${raw}`;
+  }
   if (id) {
     // Prefer the stable proxy whenever we know the patient — works for S3 keys
     // and avoids expired signed URLs from older portal responses.

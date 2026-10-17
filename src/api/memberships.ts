@@ -173,7 +173,19 @@ export type PropagationResult = {
   benefitsAdded: number;
   benefitsUpdated: number;
   benefitsRemoved: number;
+  /** Member lines re-attached to a recreated plan line for the same item, usage kept. */
+  benefitsRelinked?: number;
   groupsSynced: number;
+  /** Changed only in internal grouping; what the member gets is the same. */
+  membershipsGroupingOnly?: number;
+  activeMemberships?: number;
+  dryRun?: boolean;
+  members?: {
+    wellnessPlanId: number;
+    patientId: number | null;
+    patientName: string | null;
+    changes: string[];
+  }[];
 };
 
 export type MembershipBenefit = {
@@ -243,6 +255,18 @@ export type PatientMembership = {
   /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
   ownerChange: MembershipOwnerChange | null;
   groups: MembershipGroup[];
+  /** Covered services given this term, newest first. */
+  usage?: MembershipUsage[];
+};
+
+export type MembershipUsage = {
+  benefitId: number | null;
+  groupId: number | null;
+  name: string;
+  quantity: number;
+  usedAt: string | null;
+  visitInvoiceId: string | null;
+  note: string | null;
 };
 
 export type MembershipOwnerRef = { id: number; name: string };
@@ -399,12 +423,18 @@ export async function applyBundleToExistingMemberships(
     removeBenefitsDroppedFromPlan?: boolean;
     packageItemIds?: number[];
     removePackageItemIds?: number[];
+    /** Sync every member with the whole plan; the id lists are ignored. */
+    wholePlan?: boolean;
+    /** Return the changes without saving them. */
+    dryRun?: boolean;
   }
 ): Promise<PropagationResult> {
   const { data } = await http.post<PropagationResult>(
     `/memberships/bundles/${encodeURIComponent(id)}/apply-to-existing`,
     {
       practiceId: currentPracticeId(),
+      ...(opts?.wholePlan ? { wholePlan: true } : {}),
+      ...(opts?.dryRun ? { dryRun: true } : {}),
       ...(opts?.removeBenefitsDroppedFromPlan ? { removeBenefitsDroppedFromPlan: true } : {}),
       ...(opts?.packageItemIds?.length ? { packageItemIds: opts.packageItemIds } : {}),
       ...(opts?.removePackageItemIds?.length
@@ -424,6 +454,36 @@ export async function archiveBundle(id: number): Promise<void> {
 export async function getBundleAudit(id: number): Promise<MembershipAuditEntry[]> {
   const { data } = await http.get<MembershipAuditEntry[]>(
     `/memberships/bundles/${encodeURIComponent(id)}/audit`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export type PlanMember = {
+  wellnessPlanId: number;
+  patientId: number | null;
+  patientName: string | null;
+  clientId: number | null;
+  clientName: string | null;
+  startDate: string | null;
+  expirationDate: string | null;
+  billingInterval: string | null;
+  cancelAtTermEnd: boolean;
+  benefitsPaused: boolean;
+  /** Benefits drawn this term, all lines added together. */
+  usedTotal: number;
+  /** Pet is inactive or has a completed euthanasia visit: the membership should be cancelled. */
+  petGone?: boolean;
+  petActive?: boolean;
+  inactivationReason?: string | null;
+  inactiveAt?: string | null;
+  euthanasiaVisit?: boolean;
+};
+
+/** Patients currently on this plan, with their client. */
+export async function listPlanMembers(id: number): Promise<PlanMember[]> {
+  const { data } = await http.get<PlanMember[]>(
+    `/memberships/bundles/${encodeURIComponent(id)}/members`,
     { params: { practiceId: currentPracticeId() } }
   );
   return Array.isArray(data) ? data : [];

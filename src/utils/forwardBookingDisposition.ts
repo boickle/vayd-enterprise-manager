@@ -191,6 +191,12 @@ export function buildForwardBookingDispositionPayload(
 }
 
 /** True when all required fields for the chosen mode are present. */
+/** "Mei", "Mei & Stachio", "Mei, Stachio & Bo". */
+export function joinPetNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+}
+
 export function forwardBookingDispositionIsComplete(
   disposition: ForwardBookingDisposition | null | undefined
 ): boolean {

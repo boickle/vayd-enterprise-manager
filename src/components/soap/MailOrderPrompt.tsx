@@ -54,6 +54,8 @@ type Props = {
   paid?: boolean;
   /** Why the doctor still has to approve (e.g. script not approved yet). */
   approvalNote?: string | null;
+  /** The order is being sent; a second click would queue it twice. */
+  saving?: boolean;
   onCancel: () => void;
   onConfirm: (result: MailOrderPromptResult) => void;
 };
@@ -65,6 +67,7 @@ export default function MailOrderPrompt({
   maxQty = 1,
   paid = false,
   approvalNote,
+  saving = false,
   onCancel,
   onConfirm,
 }: Props) {
@@ -192,7 +195,7 @@ export default function MailOrderPrompt({
           <button
             type="button"
             className="btn primary"
-            disabled={!selected || qty < 1 || (!pickup && !ship)}
+            disabled={saving || !selected || qty < 1 || (!pickup && !ship)}
             title={
               !selected
                 ? 'Choose shipping or pickup first'
@@ -201,7 +204,7 @@ export default function MailOrderPrompt({
                   : undefined
             }
             onClick={() => {
-              if (!selected || (!pickup && !ship)) return;
+              if (saving || !selected || (!pickup && !ship)) return;
               onConfirm({
                 origin: mailOriginForType(selected),
                 shippingPaymentStatus: mailShippingPaymentForType(selected, false),
@@ -215,9 +218,9 @@ export default function MailOrderPrompt({
               });
             }}
           >
-            Add to mail queue
+            {saving ? 'Adding…' : 'Add to mail queue'}
           </button>
-          <button type="button" className="btn secondary" onClick={onCancel}>
+          <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
             Cancel
           </button>
         </div>

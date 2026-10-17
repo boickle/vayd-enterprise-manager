@@ -628,6 +628,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     hideOnInvoice: false,
     excludeFromProduction: false,
     allowPriceChange: false,
+    changePatientStatusTo: '',
+    changePatientSex: false,
     isAftercare: false,
     aftercareType: '' as AftercareItemType | '',
     aftercareDisplayName: '',
@@ -765,6 +767,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<'details' | 'clinical' | 'lots' | 'stock' | 'pricing' | 'online-store' | 'associations'>('details');
+
+  const procedureDetailOpen = detail?.itemType === 'procedure';
+  useEffect(() => {
+    if (!procedureDetailOpen || createPatientStatuses.length > 0) return;
+    let cancelled = false;
+    void listPatientStatuses()
+      .then((rows) => {
+        if (!cancelled) setCreatePatientStatuses(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [procedureDetailOpen, createPatientStatuses.length]);
 
   // Reset to Details tab whenever a new item is opened
   useEffect(() => {
@@ -1023,6 +1039,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       hideOnInvoice: Boolean((item as Procedure).hideOnInvoice),
       excludeFromProduction: Boolean((item as Procedure).excludeFromProduction),
       allowPriceChange: Boolean((item as Procedure).allowPriceChange),
+      changePatientStatusTo:
+        detail.itemType === 'procedure'
+          ? ((item as Procedure).changePatientStatusTo ?? '').trim()
+          : '',
+      changePatientSex:
+        detail.itemType === 'procedure' && (item as Procedure).changePatientSex === true,
       isAftercare: Boolean((item as Procedure).isAftercare),
       aftercareType: ((item as Procedure).aftercareType ?? '') as AftercareItemType | '',
       aftercareDisplayName: (item as Procedure).aftercareDisplayName ?? '',
@@ -1910,6 +1932,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         body.hideOnInvoice = coreDraft.hideOnInvoice;
         body.excludeFromProduction = coreDraft.excludeFromProduction;
         body.allowPriceChange = coreDraft.allowPriceChange;
+        body.changePatientStatusTo = coreDraft.changePatientStatusTo.trim() || null;
+        body.changePatientSex = coreDraft.changePatientSex;
         if (coreDraft.isAftercare && !coreDraft.aftercareType) {
           throw new Error('Choose which aftercare plan this item is before saving.');
         }
@@ -3134,6 +3158,53 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           Off fixes the price; staff cannot edit it on an invoice.
                         </small>
                       </span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={coreDraft.changePatientSex}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, changePatientSex: e.target.checked }))
+                        }
+                      />
+                      <span>
+                        Change patient sex
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          For spays and neuters: when the invoice is finalized, the pet is changed
+                          to spayed or neutered.
+                        </small>
+                      </span>
+                    </label>
+                    <label className="settings-label" style={{ display: 'block', margin: '8px 0', maxWidth: 320 }}>
+                      Change patient status to
+                      <select
+                        className="settings-input"
+                        value={coreDraft.changePatientStatusTo}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, changePatientStatusTo: e.target.value }))
+                        }
+                      >
+                        <option value="">No change</option>
+                        {coreDraft.changePatientStatusTo &&
+                        !createPatientStatuses.some(
+                          (s) => s.name === coreDraft.changePatientStatusTo
+                        ) ? (
+                          <option value={coreDraft.changePatientStatusTo}>
+                            {coreDraft.changePatientStatusTo}
+                          </option>
+                        ) : null}
+                        {createPatientStatuses.map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                            {s.marksInactive ? ' (marks inactive)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <small style={{ display: 'block', color: '#6b7280', marginTop: 4 }}>
+                        Set when the invoice is finalized. A status that marks inactive also
+                        stops the pet&rsquo;s memberships, auto-ships, reminders, refills, and
+                        future visits.
+                      </small>
                     </label>
                     {/*
                       The euthanasia consent form reads this item off the estimate

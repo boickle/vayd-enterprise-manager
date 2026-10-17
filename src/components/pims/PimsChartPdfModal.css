@@ -74,6 +74,22 @@
   flex-direction: column;
 }
 
+.pims-chart-pdf__image-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: #1f2937;
+}
+
+.pims-chart-pdf__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .pims-chart-pdf__status,
 .pims-chart-pdf__error {
   margin: 16px 18px;

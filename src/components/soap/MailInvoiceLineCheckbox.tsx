@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   MAIL_CANCEL_REASON_LABELS,
@@ -133,6 +133,25 @@ export function shippingLineFromNotes(notes: string | null | undefined): string 
 
 export function invoiceLineMailNote(lineId: string) {
   return `invoiceLine:${lineId}`;
+}
+
+/** Any live mail order for this invoice line is still waiting on a doctor's sign-off. */
+export function mailOrderAwaitsDoctor(
+  rows: MailOrder[],
+  invoiceId: string,
+  lineId: string
+): boolean {
+  const token = invoiceMailNote(invoiceId);
+  const lineToken = invoiceLineMailNote(lineId);
+  return rows.some(
+    (o) =>
+      o.status !== 'cancelled' &&
+      (o.notes || '').includes(token) &&
+      (o.notes || '').includes(lineToken) &&
+      (o.status === 'awaiting_doctor_approval' ||
+        o.approvalStatus === 'needs_doctor_approval' ||
+        o.approvalStatus === 'approval_pending')
+  );
 }
 
 /** "Doctor approves first, then collect payment": the doctor decides from the mail queue, not the invoice. */
@@ -318,6 +337,7 @@ export default function MailInvoiceLineCheckbox({
   const [order, setOrder] = useState<MailOrder | null>(null);
   const [closedOrder, setClosedOrder] = useState<MailOrder | null>(null);
   const [busy, setBusy] = useState(false);
+  const queueingRef = useRef(false);
   const [ask, setAsk] = useState(false);
   const [askCancel, setAskCancel] = useState(false);
 
@@ -478,9 +498,12 @@ export default function MailInvoiceLineCheckbox({
               ? `${approvalReason} — approve it on this invoice, or the doctor approves it from the mail queue before anything is filled.`
               : null
           }
+          saving={busy}
           onCancel={() => setAsk(false)}
           onConfirm={(result) => {
             if (!clientId || line.catalogItemId == null) return;
+            if (queueingRef.current || order) return;
+            queueingRef.current = true;
             setBusy(true);
             void (async () => {
               const prepared = onChargeShipping ? await onChargeShipping(result) : null;
@@ -540,7 +563,10 @@ export default function MailInvoiceLineCheckbox({
               .catch((e) =>
                 onError?.(e instanceof Error ? e.message : 'Could not send to mail orders')
               )
-              .finally(() => setBusy(false));
+              .finally(() => {
+                queueingRef.current = false;
+                setBusy(false);
+              });
           }}
         />
       ) : null}

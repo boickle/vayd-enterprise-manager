@@ -735,6 +735,8 @@ export type ParSeedSheetItem = ParTargets & {
   unit: string | null;
   isControlled: boolean;
   onHand: number;
+  /** Has had a first count at this location. */
+  counted: boolean;
   usedHere: number;
   usedOffice: number;
 };

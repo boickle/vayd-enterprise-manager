@@ -3,11 +3,11 @@
 import type { RoomLoader } from '../api/roomLoader';
 import type { ScoutChartNote } from '../api/scoutChart';
 import type { TreatmentItem, TreatmentWithItems } from '../api/treatments';
-import type { PatientProblem, PostedVisitCharge } from '../api/visitWorkflow';
+import type { PatientProblem, PostedVisitCharge, SoapEncounter } from '../api/visitWorkflow';
 import { resultedByLabel, type LabResult } from '../api/inHouseLabs';
 import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiveText';
 import { communicationBodyForDisplay } from './clientCommunicationDisplay';
-import { looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
+import { looksLikeHtmlFragment, soapHtmlToPlainText } from './sanitizeCommunicationHtml';
 import { chartRemoveReasonLabel } from './chartRemove';
 import {
   idexxAbnormalLines,
@@ -167,6 +167,8 @@ export type ChartRow = {
   isCovered?: boolean;
   filePatientId?: number;
   fileDocumentId?: number;
+  /** "PDF", "JPG", … for the Open button; undefined reads as a PDF. */
+  fileKind?: string;
   removed?: boolean;
   removedReason?: string | null;
   removedByName?: string | null;
@@ -187,6 +189,9 @@ export type ChartRow = {
   labResults?: LabResult[];
   /** Visit charges: the invoice line billed, so lab forms can find their row. */
   invoiceLineId?: string;
+  /** Vaccination billed on an invoice that isn't paid yet. */
+  pendingPayment?: boolean;
+  soapEncounterId?: string;
 };
 
 export type ChartRowSource =
@@ -210,7 +215,8 @@ export type ChartRowSource =
   | 'roomLoader'
   | 'scoutNote'
   | 'mailOrder'
-  | 'inHouseLab';
+  | 'inHouseLab'
+  | 'soapNote';
 
 export type MedicalRecordBundle = {
   labOrders?: unknown[];
@@ -618,6 +624,54 @@ function voidedChartFields(
   };
 }
 
+const DOSE_REMOVAL_REASON_LABEL: Record<string, string> = {
+  entered_in_error: 'Entered in error',
+  wrong_patient: 'Wrong patient',
+  not_given: 'Not given',
+  duplicate: 'Duplicate entry',
+  other: 'Other',
+};
+
+/** Vaccine doses removed from the record, as struck-through rows for "Show removed". */
+export function chartRowsFromRemovedVaccinations(logs: unknown[]): ChartRow[] {
+  const out: ChartRow[] = [];
+  for (const v of logs) {
+    const o = asObj(v);
+    const removal = o ? asObj(o.removal) : null;
+    if (!o || !removal) continue;
+    const id = o.id != null ? String(o.id) : `vx-removed-${out.length}`;
+    const serviceDateIso = pickStr(o.dateVaccinated);
+    const at = pickStr(removal.at);
+    const byName = pickStr(removal.byName);
+    const reasonCode = pickStr(removal.reason);
+    const reason = reasonCode ? (DOSE_REMOVAL_REASON_LABEL[reasonCode] ?? reasonCode) : null;
+    const note = pickStr(removal.note);
+    const when = at ? new Date(at).toLocaleDateString() : null;
+    out.push({
+      id: `vaccination-removed:${id}`,
+      source: 'vaccination',
+      typeLabel: 'Vaccination',
+      description: `${vaccinationLogSummary(o)} — dose removed${byName ? ` · ${byName}` : ''}`,
+      provider: employeeName(o.employee),
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      detailText: [
+        ['Dose removed', when && `on ${when}`, byName && `by ${byName}`].filter(Boolean).join(' '),
+        (reason || note) && `Reason: ${[reason, note].filter(Boolean).join(' — ')}`,
+        pickStr(o.lotNumber) && `Lot: ${pickStr(o.lotNumber)}`,
+        pickStr(o.tagNumber) && `Tag: ${pickStr(o.tagNumber)} (no longer valid)`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      removed: true,
+      removedReason: [reason, note].filter(Boolean).join(' — ') || null,
+      removedByName: byName,
+      removedAt: at,
+    });
+  }
+  return out;
+}
+
 function visitChargeChartRow(c: PostedVisitCharge, hint?: MedicationHint | null): ChartRow {
   const detail = visitChargeDetail(c, hint);
   return {
@@ -733,7 +787,9 @@ export function buildChartRowsFromMedicalRecord(
       const inv = item.inventoryItem?.name?.trim();
       const proc = item.procedure?.name?.trim();
       const lab = item.lab?.name?.trim();
-      const name = inv || proc || lab;
+      const pkg = item.package?.name?.trim();
+      const packageOnly = !inv && !proc && !lab && Boolean(pkg);
+      const name = inv || proc || lab || pkg;
       if (!name) continue;
       const serviceDateIso = item.serviceDate || plan.created || null;
       const day = (serviceDateIso || '').slice(0, 10);
@@ -743,11 +799,15 @@ export function buildChartRowsFromMedicalRecord(
         : null;
       const typeLabel = item.isDeclined
         ? 'Declined'
-        : inv
-          ? 'Inventory Item'
-          : proc
-            ? 'Procedure'
-            : 'Lab';
+        : packageOnly
+          ? /^membership\b/i.test(pkg ?? '') || item.package?.kind === 'membership'
+            ? 'Membership'
+            : 'Package'
+          : inv
+            ? 'Inventory Item'
+            : proc
+              ? 'Procedure'
+              : 'Lab';
       const hint = hintForTreatmentItem(medHints, item.id, name, day);
       const rec = item as Record<string, unknown>;
       const laterNote = laterReceivedOn
@@ -763,8 +823,15 @@ export function buildChartRowsFromMedicalRecord(
         ),
         serviceDateIso,
         sortTime: parseSortTime(serviceDateIso),
-        detailText: [treatmentItemDetail(item, hint), laterNote].filter(Boolean).join('\n'),
+        detailText: [
+          treatmentItemDetail(item, hint),
+          laterNote,
+          item.isCovered && !item.isDeclined ? 'Membership covered' : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
         isDeclined: item.isDeclined === true,
+        isCovered: item.isCovered === true && !item.isDeclined,
         laterReceivedOn,
         ...(voided
           ? voidedChartFields(name, treatmentItemDetail(item, hint), {
@@ -922,6 +989,7 @@ export function buildChartRowsFromMedicalRecord(
     const serviceDateIso =
       pickStr(o.dateVaccinated) ?? pickStr(o.serviceDate) ?? pickStr(o.administeredDate);
     const label = vaccinationLogSummary(o);
+    const pendingPayment = o.pendingPayment === true;
     out.push({
       id: `vaccination:${id}`,
       source: 'vaccination',
@@ -930,7 +998,14 @@ export function buildChartRowsFromMedicalRecord(
       provider: employeeName(o.employee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: [pickStr(o.lotNumber) && `Lot: ${pickStr(o.lotNumber)}`, pickStr(o.notes)]
+      pendingPayment,
+      detailText: [
+        pendingPayment &&
+          "The invoice isn't paid yet. The reminders it replaces are crossed out until it is.",
+        pickStr(o.lotNumber) && `Lot: ${pickStr(o.lotNumber)}`,
+        pickStr(o.tagNumber) && `Tag: ${pickStr(o.tagNumber)}`,
+        pickStr(o.notes),
+      ]
         .filter(Boolean)
         .join('\n'),
     });
@@ -1221,6 +1296,7 @@ export function buildChartRowsFromMedicalRecord(
     const removedByName = pickStr(o.removedByName);
     const removedReason = pickStr(o.removedReason);
     const scoutUpload = pickStr(o.pimsType) === 'SCOUT';
+    const fileKind = chartFileKind(ext, pickStr(o.contentType), name);
     out.push({
       id: `document:${id}`,
       source: 'document',
@@ -1235,6 +1311,7 @@ export function buildChartRowsFromMedicalRecord(
       sortTime: parseSortTime(serviceDateIso),
       filePatientId: (hasFile || canRetrieve) && patientId ? patientId : undefined,
       fileDocumentId: hasFile || canRetrieve ? fileDocumentId : undefined,
+      fileKind,
       removed,
       removedReason,
       removedByName,
@@ -1263,7 +1340,10 @@ export function buildChartRowsFromMedicalRecord(
             !text &&
               !hasFile &&
               'The file itself is not stored in Scout yet — this is the chart entry from the import.',
-            hasFile && 'Signed form PDF is attached. Open it from this row.',
+            hasFile &&
+              (fileKind === 'PDF'
+                ? 'Signed form PDF is attached. Open it from this row.'
+                : `${fileKind === 'file' ? 'A file' : `A ${fileKind}`} is attached. Open it from this row.`),
           ]
             .filter(Boolean)
             .join('\n'),
@@ -1272,6 +1352,20 @@ export function buildChartRowsFromMedicalRecord(
 
   linkLabOrdersToResults(out);
   return finish(out);
+}
+
+/** Short label for a chart file, from its extension, then content type, then name. */
+function chartFileKind(ext: string | null, contentType: string | null, name: string): string {
+  const fromExt = (ext ?? '').replace(/^\./, '').toLowerCase();
+  const fromName = /\.([a-z0-9]{2,5})$/i.exec(name)?.[1]?.toLowerCase() ?? '';
+  const fromType = (contentType ?? '').toLowerCase();
+  const e = fromExt || fromName;
+  if (e === 'pdf' || fromType === 'application/pdf') return 'PDF';
+  if (e === 'jpg' || e === 'jpeg' || fromType === 'image/jpeg') return 'JPG';
+  if (e === 'png' || fromType === 'image/png') return 'PNG';
+  if (e === 'heic' || e === 'heif') return 'photo';
+  if (e === 'gif' || e === 'webp' || fromType.startsWith('image/')) return 'image';
+  return e ? e.toUpperCase() : 'file';
 }
 
 function localDay(iso: string | null): string {
@@ -1492,6 +1586,70 @@ export function chartRowsFromMailOrders(
     }
   }
   return out;
+}
+
+function soapVitalsLine(v: Record<string, unknown> | null | undefined): string {
+  if (!v) return '';
+  const str = (k: string) => (v[k] == null ? '' : String(v[k]).trim());
+  const parts: string[] = [];
+  if (v.weightNotTaken === true || v.weightNotTaken === 'true') parts.push('Weight: not taken');
+  else if (str('weight')) parts.push(`Weight: ${str('weight')} ${str('weightUnit') === 'kg' ? 'kg' : 'lb'}`);
+  if (str('tempF')) parts.push(`Temp: ${str('tempF')} °F`);
+  if (str('hr')) parts.push(`HR: ${str('hr')}`);
+  if (str('rr')) parts.push(`RR: ${str('rr')}`);
+  if (str('bcs')) parts.push(`BCS: ${str('bcs')}`);
+  if (str('painScore')) parts.push(`FAS: ${str('painScore')}`);
+  return parts.join(' · ');
+}
+
+/** Signed Scout SOAPs belong on the record; open ones stay on the SOAPs tab until locked. */
+export function chartRowsFromSoapEncounters(
+  encounters: SoapEncounter[] | null | undefined,
+): ChartRow[] {
+  if (!encounters?.length) return [];
+  return encounters
+    .filter((e) => e.status === 'completed')
+    .map((e) => {
+      const when = e.completedAt || e.updated || e.created;
+      const plain = (s: unknown) => (typeof s === 'string' ? soapHtmlToPlainText(s).trim() : '');
+      const subjective = plain(e.subjective?.history);
+      const vitals = soapVitalsLine(e.objectiveVitals);
+      const objective = [vitals, plain(e.objectiveNotes)].filter(Boolean).join('\n');
+      const assessment = plain(e.assessmentReasoning);
+      const plan = plain(e.planNotes);
+      const complaintLine = subjective
+        .split('\n')
+        .find((l) => /^presenting complaint:/i.test(l.trim()))
+        ?.replace(/^presenting complaint:\s*/i, '')
+        .trim();
+      // Skip section headers like "Problem List:" so the row names the first problem.
+      const firstProblem = assessment
+        .split('\n')
+        .map((l) => l.replace(/^\s*[-•*]\s*/, '').trim())
+        .find((l) => l && !l.endsWith(':'));
+      const preview =
+        plain(e.subjective?.chartComplaint) ||
+        (complaintLine || firstProblem)?.slice(0, 120) ||
+        `Visit #${e.appointmentId}`;
+      return {
+        id: `soapNote:${e.id}`,
+        source: 'soapNote' as const,
+        typeLabel: e.mode === 'quick' ? 'Quick SOAP' : 'SOAP',
+        description: preview,
+        provider: '—',
+        serviceDateIso: when,
+        sortTime: parseSortTime(when),
+        detailText: [
+          subjective && `Subjective:\n${subjective}`,
+          objective && `Objective:\n${objective}`,
+          assessment && `Assessment:\n${assessment}`,
+          plan && `Plan:\n${plan}`,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        soapEncounterId: e.id,
+      };
+    });
 }
 
 /** Wrapped-up Scout medical notes belong on the pet medical record. */

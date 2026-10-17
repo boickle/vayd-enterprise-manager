@@ -362,7 +362,9 @@ export default function RecordsRequestsPage() {
                   </td>
                   <td>
                     {row.hospitalName ?? '—'}
-                    {row.sentToEmail ? (
+                    {row.source === 'client_upload' ? (
+                      <span className="records-page__sub">uploaded by owner</span>
+                    ) : row.sentToEmail ? (
                       <span className="records-page__sub">{row.sentToEmail}</span>
                     ) : (
                       <span className="records-page__sub records-page__sub--warn">

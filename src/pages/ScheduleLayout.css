@@ -125,6 +125,14 @@
   border: 1px solid transparent;
 }
 
+button.schedule-app__quick-link {
+  width: 100%;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .schedule-app__quick-link-icon {
   flex-shrink: 0;
   display: flex;

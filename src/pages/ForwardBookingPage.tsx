@@ -26,6 +26,7 @@ import { CreateForwardBookingModal } from '../components/CreateForwardBookingMod
 import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
+  FORWARD_BOOKING_CREATED_EVENT,
   FORWARD_BOOKING_CREATE_NEW_PARAM,
   FORWARD_BOOKING_CREATE_PATIENT_PARAM,
   FORWARD_BOOKING_CREATE_RETURN_TO_PARAM,
@@ -825,6 +826,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       notifySchedulingToolsNavCountsRefresh();
     }
   }, [practiceTz, isOnHoldView, includeHistory]);
+
+  useEffect(() => {
+    const onCreated = () => void load({ silent: true });
+    window.addEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+    return () => window.removeEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+  }, [load]);
 
   const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed' | 'onHold') => {
     setExitingRows((prev) => new Map(prev).set(entryId, kind));

@@ -8,11 +8,6 @@
   max-width: calc(100vw - 24px);
 }
 
-/* Room for the peeks sticking out past the front card. */
-.call-dock-bunch--stacked {
-  padding: 0 36px 48px 0;
-}
-
 .call-dock {
   position: relative;
   width: 100%;
@@ -24,13 +19,26 @@
   animation: call-dock-in 160ms ease-out;
 }
 
+/* Other waiting calls, listed under the front card so each one is fully clickable. */
+.call-dock-behind {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.call-dock-behind .call-dock__stack-hint {
+  margin: 0;
+  padding: 0 4px;
+}
+
 .call-dock-peek {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: calc(100% - 28px);
-  min-height: 64px;
-  padding: 10px 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
   border: 2px solid #2563eb;
   border-radius: 14px;
   background: #dbeafe;
@@ -65,7 +73,7 @@
 }
 
 .call-dock-peek__label {
-  display: block;
+  flex: none;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -74,8 +82,7 @@
 }
 
 .call-dock-peek__who {
-  display: block;
-  margin-top: 2px;
+  min-width: 0;
   font-size: 14px;
   font-weight: 700;
   white-space: nowrap;

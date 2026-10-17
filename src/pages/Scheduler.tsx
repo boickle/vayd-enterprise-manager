@@ -1,8 +1,10 @@
 // src/pages/Scheduler.tsx — Practice-wide appointment calendar (GET /appointments/range)
 import {
+  createContext,
   lazy,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -50,9 +52,11 @@ import {
 import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import {
   createInvoice,
+  fetchCalendarPaymentIndex,
   fetchSoapCalendarEncounterIndex,
   fetchSoapCalendarLockIndex,
   getInvoiceByAppointment,
+  type CalendarPaymentState,
 } from '../api/visitWorkflow';
 import { saveBrief } from '../api/briefs';
 import { findOpenPrevisitForAppointment } from '../utils/briefStore';
@@ -1201,6 +1205,50 @@ function SchedulerApptSoapLockedBadge({
   );
 }
 
+const SchedulerPaymentStateContext = createContext<ReadonlyMap<number, CalendarPaymentState>>(
+  new Map()
+);
+
+const PAYMENT_BADGE_TITLE: Record<CalendarPaymentState, string> = {
+  paid: 'Paid',
+  held: 'Card hold in place',
+  declined: 'Card hold declined',
+  card_saved: 'Card saved; hold is placed about 24 hours before the visit',
+  balance_due: 'Balance due',
+};
+
+/**
+ * $ on a visit that is paid or held (green), declined or past its day with a
+ * balance due (red), or has a card waiting to be held (gray).
+ */
+function SchedulerApptPaymentBadge({
+  appt,
+  variant = 'card',
+}: {
+  appt: Appointment;
+  variant?: 'card' | 'hover';
+}) {
+  const state = useContext(SchedulerPaymentStateContext).get(Number(appt.id));
+  if (!state) return null;
+  const title = PAYMENT_BADGE_TITLE[state];
+  return (
+    <span
+      className={[
+        'scheduler-appt-soap-locked-badge',
+        'scheduler-appt-payment-badge',
+        `scheduler-appt-payment-badge--${state}`,
+        variant === 'hover' ? 'scheduler-appt-soap-locked-badge--hover' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
+      aria-label={title}
+    >
+      $
+    </span>
+  );
+}
+
 function workdayActualTimesTitle(
   row: EmployeeWorkdayActual | undefined,
   practiceTz: string
@@ -1299,13 +1347,14 @@ function SchedulerEventTitleBlock({
         soapLockedAppointmentIds={soapLockedAppointmentIds}
       />
     ) : null;
-  const statusBadges =
-    visitTimesBadge || soapLockedBadge ? (
-      <>
-        {visitTimesBadge}
-        {soapLockedBadge}
-      </>
-    ) : null;
+  const paymentBadge = <SchedulerApptPaymentBadge appt={appt} />;
+  const statusBadges = (
+    <>
+      {visitTimesBadge}
+      {soapLockedBadge}
+      {paymentBadge}
+    </>
+  );
   const c = appt.client;
   const member = appointmentPatientMember(appt);
   const clientLast = pickStr(c?.lastName);
@@ -2275,13 +2324,18 @@ export function SchedulerHoverContent({
     forwardBookingSourceAppointmentIds
   );
   const soapLocked = soapLockedAppointmentIds.has(Number(appt.id));
+  const paymentState = useContext(SchedulerPaymentStateContext).get(Number(appt.id));
 
   return (
     <>
       <div className="scheduler-tooltip-vh-header">Visit Highlights</div>
       <div className="scheduler-tooltip-vh-body">
         <div className="scheduler-tooltip-vh-preamble">
-          {typeRaw || appointmentTypeIsArchived(appt) || showVisitTimesClock || soapLocked ? (
+          {typeRaw ||
+          appointmentTypeIsArchived(appt) ||
+          showVisitTimesClock ||
+          soapLocked ||
+          paymentState ? (
             <div className="scheduler-tooltip-vh-type-row">
               {typeRaw ? <div className="scheduler-tooltip-vh-type">{typeRaw}</div> : null}
               {appointmentTypeIsArchived(appt) ? <SchedulerTypeArchivedPill /> : null}
@@ -2299,10 +2353,18 @@ export function SchedulerHoverContent({
                   variant="hover"
                 />
               ) : null}
+              <SchedulerApptPaymentBadge appt={appt} variant="hover" />
             </div>
           ) : null}
           {soapLocked ? (
             <div className="scheduler-tooltip-vh-soap-locked">🔒 SOAP signed &amp; locked</div>
+          ) : null}
+          {paymentState ? (
+            <div
+              className={`scheduler-tooltip-vh-payment scheduler-tooltip-vh-payment--${paymentState}`}
+            >
+              {PAYMENT_BADGE_TITLE[paymentState]}
+            </div>
           ) : null}
           {desc ? <div className="scheduler-tooltip-vh-desc">{desc}</div> : null}
           {instr ? (
@@ -4098,7 +4160,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
   }, []);
 
+  const [paymentStateByAppointmentId, setPaymentStateByAppointmentId] = useState<
+    ReadonlyMap<number, CalendarPaymentState>
+  >(() => new Map());
+  const lastConsentStatusKeyRef = useRef<string | null>(null);
+
+  /** Also reloads the $ badges, which change at the same moments (checkout, wrap-up). */
   const refreshSoapLockedAppointmentIds = useCallback(async () => {
+    void fetchCalendarPaymentIndex(PRACTICE_ID)
+      .then(setPaymentStateByAppointmentId)
+      .catch(() => {
+        /* keep prior map */
+      });
     try {
       const index = await fetchSoapCalendarLockIndex(PRACTICE_ID);
       setSoapLockedAppointmentIds(new Set(index.lockedAppointmentIds));
@@ -5197,6 +5270,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         if (Number.isFinite(id)) next.set(id, value);
       }
       setEuthanasiaConsentStatusByApptId(next);
+      // A signed consent places the card hold, so the $ badge changes with it.
+      const consentKey = JSON.stringify(statuses ?? {});
+      if (consentKey !== lastConsentStatusKeyRef.current) {
+        const isFirstLoad = lastConsentStatusKeyRef.current == null;
+        lastConsentStatusKeyRef.current = consentKey;
+        if (!isFirstLoad) {
+          void fetchCalendarPaymentIndex(PRACTICE_ID)
+            .then(setPaymentStateByAppointmentId)
+            .catch(() => undefined);
+        }
+      }
       const nextRdvm = new Map<number, EuthanasiaRdvmUiStatus>();
       for (const [key, value] of Object.entries(rdvm ?? {})) {
         const id = Number(key);
@@ -12797,6 +12881,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               </div>
   );
   return (
+    <SchedulerPaymentStateContext.Provider value={paymentStateByAppointmentId}>
     <div
       className={[
         'scheduler-page',
@@ -14410,5 +14495,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
     </div>
+    </SchedulerPaymentStateContext.Provider>
   );
 }

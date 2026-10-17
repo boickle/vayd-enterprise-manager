@@ -4,7 +4,7 @@ import { ClientEmailComposeModal, type EmailRecipientChoice } from '../ClientEma
 import { fetchPatientChartDocumentFile } from '../../api/patients';
 import { listOutsideHospitals, type OutsideHospital } from '../../api/outsideHospitals';
 import type { GmailComposeAttachment } from '../../api/gmail';
-import { appAlert } from '../../utils/appDialog';
+import { appAlert, appConfirm } from '../../utils/appDialog';
 import {
   buildChartRecordsPdf,
   chartRecordRows,
@@ -29,7 +29,21 @@ type Props = {
   selectedIds: Set<string>;
   dateStart: string;
   dateEnd: string;
+  /** "Show removed entries" is on — removed rows go out too, labelled as removed. */
+  includeRemoved?: boolean;
 };
+
+function removedLabel(row: ChartRow): string {
+  const when = row.removedAt ? new Date(row.removedAt).toLocaleDateString('en-US') : null;
+  return [
+    ['REMOVED', when && `on ${when}`, row.removedByName && `by ${row.removedByName}`]
+      .filter(Boolean)
+      .join(' '),
+    row.removedReason && `Reason: ${row.removedReason}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 const EMAIL_LIMIT_BYTES = 20 * 1024 * 1024;
 
@@ -114,6 +128,7 @@ export default function ChartRecordsSendBar({
   selectedIds,
   dateStart,
   dateEnd,
+  includeRemoved = false,
 }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,8 +136,8 @@ export default function ChartRecordsSendBar({
   const [hospitals, setHospitals] = useState<OutsideHospital[] | null>(null);
 
   const rangeLabel = formatRange(dateStart, dateEnd);
-  const allRows = chartRecordRows(rows);
-  const rangeRows = chartRecordRows(filteredRows);
+  const allRows = chartRecordRows(rows, { includeRemoved });
+  const rangeRows = chartRecordRows(filteredRows, { includeRemoved });
   const selectedRows = allRows.filter((row) => selectedIds.has(row.id));
   const who = patientName.trim() || 'this patient';
 
@@ -138,9 +153,33 @@ export default function ChartRecordsSendBar({
       );
       return;
     }
+    const removedCount = picked.filter((row) => row.removed).length;
+    if (removedCount > 0) {
+      const ok = await appConfirm({
+        title: 'Include removed entries?',
+        message: `This ${mode === 'print' ? 'printout' : 'email'} will include ${removedCount} entr${
+          removedCount === 1 ? 'y' : 'ies'
+        } that ${removedCount === 1 ? 'was' : 'were'} removed from the record. Each is labelled REMOVED with who removed it, when and why. Turn off “Show removed entries” to leave them out.`,
+        confirmLabel: 'Include them',
+        cancelLabel: 'Cancel',
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setStatus(null);
     const entries: RecordPdfEntry[] = [];
+    if (removedCount > 0) {
+      entries.push({
+        kind: 'text',
+        date: '',
+        typeLabel: 'Notice',
+        description: `This record includes ${removedCount} entr${
+          removedCount === 1 ? 'y' : 'ies'
+        } marked REMOVED. Removed entries are kept for the audit trail and are not part of the active medical record.`,
+        provider: '',
+        detail: '',
+      });
+    }
     const skipped: string[] = [];
     const notStored: string[] = [];
     const files = picked.filter(isFileRow).length;
@@ -155,6 +194,13 @@ export default function ChartRecordsSendBar({
     });
     try {
       for (const row of picked) {
+        if (row.removed) {
+          entries.push({
+            ...textEntry(row, [removedLabel(row), rowDetail(row)].filter(Boolean).join('\n')),
+            typeLabel: `${row.typeLabel} — REMOVED`,
+          } as RecordPdfEntry);
+          continue;
+        }
         if (!isFileRow(row)) {
           entries.push(textEntry(row, rowDetail(row)));
           continue;
@@ -190,7 +236,9 @@ export default function ChartRecordsSendBar({
           skipped.length ? `Could not open: ${skipped.join('; ')}.` : 'Nothing to include.'
         );
       }
-      const header = `${who} · medical record · printed ${new Date().toLocaleDateString('en-US')}`;
+      const header = `${who} · medical record · printed ${new Date().toLocaleDateString('en-US')}${
+        removedCount > 0 ? ' · includes removed entries' : ''
+      }`;
       const built = await buildChartRecordsPdf(entries, header, (_done, _total, name) => {
         setStatus(`Adding ${name}`);
       });

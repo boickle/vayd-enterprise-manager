@@ -1,3 +1,11 @@
+.soap-page,
+.soap-checkout-page {
+  --soap-accent: #2563eb;
+  --soap-border: #e5e7eb;
+  --soap-muted: #6b7280;
+  --soap-bg: #f8fafc;
+}
+
 .soap-page {
   --soap-accent: #2563eb;
   --soap-border: #e5e7eb;
@@ -497,6 +505,44 @@ a.soap-header-client:hover {
     overflow: visible;
   }
 }
+.soap-invoice-earlier-declines {
+  padding: 8px 10px 10px;
+  border-top: 1px dashed #cbd5e1;
+  background: #f8fafc;
+}
+.soap-invoice-earlier-declines-head {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.soap-invoice-earlier-decline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.soap-invoice-earlier-decline-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-weight: 600;
+  color: #334155;
+}
+.soap-invoice-earlier-decline-when {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: #64748b;
+}
+
 .soap-invoice-previsit {
   background: #fff7ed;
   border-bottom: 1px solid #fed7aa;
@@ -760,6 +806,19 @@ a.soap-header-client:hover {
   color: var(--soap-muted);
   font-size: 11.5px;
   margin: 8px 0 0;
+}
+
+.soap-btn.soap-wrapup-fb-save {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+
+.soap-hint--warn {
+  color: #b45309;
+  font-weight: 600;
 }
 
 /* Vitals */
@@ -1133,35 +1192,6 @@ a.soap-header-client:hover {
   gap: 8px;
   margin: 0 0 10px;
 }
-/* Pet name first; "Charge to" caption sits under it so the controls line up. */
-.soap-checkout-charge-to {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
-  margin: 0;
-  flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--soap-muted);
-  line-height: 1.2;
-}
-.soap-checkout-charge-to .soap-select {
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  width: auto;
-  min-width: 5.5rem;
-  max-width: 7.5rem;
-  height: 34px;
-  padding: 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-  color: #111827;
-}
 .soap-checkout-add {
   margin: 0;
   flex: 1 1 auto;
@@ -1403,7 +1433,6 @@ a.soap-header-client:hover {
   font-size: 12px;
   font-weight: 600;
   text-align: left;
-  cursor: pointer;
 }
 .soap-invoice-pet-head > span:first-child {
   display: inline-flex;
@@ -1419,17 +1448,32 @@ a.soap-header-client:hover {
 .soap-invoice-pet-head.is-current {
   background: #eef4ff;
 }
-.soap-invoice-pet-head.is-charging {
-  box-shadow: inset 3px 0 0 var(--soap-accent);
-}
-.soap-invoice-pet-head:hover {
-  background: #eef2f7;
-}
-.soap-invoice-pet-head.is-current:hover {
-  background: #e4edff;
-}
 .soap-invoice-pet-block {
   scroll-margin-top: 0;
+}
+/* Multi-pet visits: one bordered box per pet, with its own add-charge search. */
+.soap-invoice-pet-block--card {
+  margin: 0 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: visible;
+}
+.soap-invoice-pet-block--card > .soap-invoice-pet-head {
+  border-radius: 10px 10px 0 0;
+  font-size: 13px;
+  padding: 7px 10px;
+}
+.soap-checkout-add--pet {
+  position: relative;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef2f7;
+}
+.soap-invoice-line-membership-used {
+  display: block;
+  margin-top: 2px;
+  color: #9f1239;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .soap-checkout {
@@ -1685,6 +1729,18 @@ a.soap-header-client:hover {
   font-weight: 600;
   color: #0f172a;
   line-height: 1.3;
+}
+.soap-invoice-mail-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #0f766e;
+  background: #ccfbf1;
+  vertical-align: middle;
 }
 .soap-invoice-line-amt {
   display: inline-flex;
@@ -2700,6 +2756,11 @@ a.soap-header-client:hover {
   font-size: 11px;
   margin-left: 4px;
   text-transform: capitalize;
+}
+.soap-scribe-tag--charging {
+  background: var(--soap-accent);
+  color: #fff;
+  font-weight: 600;
 }
 .soap-scribe-card-actions {
   display: flex;

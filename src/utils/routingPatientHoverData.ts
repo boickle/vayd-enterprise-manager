@@ -17,6 +17,7 @@ import {
 } from './nextScheduledAppointmentForVisit';
 import { primaryProviderFromPatientRecord } from './schedulerVisitDisplay';
 import { formatEmployeeDisplayName } from './employeeDisplayName';
+import { patientIsActiveInHousehold } from './patientStatusDisplay';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -74,6 +75,8 @@ export type RoutingPatientReminderLine = {
   reminderType: string | null;
   /** Staff assigned to this reminder, when known. */
   assigneeName: string | null;
+  /** Crossed out: an unpaid invoice already holds its replacement. */
+  pendingClear?: boolean;
 };
 
 /**
@@ -165,8 +168,7 @@ export function extractActivePatientsFromClientStaffRecord(raw: unknown): Routin
     const idRaw = o.id ?? o.patientId;
     if (idRaw == null) continue;
     const isDeleted = o.isDeleted === true || o.isDeleted === 1;
-    const isActive = o.isActive === false || o.isActive === 0 ? false : true;
-    if (isDeleted || !isActive) continue;
+    if (isDeleted || !patientIsActiveInHousehold(o)) continue;
     const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
     const name = pickStr(o.name) ?? (joined || 'Patient');
     const membership = patientMembershipFromRecord(o);
@@ -336,6 +338,7 @@ export function parseRemindersFromMedicalRecord(
         dueDateInput: reminderDueDateInput(dueMs, practiceTz),
         reminderType,
         assigneeName,
+        pendingClear: o.pendingClearByInvoiceLineId != null,
       };
     })
     .sort((a, b) => {

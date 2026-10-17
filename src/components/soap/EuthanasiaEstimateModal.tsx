@@ -62,6 +62,11 @@ function pickStr(...values: unknown[]): string | null {
   return null;
 }
 
+/** The booking choice without its explanation, e.g. "Private Cremation". */
+function bookingAftercareText(text: string): string {
+  return text.replace(/\s*\([^)]*\)\s*$/, '').trim() || text;
+}
+
 function formatPetWeight(patient: Record<string, unknown> | null): string | null {
   if (!patient) return null;
   const raw = pickStr(
@@ -110,6 +115,9 @@ export default function EuthanasiaEstimateModal({
   const [petWeight, setPetWeight] = useState<string | null>(null);
   const [quotedAftercare, setQuotedAftercare] =
     useState<EuthanasiaConsentStatus['quotedAftercare']>(null);
+  const [requestedAftercare, setRequestedAftercare] =
+    useState<EuthanasiaConsentStatus['requestedAftercare']>(null);
+  const [aftercareChangeConfirmed, setAftercareChangeConfirmed] = useState(false);
   const [consentWeightChange, setConsentWeightChange] = useState<ConsentWeightChange | null>(
     null,
   );
@@ -138,6 +146,8 @@ export default function EuthanasiaEstimateModal({
       .then((status) => {
         if (cancelled) return;
         setQuotedAftercare(status.quotedAftercare ?? null);
+        setRequestedAftercare(status.requestedAftercare ?? null);
+        setAftercareChangeConfirmed(false);
         setConsentWeightChange(parseConsentWeightChange(status.response?.answers ?? null));
       })
       .catch(() => undefined);
@@ -209,7 +219,20 @@ export default function EuthanasiaEstimateModal({
   }, [appointmentId, patientId, clientId, patientName, clientEmail, clientPhone]);
 
   const total = Number(estimate?.total ?? 0);
-  const aftercareReady = quotedAftercare?.unresolved == null && Boolean(quotedAftercare?.type);
+  const quotedPlanResolved =
+    quotedAftercare?.unresolved == null && Boolean(quotedAftercare?.type);
+  const requestedPlan =
+    requestedAftercare?.type && requestedAftercare.type !== 'unsure'
+      ? requestedAftercare.type
+      : null;
+  const aftercareMismatch =
+    quotedPlanResolved && requestedPlan != null && requestedPlan !== quotedAftercare?.type;
+  const aftercareReady = quotedPlanResolved && (!aftercareMismatch || aftercareChangeConfirmed);
+  /** No aftercare item, and no booking answer that tells us they're keeping the pet. */
+  const aftercareUnknown =
+    quotedPlanResolved &&
+    quotedAftercare?.assumed === true &&
+    requestedPlan == null;
   const canSend = !loading && !sending && total > 0 && aftercareReady;
   const aftercareDispute = parseAftercareNotConfirmedNote(visitNotes);
   const noteWeightChange = parseWeightChangedNote(
@@ -240,6 +263,7 @@ export default function EuthanasiaEstimateModal({
         patientId,
         clientId: clientId ?? undefined,
         channel,
+        confirmAftercareChange: aftercareChangeConfirmed || undefined,
       });
       notifyEuthanasiaConsentStatusChanged();
       await navigator.clipboard.writeText(result.formUrl).catch(() => undefined);
@@ -253,7 +277,7 @@ export default function EuthanasiaEstimateModal({
       setSending(false);
       setSendingChannel(null);
     }
-  }, [appointmentId, clientId, estimate, onSent, patientId]);
+  }, [aftercareChangeConfirmed, appointmentId, clientId, estimate, onSent, patientId]);
 
   /** Open the consent form on this computer or tablet — no email. */
   const signHere = useCallback(async () => {
@@ -274,6 +298,7 @@ export default function EuthanasiaEstimateModal({
             patientId,
             clientId: clientId ?? undefined,
             skipEmail: true,
+            confirmAftercareChange: aftercareChangeConfirmed || undefined,
           });
       const opened = window.open(result.formUrl, '_blank', 'noopener');
       if (!opened) {
@@ -287,7 +312,7 @@ export default function EuthanasiaEstimateModal({
     } finally {
       setSending(false);
     }
-  }, [appointmentId, clientId, estimate, patientId]);
+  }, [aftercareChangeConfirmed, appointmentId, clientId, estimate, patientId]);
 
   return createPortal(
     <div className="scheduler-modal-backdrop" onClick={onClose}>
@@ -347,11 +372,17 @@ export default function EuthanasiaEstimateModal({
               </strong>
             </div>
             <div
-              className={`euth-estimate-fact${aftercareReady ? '' : ' euth-estimate-fact--alert'}`}
+              className={`euth-estimate-fact${
+                aftercareReady && !aftercareUnknown ? '' : ' euth-estimate-fact--alert'
+              }`}
             >
               <span>Aftercare the family will confirm</span>
               <strong>
-                {aftercareReady
+                {aftercareUnknown
+                  ? 'Need to confirm aftercare with the owner'
+                  : quotedPlanResolved && aftercareMismatch && quotedAftercare?.assumed
+                  ? 'No aftercare item on the estimate yet'
+                  : quotedPlanResolved
                   ? aftercarePlanLabel
                   : quotedAftercare?.unresolved === 'conflict'
                     ? `Two plans quoted: ${(quotedAftercare.conflictingItems ?? []).join(', ')}`
@@ -359,10 +390,16 @@ export default function EuthanasiaEstimateModal({
                       ? `Not marked as aftercare in Catalog: ${(quotedAftercare.unmarkedItems ?? []).join(', ')}`
                       : 'Waiting on the estimate'}
               </strong>
-              {aftercareReady &&
+              {quotedPlanResolved &&
+              !quotedAftercare?.assumed &&
               quotedAftercare?.itemName &&
               quotedAftercare.itemName !== aftercarePlanLabel ? (
                 <p className="euth-estimate-fact-extra">{quotedAftercare.itemName}</p>
+              ) : null}
+              {requestedAftercare ? (
+                <p className="euth-estimate-fact-extra">
+                  Family asked for when booking: {bookingAftercareText(requestedAftercare.text)}
+                </p>
               ) : null}
             </div>
             <div className="euth-estimate-fact euth-estimate-fact--notes">
@@ -418,6 +455,32 @@ export default function EuthanasiaEstimateModal({
             <p className="euth-estimate-hint">
               The family would be told they are burying their pet at home. In Catalog, open the
               cremation item, check &ldquo;This is an aftercare item&rdquo;, and choose the plan.
+            </p>
+          )}
+          {total > 0 && !loading && aftercareMismatch && requestedPlan && (
+            <div className="euth-estimate-hint">
+              <p style={{ margin: 0 }}>
+                {quotedAftercare?.assumed
+                  ? `Add the ${AFTERCARE_STAFF_LABELS[requestedPlan].toLowerCase()} item to the estimate.`
+                  : `This estimate quotes ${(aftercarePlanLabel ?? 'a different plan').toLowerCase()}. Change the aftercare item to match what the family asked for.`}
+              </p>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={aftercareChangeConfirmed}
+                  onChange={(e) => setAftercareChangeConfirmed(e.target.checked)}
+                />
+                {quotedAftercare?.assumed
+                  ? 'The family changed their plan and will handle aftercare themselves'
+                  : `The family changed their plan; send with ${(aftercarePlanLabel ?? 'this plan').toLowerCase()}`}
+              </label>
+            </div>
+          )}
+          {!loading && aftercareUnknown && (
+            <p className="euth-estimate-hint">
+              Ask the owner what they&rsquo;d like for aftercare and add that item. If they&rsquo;re
+              burying at home or arranging it themselves, no item is needed &mdash; the form will
+              ask them to confirm that.
             </p>
           )}
           {total > 0 && aftercareReady && (

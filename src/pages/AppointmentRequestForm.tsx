@@ -10,6 +10,7 @@ import { AddressAutocomplete, type AddressFields } from '../components/AddressAu
 import { ManualAddressFields } from '../components/ManualAddressFields';
 import { BreedCombobox } from '../components/BreedCombobox';
 import OutsideHospitalPicker, {
+  pickedHospitalKey,
   pickedHospitalsToText,
   type PetOption,
   type PickedHospital,
@@ -545,6 +546,12 @@ type FormData = {
   mayWeAskForRecords?: 'Yes' | 'No' | '';
   /** Client uploads records now, or asks staff to request them. */
   recordsDelivery?: 'upload' | 'request' | 'holdoff' | '';
+  /**
+   * The same answer per picked practice (keyed by `pickedHospitalKey`). With two
+   * or more practices this is what the owner fills in, and `recordsDelivery`
+   * is derived from it.
+   */
+  recordsDeliveryByPractice?: Record<string, 'upload' | 'request' | 'holdoff'>;
   haveWeSeenPetBefore?: 'Yes' | 'No' | '';
   newPetInfo?: string;
   previousVeterinaryPracticesExisting?: string;
@@ -4177,9 +4184,32 @@ export default function AppointmentRequestForm() {
   const validateRecordsDelivery = (
     newErrors: Record<string, string>,
     required: boolean,
-    hasPreviousPractices: boolean,
+    picks: PickedHospital[] | undefined,
   ) => {
-    if (!required || !hasPreviousPractices) return;
+    if (!required || !picks?.length) return;
+    if (picks.length > 1) {
+      const byPractice = formData.recordsDeliveryByPractice ?? {};
+      const unanswered = picks.filter((pick) => !byPractice[pickedHospitalKey(pick)]);
+      if (unanswered.length) {
+        newErrors.recordsDelivery = `Please choose what we should do for ${unanswered
+          .map((pick) => pick.name)
+          .join(', ')}`;
+        return;
+      }
+      const missingFiles = picks.filter((pick) => {
+        const key = pickedHospitalKey(pick);
+        return (
+          byPractice[key] === 'upload' &&
+          !pendingRecordFiles.some((file) => file.practiceKey === key)
+        );
+      });
+      if (missingFiles.length) {
+        newErrors.recordFiles = `Add a photo or PDF of the records from ${missingFiles
+          .map((pick) => pick.name)
+          .join(', ')}`;
+      }
+      return;
+    }
     const delivery = formData.recordsDelivery;
     if (delivery !== 'upload' && delivery !== 'request' && delivery !== 'holdoff') {
       newErrors.recordsDelivery = 'Please choose how we should get records';
@@ -4217,11 +4247,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client-pet-info':
         validateNewClientPetInfo(newErrors);
-        validateRecordsDelivery(
-          newErrors,
-          true,
-          (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
-        );
+        validateRecordsDelivery(newErrors, true, formData.previousVeterinaryPracticesPicked);
         validateRequestVisitContinued(newErrors);
         break;
       case 'existing-client':
@@ -4231,7 +4257,7 @@ export default function AppointmentRequestForm() {
           validateRecordsDelivery(
             newErrors,
             formData.hadVetCareElsewhere === 'Yes',
-            (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
+            formData.previousVeterinaryHospitalsPicked,
           );
           validateRequestVisitContinued(newErrors);
         }
@@ -4595,11 +4621,91 @@ export default function AppointmentRequestForm() {
       updateFormData('recordsDelivery', value);
       updateFormData('optOutOfRecordsRequest', false);
     }
+    // Remember it for the lone practice, so adding a second keeps this answer.
+    setFormData((prev) => {
+      const byPractice = { ...(prev.recordsDeliveryByPractice ?? {}) };
+      for (const picks of [
+        prev.previousVeterinaryPracticesPicked ?? [],
+        prev.previousVeterinaryHospitalsPicked ?? [],
+      ]) {
+        if (picks.length === 1) byPractice[pickedHospitalKey(picks[0])] = value;
+      }
+      return { ...prev, recordsDeliveryByPractice: byPractice };
+    });
     setErrors((prev) => {
       const next = { ...prev };
       delete next.recordsDelivery;
       delete next.recordFiles;
       return next;
+    });
+  };
+
+  /** Folds per-practice answers into the single field the rest of the form reads. */
+  const recordsDeliveryFromPractices = (
+    picks: PickedHospital[],
+    byPractice: Record<string, 'upload' | 'request' | 'holdoff'>,
+  ): Pick<FormData, 'recordsDelivery' | 'optOutOfRecordsRequest'> => {
+    const answers = picks.map((pick) => byPractice[pickedHospitalKey(pick)]);
+    if (!answers.length || answers.some((a) => !a)) {
+      return { recordsDelivery: '', optOutOfRecordsRequest: false };
+    }
+    if (answers.includes('upload')) return { recordsDelivery: 'upload', optOutOfRecordsRequest: false };
+    if (answers.includes('request')) return { recordsDelivery: 'request', optOutOfRecordsRequest: false };
+    return { recordsDelivery: 'holdoff', optOutOfRecordsRequest: true };
+  };
+
+  const setPracticeRecordsDelivery = (
+    source: 'new' | 'existing',
+    practiceKey: string,
+    value: 'upload' | 'request' | 'holdoff',
+  ) => {
+    setFormData((prev) => {
+      const byPractice = { ...(prev.recordsDeliveryByPractice ?? {}), [practiceKey]: value };
+      const picks =
+        (source === 'new'
+          ? prev.previousVeterinaryPracticesPicked
+          : prev.previousVeterinaryHospitalsPicked) ?? [];
+      return {
+        ...prev,
+        recordsDeliveryByPractice: byPractice,
+        ...recordsDeliveryFromPractices(picks, byPractice),
+      };
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.recordsDelivery;
+      delete next.recordFiles;
+      return next;
+    });
+  };
+
+  /** Practices were added or removed: re-read the answers for the ones left. */
+  const syncRecordsDeliveryForPicks = (picks: PickedHospital[]) => {
+    const keys = new Set(picks.map(pickedHospitalKey));
+    setPendingRecordFiles((prev) =>
+      prev.filter((file) => !file.practiceKey || keys.has(file.practiceKey)),
+    );
+    setFormData((prev) => {
+      const byPractice = prev.recordsDeliveryByPractice ?? {};
+      if (picks.length > 1) return { ...prev, ...recordsDeliveryFromPractices(picks, byPractice) };
+      const only = picks[0] ? byPractice[pickedHospitalKey(picks[0])] : undefined;
+      if (!only) return prev;
+      return {
+        ...prev,
+        recordsDelivery: only,
+        optOutOfRecordsRequest: only === 'holdoff',
+      };
+    });
+  };
+
+  /** Each picked practice with the answer that applies to it. */
+  const picksWithRecordsDelivery = (picks: PickedHospital[] | undefined) => {
+    if (!picks?.length) return picks;
+    const byPractice = formData.recordsDeliveryByPractice ?? {};
+    const single = recordsDeliveryChoice();
+    return picks.map((pick) => {
+      const answer = picks.length > 1 ? byPractice[pickedHospitalKey(pick)] : single || undefined;
+      return answer ? { ...pick, recordsDelivery: answer } : pick;
     });
   };
 
@@ -4614,11 +4720,22 @@ export default function AppointmentRequestForm() {
     opts?: { combined?: boolean; show?: boolean },
   ) => {
     if (opts?.combined && !opts.show) return null;
+    const picks =
+      (source === 'new'
+        ? formData.previousVeterinaryPracticesPicked
+        : formData.previousVeterinaryHospitalsPicked) ?? [];
     return (
     <ClientRecordUploadFields
       variant={opts?.combined ? 'combined' : 'standalone'}
       delivery={recordsDeliveryChoice()}
       onDeliveryChange={setRecordsDeliveryChoice}
+      practices={
+        opts?.combined
+          ? picks.map((pick) => ({ key: pickedHospitalKey(pick), name: pick.name }))
+          : undefined
+      }
+      practiceDelivery={formData.recordsDeliveryByPractice}
+      onPracticeDeliveryChange={(key, value) => setPracticeRecordsDelivery(source, key, value)}
       files={pendingRecordFiles}
       onFilesChange={(files) => {
         setPendingRecordFiles(files);
@@ -4946,10 +5063,10 @@ export default function AppointmentRequestForm() {
         previousVeterinaryPractices: formData.previousVeterinaryPractices || formData.previousVeterinaryPracticesExisting || undefined,
         previousVeterinaryHospitals: formData.previousVeterinaryHospitals || undefined,
         previousVeterinaryPracticesPicked: formData.previousVeterinaryPracticesPicked?.length
-          ? formData.previousVeterinaryPracticesPicked
+          ? picksWithRecordsDelivery(formData.previousVeterinaryPracticesPicked)
           : undefined,
         previousVeterinaryHospitalsPicked: formData.previousVeterinaryHospitalsPicked?.length
-          ? formData.previousVeterinaryHospitalsPicked
+          ? picksWithRecordsDelivery(formData.previousVeterinaryHospitalsPicked)
           : undefined,
         optOutOfRecordsRequest:
           formData.recordsDelivery === 'holdoff' || formData.optOutOfRecordsRequest === true
@@ -5209,9 +5326,16 @@ export default function AppointmentRequestForm() {
           );
         } else {
           const petOptions = buildRecordPetOptions(isLoggedIn ? 'existing' : 'new');
+          const recordPicks =
+            (isLoggedIn
+              ? formData.previousVeterinaryHospitalsPicked
+              : formData.previousVeterinaryPracticesPicked) ?? [];
           let failed = 0;
           for (const item of pendingRecordFiles) {
             const pet = petOptions.find((option) => option.id === item.formPetId) ?? petOptions[0];
+            const practice =
+              recordPicks.find((pick) => pickedHospitalKey(pick) === item.practiceKey) ??
+              (recordPicks.length === 1 ? recordPicks[0] : undefined);
             try {
               await uploadAppointmentRequestRecord({
                 uploadToken,
@@ -5219,6 +5343,8 @@ export default function AppointmentRequestForm() {
                 formPetId: pet?.id ?? item.formPetId,
                 petName: pet?.name?.trim() || 'Pet',
                 patientId: pet?.patientId,
+                outsideHospitalId: practice?.outsideHospitalId,
+                hospitalName: practice?.name,
               });
             } catch {
               failed += 1;
@@ -5759,34 +5885,67 @@ export default function AppointmentRequestForm() {
         </div>
       )}
       {formData.selfScheduledSlot ? (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-            marginTop: 12,
-            padding: '12px 14px',
-            border: '1px solid #d1d5db',
-            borderRadius: 10,
-            background: '#fff',
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={!!formData.joinWaitlistIfSooner}
-            onChange={(e) => updateFormData('joinWaitlistIfSooner', e.target.checked)}
-            style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
-          />
-          <span>
-            <span style={{ display: 'block', fontWeight: 700, fontSize: 14, color: '#111827' }}>
-              I&apos;d like an earlier appointment if one opens up
+        <>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginTop: 12,
+              padding: '12px 14px',
+              border: '1px solid #d1d5db',
+              borderRadius: 10,
+              background: '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={!!formData.joinWaitlistIfSooner}
+              onChange={(e) => updateFormData('joinWaitlistIfSooner', e.target.checked)}
+              style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+            />
+            <span>
+              <span style={{ display: 'block', fontWeight: 700, fontSize: 14, color: '#111827' }}>
+                I&apos;d like an earlier appointment if one opens up
+              </span>
+              <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2, fontWeight: 400 }}>
+                We&apos;ll keep this time. If a cancellation opens before then, we&apos;ll reach out.
+              </span>
             </span>
-            <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2, fontWeight: 400 }}>
-              We&apos;ll keep this time. If a cancellation opens before then, we&apos;ll reach out.
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setFormData((prev) => ({
+                ...prev,
+                selfScheduledSlot: null,
+                joinWaitlistIfSooner: false,
+              }));
+              focusSchedulingNotes();
+            }}
+            style={{
+              display: 'block',
+              width: '100%',
+              marginTop: 10,
+              padding: '12px 14px',
+              border: '1px solid #d1d5db',
+              borderRadius: 10,
+              background: '#fff',
+              color: '#374151',
+              fontSize: 14,
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ display: 'block', fontWeight: 700, color: '#111827' }}>
+              None of these times work for me
             </span>
-          </span>
-        </label>
+            <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2 }}>
+              We won&apos;t book this time. Tell us what works and our team will reach out.
+            </span>
+          </button>
+        </>
       ) : (
         <>
           {renderSchedulingOrDivider()}
@@ -6636,6 +6795,7 @@ export default function AppointmentRequestForm() {
                         pickedHospitalsToText(picked, recordsPetOptions),
                       );
                       if (!picked.length) clearRecordsChoiceIfNoPractices();
+                      else syncRecordsDeliveryForPicks(picked);
                     }}
                   />
                   {renderRecordsFields('new', {
@@ -7598,6 +7758,7 @@ export default function AppointmentRequestForm() {
                         pickedHospitalsToText(picked, recordsPetOptions),
                       );
                       if (!picked.length) clearRecordsChoiceIfNoPractices();
+                      else syncRecordsDeliveryForPicks(picked);
                     }}
                   />
                   {renderRecordsFields('existing', {

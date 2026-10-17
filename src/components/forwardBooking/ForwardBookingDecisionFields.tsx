@@ -1,3 +1,4 @@
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Employee } from '../../api/appointmentSettings';
 import type { ForwardBookingIntervalUnit } from '../../api/forwardBooking';
 import type { ForwardBookingDispositionMode } from '../../api/forwardBookingDisposition';
@@ -368,6 +369,24 @@ export default function ForwardBookingDecisionFields({
   );
 }
 
+type StaffOption = { id: number; name: string; email: string };
+
+function staffOptions(employees: Employee[]): StaffOption[] {
+  return employees.flatMap((em) => {
+    const id = Number(em.id);
+    if (!Number.isFinite(id) || id <= 0) return [];
+    return [
+      {
+        id,
+        name: formatEmployeeDisplayName(em) || em.email || `Employee ${id}`,
+        email: em.email ?? '',
+      },
+    ];
+  });
+}
+
+/** Type a name, pick from the matches, and they land as a chip. Used for both
+ * the people doing the labs task and the people only watching it. */
 function StaffMultiPick({
   label,
   hint,
@@ -385,27 +404,128 @@ function StaffMultiPick({
   ariaLabel: string;
   onToggle: (id: number, checked: boolean) => void;
 }) {
-  const selected = new Set(selectedIds);
+  const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const people = useMemo(() => staffOptions(employees), [employees]);
+  const selected = people.filter((p) => selectedIds.includes(p.id));
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return people
+      .filter((p) => !selectedIds.includes(p.id))
+      .filter(
+        (p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
+      )
+      .sort((a, b) => {
+        const rank = (p: StaffOption) => (p.name.toLowerCase().startsWith(q) ? 0 : 1);
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      })
+      .slice(0, 8);
+  }, [people, query, selectedIds]);
+
+  useEffect(() => setActiveIndex(0), [query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const add = (id: number) => {
+    onToggle(id, true);
+    setQuery('');
+    setOpen(false);
+  };
+
   return (
-    <div className="scheduler-edit-field scheduler-forward-booking-staff-pick">
+    <div className="scheduler-edit-field scheduler-forward-booking-staff-pick" ref={rootRef}>
       <span>{label}</span>
-      <div className="scheduler-forward-booking-staff-list" role="group" aria-label={ariaLabel}>
-        {employees.map((em) => {
-          const id = Number(em.id);
-          if (!Number.isFinite(id) || id <= 0) return null;
-          return (
-            <label key={id} className="scheduler-forward-booking-staff-row">
-              <input
-                type="checkbox"
-                checked={selected.has(id)}
+      {selected.length > 0 ? (
+        <ul className="scheduler-forward-booking-staff-chips">
+          {selected.map((person) => (
+            <li key={person.id}>
+              {person.name}
+              <button
+                type="button"
                 disabled={disabled}
-                onChange={(e) => onToggle(id, e.target.checked)}
-              />
-              <span>{formatEmployeeDisplayName(em) || em.email}</span>
-            </label>
-          );
-        })}
-      </div>
+                aria-label={`Remove ${person.name}`}
+                onClick={() => onToggle(person.id, false)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <input
+        type="text"
+        role="combobox"
+        value={query}
+        disabled={disabled}
+        placeholder="Type a name to add"
+        aria-label={ariaLabel}
+        aria-autocomplete="list"
+        aria-controls={listId}
+        aria-expanded={open && matches.length > 0}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (matches.length === 0) {
+            if (e.key === 'Escape') setOpen(false);
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setOpen(true);
+            setActiveIndex((i) => Math.min(i + 1, matches.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveIndex((i) => Math.max(i - 1, 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const pick = matches[activeIndex];
+            if (pick) add(pick.id);
+          } else if (e.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
+      />
+      {open && query.trim() ? (
+        <ul id={listId} role="listbox" className="scheduler-forward-booking-staff-suggest">
+          {matches.length === 0 ? (
+            <li className="scheduler-forward-booking-staff-suggest__empty">
+              No one matches “{query.trim()}”
+            </li>
+          ) : (
+            matches.map((person, index) => (
+              <li key={person.id} role="option" aria-selected={index === activeIndex}>
+                <button
+                  type="button"
+                  className={index === activeIndex ? 'is-active' : undefined}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    add(person.id);
+                  }}
+                >
+                  <span>{person.name}</span>
+                  {person.email ? <small>{person.email}</small> : null}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : null}
       <span className="settings-muted scheduler-forward-booking-field-hint">{hint}</span>
     </div>
   );

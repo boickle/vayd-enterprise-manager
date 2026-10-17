@@ -11,7 +11,16 @@ export type PickedHospital = {
    * here rather than inferred later.
    */
   petIds?: string[];
+  /** How the owner wants records from this practice; only `request` is emailed. */
+  recordsDelivery?: 'request' | 'upload' | 'holdoff';
 };
+
+/** Stable key for one picked practice, matching how the server dedupes them. */
+export function pickedHospitalKey(pick: PickedHospital): string {
+  return pick.outsideHospitalId != null
+    ? `h${pick.outsideHospitalId}`
+    : `t${pick.name.trim().toLowerCase()}`;
+}
 
 export type PetOption = { id: string; name: string };
 

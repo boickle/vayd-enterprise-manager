@@ -78,7 +78,7 @@ type Props = {
  * Floats over the page rather than sitting in the chart flow, because the call outlives any
  * one screen. Intentionally not a modal — no backdrop, nothing trapped — so the page
  * underneath stays scrollable and clickable. Drag it anywhere; the spot is remembered.
- * Extra calls stack behind it like post-its; click one to bring it forward.
+ * Extra calls wait in a short list under it; click one to bring it forward.
  */
 export default function CallDock({
   tone,
@@ -136,36 +136,11 @@ export default function CallDock({
   const stackDepth = extra.length;
 
   return createPortal(
-    <div
-      className={`call-dock-bunch${stackDepth > 0 ? ' call-dock-bunch--stacked' : ''}`}
-      style={{ left: pos.x, top: pos.y }}
-    >
-      {extra.map((card, i) => {
-        // Stick out past the front card so the stack reads as a bunch of post-its.
-        const step = i + 1;
-        return (
-          <button
-            key={card.key}
-            type="button"
-            className={`call-dock-peek call-dock-peek--${card.tone}`}
-            style={{
-              transform: `translate(${14 + step * 12}px, ${14 + step * 14}px) rotate(${step * 1.4}deg)`,
-              zIndex: stackDepth - i,
-            }}
-            title={`Show ${card.who}`}
-            onClick={() => onSelectBehind?.(card.key)}
-          >
-            <span className="call-dock-peek__label">{card.label}</span>
-            <span className="call-dock-peek__who">{card.who}</span>
-          </button>
-        );
-      })}
-
+    <div className="call-dock-bunch" style={{ left: pos.x, top: pos.y }}>
       <div
         className={`call-dock${tone === 'ready' ? ' call-dock--ready' : ''}${
           tone === 'muted' ? ' call-dock--muted' : ''
         }`}
-        style={{ zIndex: stackDepth + 1 }}
         role="status"
         aria-live="polite"
       >
@@ -204,14 +179,6 @@ export default function CallDock({
             <span>{state}</span>
           </p>
           {note ? <p className="call-dock__note">{note}</p> : null}
-          {stackDepth > 0 ? (
-            <p className="call-dock__stack-hint">
-              {stackDepth === 1
-                ? '1 more call behind this one — click the peek to switch.'
-                : `${stackDepth} more calls behind this one — click a peek to switch.`}
-            </p>
-          ) : null}
-
           {primaryLabel || secondaryLabel || (dismissLabel && onDismiss) ? (
             <div className="call-dock__actions">
               {primaryLabel ? (
@@ -233,6 +200,26 @@ export default function CallDock({
           ) : null}
         </div>
       </div>
+
+      {stackDepth > 0 ? (
+        <div className="call-dock-behind" aria-label="Other calls waiting">
+          <span className="call-dock__stack-hint">
+            {stackDepth === 1 ? '1 more call waiting' : `${stackDepth} more calls waiting`}
+          </span>
+          {extra.map((card) => (
+            <button
+              key={card.key}
+              type="button"
+              className={`call-dock-peek call-dock-peek--${card.tone}`}
+              title={`Show ${card.who}`}
+              onClick={() => onSelectBehind?.(card.key)}
+            >
+              <span className="call-dock-peek__label">{card.label}</span>
+              <span className="call-dock-peek__who">{card.who}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>,
     document.body,
   );

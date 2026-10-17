@@ -6,8 +6,13 @@ import {
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
-import { createOrder, type EncounterOrder, type EncounterOrderKind } from '../../api/visitWorkflow';
-import { ensureSharpsFeeOrder, isVaccineSearchItem } from '../../utils/visitSharpsFee';
+import {
+  createOrder,
+  listOrders,
+  type EncounterOrder,
+  type EncounterOrderKind,
+} from '../../api/visitWorkflow';
+import { isVaccineSearchItem } from '../../utils/visitSharpsFee';
 import { appendCheckoutPrepDrafts } from '../../api/visitWrapUp';
 import { createTask } from '../../api/tasks';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
@@ -460,18 +465,14 @@ function PlanItemSearchRow({
       });
       const isVaccine = isVaccineSearchItem(item);
       onAdded(order, { isVaccine });
+      // The server may have added the sharps fee alongside a needle item.
       try {
-        const sharps = await ensureSharpsFeeOrder({
-          encounterId,
-          practiceId,
-          patientId,
-          clientId,
-          existingOrders: [...existingOrders, order],
-          triggerItem: item,
-        });
-        if (sharps) onAdded(sharps, { skipPlanNarrative: true });
+        const known = new Set([...existingOrders.map((o) => o.id), order.id]);
+        for (const o of await listOrders(encounterId)) {
+          if (!known.has(o.id)) onAdded(o, { skipPlanNarrative: true });
+        }
       } catch {
-        /* Sharps is best-effort — the vaccine/injection still charges. */
+        /* The plan picks it up on the next reload. */
       }
     } finally {
       setAdding(false);

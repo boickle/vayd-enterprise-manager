@@ -119,12 +119,16 @@ export function deathWrapUpHouseholdHasWork(
   return Boolean(previews?.some((preview) => deathWrapUpHasWork(preview)));
 }
 
+/**
+ * The server already cancels memberships settled on the death invoice, so one still
+ * listed at checkout usually has its charge or credit nowhere yet.
+ */
 export function membershipCancelMoneyOnVisit(
   wrapUp: DeathWrapUpPreview,
   membershipId: number,
-  kind: DeathWrapUpKind = 'invoice'
+  _kind: DeathWrapUpKind = 'invoice'
 ): boolean {
-  return kind === 'invoice' || wrapUp.moneyOnVisitMembershipIds.includes(membershipId);
+  return wrapUp.moneyOnVisitMembershipIds.includes(membershipId);
 }
 
 export function membershipCancelMoneyLabel(
@@ -134,7 +138,7 @@ export function membershipCancelMoneyLabel(
 ): string {
   const onVisit = wrapUp
     ? membershipCancelMoneyOnVisit(wrapUp, preview.membershipId, kind)
-    : kind === 'invoice';
+    : false;
   const hasMoney = preview.chargeAmount > 0.009 || preview.refundAmount > 0.009;
   if (onVisit) {
     const where = kind === 'invoice' ? 'this invoice' : 'an open estimate or bill';

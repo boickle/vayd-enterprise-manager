@@ -45,6 +45,12 @@ export type UnscheduledReminder = {
   /** Inventory item that created this reminder (catalog sale), when known. */
   sourceInventoryItemId?: number | null;
   sourceDefinitionId?: number | null;
+  /** e.g. Wellness, Vaccine, Callback, Todo */
+  reminderType?: string | null;
+  /** Invoice line that added this reminder. */
+  createdByInvoiceLineId?: string | null;
+  /** Crossed out: clears when the invoice holding this line is paid. */
+  pendingClearByInvoiceLineId?: string | null;
   patient?: CareOutreachPatientRef | null;
   employee?: CareOutreachEmployeeRef | null;
   practice?: { id: number; name?: string };
@@ -97,6 +103,9 @@ function unwrapReminderResponse(raw: unknown): UnscheduledReminder {
 export type PatchReminderBody = {
   outreachNotes?: string;
   isHidden?: boolean;
+  description?: string;
+  /** YYYY-MM-DD */
+  dueDate?: string;
 };
 
 export type CreatePatientReminderBody = {

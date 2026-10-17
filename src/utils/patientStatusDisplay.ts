@@ -9,10 +9,17 @@ function pickStr(v: unknown): string | null {
 export type PatientChip = { label: string; tone: 'ok' | 'danger' | 'muted' };
 
 export function patientActiveChip(p: Record<string, unknown>): PatientChip {
-  if (p.isActive === false || p.active === false) {
+  if (!patientIsActiveInHousehold(p)) {
     return { label: 'Inactive', tone: 'muted' };
   }
   return { label: 'Active', tone: 'ok' };
+}
+
+/** Active pets only — euthanized / inactive pets stay on the client record, not quick household chips. */
+export function patientIsActiveInHousehold(p: Record<string, unknown>): boolean {
+  if (p.isActive === false || p.isActive === 0) return false;
+  if (p.active === false) return false;
+  return true;
 }
 
 export function patientStatusChip(p: Record<string, unknown>): PatientChip | null {

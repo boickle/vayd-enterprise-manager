@@ -4,6 +4,8 @@ import {
   getInvoiceVaccinations,
   getOrderClinicalDetails,
   getVaccineDefaults,
+  removeInvoiceLineVaccination,
+  removeOrderVaccination,
   saveInvoiceLineVaccination,
   saveOrderVaccination,
   VISIT_WORKFLOW_PRACTICE_ID,
@@ -14,6 +16,8 @@ import {
 } from '../../api/visitWorkflow';
 import type { InventoryLotBalance } from '../../api/branchInventory';
 import VaccineLotPicker from '../soap/VaccineLotPicker';
+import { askRemoveVaccineDose } from '../RemoveVaccineDoseDialog';
+import { apiErrorMessage } from '../../api/http';
 import './InvoiceVaccineDoseEditor.css';
 
 /** Unsaved counter invoices use a placeholder id; their lines do not exist on the server yet. */
@@ -47,6 +51,8 @@ type Props = {
   disabled?: boolean;
   recorded: OrderVaccination | null;
   onSaved: (saved: OrderVaccination) => void;
+  /** The recorded dose was removed; omit to hide the Remove button. */
+  onRemoved?: () => void;
   onLotPicked?: (pick: { lotId: number | null; lotNumber: string | null }) => void;
   /** Lots belong on the linked inventory row, not this billed service. */
   hideLotPicker?: boolean;
@@ -63,6 +69,7 @@ export default function InvoiceVaccineDoseEditor({
   disabled,
   recorded,
   onSaved,
+  onRemoved,
   onLotPicked,
   hideLotPicker,
   branchId,
@@ -248,6 +255,31 @@ export default function InvoiceVaccineDoseEditor({
     }
   };
 
+  const removeDose = async () => {
+    if (!recorded || !onRemoved) return;
+    const removal = await askRemoveVaccineDose({
+      vaccineName: recorded.vaccineName ?? line.description,
+      tagNumber: recorded.tagNumber,
+      dateVaccinated: recorded.dateVaccinated,
+      wasSigned: null,
+    });
+    if (!removal) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (encounterId && orderId) {
+        await removeOrderVaccination(encounterId, orderId, removal);
+      } else {
+        await removeInvoiceLineVaccination(line.invoiceId, line.id, removal);
+      }
+      onRemoved();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="client-fin__vax-editor">
       {stockBanner}
@@ -320,6 +352,16 @@ export default function InvoiceVaccineDoseEditor({
         >
           {saving ? 'Saving…' : recorded ? 'Update dose' : 'Record dose'}
         </button>
+        {recorded && onRemoved ? (
+          <button
+            type="button"
+            className="client-fin__btn"
+            disabled={saving}
+            onClick={() => void removeDose()}
+          >
+            Remove dose
+          </button>
+        ) : null}
       </div>
     </div>
   );

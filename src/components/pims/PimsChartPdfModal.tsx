@@ -15,7 +15,7 @@ type Props = {
 function downloadName(title: string, filename?: string): string {
   if (filename?.trim()) return filename.trim();
   const base = title.replace(/[^\w\s.-]+/g, '').replace(/\s+/g, ' ').trim() || 'document';
-  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
+  return /\.[a-z0-9]{2,5}$/i.test(base) ? base : `${base}.pdf`;
 }
 
 export function PimsChartPdfModal({
@@ -28,6 +28,7 @@ export function PimsChartPdfModal({
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [savedName, setSavedName] = useState(downloadName(title, filename));
   const [loading, setLoading] = useState(true);
+  const [isImage, setIsImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export function PimsChartPdfModal({
           return;
         }
         url = file.objectUrl;
+        setIsImage(file.blob.type.startsWith('image/'));
         setObjectUrl(file.objectUrl);
         setSavedName(file.filename);
       })
@@ -91,9 +93,13 @@ export function PimsChartPdfModal({
           </button>
         </div>
         <div className="pims-chart-pdf__body">
-          {loading ? <p className="pims-chart-pdf__status">Loading PDF…</p> : null}
+          {loading ? <p className="pims-chart-pdf__status">Loading…</p> : null}
           {error ? <p className="pims-chart-pdf__error">{error}</p> : null}
-          {objectUrl && !error ? (
+          {objectUrl && !error && isImage ? (
+            <div className="pims-chart-pdf__image-wrap">
+              <img className="pims-chart-pdf__image" src={objectUrl} alt={title} />
+            </div>
+          ) : objectUrl && !error ? (
             <iframe
               className="pims-chart-pdf__frame"
               title={title}

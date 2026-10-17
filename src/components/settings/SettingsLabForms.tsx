@@ -64,6 +64,44 @@ function newDraft(): Draft {
 }
 
 /** Empty string means "no range", which is different from zero. */
+function splitList(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Keeps the typed text (trailing commas included) while the parent stores the parsed list. */
+function CommaListInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  ariaLabel: string;
+}) {
+  const [text, setText] = useState(value.join(', '));
+  useEffect(() => {
+    if (splitList(text).join('\u0000') !== value.join('\u0000')) setText(value.join(', '));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <input
+      className="settings-input"
+      value={text}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(splitList(e.target.value));
+      }}
+    />
+  );
+}
+
 function numOrNull(raw: string): number | null {
   if (raw.trim() === '') return null;
   const n = Number(raw);
@@ -420,33 +458,17 @@ export default function SettingsLabForms({ onMessage }: Props) {
 
                       {el.valueType === 'select' ? (
                         <div className="lab-forms__element-range">
-                          <input
-                            className="settings-input"
-                            value={(el.options ?? []).join(', ')}
+                          <CommaListInput
+                            value={el.options ?? []}
                             placeholder="Choices, comma separated"
-                            aria-label={`Row ${idx + 1} choices`}
-                            onChange={(e) =>
-                              patchElement(idx, {
-                                options: e.target.value
-                                  .split(',')
-                                  .map((s) => s.trim())
-                                  .filter(Boolean),
-                              })
-                            }
+                            ariaLabel={`Row ${idx + 1} choices`}
+                            onChange={(options) => patchElement(idx, { options })}
                           />
-                          <input
-                            className="settings-input"
-                            value={(el.abnormalOptions ?? []).join(', ')}
+                          <CommaListInput
+                            value={el.abnormalOptions ?? []}
                             placeholder="Which choices are abnormal"
-                            aria-label={`Row ${idx + 1} abnormal choices`}
-                            onChange={(e) =>
-                              patchElement(idx, {
-                                abnormalOptions: e.target.value
-                                  .split(',')
-                                  .map((s) => s.trim())
-                                  .filter(Boolean),
-                              })
-                            }
+                            ariaLabel={`Row ${idx + 1} abnormal choices`}
+                            onChange={(abnormalOptions) => patchElement(idx, { abnormalOptions })}
                           />
                         </div>
                       ) : null}

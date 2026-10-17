@@ -163,149 +163,6 @@ function SchedulingSubmenuLinks({
   );
 }
 
-function SettingsSubmenuLinks({
-  onNavigate,
-  settingsTabFromLocation,
-}: {
-  onNavigate: () => void;
-  settingsTabFromLocation: string | null;
-}) {
-  const location = useLocation();
-  return (
-    <>
-      <Link
-        to="/schedule/settings"
-        className={`schedule-app__settings-link${
-          location.pathname.startsWith('/schedule/settings') &&
-          (!settingsTabFromLocation || settingsTabFromLocation === 'appointment-types')
-            ? ' schedule-app__settings-link--active'
-            : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        All settings
-      </Link>
-      <p className="schedule-app__settings-group-label">Scheduling</p>
-      <Link
-        to="/schedule/settings"
-        className={`schedule-app__settings-link${
-          location.pathname.startsWith('/schedule/settings') &&
-          (!settingsTabFromLocation || settingsTabFromLocation === 'appointment-types')
-            ? ' schedule-app__settings-link--active'
-            : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Appointment Types
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=practice-booking-goals' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'practice-booking-goals' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Practice Booking Goals
-      </Link>
-      <p className="schedule-app__settings-group-label">Staff</p>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=employee-directory' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'employee-directory' ||
-          settingsTabFromLocation === 'employee-types' ||
-          settingsTabFromLocation === 'employee-zones' ||
-          settingsTabFromLocation === 'employee-schedule' ||
-          settingsTabFromLocation === 'employee-images' ||
-          settingsTabFromLocation === 'employee-goals'
-            ? ' schedule-app__settings-link--active'
-            : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Staff
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=roles' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'roles' || settingsTabFromLocation === 'role-manual-booking'
-            ? ' schedule-app__settings-link--active'
-            : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Roles
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=cl-seat-assignment' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'cl-seat-assignment' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        CL Seat Assignment
-      </Link>
-      <p className="schedule-app__settings-group-label">Finance</p>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=payment-types' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'payment-types' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Payment Types
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=client-statuses' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'client-statuses' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Client Discounts
-      </Link>
-      <p className="schedule-app__settings-group-label">Communication</p>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=gmail-mailboxes' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'gmail-mailboxes' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Gmail Mailboxes
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=reminders' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'reminders' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Reminders
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=message-templates' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'message-templates' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Email &amp; Text Templates
-      </Link>
-    </>
-  );
-}
-
 export default function NavbarScheduleHorizontalNav() {
   const location = useLocation();
   const auth = useAuth();
@@ -339,16 +196,10 @@ export default function NavbarScheduleHorizontalNav() {
     return keys;
   }, [homeTab, showAdminTab, canManageMembershipPlans]);
 
-  const settingsMenuRef = useRef<HTMLDetailsElement>(null);
   const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const navRef = useRef<HTMLElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
-
-  const closeSettingsMenu = useCallback(() => {
-    const el = settingsMenuRef.current;
-    if (el) el.open = false;
-  }, []);
 
   const closeSchedulingMenu = useCallback(() => {
     const el = schedulingToolsMenuRef.current;
@@ -374,10 +225,6 @@ export default function NavbarScheduleHorizontalNav() {
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      const settingsEl = settingsMenuRef.current;
-      if (settingsEl?.open && !settingsEl.contains(target)) {
-        settingsEl.open = false;
-      }
       const schedulingEl = schedulingToolsMenuRef.current;
       if (schedulingEl?.open && !schedulingEl.contains(target)) {
         schedulingEl.open = false;
@@ -392,21 +239,9 @@ export default function NavbarScheduleHorizontalNav() {
   }, []);
 
   useEffect(() => {
-    closeSettingsMenu();
     closeSchedulingMenu();
     closeMoreMenu();
-  }, [
-    location.pathname,
-    location.search,
-    closeSettingsMenu,
-    closeSchedulingMenu,
-    closeMoreMenu,
-  ]);
-
-  const settingsTabFromLocation = useMemo(() => {
-    if (!location.pathname.startsWith('/schedule/settings')) return null;
-    return new URLSearchParams(location.search).get('tab');
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, closeSchedulingMenu, closeMoreMenu]);
 
   /** First index that moves into “More”; equal to itemKeys.length when everything fits on one row */
   const [splitIndex, setSplitIndex] = useState(() => Number.MAX_SAFE_INTEGER);
@@ -609,31 +444,16 @@ export default function NavbarScheduleHorizontalNav() {
         );
       case 'settings':
         return (
-          <details key="settings" ref={settingsMenuRef} className="schedule-app__settings-menu">
-            <summary
-              className={`schedule-app__tab schedule-app__settings-summary${
-                location.pathname.startsWith('/schedule/settings') ? ' schedule-app__tab--active' : ''
-              }`}
-              aria-haspopup="menu"
-              onClick={(e) => toggleDetailsMenu(settingsMenuRef.current, e)}
-            >
-              Settings
-            </summary>
-            <div className="schedule-app__settings-dropdown" role="menu" aria-label="Practice settings">
-              {showAdminTab ? (
-                <SettingsSubmenuLinks onNavigate={closeSettingsMenu} settingsTabFromLocation={settingsTabFromLocation} />
-              ) : (
-                <Link
-                  to="/schedule/settings"
-                  className="schedule-app__settings-link"
-                  role="menuitem"
-                  onClick={closeSettingsMenu}
-                >
-                  Memberships
-                </Link>
-              )}
-            </div>
-          </details>
+          <NavLink
+            key="settings"
+            to="/schedule/settings"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+            onClick={(e) => {
+              if (blockScheduleNavLeave(e)) return;
+            }}
+          >
+            Settings
+          </NavLink>
         );
       case 'admin':
         return (

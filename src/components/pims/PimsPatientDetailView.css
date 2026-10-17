@@ -938,6 +938,17 @@
   flex: 1 1 auto;
 }
 
+.pims-emr-story__reminder--pending-clear .pims-emr-story__reminder-label {
+  text-decoration: line-through;
+  color: #78716c;
+}
+
+.pims-emr-story__pending-note {
+  display: block;
+  font-size: 11px;
+  color: #a16207;
+}
+
 .pims-emr-story__reminder-remove {
   flex: 0 0 auto;
   display: inline-flex;
@@ -2973,4 +2984,14 @@
   border: 1px solid #e4efe9;
   border-radius: 12px;
   background: #fff;
+}
+
+.pims-patient-detail__show-removed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
 }

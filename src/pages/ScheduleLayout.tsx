@@ -24,6 +24,8 @@ import {
   Banknote,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
+import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import { FORWARD_BOOKING_CREATED_EVENT } from '../utils/forwardBookingCreateLink';
 import {
   getVisibleScoutTabs,
   getFirstScoutSegment,
@@ -103,6 +105,7 @@ export default function ScheduleLayout() {
   );
 
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  const [forwardBookingModalOpen, setForwardBookingModalOpen] = useState(false);
 
   const [railWideEnough, setRailWideEnough] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 901px)').matches : true
@@ -351,16 +354,17 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">New Task</span>
             </NavLink>
-            <NavLink
-              to={{ pathname: '/schedule/scheduling-tools/forward-booking', search: '?new=1' }}
+            <button
+              type="button"
               className="schedule-app__quick-link"
               title={railCollapsedEffective ? 'Forward booking' : undefined}
+              onClick={() => setForwardBookingModalOpen(true)}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
                 <CalendarClock size={18} strokeWidth={1.75} />
               </span>
               <span className="schedule-app__quick-link-label">+ Forward Booking</span>
-            </NavLink>
+            </button>
             {canAccessScheduleAnalytics ? (
               <>
                 <NavLink
@@ -467,6 +471,15 @@ export default function ScheduleLayout() {
         </div>
       </div>
 
+      {forwardBookingModalOpen ? (
+        <CreateForwardBookingModal
+          onClose={() => setForwardBookingModalOpen(false)}
+          onCreated={() => {
+            setForwardBookingModalOpen(false);
+            window.dispatchEvent(new Event(FORWARD_BOOKING_CREATED_EVENT));
+          }}
+        />
+      ) : null}
     </div>
   );
 }

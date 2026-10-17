@@ -453,15 +453,47 @@ export async function removePatientChartDocumentFromChart(
   return data;
 }
 
+const CHART_FILE_TYPES_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+/** Imported files are often stored as octet-stream, so trust the bytes over the label. */
+async function sniffChartFileType(blob: Blob): Promise<string | null> {
+  const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'application/pdf';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif';
+  if (b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57 && b[9] === 0x45) return 'image/webp';
+  return null;
+}
+
 export async function fetchPatientChartDocumentFile(
   patientId: number,
   documentId: number,
   fallbackFilename = 'document.pdf',
 ): Promise<{ objectUrl: string; filename: string; blob: Blob }> {
-  const res = await http.get<Blob>(
-    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/file`,
-    { responseType: 'blob' },
-  );
+  const res = await http
+    .get<Blob>(
+      `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/file`,
+      { responseType: 'blob' },
+    )
+    .catch(async (err: { response?: { data?: unknown } }) => {
+      const body = err?.response?.data;
+      if (body instanceof Blob) {
+        const message = await body
+          .text()
+          .then((t) => (JSON.parse(t) as { message?: unknown }).message)
+          .catch(() => null);
+        if (typeof message === 'string' && message.trim()) throw new Error(message);
+      }
+      throw err;
+    });
   const data = res.data;
   const headerType = String(res.headers?.['content-type'] || '');
   if (
@@ -480,15 +512,18 @@ export async function fetchPatientChartDocumentFile(
     }
     throw new Error(message);
   }
-  const blob =
-    data instanceof Blob
-      ? data.type
-        ? data
-        : new Blob([data], { type: 'application/pdf' })
-      : new Blob([data], { type: 'application/pdf' });
   const fromHeader = filenameFromContentDisposition(
     String(res.headers?.['content-disposition'] || ''),
   );
+  const ext = (fromHeader || fallbackFilename).split('.').pop()?.toLowerCase() ?? '';
+  const raw = data instanceof Blob ? data : new Blob([data]);
+  const declared = raw.type && raw.type !== 'application/octet-stream' ? raw.type : '';
+  const type =
+    (await sniffChartFileType(raw)) ||
+    declared ||
+    CHART_FILE_TYPES_BY_EXT[ext] ||
+    'application/pdf';
+  const blob = raw.type === type ? raw : new Blob([raw], { type });
   return {
     blob,
     objectUrl: URL.createObjectURL(blob),
@@ -508,6 +543,17 @@ export async function fetchPatientMedicalRecordStaff(
     if (axios.isAxiosError(e) && e.response?.status === 404) return null;
     throw e;
   }
+}
+
+/** Vaccine doses removed from the record — for the chart's "Show removed" view only. */
+export async function fetchRemovedVaccinationLogs(
+  patientId: string | number
+): Promise<Record<string, unknown>[]> {
+  const { data } = await http.get<Record<string, unknown>[]>(
+    `/patients/${encodeURIComponent(String(patientId))}/vaccination-logs`,
+    { params: { includeRemoved: 1 } }
+  );
+  return (Array.isArray(data) ? data : []).filter((row) => row && row.removal);
 }
 
 // Get latest modified patient

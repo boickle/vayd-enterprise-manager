@@ -70,6 +70,8 @@ export type RecordsRequestRow = {
   appointmentId: number | null;
   appointmentStart: string | null;
   requestedByName: string | null;
+  /** `client_upload`: the owner sent these themselves on the booking form. */
+  source?: 'staff' | 'appointment_request' | 'system' | 'client_upload';
 };
 
 export type RecordsRequestTarget = {

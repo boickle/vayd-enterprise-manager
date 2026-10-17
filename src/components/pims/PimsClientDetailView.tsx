@@ -58,7 +58,7 @@ import {
 } from '../../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { PimsClientMergeButton } from './PimsChartWorkBar';
-import { patientStatusChip } from '../../utils/patientStatusDisplay';
+import { patientIsActiveInHousehold, patientStatusChip } from '../../utils/patientStatusDisplay';
 import { PetThumb, patientPhotoSrc } from './PetThumb';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import ClientCommunicationsPanel from './ClientCommunicationsPanel';
@@ -1799,16 +1799,20 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             </span>
           ) : undefined
         }
-        belowTitle={
-          patients.length ? (
-            <ul className="pims-emr-household__pets pims-emr-household__pets--under-name" aria-label="Patients">
-              {[...patients]
-                .sort((a, b) => {
-                  const aActive = a.isActive !== false;
-                  const bActive = b.isActive !== false;
-                  if (aActive !== bActive) return aActive ? -1 : 1;
-                  return (pickStr(a.name) ?? '').localeCompare(pickStr(b.name) ?? '');
-                })
+        belowTitle={(() => {
+          const activeHousehold = patients.filter((p) =>
+            patientIsActiveInHousehold(p as Record<string, unknown>),
+          );
+          if (!activeHousehold.length) return null;
+          return (
+            <ul
+              className="pims-emr-household__pets pims-emr-household__pets--under-name"
+              aria-label="Active patients"
+            >
+              {[...activeHousehold]
+                .sort((a, b) =>
+                  (pickStr(a.name) ?? '').localeCompare(pickStr(b.name) ?? ''),
+                )
                 .map((p, idx) => {
                   const pid = p.id != null ? String(p.id) : '';
                   const href = pid
@@ -1856,8 +1860,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   );
                 })}
             </ul>
-          ) : null
-        }
+          );
+        })()}
         reach={
           <>
             {phoneRows.length ? (

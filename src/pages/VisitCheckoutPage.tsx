@@ -20,7 +20,10 @@ import {
   subscribeVisit,
   type VisitPeer,
 } from '../utils/visitRealtime';
-import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
+import {
+  forwardBookingDispositionIsComplete,
+  joinPetNames,
+} from '../utils/forwardBookingDisposition';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
 import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
@@ -172,15 +175,7 @@ export default function VisitCheckoutPage() {
   const followUpOutstanding = pets.filter(
     (p) => !forwardBookingDispositionIsComplete(p.forwardBookingDisposition)
   );
-  const followUpSettled = pets.length > 0 && followUpOutstanding.length === 0;
-
-  const paymentBlockedReason = !followUpSettled
-    ? pets.length === 0
-      ? null
-      : `Settle the follow-up for ${followUpOutstanding
-          .map((p) => p.patientName)
-          .join(', ')} before taking payment.`
-    : null;
+  const followUpPendingNames = joinPetNames(followUpOutstanding.map((p) => p.patientName));
 
   const invoiceIsPaid =
     invoice?.status === 'paid' || invoice?.status === 'finalized';
@@ -289,7 +284,9 @@ export default function VisitCheckoutPage() {
             <CalendarClock size={15} aria-hidden /> Follow-up
           </h2>
           <p className="soap-hint">
-            Ask now, while they are still here. Payment unlocks once every pet has an answer.
+            Ask now while they are still here, or leave it for Start/End Visit — payment
+            does not wait on it.
+            {followUpPendingNames ? ` Still to do: ${followUpPendingNames}.` : ''}
           </p>
           {wrapUp && pets.length > 0 ? (
             <WrapUpForwardBooking
@@ -314,7 +311,6 @@ export default function VisitCheckoutPage() {
             roster={roster}
             practiceId={VISIT_WORKFLOW_PRACTICE_ID}
             remoteRefreshSignal={ordersRevision}
-            paymentBlockedReason={paymentBlockedReason}
             onInvoiceChange={setInvoice}
             onOrdersChange={(next) => {
               setOrders(next);

@@ -256,12 +256,6 @@ export function SchedulerAppointmentContextMenu({
               onPick={() => onAction({ kind: 'euthanasiaConsent' })}
             />
           ) : null}
-          {showInformDvmOfDeath ? (
-            <CtxSubRow
-              label="Inform DVM of death"
-              onPick={() => onAction({ kind: 'informDvmOfDeath' })}
-            />
-          ) : null}
           {showRecordsRequest ? (
             <CtxSubRow
               label={recordsRequestLabel}
@@ -316,6 +310,12 @@ export function SchedulerAppointmentContextMenu({
           title={!phone1 ? 'Client has no mobile number on file.' : undefined}
           onPick={() => phone1 && onAction({ kind: 'onMyWayText' })}
         />
+        {showInformDvmOfDeath ? (
+          <CtxSubRow
+            label="Inform DVM of death"
+            onPick={() => onAction({ kind: 'informDvmOfDeath' })}
+          />
+        ) : null}
       </CtxParentRow>
 
       <CtxParentRow

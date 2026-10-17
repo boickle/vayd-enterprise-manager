@@ -34,6 +34,17 @@ function show(n: number | null | undefined): string {
   return n == null ? '' : String(n);
 }
 
+/** Blank rather than 0 when the location has never been counted for this item. */
+function knownOnHand(item: ParSeedSheetItem): number | null {
+  return item.counted || item.onHand !== 0 ? item.onHand : null;
+}
+
+/** Blank rather than 0 when there is no recorded usage. */
+function knownUsed(item: ParSeedSheetItem, sheet: ParSeedSheet): number | null {
+  const used = sheet.isDefault ? item.usedOffice : item.usedHere;
+  return used ? used : null;
+}
+
 function draftFor(item: ParSeedSheetItem): Draft {
   return { par: show(item.par), min: show(item.min), max: show(item.max) };
 }
@@ -161,7 +172,6 @@ function escapeHtml(s: string | null | undefined): string {
 
 function printSheet(sheet: ParSeedSheet, items: ParSeedSheetItem[]) {
   const fields = fieldsFor(sheet.isDefault);
-  const used = (i: ParSeedSheetItem) => (sheet.isDefault ? i.usedOffice : i.usedHere);
   const head = `<tr><th class="code">Code</th><th>Item</th><th class="unit">Unit</th><th class="num">On hand</th><th class="num">Used ${sheet.usageDays}d</th>${fields
     .map(
       (f) =>
@@ -177,7 +187,7 @@ function printSheet(sheet: ParSeedSheet, items: ParSeedSheetItem[]) {
           ? `<tr class="cat"><td colspan="${5 + fields.length * 2}">${escapeHtml(title)}</td></tr>`
           : '';
       category = title;
-      return `${heading}<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="num">${i.onHand}</td><td class="num">${used(i) || ''}</td>${fields
+      return `${heading}<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="num">${show(knownOnHand(i))}</td><td class="num">${show(knownUsed(i, sheet))}</td>${fields
         .map((f) => `<td class="num">${show(i[f])}</td><td class="box"></td>`)
         .join('')}</tr>`;
     })
@@ -231,8 +241,8 @@ function downloadCsv(sheet: ParSeedSheet, items: ParSeedSheetItem[]) {
         i.name,
         i.unit,
         i.categoryName,
-        i.onHand,
-        sheet.isDefault ? i.usedOffice : i.usedHere,
+        knownOnHand(i),
+        knownUsed(i, sheet),
         ...fields.map((f) => i[f]),
       ]
         .map(csvCell)
@@ -902,7 +912,9 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
                       </div>
                     </td>
                     <td>{item.unit || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{item.onHand}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {knownOnHand(item) ?? <span className="settings-muted">—</span>}
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       {used || <span className="settings-muted">—</span>}
                     </td>

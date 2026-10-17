@@ -100,6 +100,16 @@ function cardCopy(call: StackedCall): {
       note: 'Quo is writing up the call. This usually takes a minute or two.',
     };
   }
+  if (phase === 'transcript_ready' && call.clientId == null) {
+    return {
+      tone: 'ready',
+      gripLabel: 'No client matched',
+      state: <>Summary ready</>,
+      note: call.call?.counterpartyPhone?.trim()
+        ? 'Quo could not match this number to a client, so there is no chart to file it to. Add the number to the client’s record and it will match next time.'
+        : 'This call had no outside number (staff to staff, or a transfer), so there is no chart to file it to.',
+    };
+  }
   if (phase === 'transcript_ready') {
     return {
       tone: 'ready',
@@ -177,17 +187,19 @@ export default function MyCallIndicator() {
   const phase = effectiveCallPhase(front);
   const copy = cardCopy(front);
   const hasText = Boolean(front.call?.transcriptText?.trim());
-  const ready = phase === 'transcript_ready' && hasText;
-  const fileAnyway = phase === 'no_record_needed' && hasText;
   const canOpenClient = front.clientId != null && Number.isFinite(front.clientId);
+  // Filing needs a chart; without a client the only honest choice is to skip it.
+  const ready = phase === 'transcript_ready' && hasText && canOpenClient;
+  const fileAnyway = phase === 'no_record_needed' && hasText && canOpenClient;
   const canDismiss =
     phase === 'no_record_needed' ||
     phase === 'transcribing' ||
     phase === 'ringing' ||
-    front.optimistic;
+    front.optimistic ||
+    !canOpenClient;
   const peeks: CallDockPeek[] = behind.map((c) => ({
     key: c.key,
-    who: c.clientName?.trim() || 'client',
+    who: c.clientName?.trim() || c.call?.counterpartyPhone?.trim() || 'Unknown caller',
     tone: toneFor(c),
     label: peekLabel(c),
   }));
@@ -231,7 +243,7 @@ export default function MyCallIndicator() {
   const whoLabel =
     front.clientName?.trim() ||
     front.call?.counterpartyPhone?.trim() ||
-    'client';
+    'Unknown caller';
 
   return (
     <>
@@ -269,11 +281,14 @@ export default function MyCallIndicator() {
             ? openClient
             : undefined
         }
-        dismissLabel={canDismiss ? 'Dismiss' : undefined}
+        dismissLabel={
+          canDismiss ? (phase === 'transcript_ready' ? 'Don’t file' : 'Dismiss') : undefined
+        }
         behind={peeks}
         onSelectBehind={setFrontKey}
         onDismiss={
-          // Clinical summaries stay until filed or skipped in the review modal.
+          // Clinical summaries stay until filed or skipped in the review modal, unless there
+          // is no client to file them to.
           canDismiss ? dismissFront : undefined
         }
       />

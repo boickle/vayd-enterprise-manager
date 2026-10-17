@@ -6,6 +6,8 @@ export const FORWARD_BOOKING_CREATE_NEW_PARAM = 'new';
 export const FORWARD_BOOKING_CREATE_PATIENT_PARAM = 'patientId';
 export const FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM = 'appointmentId';
 export const FORWARD_BOOKING_CREATE_RETURN_TO_PARAM = 'returnTo';
+/** Fired after an entry is added from outside the list (e.g. the nav shortcut). */
+export const FORWARD_BOOKING_CREATED_EVENT = 'scout:forward-booking-created';
 
 export type CreateForwardBookingPrefill = {
   patientId: number;

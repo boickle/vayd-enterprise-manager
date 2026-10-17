@@ -1274,6 +1274,12 @@
   border: 1px solid #fca5a5;
 }
 
+.soap-wrapup-pet-chip--declined-before {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px dashed #cbd5e1;
+}
+
 /* ── Reminders going in (expanded list) ── */
 .soap-wrapup-pet-rem-list {
   list-style: none;

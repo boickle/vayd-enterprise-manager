@@ -52,6 +52,7 @@ import {
   deactivatePatient,
   fetchPatientByIdStaff,
   fetchPatientMedicalRecordStaff,
+  fetchRemovedVaccinationLogs,
   patchPatient,
   reactivatePatient,
   uploadPatientChartDocument,
@@ -85,7 +86,9 @@ import {
   mergeInHouseLabsIntoChart,
   chartRowsFromClientRoomLoaders,
   chartRowsFromMailOrders,
+  chartRowsFromRemovedVaccinations,
   chartRowsFromScoutNotes,
+  chartRowsFromSoapEncounters,
   filterRowsByDateRange,
   groupChartRowsByLocalDate,
   laterReceivedDateForDeclinedItem,
@@ -182,6 +185,7 @@ import {
 import { BreedPicker, SpeciesSelect, useSpeciesCatalog } from './detail/SpeciesBreedFields';
 import {
   patientActiveChip,
+  patientIsActiveInHousehold,
   patientStatusChip as statusChipFromRecord,
 } from '../../utils/patientStatusDisplay';
 import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
@@ -240,6 +244,7 @@ function householdPetsFromClient(raw: unknown, currentId: string): HouseholdPet[
   if (!Array.isArray(patients)) return [];
   const pets = patients
     .filter((p): p is Record<string, unknown> => p != null && typeof p === 'object' && p.id != null)
+    .filter((p) => patientIsActiveInHousehold(p))
     .map((p) => ({
       id: String(p.id),
       name: pickStr(p.name) ?? `Pet #${p.id}`,
@@ -250,7 +255,6 @@ function householdPetsFromClient(raw: unknown, currentId: string): HouseholdPet[
       sexTone: patientSexHighlightTone(p as never),
     }));
   pets.sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
     if (a.id === currentId) return -1;
     if (b.id === currentId) return 1;
     return a.name.localeCompare(b.name);
@@ -498,9 +502,11 @@ function ChartRowExpandBody({
   onRemove,
   onSummarize,
   onLabResultSaved,
+  onOpenSoap,
 }: {
   row: ChartRow;
   onRemove?: (row: ChartRow) => void;
+  onOpenSoap?: (soapEncounterId: string) => void;
   /** Opens the records summary and reminder review for this one document. */
   onSummarize?: (documentId: number) => void;
   /** In-house lab forms are run right here in the timeline. */
@@ -527,7 +533,7 @@ function ChartRowExpandBody({
     row.filePatientId && row.fileDocumentId ? (
       <ChartDocumentOpenButton
         row={row}
-        label={row.removed ? 'Retrieve file' : 'Open PDF'}
+        label={row.removed ? 'Retrieve file' : `Open ${row.fileKind ?? 'PDF'}`}
       />
     ) : null;
   const removeBtn =
@@ -541,6 +547,19 @@ function ChartRowExpandBody({
         }}
       >
         Remove from chart
+      </button>
+    ) : null;
+  const soapBtn =
+    row.soapEncounterId && onOpenSoap ? (
+      <button
+        type="button"
+        className="pims-patient-detail__pdf-btn"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenSoap(row.soapEncounterId!);
+        }}
+      >
+        Open SOAP
       </button>
     ) : null;
   const summarizeId = onSummarize ? summarizableDocId(row) : null;
@@ -579,15 +598,16 @@ function ChartRowExpandBody({
     );
   } else if (text) {
     body = <div className="pims-patient-detail__expand-text">{text}</div>;
-  } else if (!fileBtn && !removeBtn) {
+  } else if (!fileBtn && !removeBtn && !soapBtn) {
     body = <div className="pims-patient-detail__expand-text">No additional detail.</div>;
   }
 
   return (
     <div className="pims-patient-detail__expand-stack">
       {body}
-      {fileBtn || removeBtn || summarizeBtn ? (
+      {fileBtn || removeBtn || summarizeBtn || soapBtn ? (
         <div className="pims-patient-detail__expand-actions">
+          {soapBtn}
           {fileBtn}
           {summarizeBtn}
           {removeBtn}
@@ -990,6 +1010,21 @@ function RemoveFromChartConfirm({
   );
 }
 
+function ChartReminderLabel({
+  reminder,
+}: {
+  reminder: { label: string; pendingClear?: boolean };
+}) {
+  return (
+    <span title={reminder.pendingClear ? 'Replaced by an unpaid invoice' : undefined}>
+      <span className="pims-emr-story__reminder-label">{reminder.label}</span>
+      {reminder.pendingClear ? (
+        <span className="pims-emr-story__pending-note">Clears when the invoice is paid</span>
+      ) : null}
+    </span>
+  );
+}
+
 function DeleteReminderConfirm({
   reminder,
   patientName,
@@ -1188,6 +1223,8 @@ export default function PimsPatientDetailView({
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
   /** Checked timeline rows, by row id — documents are summarized; any row can be emailed or printed. */
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [removedVaccinations, setRemovedVaccinations] = useState<Record<string, unknown>[]>([]);
   /** Documents open in the summarize & reminders review, or null when closed. */
   const [summarizeDocIds, setSummarizeDocIds] = useState<number[] | null>(null);
   const toggleSelectedRow = useCallback((id: string) => {
@@ -1438,7 +1475,7 @@ export default function PimsPatientDetailView({
   const badge = payload ? patientActiveBadge(payload) : { label: '—', variant: 'muted' as const };
   const statusChip = payload ? patientStatusChip(payload) : null;
 
-  const chartRows = useMemo(() => {
+  const allChartRows = useMemo(() => {
     const base = buildChartRowsFromMedicalRecord(
       medicalRecord,
       problems,
@@ -1452,11 +1489,53 @@ export default function PimsPatientDetailView({
     const loaders = chartRowsFromClientRoomLoaders(clientRoomLoaders, patientId);
     const notes = chartRowsFromScoutNotes(scoutNotes);
     const mail = chartRowsFromMailOrders(mailOrders, patientId);
+    const soaps = chartRowsFromSoapEncounters(soapNotes);
     // Snap tests and other in-house forms ride on their charge's row, or stand
     // alone while the bill is still open, so a WAITING lab shows from the chart.
     const withLabs = mergeInHouseLabsIntoChart(base, labResults);
-    return [...withLabs, ...loaders, ...notes, ...mail].sort((a, b) => b.sortTime - a.sortTime);
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, patientId]);
+    const removedDoses = chartRowsFromRemovedVaccinations(removedVaccinations);
+    return [...withLabs, ...soaps, ...loaders, ...notes, ...mail, ...removedDoses].sort(
+      (a, b) => b.sortTime - a.sortTime
+    );
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, patientId, removedVaccinations, soapNotes]);
+
+  /** Removed entries (voided charges, removed files and doses) stay hidden unless asked for. */
+  const chartRows = useMemo(
+    () => (showRemoved ? allChartRows : allChartRows.filter((r) => !r.removed)),
+    [allChartRows, showRemoved]
+  );
+
+  useEffect(() => {
+    if (!showRemoved || !patientId) {
+      setRemovedVaccinations([]);
+      return;
+    }
+    let canceled = false;
+    void fetchRemovedVaccinationLogs(patientId)
+      .then((rows) => {
+        if (!canceled) setRemovedVaccinations(rows);
+      })
+      .catch(() => {
+        if (!canceled) setRemovedVaccinations([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [showRemoved, patientId, medicalRecord]);
+
+  const showRemovedToggle = (
+    <label className="pims-patient-detail__show-removed">
+      <input
+        type="checkbox"
+        checked={showRemoved}
+        onChange={(e) => {
+          setShowRemoved(e.target.checked);
+          if (!e.target.checked) setSelectedRowIds(new Set());
+        }}
+      />
+      Show removed entries
+    </label>
+  );
 
   /**
    * Unsigned SOAPs. The timeline only carries locked material, so these would otherwise
@@ -2607,6 +2686,7 @@ export default function PimsPatientDetailView({
         householdPatients={
           householdPets.length
             ? householdPets
+                .filter((p) => p.active)
                 .map((p) => ({ id: Number(p.id), name: p.name }))
                 .filter((p) => Number.isFinite(p.id))
             : Number.isFinite(Number(patientId))
@@ -2777,28 +2857,37 @@ export default function PimsPatientDetailView({
                 ) : (
                   <ul className="pims-emr-story__list pims-emr-story__list--overdue">
                     {reminderSplit.overdue.map((r) => (
-                      <li key={r.id} className="pims-emr-story__reminder">
-                        <span>{r.label}</span>
-                        <button
-                          type="button"
-                          className="pims-emr-story__reminder-no"
-                          title="Owner declined — stays on the chart"
-                          aria-label={`Owner declined ${r.label}`}
-                          disabled={removingReminderId === r.id}
-                          onClick={() => void handleDeclineReminder(r)}
-                        >
-                          🚫
-                        </button>
-                        <button
-                          type="button"
-                          className="pims-emr-story__reminder-remove"
-                          title="Remove from this list only"
-                          aria-label={`Remove reminder ${r.label}`}
-                          disabled={removingReminderId === r.id}
-                          onClick={() => setPendingDeleteReminder(r)}
-                        >
-                          <X size={14} aria-hidden />
-                        </button>
+                      <li
+                        key={r.id}
+                        className={`pims-emr-story__reminder${
+                          r.pendingClear ? ' pims-emr-story__reminder--pending-clear' : ''
+                        }`}
+                      >
+                        <ChartReminderLabel reminder={r} />
+                        {r.pendingClear ? null : (
+                          <>
+                            <button
+                              type="button"
+                              className="pims-emr-story__reminder-no"
+                              title="Owner declined — stays on the chart"
+                              aria-label={`Owner declined ${r.label}`}
+                              disabled={removingReminderId === r.id}
+                              onClick={() => void handleDeclineReminder(r)}
+                            >
+                              🚫
+                            </button>
+                            <button
+                              type="button"
+                              className="pims-emr-story__reminder-remove"
+                              title="Remove from this list only"
+                              aria-label={`Remove reminder ${r.label}`}
+                              disabled={removingReminderId === r.id}
+                              onClick={() => setPendingDeleteReminder(r)}
+                            >
+                              <X size={14} aria-hidden />
+                            </button>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -2811,28 +2900,37 @@ export default function PimsPatientDetailView({
                 ) : (
                   <ul className="pims-emr-story__list">
                     {reminderSplit.active.map((r) => (
-                      <li key={r.id} className="pims-emr-story__reminder">
-                        <span>{r.label}</span>
-                        <button
-                          type="button"
-                          className="pims-emr-story__reminder-no"
-                          title="Owner declined — stays on the chart"
-                          aria-label={`Owner declined ${r.label}`}
-                          disabled={removingReminderId === r.id}
-                          onClick={() => void handleDeclineReminder(r)}
-                        >
-                          🚫
-                        </button>
-                        <button
-                          type="button"
-                          className="pims-emr-story__reminder-remove"
-                          title="Remove from this list only"
-                          aria-label={`Remove reminder ${r.label}`}
-                          disabled={removingReminderId === r.id}
-                          onClick={() => setPendingDeleteReminder(r)}
-                        >
-                          <X size={14} aria-hidden />
-                        </button>
+                      <li
+                        key={r.id}
+                        className={`pims-emr-story__reminder${
+                          r.pendingClear ? ' pims-emr-story__reminder--pending-clear' : ''
+                        }`}
+                      >
+                        <ChartReminderLabel reminder={r} />
+                        {r.pendingClear ? null : (
+                          <>
+                            <button
+                              type="button"
+                              className="pims-emr-story__reminder-no"
+                              title="Owner declined — stays on the chart"
+                              aria-label={`Owner declined ${r.label}`}
+                              disabled={removingReminderId === r.id}
+                              onClick={() => void handleDeclineReminder(r)}
+                            >
+                              🚫
+                            </button>
+                            <button
+                              type="button"
+                              className="pims-emr-story__reminder-remove"
+                              title="Remove from this list only"
+                              aria-label={`Remove reminder ${r.label}`}
+                              disabled={removingReminderId === r.id}
+                              onClick={() => setPendingDeleteReminder(r)}
+                            >
+                              <X size={14} aria-hidden />
+                            </button>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -3072,6 +3170,7 @@ export default function PimsPatientDetailView({
                 clientEmail={clientEmail ?? null}
                 rows={chartRows}
                 filteredRows={filteredChartRows}
+                includeRemoved={showRemoved}
                 selectedIds={selectedRowIds}
                 dateStart={dateStart}
                 dateEnd={dateEnd}
@@ -3108,6 +3207,7 @@ export default function PimsPatientDetailView({
           <>
             <p className="pims-patient-detail__mr-count">
               Showing {filteredChartRows.length} out of {chartRows.length} entries
+              {showRemovedToggle}
             </p>
             <div className="pims-patient-detail__mr-table-wrap">
               <table className="pims-patient-detail__mr-table pims-patient-detail__mr-table--condensed">
@@ -3168,7 +3268,7 @@ export default function PimsPatientDetailView({
                             </td>
                             <td>
                               <span className="pims-patient-detail__type-inner">
-                                {!r.removed ? (
+                                {!r.removed || showRemoved ? (
                                   <input
                                     type="checkbox"
                                     className="pims-patient-detail__doc-select"
@@ -3195,6 +3295,14 @@ export default function PimsPatientDetailView({
                               {r.isCovered ? (
                                 <span title="Membership covered" aria-label="Membership covered">
                                   ❤️{' '}
+                                </span>
+                              ) : null}
+                              {r.pendingPayment ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--pending"
+                                  title="Old reminders clear when the invoice is paid"
+                                >
+                                  Not paid
                                 </span>
                               ) : null}
                               {r.communicationStatusBadge === 'pending' ? (
@@ -3225,6 +3333,9 @@ export default function PimsPatientDetailView({
                                 <ChartRowExpandBody
                                   row={r}
                                   onLabResultSaved={onChartLabResultSaved}
+                                  onOpenSoap={(id) =>
+                                    setSelectedSoapNote(soapNotes.find((n) => n.id === id) ?? null)
+                                  }
                                   onSummarize={(id) => setSummarizeDocIds([id])}
                                   onRemove={(next) => {
                                     setRemoveChartError(null);
@@ -3299,6 +3410,7 @@ export default function PimsPatientDetailView({
           <>
             <p className="pims-patient-detail__mr-count">
               Showing {filteredChartRows.length} out of {chartRows.length} entries
+              {showRemovedToggle}
             </p>
             <div className="pims-patient-detail__mr-table-wrap">
               <table className="pims-patient-detail__mr-table pims-patient-detail__mr-table--detail pims-patient-detail__mr-table--condensed">
@@ -3366,6 +3478,14 @@ export default function PimsPatientDetailView({
                               {r.isCovered ? (
                                 <span title="Membership covered" aria-label="Membership covered">
                                   ❤️{' '}
+                                </span>
+                              ) : null}
+                              {r.pendingPayment ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--pending"
+                                  title="Old reminders clear when the invoice is paid"
+                                >
+                                  Not paid
                                 </span>
                               ) : null}
                               {r.communicationStatusBadge === 'pending' ? (

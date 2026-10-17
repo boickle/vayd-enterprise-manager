@@ -802,6 +802,72 @@
   font-size: 12px;
 }
 
+/* ----------------------------------------------------------------- members */
+
+.memberships-members {
+  margin-top: 12px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.memberships-members__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.memberships-members__table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface, #fff);
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.memberships-members__table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.memberships-members__table th:nth-child(n + 3),
+.memberships-members__table td:nth-child(n + 3) {
+  white-space: nowrap;
+}
+
+.memberships-members__flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: var(--warning-bg, #fff4e0);
+  color: var(--warning-text, #8a5a00);
+}
+
+.memberships-members__flag--gone {
+  display: table;
+  margin: 4px 0 0;
+  background: #fdecec;
+  color: #a12a2a;
+  font-weight: 600;
+}
+
+.memberships-members__row--gone td {
+  background: #fff7f7;
+}
+
+.memberships-members__gone-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #a12a2a;
+  font-size: 13px;
+}
+
 @media (max-width: 1100px) {
   .memberships-layout {
     grid-template-columns: 1fr;

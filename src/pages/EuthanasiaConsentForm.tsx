@@ -132,6 +132,21 @@ export default function EuthanasiaConsentForm() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token')?.trim() || '';
   const [page, setPage] = useState(0);
+  const cardTopRef = useRef<HTMLDivElement>(null);
+  const firstPageRender = useRef(true);
+  useEffect(() => {
+    if (firstPageRender.current) {
+      firstPageRender.current = false;
+      return;
+    }
+    // The form can sit inside a scrolling container rather than the window,
+    // so bring the card's top into view in whatever is scrolling.
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      cardTopRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,7 +184,6 @@ export default function EuthanasiaConsentForm() {
   const [pawPrintNone, setPawPrintNone] = useState(false);
   const [memorialItems, setMemorialItems] = useState<ConsentMemorialItem[]>([]);
   const [additionalInfo, setAdditionalInfo] = useState('');
-  const [saveCardOnFile, setSaveCardOnFile] = useState(true);
   const [consentAcknowledged, setConsentAcknowledged] = useState(false);
   const [clayStoreOpen, setClayStoreOpen] = useState(false);
   const [clayStoreDetail, setClayStoreDetail] = useState<StoreListing | null>(null);
@@ -584,7 +598,7 @@ export default function EuthanasiaConsentForm() {
           additionalInfo: additionalInfo.trim() || undefined,
           memorialItems: memorialItems.length ? memorialItems : undefined,
           consentAcknowledged: true,
-          saveCardOnFile,
+          saveCardOnFile: true,
         },
       });
       setDone(true);
@@ -679,7 +693,7 @@ export default function EuthanasiaConsentForm() {
   return (
     <div className="consent-page">
       <ConsentCartFloat items={cartItems} onRemove={removeCartItem} />
-      <div className="consent-card">
+      <div className="consent-card" ref={cardTopRef}>
         <p className="consent-progress">Step {page + 1} of 4</p>
         <h1>Euthanasia Consent Form</h1>
         {form.providerName ? (
@@ -1388,7 +1402,7 @@ export default function EuthanasiaConsentForm() {
                 <p className="consent-quote-note">
                   {chargeNow
                     ? 'This includes everything you have chosen. Because this visit has already happened, we will charge this card when you submit.'
-                    : 'This includes everything you have chosen. The next step is an authorization — a hold, not a charge. We will charge this card on the day of service.'}
+                    : 'This includes everything you have chosen. The next step is a card authorization. A hold is not a charge; we charge the final amount on the day of service.'}
                 </p>
                 {quoteLines.length > 0 ? (
                   <details className="consent-quote-lines">
@@ -1462,12 +1476,18 @@ export default function EuthanasiaConsentForm() {
                     </>
                   ) : (
                     <>
-                      This is an authorization, not a charge. We will hold{' '}
+                      We'll keep this card on file for {pet}'s visit only. About 24 hours
+                      before the visit (or right away, if the visit is sooner), we'll place a
+                      hold of about{' '}
                       {payTotal.toLocaleString('en-US', {
                         style: 'currency',
                         currency: 'USD',
-                      })}{' '}
-                      on this card now. We will charge this card on the day of service.
+                      })}
+                      . A hold is not a charge. If the visit is rescheduled, we'll move the
+                      hold to the new date. If it's cancelled, we'll release it. On the day of
+                      service, we'll charge the final amount for the items you've chosen. If
+                      it's more than the hold, we'll charge the difference to this same card.
+                      If it's less, the rest is released.
                     </>
                   )}
                 </p>
@@ -1478,14 +1498,6 @@ export default function EuthanasiaConsentForm() {
                     createPaymentMethodRef.current = create;
                   }}
                 />
-                <label className="consent-save-card">
-                  <input
-                    type="checkbox"
-                    checked={saveCardOnFile}
-                    onChange={(e) => setSaveCardOnFile(e.target.checked)}
-                  />
-                  <span>Save this card on file for this visit</span>
-                </label>
                 <FieldHint field="payment" />
               </div>
             ) : null}

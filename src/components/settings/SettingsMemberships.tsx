@@ -19,6 +19,7 @@ import {
   getBundle,
   getBundleAudit,
   listBundles,
+  listPlanMembers,
   listRenewalGaps,
   updateBundle,
   type Bundle,
@@ -32,6 +33,7 @@ import {
   type ItemProductionBasis,
   type MembershipAuditEntry,
   type MembershipItemType,
+  type PlanMember,
   type PropagationResult,
   type RenewalGap,
 } from '../../api/memberships';
@@ -49,6 +51,7 @@ import {
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import { appAlert, appConfirm } from '../../utils/appDialog';
+import { askMembershipApplyReview } from './MembershipApplyReviewDialog';
 import { useCan } from '../../permissions/PermissionContext';
 import './SettingsMemberships.css';
 
@@ -843,14 +846,153 @@ function catalogPickFrom(row: SearchableItem): ItemDraft | null {
   };
 }
 
+/* ------------------------------------------------------------ plan members */
+
+function memberDate(value: string | null): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+const INACTIVATION_REASON_LABEL: Record<string, string> = {
+  euthanized: 'Euthanized',
+  passed_away: 'Passed away',
+  rehomed: 'Rehomed',
+  moved_or_changed_vets: 'Moved / changed vets',
+  duplicate_record: 'Duplicate record',
+  other: 'Inactive',
+};
+
+function petGoneLabel(m: PlanMember): string {
+  if (m.petActive === false) {
+    const reason = m.inactivationReason ? INACTIVATION_REASON_LABEL[m.inactivationReason] : null;
+    return reason ?? (m.euthanasiaVisit ? 'Euthanized' : 'Inactive');
+  }
+  return 'Euthanasia visit on chart';
+}
+
+/** Collapsed list of who is on the plan; loads with the plan so inactive pets show on the header. */
+function PlanMembersList({ planId, count }: { planId: number; count: number }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<PlanMember[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const showBilling = (rows ?? []).some((m) => m.billingInterval);
+  const gone = (rows ?? []).filter((m) => m.petGone);
+
+  useEffect(() => {
+    let cancelled = false;
+    listPlanMembers(planId)
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setRows([]);
+        setError(extractErr(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [planId]);
+
+  return (
+    <div className="settings-card">
+      <button
+        type="button"
+        className="btn-link memberships-audit__toggle"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+        <Users size={14} aria-hidden /> Members ({count})
+      </button>
+      {gone.length ? (
+        <p className="memberships-members__gone-note" role="status">
+          {gone.length} pet{gone.length === 1 ? ' is' : 's are'} inactive or euthanized but still on
+          this plan. Cancel {gone.length === 1 ? 'that membership' : 'those memberships'} from the
+          pet&apos;s chart.
+        </p>
+      ) : null}
+      {!open ? null : error ? (
+        <p className="settings-message settings-error-message">{error}</p>
+      ) : rows == null ? (
+        <p className="settings-muted">Loading members…</p>
+      ) : rows.length === 0 ? (
+        <p className="settings-muted">No one is on this plan right now.</p>
+      ) : (
+        <div className="memberships-members">
+          <table className="memberships-members__table">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Pet</th>
+                <th>Started</th>
+                <th>Term ends</th>
+                {showBilling ? <th>Billing</th> : null}
+                <th>Used</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((m) => (
+                <tr
+                  key={m.wellnessPlanId}
+                  className={m.petGone ? 'memberships-members__row--gone' : undefined}
+                >
+                  <td>
+                    {m.clientId != null ? (
+                      <a href={`/schedule/clients?clientId=${m.clientId}`}>
+                        {m.clientName || `Client #${m.clientId}`}
+                      </a>
+                    ) : (
+                      <span className="settings-muted">No client</span>
+                    )}
+                  </td>
+                  <td>
+                    {m.patientId != null ? (
+                      <a href={`/schedule/patients?patientId=${m.patientId}`}>
+                        {m.patientName || `Pet #${m.patientId}`}
+                      </a>
+                    ) : (
+                      m.patientName || '—'
+                    )}
+                    {m.petGone ? (
+                      <span className="memberships-members__flag memberships-members__flag--gone">
+                        {petGoneLabel(m)} · must remove membership
+                      </span>
+                    ) : null}
+                    {m.cancelAtTermEnd ? (
+                      <span className="memberships-members__flag">Cancels at term end</span>
+                    ) : null}
+                    {m.benefitsPaused ? (
+                      <span className="memberships-members__flag">Paused</span>
+                    ) : null}
+                  </td>
+                  <td>{memberDate(m.startDate)}</td>
+                  <td>{memberDate(m.expirationDate)}</td>
+                  {showBilling ? <td>{m.billingInterval ?? '—'}</td> : null}
+                  <td>{m.usedTotal}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ item picker */
 
 function CatalogItemPicker({
   onPick,
   onClose,
+  exclude = [],
 }: {
   onPick: (item: ItemDraft) => void;
   onClose: () => void;
+  /** Items already in this line or OR group; they are left out of the results. */
+  exclude?: ItemDraft[];
 }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchableItem[]>([]);
@@ -893,6 +1035,12 @@ function CatalogItemPicker({
     };
   }, [query]);
 
+  const taken = new Set(exclude.map((item) => `${item.itemType}:${item.catalogItemId}`));
+  const picks = hits
+    .map(catalogPickFrom)
+    .filter((draft): draft is ItemDraft => draft != null)
+    .filter((draft) => !taken.has(`${draft.itemType}:${draft.catalogItemId}`));
+
   return (
     <div className="memberships-picker">
       <div className="memberships-picker__field">
@@ -923,11 +1071,13 @@ function CatalogItemPicker({
         <p className="settings-muted memberships-picker__hint">
           Nothing in the catalog matches that.
         </p>
+      ) : picks.length === 0 ? (
+        <p className="settings-muted memberships-picker__hint">
+          Everything that matches is already here.
+        </p>
       ) : (
         <ul className="memberships-picker__results">
-          {hits.map((row, index) => {
-            const draft = catalogPickFrom(row);
-            if (!draft) return null;
+          {picks.map((draft, index) => {
             return (
               <li key={`${draft.itemType}-${draft.catalogItemId}-${index}`}>
                 <button
@@ -1454,6 +1604,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
       const exists = cur.some((plan) => plan.id === bundle.id);
       return exists ? cur.map((plan) => (plan.id === bundle.id ? bundle : plan)) : [...cur, bundle];
     });
+    void listRenewalGaps()
+      .then(setRenewalGaps)
+      .catch(() => undefined);
   }
 
   function failSave(message: string) {
@@ -1577,6 +1730,61 @@ export default function SettingsMemberships({ onMessage }: Props) {
         `Saved ${saved.name}. ${propagationSummary(result, saved.name)}`,
         'success',
       );
+      if (auditOpen) void loadAudit(saved.id);
+    } catch (e) {
+      failSave(extractErr(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Save, preview, then bring every current member in line with the whole plan — not just what
+   * changed in this tab. Usage is never reduced and recreated lines keep their used counts.
+   */
+  async function applyWholePlanToExisting() {
+    if (!detail) return;
+    if (detail.activeMemberCount <= 0) {
+      onMessage?.('No current members on this plan to update.', 'error');
+      return;
+    }
+    const problem = validate(planDraft, groups, detail.id, plans);
+    if (problem) {
+      failSave(problem);
+      return;
+    }
+    setSaveError(null);
+    setSaving(true);
+    try {
+      const saved = await updateBundle(detail.id, planFieldsFrom(planDraft), {
+        groups: groupInputsFrom(groups),
+      });
+      absorbSaved(saved);
+      const opts = { wholePlan: true, removeBenefitsDroppedFromPlan: removeDropped };
+      const preview = await applyBundleToExistingMemberships(saved.id, { ...opts, dryRun: true });
+      if (preview.membershipsUpdated === 0) {
+        onMessage?.(
+          `Saved ${saved.name}. All ${preview.activeMemberships ?? detail.activeMemberCount} current members already match the plan.`,
+          'success'
+        );
+        return;
+      }
+      const clients = await listPlanMembers(saved.id).catch(() => [] as PlanMember[]);
+      const ok = await askMembershipApplyReview({
+        planName: saved.name,
+        preview,
+        totalMembers: preview.activeMemberships ?? detail.activeMemberCount,
+        clientByPlanId: new Map(clients.map((m) => [m.wellnessPlanId, m.clientName])),
+      });
+      if (!ok) {
+        onMessage?.(`Saved ${saved.name}. Current members were not changed.`, 'success');
+        return;
+      }
+      const result = await applyBundleToExistingMemberships(saved.id, opts);
+      const savedSnaps = snapsFromBundle(saved);
+      setBaselineSnaps(savedSnaps);
+      writeStoredBaseline(saved.id, savedSnaps);
+      onMessage?.(`Saved ${saved.name}. ${propagationSummary(result, saved.name)}`, 'success');
       if (auditOpen) void loadAudit(saved.id);
     } catch (e) {
       failSave(extractErr(e));
@@ -2558,6 +2766,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                             <CatalogItemPicker
                               onClose={closePicker}
                               onPick={(item) => pickItem(group.key, item)}
+                              exclude={group.items}
                             />
                           </section>
                         );
@@ -2580,6 +2789,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                               <CatalogItemPicker
                                 onClose={closePicker}
                                 onPick={(item) => pickItem(group.key, item)}
+                                exclude={group.items}
                               />
                             ) : null}
                           </section>
@@ -2740,6 +2950,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                             <CatalogItemPicker
                               onClose={closePicker}
                               onPick={(item) => pickItem(group.key, item)}
+                              exclude={group.items}
                             />
                           ) : (
                             <button
@@ -2768,10 +2979,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     <p className="settings-muted memberships-apply__hint">
                       {detail.activeMemberCount} patient
                       {detail.activeMemberCount === 1 ? ' is' : 's are'} already on this plan.
-                      Saving on its own does not change what they get. The button below saves
-                      the plan and pushes the benefits you changed since opening it — not the
-                      rest of the list, and not price, species, age, or other restrictions.
-                      Allowances members have already drawn on are never reduced.
+                      Saving on its own does not change what they get. "Apply benefits" pushes
+                      the benefits you changed since opening this plan. "Apply whole plan" shows
+                      a preview, then brings every member in line with the full benefit list.
+                      Neither changes price, species, age, or other restrictions, and allowances
+                      members have already drawn on are never reduced.
                     </p>
                     <label className="settings-checkbox-item memberships-apply__danger">
                       <input
@@ -2795,6 +3007,15 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       onClick={() => void applyBenefitsToExisting()}
                     >
                       Apply benefits to existing members &amp; save plan
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary memberships-apply__button"
+                      disabled={saving}
+                      title="Saves, shows what will change for each member, then applies the whole plan"
+                      onClick={() => void applyWholePlanToExisting()}
+                    >
+                      Apply whole plan to current members…
                     </button>
                   </div>
                 ) : null}
@@ -2880,6 +3101,14 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     )
                   ) : null}
                 </div>
+              ) : null}
+
+              {detail ? (
+                <PlanMembersList
+                  key={detail.id}
+                  planId={detail.id}
+                  count={detail.activeMemberCount}
+                />
               ) : null}
             </>
           )}

@@ -4,6 +4,7 @@ import { ExternalLink, FilePlus2, Lock, PenLine, X } from 'lucide-react';
 import { Link } from 'react-router';
 import SoapAddendaSection from '../soap/SoapAddendaSection';
 import type { SoapEncounter } from '../../api/visitWorkflow';
+import { looksLikeHtmlFragment, sanitizeSoapHtml } from '../../utils/sanitizeCommunicationHtml';
 import './PimsSoapNoteModal.css';
 
 type Props = {
@@ -17,6 +18,19 @@ function formatWhen(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** Scribe sections can carry `<br>` and `<strong>` (bold abnormals). */
+function SoapText({ text }: { text: string }) {
+  if (looksLikeHtmlFragment(text)) {
+    return (
+      <p
+        className="pims-soap-modal__text"
+        dangerouslySetInnerHTML={{ __html: sanitizeSoapHtml(text) }}
+      />
+    );
+  }
+  return <p className="pims-soap-modal__text">{text}</p>;
 }
 
 function subjectiveHistory(enc: SoapEncounter): string | null {
@@ -154,7 +168,7 @@ export default function PimsSoapNoteModal({ encounter, patientName, onClose }: P
           <section className="pims-soap-modal__section">
             <h3 className="pims-soap-modal__section-title">Subjective</h3>
             {history ? (
-              <p className="pims-soap-modal__text">{history}</p>
+              <SoapText text={history} />
             ) : (
               <p className="pims-soap-modal__muted">Nothing recorded.</p>
             )}
@@ -173,7 +187,7 @@ export default function PimsSoapNoteModal({ encounter, patientName, onClose }: P
               </dl>
             )}
             {encounter.objectiveNotes?.trim() ? (
-              <p className="pims-soap-modal__text">{encounter.objectiveNotes}</p>
+              <SoapText text={encounter.objectiveNotes} />
             ) : vitals.length === 0 ? (
               <p className="pims-soap-modal__muted">Nothing recorded.</p>
             ) : null}
@@ -182,7 +196,7 @@ export default function PimsSoapNoteModal({ encounter, patientName, onClose }: P
           <section className="pims-soap-modal__section">
             <h3 className="pims-soap-modal__section-title">Assessment</h3>
             {encounter.assessmentReasoning?.trim() ? (
-              <p className="pims-soap-modal__text">{encounter.assessmentReasoning}</p>
+              <SoapText text={encounter.assessmentReasoning} />
             ) : (
               <p className="pims-soap-modal__muted">Nothing recorded.</p>
             )}
@@ -191,7 +205,7 @@ export default function PimsSoapNoteModal({ encounter, patientName, onClose }: P
           <section className="pims-soap-modal__section">
             <h3 className="pims-soap-modal__section-title">Plan</h3>
             {encounter.planNotes?.trim() ? (
-              <p className="pims-soap-modal__text">{encounter.planNotes}</p>
+              <SoapText text={encounter.planNotes} />
             ) : (
               <p className="pims-soap-modal__muted">Nothing recorded.</p>
             )}

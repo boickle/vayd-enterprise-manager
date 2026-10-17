@@ -49,12 +49,19 @@ import {
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 import { appConfirm, appDeclineHow, appPrompt } from '../../utils/appDialog';
+import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
+  formatDeclinedDate,
   isOffRecordDeclineNote,
   offRecordDeclineNote,
+  type DeclinedTreatmentItem,
 } from '../../api/declinedTreatments';
+import { getVisitReminders } from '../../api/visitWrapUp';
+import { searchItems as searchCatalogItems } from '../../api/roomLoader';
+import { createOrderFromSearchItem } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from './TerminalReaderPicker';
 import VirtualTerminalModal from './VirtualTerminalModal';
+import CheckoutReminders from './CheckoutReminders';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from './SendRxLabelButton';
@@ -63,6 +70,8 @@ import MailInvoiceLineCheckbox, {
   cancelMailOrdersForInvoiceLines,
   isMailOrderShipped,
   mailOrderWaitsForQueueApproval,
+  mailOrderAwaitsDoctor,
+  mailStageLabel,
   matchingMailOrderForLine,
   shippedMailMessage,
   shippingLineFromNotes,
@@ -84,6 +93,8 @@ import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip from '../labs/LabResultChip';
 import VisitDoseAndRxSection from './VisitDoseAndRxSection';
 import PlanOrdersSection from './PlanOrdersSection';
+import { listPatientMemberships, type PatientMembership } from '../../api/memberships';
+import { usedUpMembershipNote } from '../../utils/membershipLineUsage';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
@@ -861,15 +872,29 @@ function groupCheckoutLinesByPet(
   label: string;
   patientId: number | null;
   isCurrent: boolean;
+  /** False for a housemate billed on this invoice who isn't on the visit itself. */
+  onRoster: boolean;
   lines: VisitInvoiceLine[];
 }[] {
-  if (roster.length <= 1) {
+  const pets: { patientId: number; patientName: string; isCurrent: boolean; onRoster: boolean }[] =
+    roster.map((r) => ({ ...r, onRoster: true }));
+  for (const l of lines) {
+    if (l.patientId == null || pets.some((p) => p.patientId === l.patientId)) continue;
+    pets.push({
+      patientId: l.patientId,
+      patientName: l.patientName?.trim() || `Pet #${l.patientId}`,
+      isCurrent: false,
+      onRoster: false,
+    });
+  }
+  if (pets.length <= 1) {
     return [
       {
         key: 'all',
         label: roster[0]?.patientName ?? '',
         patientId: roster[0]?.patientId ?? null,
         isCurrent: true,
+        onRoster: true,
         lines,
       },
     ];
@@ -880,8 +905,9 @@ function groupCheckoutLinesByPet(
     label: string;
     patientId: number | null;
     isCurrent: boolean;
+    onRoster: boolean;
     lines: VisitInvoiceLine[];
-  }[] = [...roster]
+  }[] = pets
     .sort((a, b) => {
       const byName = a.patientName.localeCompare(b.patientName, undefined, {
         sensitivity: 'base',
@@ -896,6 +922,7 @@ function groupCheckoutLinesByPet(
       label: r.patientName,
       patientId: r.patientId,
       isCurrent: r.isCurrent,
+      onRoster: r.onRoster,
       lines: petLines,
     };
   });
@@ -906,6 +933,7 @@ function groupCheckoutLinesByPet(
       label: 'Whole visit',
       patientId: null,
       isCurrent: false,
+      onRoster: false,
       lines: leftover,
     });
   }
@@ -1053,12 +1081,24 @@ export default function VisitCheckoutPanel({
   const [editingPriceLineId, setEditingPriceLineId] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [cardOnFile, setCardOnFile] = useState<InvoiceCardOnFile | null>(null);
-  /**
-   * Pet the next catalog add is billed to. The household shares one invoice, so a tech can
-   * charge a housemate from here instead of switching charts; the order is still written on
-   * that pet's own encounter, which is what tags the invoice line with the right patient.
-   */
-  const [chargeToPatientId, setChargeToPatientId] = useState<number | null>(patientId ?? null);
+  const [petMemberships, setPetMemberships] = useState<PatientMembership[]>([]);
+  const membershipClientId = clientId ?? invoice?.clientId ?? null;
+  useEffect(() => {
+    if (membershipClientId == null && patientId == null) return;
+    let cancelled = false;
+    void listPatientMemberships(
+      membershipClientId != null ? { clientId: membershipClientId } : { patientId: patientId! }
+    )
+      .then((rows) => {
+        if (!cancelled) setPetMemberships(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPetMemberships([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [membershipClientId, patientId, invoice?.id, invoice?.status]);
   /** Proposed/declined Room Loader lines for housemates (current chart's orders come from `orders`). */
   const [siblingPendingOrders, setSiblingPendingOrders] = useState<EncounterOrder[]>([]);
   const [previsitBusyId, setPrevisitBusyId] = useState<string | null>(null);
@@ -1069,13 +1109,28 @@ export default function VisitCheckoutPanel({
 
   useEffect(() => {
     holdInvoiceScrollRef.current = false;
-    setChargeToPatientId(patientId ?? null);
   }, [patientId]);
 
   const currentPendingOrders = useMemo(
     () => orders.filter((o) => o.state === 'proposed' || o.state === 'declined'),
     [orders]
   );
+
+  const reminderPets = useMemo(() => {
+    const out: { patientId: number; patientName: string }[] = roster.map((r) => ({
+      patientId: r.patientId,
+      patientName: r.patientName,
+    }));
+    const add = (id: number | null | undefined, name?: string | null) => {
+      if (id == null || out.some((p) => p.patientId === id)) return;
+      out.push({ patientId: id, patientName: name?.trim() || `Pet #${id}` });
+    };
+    for (const l of invoice?.lines ?? []) {
+      if (!l.isDeleted) add(l.patientId, l.patientName);
+    }
+    if (out.length === 0) add(patientId ?? invoice?.patientId ?? null);
+    return out;
+  }, [roster, invoice?.lines, invoice?.patientId, patientId]);
 
   const previsitOrders = useMemo(() => {
     const byId = new Map<string, EncounterOrder>();
@@ -1142,6 +1197,105 @@ export default function VisitCheckoutPanel({
       canceled = true;
     };
   }, [roster, siblingRefreshTick, invoice?.id, remoteRefreshSignal]);
+
+  // Declines still standing from an earlier visit (eVet history, an old Room Loader
+  // decline). Today's declines are already on the invoice as declined orders.
+  const [earlierDeclines, setEarlierDeclines] = useState<DeclinedTreatmentItem[]>([]);
+  const [earlierDeclineBusyId, setEarlierDeclineBusyId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!encounterId) {
+      setEarlierDeclines([]);
+      return;
+    }
+    let cancelled = false;
+    const visitDay = new Date(invoice?.created ?? Date.now());
+    visitDay.setHours(0, 0, 0, 0);
+    void getVisitReminders(encounterId)
+      .then(({ pets }) => {
+        if (cancelled) return;
+        setEarlierDeclines(
+          pets.flatMap((pet) =>
+            (pet.declinedItems ?? [])
+              .filter((d) => {
+                if (d.onChart === false || d.laterReceivedAt) return false;
+                const at = d.declinedAt ? new Date(d.declinedAt).getTime() : NaN;
+                return Number.isFinite(at) && at < visitDay.getTime();
+              })
+              .map((d) => ({ ...d, patientId: pet.patientId }))
+          )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setEarlierDeclines([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [encounterId, invoice?.id, invoice?.created, siblingRefreshTick, remoteRefreshSignal]);
+
+  const earlierDeclineOnInvoice = (d: DeclinedTreatmentItem): boolean =>
+    (invoice?.lines ?? []).some(
+      (l) =>
+        !l.isDeleted &&
+        l.patientId === d.patientId &&
+        ((d.catalogItemId != null &&
+          l.catalogItemId === d.catalogItemId &&
+          (l.catalogItemType ?? null) === (d.catalogItemType ?? null)) ||
+          l.description.trim().toLowerCase() === d.label.trim().toLowerCase())
+    );
+
+  const addEarlierDecline = async (d: DeclinedTreatmentItem) => {
+    if (earlierDeclineBusyId != null || disabled || d.patientId == null) return;
+    const pet = roster.find((r) => r.patientId === d.patientId);
+    const encId = pet?.soapEncounterId ?? (d.patientId === patientId ? encounterId : null);
+    if (!encId) {
+      setError(`Open ${pet?.patientName ?? 'this pet'}’s chart first to add a charge for them.`);
+      return;
+    }
+    setEarlierDeclineBusyId(d.id);
+    setError(null);
+    try {
+      const pid = practiceId ?? VISIT_WORKFLOW_PRACTICE_ID;
+      const results = await searchCatalogItems({
+        q: d.label,
+        practiceId: pid,
+        limit: 25,
+        patientId: d.patientId,
+        clientId: clientId ?? undefined,
+      });
+      const idOf = (item: (typeof results)[number]) =>
+        Number(item.inventoryItem?.id ?? item.lab?.id ?? item.procedure?.id ?? NaN);
+      const match =
+        results.find(
+          (item) =>
+            d.catalogItemId != null &&
+            item.itemType === d.catalogItemType &&
+            idOf(item) === d.catalogItemId
+        ) ??
+        results.find((item) => item.name.trim().toLowerCase() === d.label.trim().toLowerCase());
+      if (!match) {
+        setError(`Couldn’t find “${d.label}” in the catalog — search for it above to add it.`);
+        return;
+      }
+      await createOrderFromSearchItem({
+        encounterId: encId,
+        item: match,
+        patientId: d.patientId,
+        practiceId: pid,
+        clientId: clientId ?? undefined,
+      });
+      if (encId === encounterId && onOrdersChange) {
+        onOrdersChange(await listOrders(encId));
+      }
+      setSiblingRefreshTick((n) => n + 1);
+      if (onInvoiceShouldRefresh) onInvoiceShouldRefresh();
+      else if (invoice?.id) onInvoiceChange(await getInvoice(invoice.id));
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setEarlierDeclineBusyId(null);
+    }
+  };
 
   const applyPrevisitState = async (
     order: EncounterOrder,
@@ -1490,7 +1644,12 @@ export default function VisitCheckoutPanel({
         await cancelTerminalCheckout(activeCheckoutId).catch(() => undefined);
         setActiveCheckoutId(null);
       }
-      onInvoiceChange(await voidInvoice(invoice.id, { reason }));
+      const voided = await removeWithRecordedDose(
+        (removeDose) => voidInvoice(invoice.id, { reason, removeDose }),
+        'void',
+      );
+      if (!voided) return;
+      onInvoiceChange(voided);
       setVoidPromptOpen(false);
       setNote("Invoice voided. Its items show as voided on the pet's chart. Reopen and finalize it to bill them again.");
     });
@@ -1617,12 +1776,51 @@ export default function VisitCheckoutPanel({
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
-  const chargeToIsCurrent = chargeToPatientId == null || chargeToPatientId === patientId;
-  const chargeToEncounterId = chargeToIsCurrent
-    ? encounterId ?? undefined
-    : roster.find((r) => r.patientId === chargeToPatientId)?.soapEncounterId ??
-      encounterId ??
-      undefined;
+  const multiPetRoster = roster.length > 1;
+
+  /**
+   * Catalog search that bills one pet. The household shares one invoice, but the order is
+   * written on that pet's own encounter, which is what tags the invoice line with the patient.
+   */
+  const renderAddCharge = (petId: number | null, petName?: string) => {
+    if (!encounterId || !onOrdersChange || disabled) return null;
+    const isCurrent = petId == null || petId === patientId;
+    const petEncounterId = isCurrent
+      ? encounterId
+      : roster.find((r) => r.patientId === petId)?.soapEncounterId ?? encounterId;
+    return (
+      <PlanOrdersSection
+        key={`checkout-add-${petEncounterId}`}
+        className={`soap-checkout-add${petName ? ' soap-checkout-add--pet' : ''}`}
+        encounterId={petEncounterId}
+        orders={isCurrent ? orders : []}
+        disabled={disabled}
+        patientId={petId ?? undefined}
+        clientId={clientId ?? undefined}
+        practiceId={practiceId}
+        showList={false}
+        showSearch
+        searchPlaceholder={petName ? `Add a charge for ${petName}` : undefined}
+        onChange={(next) => {
+          // A housemate's orders belong to their chart, not this one — the shared
+          // invoice refresh below is what surfaces the new line here.
+          if (isCurrent) onOrdersChange(next);
+        }}
+        onInvoiceShouldRefresh={() => {
+          if (onInvoiceShouldRefresh) {
+            onInvoiceShouldRefresh();
+            return;
+          }
+          if (!invoice?.id) return;
+          void getInvoice(invoice.id)
+            .then(onInvoiceChange)
+            .catch(() => undefined);
+        }}
+        onInventoryItemAdded={isCurrent ? onInventoryItemAdded : undefined}
+        onInventoryItemRemoved={isCurrent ? onInventoryItemRemoved : undefined}
+      />
+    );
+  };
 
   const activeCheckoutLines = (invoice?.lines ?? []).filter((row) => !row.isDeleted);
   const checkoutTagalongs = attachTagalongLines(activeCheckoutLines);
@@ -1670,6 +1868,14 @@ export default function VisitCheckoutPanel({
 
     if (l.orderId && vaccineOrderIds.has(l.orderId)) {
       if (!vaccinationsByOrderId[l.orderId]) return 'Record the dose given';
+    } else if (showRxLabel && mailed) {
+      if (!l.rxApprovedAt) {
+        return mailOrderWaitsForQueueApproval(mailed)
+          ? 'Doctor approves this from the mail queue'
+          : !String(instructions).trim()
+            ? 'Enter the directions (sig)'
+            : 'Approve the sig';
+      }
     } else if (showRxLabel && !mailed) {
       if (!String(instructions).trim()) return 'Enter the directions (sig)';
       if (!l.rxApprovedAt) return 'Approve the sig';
@@ -1679,6 +1885,9 @@ export default function VisitCheckoutPanel({
       if (refillN > 0 && !recorded?.refillExpiration) {
         return 'Enter the refill expiration, then Save Rx';
       }
+    }
+    if (mailed && invoice && mailOrderAwaitsDoctor(mailOrders, invoice.id, l.id)) {
+      return 'Mail order waiting on the doctor’s approval';
     }
     if (needsProvider && l.providerEmployeeId == null) return 'Pick a provider';
     if (l.trackLots && !mailed && !isVaccineLine && l.inventoryLotBalanceId == null) {
@@ -1724,12 +1933,19 @@ export default function VisitCheckoutPanel({
         if (shippingId === line.id) continue;
         await removeCounterInvoiceLine(invoice.id, shippingId).catch(() => undefined);
       }
-      if (line.orderId && encounterId) {
-        await deleteOrder(encounterId, line.orderId);
-        onOrderRemoved?.(line.orderId);
+      const orderId = line.orderId;
+      if (orderId && encounterId) {
+        const removed = await removeWithRecordedDose(async (removeDose) => {
+          await deleteOrder(encounterId, orderId, removeDose);
+          return true;
+        });
+        if (removed) onOrderRemoved?.(orderId);
         return;
       }
-      onInvoiceChange(await removeCounterInvoiceLine(invoice.id, line.id));
+      const next = await removeWithRecordedDose((removeDose) =>
+        removeCounterInvoiceLine(invoice.id, line.id, removeDose)
+      );
+      if (next) onInvoiceChange(next);
     });
   };
 
@@ -1795,62 +2011,11 @@ export default function VisitCheckoutPanel({
         )}
       </div>
 
-      {encounterId && onOrdersChange ? (
-        <div className="soap-checkout-add-block">
-          {roster.length > 1 ? (
-            <label className="soap-checkout-charge-to">
-              <select
-                className="soap-select"
-                value={chargeToPatientId ?? ''}
-                disabled={disabled || busy != null}
-                onChange={(e) =>
-                  setChargeToPatientId(e.target.value ? Number(e.target.value) : null)
-                }
-                aria-label="Charge to"
-              >
-                {roster.map((r) => (
-                  <option key={r.patientId} value={r.patientId}>
-                    {r.patientName}
-                  </option>
-                ))}
-              </select>
-              <span>Charge to</span>
-            </label>
-          ) : null}
-          <PlanOrdersSection
-            // Remount when the billed pet changes so the search resets to their pricing.
-            key={`checkout-add-${chargeToEncounterId ?? encounterId}`}
-            className="soap-checkout-add"
-            encounterId={chargeToEncounterId ?? encounterId}
-            orders={chargeToIsCurrent ? orders : []}
-            disabled={disabled}
-            patientId={chargeToPatientId ?? undefined}
-            clientId={clientId ?? undefined}
-            practiceId={practiceId}
-            showList={false}
-            showSearch={!disabled}
-            onChange={(next) => {
-              // A housemate's orders belong to their chart, not this one — the shared
-              // invoice refresh below is what surfaces the new line here.
-              if (chargeToIsCurrent) onOrdersChange(next);
-            }}
-            onInvoiceShouldRefresh={() => {
-              if (onInvoiceShouldRefresh) {
-                onInvoiceShouldRefresh();
-                return;
-              }
-              if (!invoice?.id) return;
-              void getInvoice(invoice.id)
-                .then(onInvoiceChange)
-                .catch(() => undefined);
-            }}
-            onInventoryItemAdded={chargeToIsCurrent ? onInventoryItemAdded : undefined}
-            onInventoryItemRemoved={chargeToIsCurrent ? onInventoryItemRemoved : undefined}
-          />
-        </div>
+      {!multiPetRoster && encounterId && onOrdersChange && !disabled ? (
+        <div className="soap-checkout-add-block">{renderAddCharge(patientId ?? null)}</div>
       ) : null}
 
-      {!invoice && previsitOrders.length === 0 ? (
+      {!invoice && previsitOrders.length === 0 && !multiPetRoster ? (
         <div className="soap-empty">
           No invoice yet — add a charge above to open one.
         </div>
@@ -1864,7 +2029,7 @@ export default function VisitCheckoutPanel({
                     if (section.patientId != null) return o.patientId === section.patientId;
                     return patientId == null || o.patientId === patientId;
                   });
-            if (sectionPrevisit.length === 0) return null;
+            if (sectionPrevisit.length === 0 && !multiPetRoster) return null;
             return (
               <div
                 key={section.key}
@@ -1873,14 +2038,23 @@ export default function VisitCheckoutPanel({
                     ? `soap-invoice-pet-${section.patientId}`
                     : undefined
                 }
-                className="soap-invoice-pet-block"
+                className={`soap-invoice-pet-block${multiPetRoster ? ' soap-invoice-pet-block--card' : ''}`}
               >
-                {roster.length > 1 ? (
+                {multiPetRoster ? (
                   <div className="soap-invoice-pet-head">
-                    <span>{section.label}</span>
-                    <span>{sectionPrevisit.length} pre-visit</span>
+                    <span>
+                      {section.label}
+                      {section.isCurrent ? (
+                        <span className="soap-scribe-tag">this chart</span>
+                      ) : null}
+                    </span>
+                    <span>
+                      {sectionPrevisit.length ? `${sectionPrevisit.length} pre-visit` : 'No items'}
+                    </span>
                   </div>
                 ) : null}
+                {multiPetRoster ? renderAddCharge(section.patientId, section.label) : null}
+                {sectionPrevisit.length === 0 ? null : (
                 <div className="soap-invoice-previsit">
                   <div className="soap-invoice-previsit-banner">Pre-visit accepts</div>
                   <p className="soap-invoice-previsit-hint">
@@ -1943,6 +2117,7 @@ export default function VisitCheckoutPanel({
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             );
           })}
@@ -1971,7 +2146,7 @@ export default function VisitCheckoutPanel({
               <span>Amt</span>
               <span />
             </div>
-            {groupCheckoutLinesByPet(visibleCheckoutLines, roster).map((section) => {
+            {groupCheckoutLinesByPet(visibleCheckoutLines, roster).map((section, _i, allSections) => {
               const sectionPrevisit =
                 section.key === 'visit'
                   ? []
@@ -2007,25 +2182,23 @@ export default function VisitCheckoutPanel({
                     ? `soap-invoice-pet-${section.patientId}`
                     : undefined
                 }
-                className="soap-invoice-pet-block"
+                className={`soap-invoice-pet-block${allSections.length > 1 ? ' soap-invoice-pet-block--card' : ''}`}
               >
-                {roster.length > 1 ? (
-                  <button
-                    type="button"
-                    className={`soap-invoice-pet-head${section.isCurrent ? ' is-current' : ''}${
-                      section.patientId != null && section.patientId === chargeToPatientId
-                        ? ' is-charging'
-                        : ''
-                    }`}
-                    onClick={() => {
-                      if (section.patientId != null) setChargeToPatientId(section.patientId);
-                    }}
-                    title={
-                      section.patientId != null
-                        ? `New charges go to ${section.label}`
-                        : undefined
-                    }
+                {allSections.length > 1 && !section.onRoster ? (
+                  <div
+                    className="soap-invoice-pet-head"
+                    title={`${section.label} isn't on this visit. Move or remove their charges from the client's invoice.`}
                   >
+                    <span>
+                      {section.label}
+                      {section.patientId != null ? (
+                        <span className="soap-scribe-tag">not on this visit</span>
+                      ) : null}
+                    </span>
+                    <span>{petHeadRight}</span>
+                  </div>
+                ) : allSections.length > 1 ? (
+                  <div className={`soap-invoice-pet-head${section.isCurrent ? ' is-current' : ''}`}>
                     <span>
                       {section.label}
                       {section.isCurrent ? (
@@ -2033,8 +2206,11 @@ export default function VisitCheckoutPanel({
                       ) : null}
                     </span>
                     <span>{petHeadRight}</span>
-                  </button>
+                  </div>
                 ) : null}
+                {multiPetRoster && section.onRoster && section.patientId != null
+                  ? renderAddCharge(section.patientId, section.label)
+                  : null}
                 {sectionPrevisit.length > 0 ? (
                   <div className="soap-invoice-previsit">
                     <div className="soap-invoice-previsit-banner">Pre-visit accepts</div>
@@ -2198,6 +2374,14 @@ export default function VisitCheckoutPanel({
                           </span>
                         ) : null}
                         {l.description}
+                        {mailed ? (
+                          <span
+                            className="soap-invoice-mail-tag"
+                            title={mailStageLabel(mailed)}
+                          >
+                            Mail order
+                          </span>
+                        ) : null}
                         {hasLabForms ? <LabResultChip results={lineLabResults} /> : null}
                         {lineReady ? (
                           <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
@@ -2215,6 +2399,11 @@ export default function VisitCheckoutPanel({
                       {formatInvoiceLineEntered(l.created) ? (
                         <span className="soap-invoice-line-entered">
                           Added {formatInvoiceLineEntered(l.created)}
+                        </span>
+                      ) : null}
+                      {usedUpMembershipNote(petMemberships, l) ? (
+                        <span className="soap-invoice-line-membership-used">
+                          ❤️ {usedUpMembershipNote(petMemberships, l)}
                         </span>
                       ) : null}
                     </span>
@@ -2785,6 +2974,45 @@ export default function VisitCheckoutPanel({
                     </button>
                   </div>
                 ))}
+                {(() => {
+                  const sectionEarlier =
+                    section.patientId == null
+                      ? []
+                      : earlierDeclines.filter(
+                          (d) => d.patientId === section.patientId && !earlierDeclineOnInvoice(d)
+                        );
+                  if (sectionEarlier.length === 0) return null;
+                  return (
+                    <div className="soap-invoice-earlier-declines">
+                      <div className="soap-invoice-earlier-declines-head">
+                        Declined at an earlier visit
+                      </div>
+                      {sectionEarlier.map((d) => (
+                        <div key={d.id} className="soap-invoice-earlier-decline">
+                          <span className="soap-invoice-earlier-decline-name">
+                            {d.label}
+                            <span className="soap-invoice-earlier-decline-when">
+                              Declined {formatDeclinedDate(d.declinedAt)}
+                              {d.declinedByName ? ` · ${d.declinedByName}` : ''}
+                            </span>
+                          </span>
+                          {canEditLines ? (
+                            <button
+                              type="button"
+                              className="soap-btn small ok"
+                              disabled={disabled || earlierDeclineBusyId != null}
+                              title="The owner wants it today — add it to this invoice"
+                              onClick={() => void addEarlierDecline(d)}
+                            >
+                              <RotateCcw size={12} />{' '}
+                              {earlierDeclineBusyId === d.id ? 'Adding…' : 'Add to invoice'}
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             );
             })}
@@ -3049,6 +3277,13 @@ export default function VisitCheckoutPanel({
           </div>
           {!isPaid && !isVoid && (
             <p className="soap-hint">
+              {paymentBlockedReason ? (
+                <strong className="soap-hint--warn">{paymentBlockedReason} </strong>
+              ) : !branchReady ? (
+                <strong className="soap-hint--warn">
+                  Choose the branch and location inventory is drawn from.{' '}
+                </strong>
+              ) : null}
               {selectedReader
                 ? `Tap to Pay goes to ${selectedReader.label} until you pick a different reader.`
                 : 'Select a reader once — Scout Terminal or a WisePOS. That choice is saved for your account.'}
@@ -3058,6 +3293,10 @@ export default function VisitCheckoutPanel({
           ) : null}
         </>
       )}
+
+      {showPayment ? (
+        <CheckoutReminders invoice={invoice} pets={reminderPets} disabled={disabled} />
+      ) : null}
 
       {followUpSlot}
 

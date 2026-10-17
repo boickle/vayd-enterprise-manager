@@ -273,13 +273,16 @@
 }
 
 .client-fin__table-wrap--doc {
-  max-height: none;
+  max-height: min(72vh, 800px);
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
 }
 
 .client-fin__table-wrap--doc .client-fin__table th {
-  position: static;
+  /* keep sticky for the invoice table */
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .client-fin__table tr.is-writeoff td {
@@ -311,7 +314,8 @@
   background: #f8fafc;
   color: #475569;
   font-weight: 600;
-  z-index: 1;
+  z-index: 3;
+  box-shadow: 0 1px 0 #e2e8f0;
 }
 
 .client-fin__table tr.is-on td {
@@ -357,8 +361,74 @@
   padding: 6px 10px;
 }
 
-.client-fin__pet-head.is-current td {
-  background: #eef4ff;
+/* Each pet is its own box: a spacer row splits the table, the head row tops the box. */
+.client-fin__pet-gap td {
+  height: 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.client-fin__pet-group:first-of-type .client-fin__pet-gap td {
+  height: 0;
+}
+
+/* Top border for each pet section — acts as a divider between groups */
+.client-fin__pet-group:not(:first-of-type) .client-fin__pet-head td {
+  border-top: 2px solid #cbd5e1;
+}
+
+.client-fin__invoice--pets .client-fin__pet-head td {
+  background: #f1f5f9;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 7px 10px;
+}
+
+.client-fin__pet-add-row td {
+  padding: 5px 10px 6px;
+  background: #fafcff;
+  border-bottom: 1px solid #e8edf4;
+  position: relative;
+  z-index: 1;
+}
+
+.client-fin__pet-add .client-fin__hits {
+  margin: 6px 0 0;
+}
+
+.client-fin__search--pet {
+  padding: 4px 8px;
+}
+
+.client-fin__pet-head-select {
+  font: inherit;
+  font-weight: 700;
+  padding: 2px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.client-fin__add-pet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.client-fin__add-pet select {
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .client-fin__pet-head-name {
@@ -372,12 +442,16 @@
   font-weight: 600;
 }
 
-.client-fin__pet-move {
-  display: block;
-  margin-top: 4px;
-  max-width: 11rem;
-  font-size: 11px;
-  color: #64748b;
+.client-fin__pet-empty td {
+  color: #94a3b8;
+  font-size: 12px;
+  font-style: italic;
+  padding: 8px 10px;
+}
+
+.client-fin__field--charge-to select {
+  border-color: #2563eb;
+  font-weight: 600;
 }
 
 .client-fin__bundle-head td {
@@ -513,6 +587,13 @@
   font-size: 12px;
   font-weight: 400;
   color: #6b7280;
+}
+
+.client-fin__item-membership-used {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9f1239;
 }
 
 .client-fin__col-item .client-fin__btn {
@@ -996,6 +1077,9 @@
 .client-fin__fulfill-pill--mail {
   color: #0f766e;
   background: #ccfbf1;
+  text-transform: none;
+  font-size: 11px;
+  letter-spacing: 0;
 }
 
 .client-fin__line--mail-split > td:first-child {
@@ -1290,16 +1374,17 @@
 }
 
 .client-fin__search--add {
-  padding: 12px 14px;
-  border: 1.5px solid #86efac;
-  background: #ecfdf5;
+  padding: 5px 10px;
+  border: 1px solid #86efac;
+  background: #f0fdf4;
   color: #166534;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+  box-shadow: none;
+  border-radius: 7px;
 }
 
 .client-fin__search--add:focus-within {
   border-color: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15);
 }
 
 .client-fin__search input {
@@ -1313,14 +1398,14 @@
 }
 
 .client-fin__search--add input {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   color: #14532d;
 }
 
 .client-fin__search--add input::placeholder {
-  color: #15803d;
-  font-weight: 650;
+  color: #4ade80;
+  font-weight: 500;
   opacity: 1;
 }
 
@@ -1503,11 +1588,65 @@
   font-weight: 650;
 }
 
+.client-fin__removed-group td {
+  color: #64748b;
+}
+
+.client-fin__removed-why {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .client-fin__pay {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
   margin-top: 10px;
+}
+
+.client-fin__pay-method-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.client-fin__field--pay-method {
+  flex: 0 1 10.5rem;
+  min-width: 8.5rem;
+  margin: 0;
+}
+
+.client-fin__reader-picker {
+  flex: 1 1 14rem;
+  min-width: 10rem;
+  margin: 0;
+}
+
+.client-fin__reader-picker .soap-reader-picker-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.client-fin__reader-picker .terminal-reader-select {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.client-fin__reader-picker .soap-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
 }
 
 .client-fin__actions {

@@ -187,6 +187,8 @@ function intervalFor(plan: Bundle, current: string | null): MembershipBillingInt
   return plan.priceMonthly != null ? 'monthly' : 'annual';
 }
 
+const ALLOWANCE_OPTIONS_SHOWN = 5;
+
 const COVERAGE_OPTIONS: { value: ItemCoverage; label: string }[] = [
   { value: 'included', label: 'Included — no charge' },
   { value: 'copay', label: 'Copay — fixed price' },
@@ -523,6 +525,58 @@ export default function PatientMembershipPanel({
     () => plans.filter((p) => p.id !== membership?.packageId),
     [plans, membership]
   );
+
+  const [benefitDetailsOpen, setBenefitDetailsOpen] = useState(false);
+  const [expandedAllowances, setExpandedAllowances] = useState<Set<string>>(() => new Set());
+
+  /** One row per allowance: an OR group is one row listing its options; an "all" group lists each benefit. */
+  const allowanceRows = useMemo(() => {
+    if (!membership) return [];
+    type Row = {
+      key: string;
+      options: string[];
+      pickLabel: string;
+      leftLabel: string;
+      spent: boolean;
+      coverageNote: string | null;
+    };
+    const rows: Row[] = [];
+    const leftOf = (remaining: number, total: number) =>
+      isUnlimitedAllowance(total)
+        ? { leftLabel: 'Unlimited', spent: false }
+        : remaining <= 0
+          ? { leftLabel: total > 1 ? `All ${total} used` : 'Used', spent: true }
+          : { leftLabel: `${remaining} of ${total} left`, spent: false };
+    const coverageNoteOf = (b: MembershipBenefit) =>
+      b.coverage === 'included' ? null : coverageLabel(b);
+    for (const group of [...membership.groups].sort((a, b) => a.sortOrder - b.sortOrder)) {
+      const live = group.benefits.filter((b) => !b.isRemoved);
+      if (!live.length) continue;
+      if (group.selectionMode === 'choice' || group.selectionMode === 'any') {
+        const notes = [...new Set(live.map(coverageNoteOf).filter(Boolean))];
+        rows.push({
+          key: `g${group.id}`,
+          options: live.map((b) => b.name),
+          pickLabel: isUnlimitedAllowance(group.allowedQuantity)
+            ? 'Any of'
+            : `Choose ${group.allowedQuantity}`,
+          coverageNote: notes.length === 1 ? notes[0] : null,
+          ...leftOf(group.remainingQuantity, group.allowedQuantity),
+        });
+        continue;
+      }
+      for (const b of live) {
+        rows.push({
+          key: `b${b.id}`,
+          options: [b.name],
+          pickLabel: '',
+          coverageNote: coverageNoteOf(b),
+          ...leftOf(b.remainingQuantity, b.includedQuantity),
+        });
+      }
+    }
+    return rows.sort((a, b) => Number(a.spent) - Number(b.spent));
+  }, [membership]);
 
   const customCount = useMemo(() => {
     if (!membership) return 0;
@@ -1922,13 +1976,106 @@ export default function PatientMembershipPanel({
                 </Card>
               ) : null}
 
-              <div className="pmp-groups">
-                {membership.groups.length === 0 ? (
-                  <p className="pmp-muted">This membership has no benefit groups yet.</p>
+              <div className="pmp-allowance">
+                <h4 className="pmp-allowance__title">What {patientName ?? 'this pet'} can use</h4>
+                {allowanceRows.length === 0 ? (
+                  <p className="pmp-muted">This membership has no benefits yet.</p>
                 ) : (
-                  [...membership.groups].sort((a, b) => a.sortOrder - b.sortOrder).map(renderGroup)
+                  <ul className="pmp-allowance__list">
+                    {allowanceRows.map((row) => (
+                      <li
+                        key={row.key}
+                        className={`pmp-allowance__row${row.spent ? ' is-spent' : ''}`}
+                      >
+                        <div className="pmp-allowance__what">
+                          {row.options.length > 1 ? (
+                            <span className="pmp-allowance__pick">{row.pickLabel}</span>
+                          ) : null}
+                          <span className="pmp-allowance__options">
+                            {(expandedAllowances.has(row.key)
+                              ? row.options
+                              : row.options.slice(0, ALLOWANCE_OPTIONS_SHOWN)
+                            ).map((name, i) => (
+                              <span key={`${row.key}-${i}`}>
+                                {i > 0 ? <em className="pmp-allowance__or">or</em> : null}
+                                {name}
+                              </span>
+                            ))}
+                            {row.options.length > ALLOWANCE_OPTIONS_SHOWN ? (
+                              <button
+                                type="button"
+                                className="pmp-allowance__more"
+                                onClick={() =>
+                                  setExpandedAllowances((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(row.key)) next.delete(row.key);
+                                    else next.add(row.key);
+                                    return next;
+                                  })
+                                }
+                              >
+                                {expandedAllowances.has(row.key)
+                                  ? 'Show less'
+                                  : `+${row.options.length - ALLOWANCE_OPTIONS_SHOWN} more`}
+                              </button>
+                            ) : null}
+                          </span>
+                          {row.coverageNote ? (
+                            <span className="pmp-allowance__coverage">{row.coverageNote}</span>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`pmp-allowance__left${row.spent ? ' is-spent' : ''}`}
+                        >
+                          {row.leftLabel}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
+
+              <div className="pmp-allowance">
+                <h4 className="pmp-allowance__title">Used this term</h4>
+                {(membership.usage ?? []).length === 0 ? (
+                  <p className="pmp-muted">Nothing used yet this term.</p>
+                ) : (
+                  <ul className="pmp-usage">
+                    {(membership.usage ?? []).map((u, i) => (
+                      <li key={`${u.benefitId ?? 'x'}-${u.usedAt ?? ''}-${i}`} className="pmp-usage__row">
+                        <span className="pmp-usage__date">{shortDate(u.usedAt)}</span>
+                        <span className="pmp-usage__name">
+                          {u.name}
+                          {u.quantity > 1 ? ` ×${u.quantity}` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="pmp-inactive-details-toggle"
+                aria-expanded={benefitDetailsOpen}
+                onClick={() => setBenefitDetailsOpen((v) => !v)}
+              >
+                {benefitDetailsOpen ? (
+                  <ChevronDown size={14} aria-hidden />
+                ) : (
+                  <ChevronRight size={14} aria-hidden />
+                )}
+                {canEditBenefits ? 'Benefit details & edits' : 'Benefit details'}
+              </button>
+              {benefitDetailsOpen ? (
+                <div className="pmp-groups">
+                  {membership.groups.length === 0 ? (
+                    <p className="pmp-muted">This membership has no benefit groups yet.</p>
+                  ) : (
+                    [...membership.groups].sort((a, b) => a.sortOrder - b.sortOrder).map(renderGroup)
+                  )}
+                </div>
+              ) : null}
 
               <div className="pmp-audit">
                 <button

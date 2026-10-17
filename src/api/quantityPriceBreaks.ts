@@ -121,6 +121,10 @@ export type Procedure = {
   hideOnInvoice?: boolean;
   excludeFromProduction?: boolean;
   allowPriceChange?: boolean;
+  /** Patient status set when this procedure is invoiced (e.g. Euthanized); null means no change. */
+  changePatientStatusTo?: string | null;
+  /** Invoicing this procedure changes the patient to spayed / neutered. */
+  changePatientSex?: boolean;
   /** The charge that decides what happens to a pet after euthanasia. */
   isAftercare?: boolean;
   aftercareType?: AftercareItemType | null;

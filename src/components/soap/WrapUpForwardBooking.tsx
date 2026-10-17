@@ -9,6 +9,7 @@ import {
   forwardBookingDispositionIsComplete,
   forwardBookingFormStateFromDisposition,
   forwardBookingFormStateIsComplete,
+  joinPetNames,
   type ForwardBookingDispositionFormState,
 } from '../../utils/forwardBookingDisposition';
 import { toDatetimeLocalValue } from '../../utils/taskDateTime';
@@ -282,8 +283,9 @@ export default function WrapUpForwardBooking({
   );
 
   const editorPetId = remainingPets[0]?.patientId ?? null;
-  const remainingNames = remainingPets.map((p) => p.patientName).join(', ');
-  const savedNames = savedPets.map((p) => p.patientName).join(', ');
+  const remainingNames = joinPetNames(remainingPets.map((p) => p.patientName));
+  const savedNames = joinPetNames(savedPets.map((p) => p.patientName));
+  const sharedEditor = sameForAll && remainingPets.length > 1;
 
   return (
     <div className="soap-wrapup-fb">
@@ -296,8 +298,8 @@ export default function WrapUpForwardBooking({
           . {remainingPets.length === 1
             ? `Set follow-up for ${remainingNames}.`
             : sameForAll
-              ? `The choice below applies to the remaining ${remainingPets.length}.`
-              : `Set follow-up for each of the remaining ${remainingPets.length}.`}
+              ? `The choice below applies to ${remainingNames}.`
+              : `Set follow-up for ${remainingNames}.`}
         </p>
       )}
 
@@ -309,7 +311,7 @@ export default function WrapUpForwardBooking({
             disabled={disabled}
             onChange={(e) => setSameForAll(e.target.checked)}
           />
-          Same follow-up for remaining {remainingPets.length} pets
+          Same follow-up for {remainingNames}
         </label>
       )}
 
@@ -320,11 +322,12 @@ export default function WrapUpForwardBooking({
         const complete = forwardBookingFormStateIsComplete(form);
         const savedComplete = isFollowUpSaved(pet);
         const showEditor = !savedComplete && (!sameForAll || pet.patientId === editorPetId);
+        if (sharedEditor && !savedComplete && !showEditor) return null;
 
         return (
           <div className="soap-wrapup-fb-pet" key={pet.patientId}>
             <div className="soap-wrapup-fb-pet-head">
-              <strong>{pet.patientName}</strong>
+              <strong>{sharedEditor && showEditor ? remainingNames : pet.patientName}</strong>
               {savedComplete ? (
                 <span className="soap-wrapup-fb-ok">
                   <Check size={13} /> {dispositionLabel(saved)}
@@ -356,16 +359,15 @@ export default function WrapUpForwardBooking({
                   <div className="soap-wrapup-fb-actions">
                     <button
                       type="button"
-                      className="soap-btn"
+                      className="soap-btn primary soap-wrapup-fb-save"
                       disabled={!complete || savingPatientId != null}
+                      title={complete ? '' : 'Finish the choice above first'}
                       onClick={() => void save(pet)}
                     >
                       <CalendarClock size={14} />{' '}
                       {savingPatientId != null
                         ? 'Saving…'
-                        : sameForAll && remainingPets.length > 1
-                          ? `Save follow-up for remaining ${remainingPets.length} pets`
-                          : 'Save follow-up'}
+                        : `Save follow-up for ${sharedEditor ? remainingNames : pet.patientName}`}
                     </button>
                     {form.mode === 'forward_book_fields' && (
                       <button

@@ -1160,6 +1160,9 @@ export function SelfScheduleCalendarModal({
           monthHasBookableCandidates(cachedStart, startMonth, earliestCalendarDate)
         ) {
           applyMonth(startMonth, cachedVisible, false);
+          // A search this one replaced may have turned the spinner on, and it
+          // only turns it off for the newest search.
+          setLoadingMonth(false);
           return;
         }
         for (let i = 1; i < 12; i++) {
@@ -1175,6 +1178,7 @@ export function SelfScheduleCalendarModal({
               candidatesInCalendarMonth(cachedLater, later, earliestCalendarDate),
               true,
             );
+            setLoadingMonth(false);
             return;
           }
         }

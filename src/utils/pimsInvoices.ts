@@ -291,6 +291,7 @@ export function normalizeInvoice(row: unknown, idx: number): NormalizedInvoice |
   let listSubtotal = 0;
   let chargedSubtotal = 0;
   for (const line of forTotals) {
+    if (line.isCovered) continue;
     const qty = Number(line.qty) || 1;
     const list =
       line.originalPrice != null ? line.originalPrice * qty : line.total;

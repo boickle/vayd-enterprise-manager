@@ -266,6 +266,129 @@
   color: var(--warning);
 }
 
+/* ---------- Allowance summary ---------- */
+
+.pmp-allowance {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.pmp-allowance__title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pmp-allowance__list,
+.pmp-usage {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pmp-allowance__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.pmp-allowance__row:first-child {
+  border-top: 0;
+}
+
+.pmp-allowance__row.is-spent .pmp-allowance__what {
+  opacity: 0.55;
+}
+
+.pmp-allowance__what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.pmp-allowance__pick {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pmp-allowance__options {
+  display: inline;
+  font-weight: 600;
+}
+
+.pmp-allowance__or {
+  margin: 0 5px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.pmp-allowance__more {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.pmp-allowance__coverage {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.pmp-allowance__left {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pmp-allowance__left.is-spent {
+  color: var(--muted);
+}
+
+.pmp-usage__row {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.pmp-usage__row:first-child {
+  border-top: 0;
+}
+
+.pmp-usage__date {
+  flex: 0 0 6.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pmp-usage__name {
+  font-weight: 600;
+}
+
 /* ---------- Groups ---------- */
 
 .pmp-groups {

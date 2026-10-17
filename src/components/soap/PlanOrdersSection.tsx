@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
   deleteOrder,
+  listOrders,
   setOrderState,
   updateOrder,
   type EncounterOrder,
@@ -17,6 +18,7 @@ import {
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
 import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
 import { apiErrorMessage } from '../../api/http';
+import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
   catalogIdForSearchItem,
   createNoteOrder,
@@ -26,11 +28,7 @@ import {
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import type { CoverageChoicePrompt } from '../../utils/membershipCoverageChoice';
-import {
-  ensureSharpsFeeOrder,
-  isSharpsOrderName,
-  isVaccineSearchItem,
-} from '../../utils/visitSharpsFee';
+import { isSharpsOrderName, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 
 type Props = {
   encounterId: string;
@@ -56,6 +54,7 @@ type Props = {
   showList?: boolean;
   /** Optional class for Checkout's green add-charge treatment. */
   className?: string;
+  searchPlaceholder?: string;
 };
 
 function money(n: number): string {
@@ -88,6 +87,7 @@ export default function PlanOrdersSection({
   showSearch = true,
   showList = true,
   className,
+  searchPlaceholder,
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchableItem[]>([]);
@@ -233,6 +233,15 @@ export default function PlanOrdersSection({
     await patch(order, { qty: q, unitPrice: unitFinal, isCovered });
   };
 
+  /** The server adds or drops the sharps fee alongside needle items, so re-read the plan. */
+  const reloadOrders = async (fallback: EncounterOrder[]) => {
+    try {
+      onChange(await listOrders(encounterId));
+    } catch {
+      onChange(fallback);
+    }
+  };
+
   const addItem = async (item: SearchableItem) => {
     if (adding) return;
     setAdding(true);
@@ -250,21 +259,7 @@ export default function PlanOrdersSection({
           }),
       });
       storePricing(order.id, pricingItem);
-      const nextOrders = [...orders, order];
-      let sharpsOrder: EncounterOrder | null = null;
-      try {
-        sharpsOrder = await ensureSharpsFeeOrder({
-          encounterId,
-          practiceId,
-          patientId: canPrice ? patientId : undefined,
-          clientId,
-          existingOrders: nextOrders,
-          triggerItem: item,
-        });
-      } catch {
-        /* Sharps is best-effort — the vaccine/injection still charges. */
-      }
-      onChange(sharpsOrder ? [...nextOrders, sharpsOrder] : nextOrders);
+      await reloadOrders([...orders, order]);
       onInvoiceShouldRefresh();
       if (item.itemType === 'inventory' && !isSharpsOrderName(item.name)) {
         onInventoryItemAdded?.({
@@ -336,7 +331,7 @@ export default function PlanOrdersSection({
           created.push(order);
         }
       }
-      onChange([...orders, ...created]);
+      await reloadOrders([...orders, ...created]);
       onInvoiceShouldRefresh();
       setQuery('');
       setResults([]);
@@ -412,14 +407,18 @@ export default function PlanOrdersSection({
       }
     }
 
-    onChange(orders.map((o) => (o.id === order.id ? updated : o)));
+    await reloadOrders(orders.map((o) => (o.id === order.id ? updated : o)));
     onInvoiceShouldRefresh();
   };
 
   const remove = async (order: EncounterOrder) => {
-    await deleteOrder(encounterId, order.id);
+    const removed = await removeWithRecordedDose(async (removeDose) => {
+      await deleteOrder(encounterId, order.id, removeDose);
+      return true;
+    });
+    if (!removed) return;
     dropPricing(order.id);
-    onChange(orders.filter((o) => o.id !== order.id));
+    await reloadOrders(orders.filter((o) => o.id !== order.id));
     onInvoiceShouldRefresh();
     if (order.catalogItemType === 'inventory') {
       onInventoryItemRemoved?.(order.name);
@@ -468,7 +467,7 @@ export default function PlanOrdersSection({
             <Search size={15} className="soap-plan-search-icon" />
             <input
               className="soap-input"
-              placeholder="Type here to add a charge, or a note…"
+              placeholder={searchPlaceholder ?? 'Type here to add a charge, or a note…'}
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);

@@ -169,6 +169,11 @@ export type VisitInvoiceLine = {
   tagalongRuleId?: number | null;
   /** after_tax = tax the product first (Maine rebate). before_tax folds this into the product. */
   tagalongTaxMode?: 'after_tax' | 'before_tax' | string | null;
+  /** eVet chart row this line was copied from. */
+  evetTreatmentItemId?: number | null;
+  removedAt?: string | null;
+  removedReason?: string | null;
+  removedByName?: string | null;
 };
 
 export type VisitInvoiceTender = {
@@ -235,6 +240,8 @@ export type VisitInvoice = {
     employeeName?: string | null;
   }> | null;
   lines?: VisitInvoiceLine[];
+  /** Charges removed with a reason; still listed, struck through. */
+  removedLines?: VisitInvoiceLine[];
   tenders?: VisitInvoiceTender[];
 };
 
@@ -270,6 +277,26 @@ export async function listEncounters(params: {
  * Appointment ids whose SOAP is signed & locked — for calendar lock badges / menu copy.
  * Same pattern as GET /forward-bookings/calendar-index.
  */
+/**
+ * `held` / `declined` / `card_saved` come from a euthanasia visit's estimate hold.
+ * `balance_due`: the invoice still owes money and the visit day has passed.
+ */
+export type CalendarPaymentState = 'paid' | 'held' | 'declined' | 'card_saved' | 'balance_due';
+
+export async function fetchCalendarPaymentIndex(
+  practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
+): Promise<Map<number, CalendarPaymentState>> {
+  const { data } = await http.get<{
+    appointments?: { appointmentId: number; state: CalendarPaymentState }[];
+  }>('/visit-invoices/calendar-payment-index', { params: { practiceId } });
+  const out = new Map<number, CalendarPaymentState>();
+  for (const row of data?.appointments ?? []) {
+    const id = Number(row.appointmentId);
+    if (Number.isFinite(id) && id > 0) out.set(id, row.state);
+  }
+  return out;
+}
+
 export async function fetchSoapCalendarLockIndex(
   practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
 ): Promise<{ lockedAppointmentIds: number[] }> {
@@ -525,11 +552,101 @@ export async function setOrderState(
   return data;
 }
 
-export async function deleteOrder(encounterId: string, orderId: string): Promise<void> {
+/** `removeDose` also removes a recorded vaccine dose; without it a dosed order is refused (409). */
+export async function deleteOrder(
+  encounterId: string,
+  orderId: string,
+  removeDose?: VaccineDoseRemoval | null
+): Promise<void> {
   await http.delete(
     `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(orderId)}`,
-    { params: { practiceId: pid() } }
+    { params: { practiceId: pid(), ...removeDoseParams(removeDose) } }
   );
+}
+
+// --- Removing a recorded vaccine dose ---
+
+export type VaccineDoseRemovalReason =
+  | 'entered_in_error'
+  | 'wrong_patient'
+  | 'not_given'
+  | 'duplicate'
+  | 'other';
+
+export type VaccineDoseRemoval = { reason: VaccineDoseRemovalReason; note?: string | null };
+
+export type RemovedVaccineDose = {
+  vaccinationLogId: number;
+  vaccineName: string | null;
+  tagNumber: string | null;
+  wasSigned: boolean;
+  remindersRemoved: number;
+  remindersReopened: number;
+};
+
+/** The dose that blocked removing its order / invoice line. */
+export type RecordedDoseConflict = {
+  vaccinationLogId: number;
+  vaccineName: string | null;
+  tagNumber: string | null;
+  dateVaccinated: string | null;
+  wasSigned: boolean;
+};
+
+function removeDoseParams(removeDose?: VaccineDoseRemoval | null) {
+  if (!removeDose) return {};
+  return {
+    doseReason: removeDose.reason,
+    ...(removeDose.note?.trim() ? { doseNote: removeDose.note.trim() } : {}),
+  };
+}
+
+/** The recorded dose, when the API refused a removal because one is on the line. */
+export function recordedDoseConflict(e: unknown): RecordedDoseConflict | null {
+  const data = (e as { response?: { status?: number; data?: unknown } })?.response;
+  if (data?.status !== 409) return null;
+  const body = data.data as { code?: string; dose?: RecordedDoseConflict } | undefined;
+  return body?.code === 'VACCINE_DOSE_RECORDED' && body.dose ? body.dose : null;
+}
+
+export async function removeOrderVaccination(
+  encounterId: string,
+  orderId: string,
+  removal: VaccineDoseRemoval
+): Promise<RemovedVaccineDose> {
+  const { data } = await http.delete<RemovedVaccineDose>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/vaccination`,
+    {
+      params: {
+        practiceId: pid(),
+        reason: removal.reason,
+        ...(removal.note?.trim() ? { note: removal.note.trim() } : {}),
+      },
+    }
+  );
+  return data;
+}
+
+export async function removeInvoiceLineVaccination(
+  invoiceId: string,
+  lineId: string,
+  removal: VaccineDoseRemoval
+): Promise<RemovedVaccineDose> {
+  const { data } = await http.delete<RemovedVaccineDose>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(
+      lineId
+    )}/vaccination`,
+    {
+      params: {
+        practiceId: pid(),
+        reason: removal.reason,
+        ...(removal.note?.trim() ? { note: removal.note.trim() } : {}),
+      },
+    }
+  );
+  return data;
 }
 
 // --- What the visit produced: doses given and prescriptions written ---
@@ -1131,6 +1248,8 @@ export async function returnVisitInvoiceLines(
     cashierEmployeeId?: number | null;
     refundViaStripe?: boolean;
     reason?: string;
+    /** Fully returned lines with a recorded dose are refused (409) without this. */
+    removeDose?: VaccineDoseRemoval | null;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1141,6 +1260,7 @@ export async function returnVisitInvoiceLines(
       cashierEmployeeId: opts?.cashierEmployeeId ?? null,
       refundViaStripe: opts?.refundViaStripe === true,
       reason: opts?.reason,
+      ...removeDoseParams(opts?.removeDose),
     }
   );
   return data;
@@ -1201,22 +1321,33 @@ export async function addCounterInvoiceLine(
 export async function updateCounterInvoiceLine(
   invoiceId: string,
   lineId: string,
-  body: Partial<CounterInvoiceLineInput>
+  body: Partial<CounterInvoiceLineInput>,
+  /** Moving a dosed line to another pet: the dose comes off the first pet with this reason. */
+  removeDose?: VaccineDoseRemoval | null
 ): Promise<VisitInvoice> {
   const { data } = await http.patch<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
-    { practiceId: pid(), ...body }
+    { practiceId: pid(), ...body, ...removeDoseParams(removeDose) }
   );
   return data;
 }
 
+/** `removeDose` also removes a recorded vaccine dose; without it a dosed line is refused (409). */
 export async function removeCounterInvoiceLine(
   invoiceId: string,
-  lineId: string
+  lineId: string,
+  removeDose?: VaccineDoseRemoval | null,
+  reason?: string | null
 ): Promise<VisitInvoice> {
   const { data } = await http.delete<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
-    { params: { practiceId: pid() } }
+    {
+      params: {
+        practiceId: pid(),
+        ...removeDoseParams(removeDose),
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      },
+    }
   );
   return data;
 }
@@ -1250,12 +1381,18 @@ export async function finalizeInvoice(id: string): Promise<VisitInvoice> {
 
 export async function voidInvoice(
   id: string,
-  opts?: { reason: string; voidedByEmployeeId?: number | null },
+  opts?: {
+    reason: string;
+    voidedByEmployeeId?: number | null;
+    /** Invoices with a recorded dose are refused (409) without this. */
+    removeDose?: VaccineDoseRemoval | null;
+  },
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
     reason: opts?.reason,
     voidedByEmployeeId: opts?.voidedByEmployeeId,
+    ...removeDoseParams(opts?.removeDose),
   });
   return data;
 }
