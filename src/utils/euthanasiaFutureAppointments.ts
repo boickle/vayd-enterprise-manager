@@ -93,7 +93,12 @@ export function isEuthanasiaAppointment(appt: Appointment | null | undefined): b
   return isEuthanasiaAppointmentType(appt.appointmentType);
 }
 
-function isCountableFutureAppointment(a: Appointment, asOfMs: number): boolean {
+/**
+ * True when a row should be cancelled as a post-euthanasia *future* visit.
+ * Uses strict `start > asOf` so the euthanasia visit itself is never a candidate when
+ * `asOf` is that visit's `appointmentStart` (End Visit must pass that, not wall-clock now).
+ */
+export function isCountableFutureAppointment(a: Appointment, asOfMs: number): boolean {
   if (a.isDeleted) return false;
   if (a.isActive === false) return false;
   if (a.allDay) return false;
@@ -103,6 +108,40 @@ function isCountableFutureAppointment(a: Appointment, asOfMs: number): boolean {
   if (!a.appointmentStart?.trim()) return false;
   const startMs = Date.parse(a.appointmentStart);
   return Number.isFinite(startMs) && startMs > asOfMs;
+}
+
+/** Coerce calendar / PIMS ids that may arrive as strings. */
+export function coercePositiveAppointmentId(id: unknown): number | null {
+  if (typeof id === 'number') {
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+  if (typeof id === 'string' && id.trim()) {
+    const n = Number(id.trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Earliest valid appointmentStart among rows — used as `asOfIso` when ending a euthanasia visit
+ * so the current stop is never treated as “future” if staff wrap up before the scheduled start.
+ */
+export function earliestAppointmentStartIso(
+  appointments: readonly { appointmentStart?: string | null }[],
+): string | null {
+  let best: string | null = null;
+  let bestMs = Infinity;
+  for (const a of appointments) {
+    const iso = a.appointmentStart?.trim();
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) continue;
+    if (ms < bestMs) {
+      bestMs = ms;
+      best = iso;
+    }
+  }
+  return best;
 }
 
 /**
@@ -125,7 +164,11 @@ export type FindEuthanasiaFutureAppointmentsArgs = {
   patients: readonly { patientId: string; patientName?: string | null }[];
   /** Exclude these appointment ids (the euthanasia visit itself, reschedule source, etc.). */
   excludeAppointmentIds?: readonly number[];
-  /** Defaults to now. */
+  /**
+   * Cutover for “future” (strict start > asOf). Booking should pass the new visit start.
+   * End Visit must pass the euthanasia visit’s appointmentStart — defaulting to now can
+   * cancel that same card when staff wrap up before the scheduled start.
+   */
   asOfIso?: string;
   /** Lookahead years from asOf (default 2). */
   lookaheadYears?: number;
@@ -145,8 +188,8 @@ export async function findFutureAppointmentsForPatients(
 
   const exclude = new Set(
     (args.excludeAppointmentIds ?? [])
-      .map((id) => Number(id))
-      .filter((id) => Number.isFinite(id) && id > 0),
+      .map((id) => coercePositiveAppointmentId(id))
+      .filter((id): id is number => id != null),
   );
 
   const byId = new Map<number, EuthanasiaFutureAppointmentRow>();
@@ -170,8 +213,8 @@ export async function findFutureAppointmentsForPatients(
 
       for (const appt of rows) {
         if (!isCountableFutureAppointment(appt, asOfMs)) continue;
-        const apptId = Number(appt.id);
-        if (!Number.isFinite(apptId) || apptId <= 0) continue;
+        const apptId = coercePositiveAppointmentId(appt.id);
+        if (apptId == null) continue;
         if (exclude.has(apptId) || byId.has(apptId)) continue;
         if (!isSolePatientAppointment(appt, patientId)) continue;
 
