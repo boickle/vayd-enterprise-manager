@@ -2,8 +2,13 @@ import { type Dayjs } from 'dayjs';
 
 /**
  * Trailing calendar days used for doctor/day-of-week averages.
+ * Eight weeks gives most weekdays 6–8 samples; 30 days left only 2–4, so one odd week
+ * rewrote every future instance of that weekday.
  */
-export const DOCTOR_CAPACITY_LOOKBACK_DAYS = 30;
+export const DOCTOR_CAPACITY_LOOKBACK_DAYS = 56;
+
+/** Late bookings may lift a day above its typical points, but not without limit. */
+const MAX_TYPICAL_MULTIPLE = 1.5;
 
 export type DoctorWeekdayAverage = {
   avgPoints: number;
@@ -79,34 +84,54 @@ export type DoctorTypicalDay = {
 
 /**
  * Resolve one doctor's expectation for the weekday of a future date.
- * There is deliberately no practice-average or booking-fill adjustment: this number is the
- * doctor's own recent average for that weekday, floored only by points already booked.
+ *
+ * `points` is the doctor's own recent average for that weekday, scaled by `shiftFraction`
+ * for shortened days. With a `fillFraction` (share of a day's final points typically
+ * already booked this many days out), expected points are what is booked plus the typical
+ * late fill: booked + typical × (1 − fillFraction). A day that is behind its usual pace
+ * stays behind; a day already near final is not topped up to the average. Without a fill
+ * fraction, falls back to max(booked, typical).
  */
 export function projectDoctorWeekdayPoints(args: {
   bookedPoints: number;
   date: string;
   capacity: DoctorPointsCapacity | undefined;
   dailyPointGoal?: number | null;
+  /** Scheduled hours ÷ normal weekday hours (half-day overrides). Defaults to 1. */
+  shiftFraction?: number | null;
+  fillFraction?: number | null;
 }): DoctorTypicalDay & { projectedPoints: number } {
   const booked = Math.max(0, Number(args.bookedPoints) || 0);
   const weekday =
     args.capacity?.byDayOfWeek[args.date ? new Date(`${args.date}T12:00:00`).getDay() : -1];
   // A 0 average usually means this weekday was not actually worked in the lookback
   // (e.g. a newly added Saturday) rather than a true empty workday.
-  const weekdayAvg =
-    weekday != null && weekday.avgPoints > 0 ? weekday.avgPoints : null;
+  const weekdayAvg = weekday != null && weekday.avgPoints > 0 ? weekday.avgPoints : null;
   const goal = Number(args.dailyPointGoal);
   const goalFallback = Number.isFinite(goal) && goal > 0 ? goal : null;
   const overall =
     args.capacity?.overallAvgPoints != null && args.capacity.overallAvgPoints > 0
       ? args.capacity.overallAvgPoints
       : null;
-  const typical = weekdayAvg ?? goalFallback ?? overall;
+  const baseTypical = weekdayAvg ?? goalFallback ?? overall;
+  const shift = Number(args.shiftFraction);
+  const shiftScale = Number.isFinite(shift) ? Math.max(0, Math.min(1, shift)) : 1;
+  const typical = baseTypical != null ? baseTypical * shiftScale : null;
+
+  const fill = Number(args.fillFraction);
+  let projectedPoints: number;
+  if (args.fillFraction != null && Number.isFinite(fill) && typical != null) {
+    const stillToBook = typical * Math.max(0, 1 - Math.min(1, fill));
+    const ceiling = Math.max(booked, typical * MAX_TYPICAL_MULTIPLE);
+    projectedPoints = Math.max(booked, Math.min(booked + stillToBook, ceiling));
+  } else {
+    projectedPoints = Math.max(booked, typical ?? 0);
+  }
 
   return {
     points: typical,
     sampleDays: weekdayAvg != null ? (weekday?.sampleDays ?? 0) : 0,
-    usedGoalFallback: weekdayAvg == null && typical != null,
-    projectedPoints: Math.max(booked, typical ?? 0),
+    usedGoalFallback: weekdayAvg == null && baseTypical != null,
+    projectedPoints,
   };
 }
