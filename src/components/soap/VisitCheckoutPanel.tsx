@@ -1365,6 +1365,7 @@ export default function VisitCheckoutPanel({
             updated = await updateOrder(encId, updated.id, {
               unitPrice: unitFinal,
               isCovered,
+              automaticDiscount: true,
             });
           }
         }
@@ -2611,8 +2612,21 @@ export default function VisitCheckoutPanel({
                                   if (!Number.isFinite(n) || n < 0) return;
                                   if (Math.abs(n - Number(order.unitPrice)) < 0.0001) return;
                                   void (async () => {
+                                    let discountReason: string | undefined;
+                                    if (n + 0.009 < Number(order.unitPrice)) {
+                                      const reason = await appPrompt({
+                                        title: 'Why is this discounted?',
+                                        message: 'This note is saved on the discounts report with your name.',
+                                        placeholder: 'Price match, professional courtesy, …',
+                                        requireReason: true,
+                                        confirmLabel: 'Apply discount',
+                                      });
+                                      if (!reason) return;
+                                      discountReason = reason;
+                                    }
                                     const updated = await updateOrder(encounterId!, order.id, {
                                       unitPrice: n,
+                                      discountReason,
                                     });
                                     onOrdersChange?.(
                                       orders.map((o) => (o.id === order.id ? updated : o))

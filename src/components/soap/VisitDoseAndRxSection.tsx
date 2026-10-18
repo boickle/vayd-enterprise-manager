@@ -220,6 +220,7 @@ export default function VisitDoseAndRxSection({
           qty: q,
           unitPrice: unitFinal,
           isCovered,
+          automaticDiscount: true,
         });
         onOrderUpdated(updated);
       } else {

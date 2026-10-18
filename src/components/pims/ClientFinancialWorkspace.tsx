@@ -1073,6 +1073,29 @@ function isDiscountType(name: string | null | undefined, discountNames: Set<stri
   return Boolean(key && discountNames.has(key));
 }
 
+/** Staff, employee, and cost-plus lines are the client's discount. Everything else typed as a negative price needs a note. */
+function isAutomaticClientDiscountName(name: string | null | undefined): boolean {
+  const text = (name ?? '').trim();
+  if (!text) return false;
+  if (/(membership|wellness plan|preventative care|medical progress|recheck)/i.test(text)) return false;
+  return /(staff|employee|cost \+ ?10)/i.test(text);
+}
+
+/** `null` means the person cancelled. `undefined` means no note is required. */
+async function askHandDiscountReason(
+  description: string,
+  unitPrice: number,
+): Promise<string | null | undefined> {
+  if (!(unitPrice < -0.005) || isAutomaticClientDiscountName(description)) return undefined;
+  return appPrompt({
+    title: 'Why is this discounted?',
+    message: 'This note is saved on the discounts report with your name.',
+    placeholder: 'Professional courtesy, price match, …',
+    requireReason: true,
+    confirmLabel: 'Add discount',
+  });
+}
+
 function isImportAdjustment(line: { description?: string | null }): boolean {
   return (line.description ?? '') === 'eVet billed-total adjustment';
 }
@@ -2999,10 +3022,13 @@ export default function ClientFinancialWorkspace({
       }
       const persisted = isUnsavedInvoice(invoice) ? await persistDraftIfNeeded() : invoice;
       if (!persisted) return;
+      const discountReason = await askHandDiscountReason(refill.name, Number(refill.unitPrice) || 0);
+      if (discountReason === null) return;
       const next = await addCounterInvoiceLine(persisted.id, {
         description: refill.name,
         qty: refill.qty > 0 ? refill.qty : 1,
         unitPrice: refill.unitPrice ?? undefined,
+        discountReason,
         instructions: refill.instructions || null,
         catalogItemId: refill.catalogItemId ?? null,
         catalogItemType: refill.catalogItemId != null ? 'inventory' : null,
@@ -3158,10 +3184,13 @@ export default function ClientFinancialWorkspace({
       const invoice = await persistDraftIfNeeded();
       if (!invoice) return;
       try {
+        const discountReason = await askHandDiscountReason(item.name, priced.unitFinal);
+        if (discountReason === null) return;
         const next = await addCounterInvoiceLine(invoice.id, {
           description: item.name,
           qty: 1,
           unitPrice: priced.unitFinal,
+          discountReason,
           isCovered: priced.isCovered,
           catalogItemId: Number.isFinite(catalogId) ? catalogId : null,
           catalogItemType: item.itemType || null,
@@ -3254,10 +3283,13 @@ export default function ClientFinancialWorkspace({
               /* use bundle catalog price */
             }
           }
+          const discountReason = await askHandDiscountReason(line.name, unitPrice);
+          if (discountReason === null) return;
           next = await addCounterInvoiceLine(next.id, {
             description: line.name,
             qty: line.quantity,
             unitPrice,
+            discountReason,
             isCovered,
             catalogItemId: line.catalogItemId,
             catalogItemType: line.itemType,
@@ -3333,6 +3365,21 @@ export default function ClientFinancialWorkspace({
     opts?: { askDoseReasonOnMove?: boolean }
   ): Promise<boolean> {
     if (!selected) return false;
+    if (
+      body.unitPrice != null &&
+      body.unitPrice + 0.009 < Number(line.unitPrice) &&
+      !body.discountReason
+    ) {
+      const reason = await appPrompt({
+        title: 'Why is this discounted?',
+        message: 'This note is saved on the discounts report with your name.',
+        placeholder: 'Price match, professional courtesy, …',
+        requireReason: true,
+        confirmLabel: 'Apply discount',
+      });
+      if (!reason) return false;
+      body = { ...body, discountReason: reason };
+    }
     setBusy(true);
     setError(null);
     try {
@@ -3854,6 +3901,18 @@ export default function ClientFinancialWorkspace({
       setError('Sign in as staff to record a discount.');
       return;
     }
+    let discountReason: string | null = null;
+    if (isDiscountType(tenderPaymentType, discountTypeNames)) {
+      const reason = await appPrompt({
+        title: 'Why is this discounted?',
+        message: 'This note is saved on the discounts report with your name.',
+        placeholder: 'Angel Fund, write-off, professional courtesy, …',
+        requireReason: true,
+        confirmLabel: 'Record discount',
+      });
+      if (!reason) return;
+      discountReason = reason;
+    }
     if (tenderMethod === 'check' && !checkNumber.trim()) {
       setError('Check number is required for check payments.');
       return;
@@ -3888,6 +3947,7 @@ export default function ClientFinancialWorkspace({
         cashReceived: tenderMethod === 'cash' && Number.isFinite(received) ? received : null,
         changeGiven: change,
         checkNumber: tenderMethod === 'check' ? checkNumber.trim() || null : null,
+        discountReason,
       });
       setSelected(next);
       setTenderAmount('');
@@ -5355,10 +5415,16 @@ export default function ClientFinancialWorkspace({
                                 invoice = await updateCounterInvoiceLine(invoice.id, line.id, {
                                   qty: keepQty,
                                 });
+                                const splitReason = await askHandDiscountReason(
+                                  line.description,
+                                  Number(line.unitPrice) || 0,
+                                );
+                                if (splitReason === null) return null;
                                 invoice = await addCounterInvoiceLine(invoice.id, {
                                   description: line.description,
                                   qty: mailQty,
                                   unitPrice: Number(line.unitPrice) || 0,
+                                  discountReason: splitReason,
                                   catalogItemId: line.catalogItemId ?? null,
                                   catalogItemType: line.catalogItemType ?? 'inventory',
                                   patientId: line.patientId ?? selected.patientId ?? null,

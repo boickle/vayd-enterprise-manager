@@ -18,6 +18,7 @@ import {
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
 import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
 import { apiErrorMessage } from '../../api/http';
+import { appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
   catalogIdForSearchItem,
@@ -209,6 +210,8 @@ export default function PlanOrdersSection({
       qty?: number;
       unitPrice?: number;
       isCovered?: boolean;
+      automaticDiscount?: boolean;
+      discountReason?: string | null;
     }
   ) => {
     const updated = await updateOrder(encounterId, order.id, body);
@@ -230,7 +233,7 @@ export default function PlanOrdersSection({
     }
 
     const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, q);
-    await patch(order, { qty: q, unitPrice: unitFinal, isCovered });
+    await patch(order, { qty: q, unitPrice: unitFinal, isCovered, automaticDiscount: true });
   };
 
   /** The server adds or drops the sharps fee alongside needle items, so re-read the plan. */
@@ -325,6 +328,7 @@ export default function PlanOrdersSection({
               qty: line.quantity,
               unitPrice: unitFinal,
               isCovered,
+              automaticDiscount: true,
             }),
           );
         } else {
@@ -402,6 +406,7 @@ export default function PlanOrdersSection({
           updated = await updateOrder(encounterId, updated.id, {
             unitPrice: unitFinal,
             isCovered,
+            automaticDiscount: true,
           });
         }
       }
@@ -622,6 +627,7 @@ function CatalogRow({
       clientNote?: string | null;
       microchipNumber?: string | null;
       unitPrice?: number;
+      discountReason?: string | null;
     }
   ) => Promise<void>;
   onChangeState: (order: EncounterOrder, state: 'accepted' | 'declined') => void;
@@ -657,7 +663,24 @@ function CatalogRow({
       return;
     }
     if (Math.abs(n - Number(o.unitPrice)) < 0.0001) return;
-    void onPatch(o, { unitPrice: n });
+    void (async () => {
+      if (n + 0.009 < Number(o.unitPrice)) {
+        const reason = await appPrompt({
+          title: 'Why is this discounted?',
+          message: 'This note is saved on the discounts report with your name.',
+          placeholder: 'Price match, professional courtesy, …',
+          requireReason: true,
+          confirmLabel: 'Apply discount',
+        });
+        if (!reason) {
+          setPriceDraft(String(Number(o.unitPrice) || 0));
+          return;
+        }
+        await onPatch(o, { unitPrice: n, discountReason: reason });
+        return;
+      }
+      await onPatch(o, { unitPrice: n });
+    })();
   };
 
   return (
@@ -798,7 +821,7 @@ function NoteRow({
   disabled?: boolean;
   onPatch: (
     order: EncounterOrder,
-    body: { name?: string; note?: string | null; unitPrice?: number }
+    body: { name?: string; note?: string | null; unitPrice?: number; discountReason?: string | null }
   ) => Promise<void>;
   onRemove: (order: EncounterOrder) => void;
 }) {
@@ -813,7 +836,25 @@ function NoteRow({
   };
   const commitPrice = () => {
     const next = Number(price) || 0;
-    if (next !== Number(o.unitPrice)) void onPatch(o, { unitPrice: next });
+    if (next === Number(o.unitPrice)) return;
+    void (async () => {
+      if (next + 0.009 < Number(o.unitPrice)) {
+        const reason = await appPrompt({
+          title: 'Why is this discounted?',
+          message: 'This note is saved on the discounts report with your name.',
+          placeholder: 'Price match, professional courtesy, …',
+          requireReason: true,
+          confirmLabel: 'Apply discount',
+        });
+        if (!reason) {
+          setPrice(Number(o.unitPrice) > 0 ? String(Number(o.unitPrice)) : '');
+          return;
+        }
+        await onPatch(o, { unitPrice: next, discountReason: reason });
+        return;
+      }
+      await onPatch(o, { unitPrice: next });
+    })();
   };
 
   return (

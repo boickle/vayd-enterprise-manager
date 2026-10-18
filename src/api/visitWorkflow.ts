@@ -533,6 +533,9 @@ export async function updateOrder(
     qty?: number;
     unitPrice?: number;
     isCovered?: boolean;
+    /** Catalog reprice. A typed lower price omits this and sends discountReason. */
+    automaticDiscount?: boolean;
+    discountReason?: string | null;
   }
 ): Promise<EncounterOrder> {
   const { data } = await http.patch<EncounterOrder>(
@@ -1060,6 +1063,8 @@ export type CounterInvoiceLineInput = {
   sourceBundleName?: string | null;
   /** Practice revenue only — no provider (Not Specified VSD). */
   excludeFromProduction?: boolean;
+  /** Required when this line is a hand-entered discount. */
+  discountReason?: string | null;
 };
 
 export async function listClientVisitInvoices(
@@ -1155,6 +1160,7 @@ export async function addVisitTender(
     changeGiven?: number | null;
     checkNumber?: string | null;
     stripePaymentIntentId?: string | null;
+    discountReason?: string | null;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1593,6 +1599,8 @@ export type CreditDiscountRow = {
   detail: string;
   reason: string | null;
   invoiceNumber: string | null;
+  /** manual = someone typed it; auto = the client's status (staff, employee, cost plus). */
+  discountClass: 'manual' | 'auto' | null;
 };
 
 export async function listCreditsAndDiscounts(
