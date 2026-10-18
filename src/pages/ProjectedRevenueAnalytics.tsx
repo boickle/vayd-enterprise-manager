@@ -37,6 +37,7 @@ import { type DoctorRevenueSeriesResponse } from '../api/opsStats';
 import { type DoctorMonthDay } from '../api/appointments';
 import {
   fetchAllAppointmentTypes,
+  normalizeScheduleOverrideLocalTime,
   scheduleOverrideIsOff,
   type EmployeeWeeklySchedule,
   type ScheduleOverride,
@@ -49,6 +50,7 @@ import {
 } from '../utils/appointmentTypeSettings';
 import { monthDayIsTimeOff } from '../utils/doctorTimeOff';
 import {
+  fetchBookingsAnalyticsCached,
   fetchCollectibleRevenueRatesCached,
   fetchDoctorMonthsCached,
   fetchDoctorRevenueSeriesCachedMany,
@@ -67,10 +69,16 @@ import {
 } from '../utils/projectedRevenueCollectible';
 import {
   practiceVsdPerPointTrend,
-  projectVsdPerPoint,
   vsdPerPointTrend,
   type VsdPerPointTrend,
 } from '../utils/vsdPerPoint';
+import {
+  BOOKING_FILL_SERVICE_LOOKBACK_DAYS,
+  bookingFillHistoryWindow,
+  buildBookingFillCurve,
+  flattenBookingAnalyticsDetails,
+  type BookingFillCurve,
+} from '../utils/bookingFillCurve';
 import { mapPool } from '../utils/asyncTtlCache';
 import {
   buildDoctorPointsCapacity,
@@ -243,9 +251,10 @@ function ancillaryGrowthFromWindow(values: number[]): {
  * Linear $/day growth was compounding into multi-month forecasts and diverging
  * from actuals (pharmacy collapsing, membership exploding).
  */
-function ancillaryForDate(
-  rates: AncillaryDailyRates | null
-): { pharmacy: number; membership: number } {
+function ancillaryForDate(rates: AncillaryDailyRates | null): {
+  pharmacy: number;
+  membership: number;
+} {
   if (!rates) return { pharmacy: 0, membership: 0 };
   return {
     pharmacy: Math.max(0, rates.pharmacyBaseline),
@@ -292,6 +301,36 @@ function isDoctorWorkingOnDate(emp: DoctorScheduleInfo | undefined, dateStr: str
   const goalsWorkday = emp.goalsWorkdayByDate.get(dateStr);
   if (goalsWorkday != null) return goalsWorkday;
   return isWeeklyWorkday(emp, dateStr);
+}
+
+function localTimeToMinutes(value: string | null | undefined): number | null {
+  const m = normalizeScheduleOverrideLocalTime(value).match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function shiftMinutes(
+  start: string | null | undefined,
+  end: string | null | undefined
+): number | null {
+  const s = localTimeToMinutes(start);
+  const e = localTimeToMinutes(end);
+  if (s == null || e == null || e <= s) return null;
+  return e - s;
+}
+
+/**
+ * Share of a normal shift the doctor is scheduled for on a date (e.g. 0.5 for an 8:30–12:00
+ * override on a 7-hour weekday). 1 when there is no shortened override or hours are unknown.
+ */
+function shiftFractionOnDate(emp: DoctorScheduleInfo | undefined, dateStr: string): number {
+  const override = emp?.scheduleOverridesByDate.get(dateStr);
+  if (!override || scheduleOverrideIsOff(override)) return 1;
+  const overrideMin = shiftMinutes(override.workStartLocal, override.workEndLocal);
+  const weekly = emp?.weeklySchedules.find((s) => s.dayOfWeek === dayjs(dateStr).day());
+  const weeklyMin = shiftMinutes(weekly?.workStartLocal, weekly?.workEndLocal);
+  if (overrideMin == null || weeklyMin == null) return 1;
+  return Math.max(0, Math.min(1, overrideMin / weeklyMin));
 }
 
 /** Future-looking presets (from today forward). */
@@ -365,6 +404,7 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [doctorSchedulesBase, setDoctorSchedulesBase] = useState<
     Record<string, Omit<DoctorScheduleInfo, 'timeOffDates'>>
   >({});
+  const [fillCurve, setFillCurve] = useState<BookingFillCurve | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -489,6 +529,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     // Schedules/overrides for both the averaging window and selected future range.
     const scheduleDates = dateRange(fetchStart, end);
     const doctorIds = providersForApi.map((p) => String(p.id));
+    const fillWindow = bookingFillHistoryWindow(todayD);
 
     let alive = true;
     setLoading(true);
@@ -500,13 +541,16 @@ export default function ProjectedRevenueAnalyticsPage() {
           id: String(p.id),
           name: p.name,
         }));
-        const [revenueResults, rateHistResults, pointResults, paymentsSeries, collectible, scheduleResults] =
-          await Promise.all([
-          fetchDoctorRevenueSeriesCachedMany(
-            doctorsForRevenue,
-            fetchStartStr,
-            revenueEndStr
-          ),
+        const [
+          revenueResults,
+          rateHistResults,
+          pointResults,
+          paymentsSeries,
+          collectible,
+          scheduleResults,
+          bookingHistory,
+        ] = await Promise.all([
+          fetchDoctorRevenueSeriesCachedMany(doctorsForRevenue, fetchStartStr, revenueEndStr),
           fetchDoctorRevenueSeriesCachedMany(
             doctorsForRevenue,
             toLocalDateStr(rateHistStart),
@@ -559,6 +603,10 @@ export default function ProjectedRevenueAnalyticsPage() {
               pointGoalByDate,
             };
           }),
+          fetchBookingsAnalyticsCached({
+            startDate: toLocalDateStr(fillWindow.bookedStart),
+            endDate: toLocalDateStr(fillWindow.bookedEnd),
+          }),
         ]);
 
         if (!alive) return;
@@ -580,6 +628,14 @@ export default function ProjectedRevenueAnalyticsPage() {
         setPaymentHistorySeries(Array.isArray(paymentsSeries) ? paymentsSeries : []);
         setCollectibleRates(ratesFromApi(collectible));
         setDoctorSchedulesBase(schedulesById);
+        const curve = bookingHistory?.users
+          ? buildBookingFillCurve(
+              flattenBookingAnalyticsDetails(bookingHistory.users),
+              fillWindow.serviceStart,
+              fillWindow.serviceEnd
+            )
+          : null;
+        setFillCurve(curve && curve.sampleDays > 0 ? curve : null);
       } catch (e) {
         if (!alive) return;
         console.error('Projected revenue fetch failed:', e);
@@ -590,6 +646,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         setPaymentHistorySeries([]);
         setCollectibleRates(EMPTY_COLLECTIBLE_RATES);
         setDoctorSchedulesBase({});
+        setFillCurve(null);
       } finally {
         if (alive) setLoading(false);
       }
@@ -769,9 +826,18 @@ export default function ProjectedRevenueAnalyticsPage() {
     const dates = dateRange(start, end);
     const todayD = dayjs().startOf('day');
     const share = collectibleShare(collectibleRates);
-    const collectibleRate = (id: string, daysUntil: number) => {
-      const vsd = projectVsdPerPoint(ratesByDoctor.byDoctor[id]?.trend, daysUntil);
+    // Flat recent rate for every future day. Extrapolating the short-window $/point slope
+    // flipped sign week to week and compounded on distant dates (pinning at its cap), which
+    // made months ahead swing far more than the practice does.
+    const collectibleRate = (id: string) => {
+      const vsd = ratesByDoctor.byDoctor[id]?.trend?.baseline ?? null;
       return vsd != null ? scaleCollectible(vsd, share) : null;
+    };
+    const fillFractionFor = (daysUntil: number): number | null => {
+      if (!fillCurve) return null;
+      const h = Math.min(Math.max(0, daysUntil), fillCurve.maxHorizon);
+      const f = fillCurve.fractionBookedByHorizon[h];
+      return Number.isFinite(f) ? f : null;
     };
 
     return dates.map((date) => {
@@ -794,7 +860,11 @@ export default function ProjectedRevenueAnalyticsPage() {
         }
         return apptCountByDoctorByDate[graphSelection]?.[date] ?? 0;
       })();
-      const typicalForDoctor = (id: string, bookedPoints = 0) => {
+      const typicalForDoctor = (
+        id: string,
+        bookedPoints = 0,
+        fillFraction: number | null = null
+      ) => {
         const provider = providersForApi.find((p) => String(p.id) === id);
         return projectDoctorWeekdayPoints({
           bookedPoints,
@@ -802,6 +872,8 @@ export default function ProjectedRevenueAnalyticsPage() {
           capacity: weekdayCapacityByDoctor[id],
           dailyPointGoal:
             doctorSchedules[id]?.pointGoalByDate.get(date) ?? provider?.dailyPointGoal,
+          shiftFraction: shiftFractionOnDate(doctorSchedules[id], date),
+          fillFraction,
         });
       };
 
@@ -843,7 +915,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           // delivered, so today's posted revenue already covers appointments that have not
           // happened yet. Adding a points estimate on top would count those twice; take
           // whichever view of the day is larger instead.
-          const rate = collectibleRate(id, 0);
+          const rate = collectibleRate(id);
           const estimate = rate != null && bookedPts > 0 ? rate * bookedPts : 0;
           if (estimate > actual) estimateExceedsActual = true;
           treatment += Math.max(actual, estimate);
@@ -873,6 +945,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       }
 
       const daysUntil = Math.max(0, dayjs(date).startOf('day').diff(todayD, 'day'));
+      const dayFillFraction = fillFractionFor(daysUntil);
       const ancillary = includeAncillary
         ? ancillaryForDate(ancillaryRates)
         : { pharmacy: 0, membership: 0 };
@@ -885,8 +958,8 @@ export default function ProjectedRevenueAnalyticsPage() {
         const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
         const posted = postedFor(id);
         const working = isDoctorWorkingOnDate(doctorSchedules[id], date);
-        const rate = collectibleRate(id, daysUntil);
-        const weekdayProjection = typicalForDoctor(id, pts);
+        const rate = collectibleRate(id);
+        const weekdayProjection = typicalForDoctor(id, pts, dayFillFraction);
         // Off with something already booked: that is all there will be.
         const projection = working ? weekdayProjection : { projectedPoints: pts };
         return {
@@ -894,7 +967,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           posted,
           points: pts,
           projectedPoints: projection.projectedPoints,
-          fillFraction: null as number | null,
+          fillFraction: working ? dayFillFraction : null,
           typicalDayPoints: working ? (weekdayProjection.points ?? 0) : 0,
           bookedTreatment: Math.max(rate != null ? rate * pts : 0, posted),
           projectedTreatment: Math.max(
@@ -1036,6 +1109,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     doctorSchedules,
     weekdayCapacityByDoctor,
     collectibleRates,
+    fillCurve,
   ]);
 
   const dailyEstimates = dailyTreatmentEstimates;
@@ -1254,31 +1328,34 @@ export default function ProjectedRevenueAnalyticsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Past days use collectible treatment (VSD after membership coverage) and (for practice
           totals) actual pharmacy / membership payments. Membership coverage is a trailing
-          practice-wide rate (membership discounts ÷ VSD over the last{' '}
-          {VSD_ESTIMATE_LOOKBACK_DAYS} complete days), applied evenly — it is not priced client by
-          client for future visits. Membership dues stay on their own line. Open A/R is left out:
-          it is unpaid invoices already on the books, not cash expected in this window, and new A/R
-          versus collections tends to average out. For today, each
-          doctor&apos;s treatment starts from recent-half VSD per point (total VSD ÷ total
-          appointment points, using each visit&apos;s configured type points), then that amount is reduced by the collectible
-          share. The day shows
-          the greater of posted collectible treatment and that
-          estimate — treatment is often invoiced at booking, so the two are never added together. A
-          doctor whose posted amount already meets their daily revenue goal shows actual only. For
-          future days, each scheduled
-          doctor is expected to reach their own average for that specific weekday over the trailing{' '}
+          practice-wide rate (membership discounts ÷ VSD over the last {VSD_ESTIMATE_LOOKBACK_DAYS}{' '}
+          complete days), applied evenly — it is not priced client by client for future visits.
+          Membership dues stay on their own line. Open A/R is left out: it is unpaid invoices
+          already on the books, not cash expected in this window, and new A/R versus collections
+          tends to average out. For today, each doctor&apos;s treatment starts from recent-half VSD
+          per point (total VSD ÷ total appointment points, using each visit&apos;s configured type
+          points), then that amount is reduced by the collectible share. The day shows the greater
+          of posted collectible treatment and that estimate — treatment is often invoiced at
+          booking, so the two are never added together. A doctor whose posted amount already meets
+          their daily revenue goal shows actual only. For future days, each scheduled doctor is
+          expected to reach their own average for that specific weekday over the trailing{' '}
           {DOCTOR_CAPACITY_LOOKBACK_DAYS} days, shown as Typical pts. For example, a doctor&apos;s
-          recent Fridays determine future Fridays; Mondays do not affect them. Expected points are
-          that weekday average or the points already booked, whichever is higher—there is no
-          additional booking-fill multiplier. Expected points are priced at each doctor&apos;s
-          collectible $ per point from the more recent half of the trailing{' '}
-          {VSD_ESTIMATE_LOOKBACK_DAYS}-day window, plus the measured half-to-half slope out to that
-          day (capped so the rate stays between 70% and 150% of the recent-half baseline). Pharmacy
-          and Square + Stripe membership stay at that same recent-half daily average rather than
-          compounding a $/day trend across the horizon. Because visits are billed at booking, a
-          future day never projects below the collectible treatment already invoiced against it.
-          Days nobody is scheduled get no expected volume (weekly schedules, OFF overrides, and
-          calendar time off all count), and cancelled visits never count as booked points.
+          recent Fridays determine future Fridays; Mondays do not affect them. Shortened days (e.g.
+          a half-day schedule override) scale that average by the hours scheduled. Expected points
+          are the points already booked plus the part of a typical day that usually still gets
+          booked that many days out, measured from how the last {BOOKING_FILL_SERVICE_LOOKBACK_DAYS}{' '}
+          completed days filled in
+          {fillCurve
+            ? ` (about ${Math.round((1 - (fillCurve.fractionBookedByHorizon[Math.min(7, fillCurve.maxHorizon)] ?? 1)) * 100)}% of a day is typically booked within its final week)`
+            : ''}
+          . A day that is behind its usual pace stays behind instead of being topped up to the
+          average. Expected points are priced at each doctor&apos;s collectible $ per point from the
+          more recent half of the trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day window, held flat for
+          every future day. Pharmacy and Square + Stripe membership stay at that same recent-half
+          daily average. Because visits are billed at booking, a future day never projects below the
+          collectible treatment already invoiced against it. Days nobody is scheduled get no
+          expected volume (weekly schedules, OFF overrides, and calendar time off all count), and
+          cancelled visits never count as booked points.
           {useDailyBuckets
             ? ' Showing daily totals for this range.'
             : ' Range is over 30 days — showing weekly totals.'}
@@ -1468,7 +1545,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                     </Typography>
                     <Typography variant="h5">{fmtUSD(expectedAdditionalTreatment)}</Typography>
                     <Typography variant="caption" color="text.secondary" display="block">
-                      room from booked points to weekday averages
+                      visits expected to still be booked, based on how late days usually fill
                     </Typography>
                   </Box>
                 </>
@@ -1515,14 +1592,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                       )}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" display="block">
-                      {ratesByDoctor.byDoctor[graphSelection].trend.dailyGrowth >= 0 ? '+' : ''}
-                      {fmtUSD(
-                        scaleCollectible(
-                          ratesByDoctor.byDoctor[graphSelection].trend.dailyGrowth,
-                          collectibleShareValue
-                        )
-                      )}
-                      /day on future days, capped at 70–150% of this rate
+                      applied flat to every future day
                     </Typography>
                   </Box>
                 )}
@@ -1533,14 +1603,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                   </Typography>
                   <Typography variant="h5">{fmtUSD(ratesByDoctor.practiceAvg)}</Typography>
                   <Typography variant="caption" color="text.secondary" display="block">
-                    {ratesByDoctor.practiceTrend.dailyGrowth >= 0 ? '+' : ''}
-                    {fmtUSD(
-                      scaleCollectible(
-                        ratesByDoctor.practiceTrend.dailyGrowth,
-                        collectibleShareValue
-                      )
-                    )}
-                    /day on future days, capped at 70–150% of this rate
+                    each doctor&apos;s own rate is applied flat to every future day
                   </Typography>
                 </Box>
               )}
