@@ -30,6 +30,7 @@ import {
   listBundles,
   listPatientMemberships,
   markMembershipOwnerChangeHandled,
+  planBillingCadence,
   removeMembershipItem,
   resumeMembershipBenefits,
   updateMembershipItem,
@@ -156,16 +157,11 @@ function planPriceLabel(plan: Bundle): string {
 }
 
 /**
- * Plans are usually named “… Annual” / “… Monthly” with a single price field.
- * Prefer that over a separate billing dropdown so staff don’t enroll an annual
- * plan as monthly by accident.
+ * Each plan bills one way, set on the plan in Settings. Use that instead of a
+ * separate billing dropdown so staff don’t enroll an annual plan as monthly by accident.
  */
 function billingIntervalForPlan(plan: Bundle): MembershipBillingInterval {
-  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
-  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
-  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
-  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
-  return 'monthly';
+  return planBillingCadence(plan) ?? 'monthly';
 }
 
 function listedPriceForPlan(

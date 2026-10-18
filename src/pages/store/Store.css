@@ -314,6 +314,8 @@
 }
 .vayd-store__card-media {
   position: relative;
+  min-height: 180px;
+  background: #eef6f2;
 }
 .vayd-store__card img {
   width: 100%;

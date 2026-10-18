@@ -85,6 +85,8 @@ import {
 } from '../../utils/staffUiPrefs';
 import {
   accountBalanceFromClient,
+  evetAccountCreditFromClient,
+  evetCreditActivityFromClient,
   formatUsd,
   normalizeInvoicesFromClient,
   type NormalizedInvoice,
@@ -1558,6 +1560,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const record = payload;
   const name = displayName(record);
   const evetBalance = accountBalanceFromClient(record);
+  const evetAccountCredit = evetAccountCreditFromClient(record);
+  const evetCreditActivity = evetCreditActivityFromClient(record);
   const scoutState = scoutManagedState(record, 'client');
   const isActive = record.isActive === true;
   const alerts = pickStr(record.alerts);
@@ -2443,6 +2447,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           clientId={Number(clientId)}
           clientName={name}
           evetBalance={evetBalance}
+          evetAccountCredit={evetAccountCredit}
+          evetCreditActivity={evetCreditActivity}
           evetInvoices={invoices}
           pets={financialPets}
           cashierEmployeeId={employeeId != null ? Number(employeeId) : null}

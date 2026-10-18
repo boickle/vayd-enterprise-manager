@@ -15,6 +15,7 @@ export function formatAutoshipFrequency(frequency: string | null | undefined): s
   if (frequency === 'every_6_months') return 'Every 6 months';
   if (frequency === 'yearly') return 'Yearly';
   if (frequency === 'weekly') return 'Weekly';
+  if (frequency === 'every_2_weeks') return 'Every 2 weeks';
   const custom = /^every_(\d+)_(days|weeks|months)$/i.exec(frequency);
   if (custom) {
     const n = Number(custom[1]);
@@ -34,6 +35,7 @@ export function autoshipCadencePhrase(frequency: string | null | undefined): str
   if (frequency === 'every_6_months') return 'every 6 months';
   if (frequency === 'yearly') return 'every year';
   if (frequency === 'weekly') return 'every week';
+  if (frequency === 'every_2_weeks') return 'every 2 weeks';
   const label = formatAutoshipFrequency(frequency).toLowerCase();
   if (label.startsWith('every ')) return label;
   return label;
@@ -57,6 +59,7 @@ export function addAutoshipFrequency(from: Date, frequency: string): Date {
   else if (frequency === 'every_6_months') d.setMonth(d.getMonth() + 6);
   else if (frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
   else if (frequency === 'weekly') d.setDate(d.getDate() + 7);
+  else if (frequency === 'every_2_weeks') d.setDate(d.getDate() + 14);
   else d.setMonth(d.getMonth() + 1);
   return d;
 }

@@ -126,6 +126,49 @@
   color: #14532d;
 }
 
+.inv-refill__actions {
+  gap: 8px;
+}
+
+.inv-refill__form {
+  display: grid;
+  gap: 10px;
+}
+
+.inv-refill__form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.inv-refill__form select,
+.inv-refill__form textarea {
+  font: inherit;
+  font-weight: 400;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.inv-refill__credit {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.inv-refill__credit.is-given {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.inv-refill__credit-none {
+  font-size: 12px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
 .inv-refill__locked {
   color: #6b7280;
   font-size: 12px;

@@ -238,6 +238,147 @@
   width: 100%;
 }
 
+.portal-preview {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.portal-preview__heading {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.portal-preview__note {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.portal-preview__recommend {
+  max-width: 360px;
+  margin: 10px 0 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-left: 4px solid #4fb128;
+  background: #e6f7f5;
+}
+
+.portal-preview__recommend strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.portal-preview__recommend p {
+  margin: 0;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+.portal-preview__card {
+  width: min(100%, 360px);
+  margin-top: 12px;
+  padding: 24px 24px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.portal-preview__head {
+  text-align: center;
+  border-radius: 14px;
+  padding: 14px;
+  background: linear-gradient(180deg, #1f2937 0%, #0f172a 100%);
+  color: #fff;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.portal-preview__head h3 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.3px;
+}
+
+.portal-preview__tag {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.portal-preview__price {
+  margin-top: 16px;
+  padding: 16px;
+  text-align: center;
+  border-radius: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: #fff7ed;
+}
+
+.portal-preview__price-main {
+  font-size: 28px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.portal-preview__price-main span {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.portal-preview__price-note {
+  margin-top: 4px;
+  font-size: 13px;
+  color: rgba(17, 24, 39, 0.7);
+}
+
+.portal-preview__includes {
+  margin-top: 16px;
+}
+
+.portal-preview__includes strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.portal-preview__includes ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+.portal-preview__includes li {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.portal-preview__fallback {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.portal-preview__cart {
+  align-self: flex-end;
+  margin-top: 16px;
+  margin-left: auto;
+  width: fit-content;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #4fb128;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+}
+
 .memberships-restrictions {
   margin-top: 16px;
 }

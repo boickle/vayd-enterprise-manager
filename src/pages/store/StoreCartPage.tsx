@@ -9,6 +9,7 @@ import {
   publicStoreFulfillment,
   publicStoreProducts,
   publicStoreTax,
+  storeMasterImageUrl,
   storeProductImageUrl,
   type StoreFulfillmentOption,
   type StoreReminderCadence,
@@ -509,7 +510,12 @@ export default function StoreCartPage() {
           </thead>
           <tbody>
             {lines.map((line, i) => {
-              const image = storeProductImageUrl(PRACTICE_ID, line.inventoryItemId);
+              const image =
+                line.hasImage === false
+                  ? null
+                  : line.storeProductId
+                    ? storeMasterImageUrl(PRACTICE_ID, line.storeProductId)
+                    : storeProductImageUrl(PRACTICE_ID, line.inventoryItemId);
               const rx = lineNeedsApproval(line);
               const needsPet = lineNeedsPet(line) || hasMemberPricing;
               const extras = extrasByIndex[i] ?? [];
@@ -535,7 +541,7 @@ export default function StoreCartPage() {
                 >
                   <td>
                     <div className="vayd-store__cart-item">
-                      {line.hasImage !== false ? (
+                      {image ? (
                         <img src={image} alt="" />
                       ) : (
                         <div className="vayd-store__cart-ph" aria-hidden />
@@ -607,7 +613,7 @@ export default function StoreCartPage() {
                                     });
                                   }}
                                 >
-                                  Build your own
+                                  Custom
                                 </button>
                                 {recommended &&
                                 !AUTOSHIP_FREQS.some((row) => row.value === recommended) ? (

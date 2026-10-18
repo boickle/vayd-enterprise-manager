@@ -34,6 +34,23 @@ export const UNLIMITED_ALLOWANCE = -1;
 
 export type MembershipBillingInterval = 'monthly' | 'annual';
 
+/** The plan's chosen billing, else the one price it has, else "Monthly"/"Annual" in its name. */
+export function planBillingCadence(plan: {
+  name?: string | null;
+  billingCadence?: MembershipBillingInterval | null;
+  priceMonthly?: number | null;
+  priceAnnual?: number | null;
+}): MembershipBillingInterval | null {
+  if (plan.billingCadence === 'monthly' || plan.billingCadence === 'annual') {
+    return plan.billingCadence;
+  }
+  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
+  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
+  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
+  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
+  return null;
+}
+
 /* ------------------------------------------------------------------- types */
 
 export type BundleItem = {
@@ -96,6 +113,8 @@ export type Bundle = {
   price: number | null;
   priceMonthly: number | null;
   priceAnnual: number | null;
+  /** Which price a membership plan bills on. Null on bundles. */
+  billingCadence?: MembershipBillingInterval | null;
   outOfPlanDiscount: number | null;
   onlineStoreDiscount: number | null;
   renewalMonths: number | null;
@@ -155,6 +174,7 @@ export type BundleFields = {
   price?: number | null;
   priceMonthly?: number | null;
   priceAnnual?: number | null;
+  billingCadence?: MembershipBillingInterval | null;
   outOfPlanDiscount?: number | null;
   onlineStoreDiscount?: number | null;
   renewalMonths?: number | null;

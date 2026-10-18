@@ -13,6 +13,8 @@ export type LabCatalogItem = {
   id: number;
   name: string;
   code: string | null;
+  /** Missing on older template payloads; those rows are labs. */
+  catalogItemType?: 'lab' | 'procedure';
 };
 
 export type LabFormTemplate = {
@@ -23,6 +25,7 @@ export type LabFormTemplate = {
   mode: LabFormMode;
   elements: LabFormElement[];
   labs?: LabCatalogItem[];
+  procedures?: LabCatalogItem[];
   sortOrder: number;
   isPublished: boolean;
   seedKey: string | null;
@@ -35,6 +38,7 @@ export type UpsertLabFormTemplate = {
   mode?: LabFormMode;
   elements?: LabFormElement[];
   labIds?: number[];
+  procedureIds?: number[];
   sortOrder?: number;
   isPublished?: boolean;
   seedKey?: string | null;
@@ -86,7 +90,7 @@ export async function seedLabFormTemplates(
   return data;
 }
 
-/** Catalog lab items, for assigning which tests open which form. */
+/** Catalog labs and procedures, for assigning which tests open which form. */
 export async function listLabCatalogItems(): Promise<LabCatalogItem[]> {
   const { data } = await http.get<LabCatalogItem[]>('/in-house-labs/catalog-labs', {
     params: { practiceId: pid() },

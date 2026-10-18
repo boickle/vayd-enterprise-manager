@@ -8,6 +8,8 @@ import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
 import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
 import RoomLoaderDeclinesReportPage from './pages/RoomLoaderDeclinesReportPage';
+import ProductionOverridesReportPage from './pages/ProductionOverridesReportPage';
+import CreditsDiscountsReportPage from './pages/CreditsDiscountsReportPage';
 import PlatformPractices from './pages/PlatformPractices';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
@@ -78,6 +80,20 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     label: 'Room Loader declines',
     group: 'Reports',
     element: <RoomLoaderDeclinesReportPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'reports/production-overrides',
+    label: 'Production overrides',
+    group: 'Reports',
+    element: <ProductionOverridesReportPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'reports/credits-discounts',
+    label: 'Credits and discounts',
+    group: 'Reports',
+    element: <CreditsDiscountsReportPage />,
     role: ['admin', 'superadmin'],
   },
   {

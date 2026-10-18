@@ -93,7 +93,12 @@ import {
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
 import VirtualTerminalModal from '../soap/VirtualTerminalModal';
-import { InvoiceRefillsButton, RefillCheckButton, RefillSummary } from './InvoiceRefillPanel';
+import {
+  InvoiceRefillsButton,
+  RefillCheckButton,
+  RefillProductionCredit,
+  RefillSummary,
+} from './InvoiceRefillPanel';
 import DirectionsLimitHint, { directionsMaxLength } from '../soap/DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import {
@@ -117,6 +122,8 @@ import {
   formatUsd,
   invoicePublicLabel,
   normalizeInvoicesFromClient,
+  type EvetAccountCredit,
+  type EvetCreditActivity,
   type NormalizedInvoice,
 } from '../../utils/pimsInvoices';
 import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
@@ -239,6 +246,10 @@ type Props = {
   clientId: number;
   clientName: string;
   evetBalance: number | null;
+  /** Shown as its own ledger row; already counted in `evetBalance`. */
+  evetAccountCredit?: EvetAccountCredit | null;
+  /** eVet receipts not applied to an invoice (credit put on / taken off the account). */
+  evetCreditActivity?: EvetCreditActivity[];
   evetInvoices: NormalizedInvoice[];
   pets: FinancialPet[];
   cashierEmployeeId: number | null;
@@ -559,6 +570,17 @@ function ledgerArStatus(args: {
     return 'paid';
   }
   return status;
+}
+
+/** eVet records account credit spent on an invoice as a negative `creditUsed` on its payment rows. */
+function evetCreditUsedNote(inv: NormalizedInvoice): string | null {
+  const rows = Array.isArray(inv.raw.invoicePayments) ? inv.raw.invoicePayments : [];
+  let used = 0;
+  for (const row of rows as Record<string, unknown>[]) {
+    if (row.isVoided === true) continue;
+    used += -(Number(row.creditUsed) || 0);
+  }
+  return used > 0.005 ? `Includes ${money(used)} account credit` : null;
 }
 
 function voidedPaymentNote(
@@ -1131,6 +1153,8 @@ export default function ClientFinancialWorkspace({
   clientId,
   clientName,
   evetBalance,
+  evetAccountCredit,
+  evetCreditActivity,
   evetInvoices,
   pets,
   cashierEmployeeId,
@@ -1377,6 +1401,7 @@ export default function ClientFinancialWorkspace({
   const canVoidPayment = useCan('payment.void');
   const canRefundPayment = useCan('payment.refund');
   const canChangeProviderAfterClose = useCan('invoice.line.provider.change');
+  const canOverrideRefillProduction = useCan('invoice.refill.production.override');
   const canEditPostedPayment = useCan('payment.posted.edit');
   const canApproveRx = useCan('rx.invoice.approve');
   const [providerChangeLine, setProviderChangeLine] = useState<VisitInvoiceLine | null>(null);
@@ -1939,7 +1964,7 @@ export default function ClientFinancialWorkspace({
   const labLoadKey =
     selected && !isUnsavedInvoice(selected)
       ? `${selected.id}:${activeLines(selected)
-          .filter((l) => l.catalogItemType === 'lab')
+          .filter((l) => l.catalogItemType === 'lab' || l.catalogItemType === 'procedure')
           .map((l) => l.id)
           .join(',')}`
       : '';
@@ -2175,22 +2200,73 @@ export default function ClientFinancialWorkspace({
                 .filter(Boolean)
                 .join(' · ')
             : null,
-          paymentNote: voidedPaymentNote(
-            evetPaymentsOnInvoice(inv)
-              .filter((pay) => pay.isVoided)
-              .map((pay) => ({
-                label: pay.method?.trim() || 'payment',
-                amount: pay.amount,
-              })),
-          ),
+          paymentNote: [
+            evetCreditUsedNote(inv),
+            voidedPaymentNote(
+              evetPaymentsOnInvoice(inv)
+                .filter((pay) => pay.isVoided)
+                .map((pay) => ({
+                  label: pay.method?.trim() || 'payment',
+                  amount: pay.amount,
+                })),
+            ),
+          ]
+            .filter(Boolean)
+            .join(' · ') || null,
           total: inv.total,
           paid: inv.paid,
           due: deleted ? 0 : inv.due,
           evet: inv,
         };
       });
-    return [...scoutRows, ...evetRows].sort((a, b) => b.sortAt - a.sortAt);
-  }, [scoutInvoices, evetLedgerInvoices, visits, allPets, staffById]);
+    const creditRows: LedgerRow[] = evetAccountCredit
+      ? [
+          {
+            key: 'evet:account-credit',
+            source: 'evet',
+            label: 'eVet account credit',
+            date: evetAccountCredit.asOf ? `as of ${formatTs(evetAccountCredit.asOf)}` : '—',
+            sortAt: ledgerTime(evetAccountCredit.asOf),
+            status: 'open',
+            actorNote: 'Unused credit on the eVet account',
+            total: -evetAccountCredit.amount,
+            paid: 0,
+            due: -evetAccountCredit.amount,
+          },
+        ]
+      : [];
+    const activityRows: LedgerRow[] = (evetCreditActivity ?? []).map((a) => ({
+      key: `evet:credit-activity:${a.id}`,
+      source: 'evet',
+      label: a.amount > 0 ? 'Credit added to account' : 'Credit removed from account',
+      date: a.at ? formatTs(a.at) : '—',
+      sortAt: ledgerTime(a.at),
+      status: a.isVoided ? 'void' : 'credit',
+      actorNote: [
+        a.paymentTypeName,
+        a.cashierName,
+        a.receiptNumber != null ? `receipt ${a.receiptNumber}` : null,
+        a.notes,
+        a.isVoided ? ['Voided', a.voidedComments].filter(Boolean).join(': ') : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      total: -a.amount,
+      paid: 0,
+      due: 0,
+    }));
+    return [...scoutRows, ...evetRows, ...creditRows, ...activityRows].sort(
+      (a, b) => b.sortAt - a.sortAt,
+    );
+  }, [
+    scoutInvoices,
+    evetLedgerInvoices,
+    evetAccountCredit,
+    evetCreditActivity,
+    visits,
+    allPets,
+    staffById,
+  ]);
 
   const visibleLedger = ledger.filter((row) => {
     const status = row.status.toLowerCase();
@@ -2995,8 +3071,16 @@ export default function ClientFinancialWorkspace({
       setError('Enter a credit amount of at least $0.01.');
       return;
     }
-    const description =
-      window.prompt('Description (optional):', 'Account credit')?.trim() || 'Account credit';
+    const description = (
+      await appPrompt({
+        title: 'Account credit',
+        message: 'Why is this credit being given? This is saved with your name.',
+        confirmLabel: 'Add credit',
+        requireReason: true,
+        placeholder: 'Professional courtesy, refund of a fee, …',
+      })
+    )?.trim();
+    if (!description) return;
     setBusy(true);
     setError(null);
     try {
@@ -5121,8 +5205,7 @@ export default function ClientFinancialWorkspace({
                           !showRxMeta &&
                           !linkedStock.linked;
                         /** An in-house lab with a form: results are entered on the line. */
-                        const lineLabResults =
-                          line.catalogItemType === 'lab' ? labResultsByLineId[line.id] ?? null : null;
+                        const lineLabResults = labResultsByLineId[line.id] ?? null;
                         const showLabMeta =
                           Boolean(lineLabResults?.length) && !showVaxMeta && !showRxMeta && !showLotOnly;
                         const labState = labResultsState(lineLabResults);
@@ -5499,7 +5582,25 @@ export default function ClientFinancialWorkspace({
                             {isPrescriptionLine(line) && !showMeta ? rxPrintButton : null}
                           </td>
                           <td className={`client-fin__col-provider${rxMissing('provider') ? ' is-missing' : ''}`}>
-                            {noProviderLine ? (
+                            {line.refillOfPrescriptionId != null && selected ? (
+                              <RefillProductionCredit
+                                invoiceId={selected.id}
+                                line={line}
+                                providers={providerOptions.map((emp) => ({
+                                  id: Number(emp.id),
+                                  label: providerChoiceLabel(emp),
+                                }))}
+                                canOverride={canOverrideRefillProduction}
+                                disabled={busy || selected.status === 'void' || returning}
+                                className="client-fin__btn-ghost"
+                                onChanged={(next) => {
+                                  setError(null);
+                                  setSelected(next);
+                                  void refreshList(next.id);
+                                }}
+                                onError={setError}
+                              />
+                            ) : noProviderLine ? (
                               '—'
                             ) : canEdit ? (
                               <select

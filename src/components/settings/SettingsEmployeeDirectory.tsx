@@ -131,7 +131,6 @@ export type EmployeeHubSection =
   | 'types'
   | 'zones'
   | 'goals'
-  | 'photo'
   | 'access';
 
 const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
@@ -139,7 +138,6 @@ const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
   { id: 'schedule', label: 'Schedule' },
   { id: 'types', label: 'Appointment types' },
   { id: 'goals', label: 'Goals' },
-  { id: 'photo', label: 'Photo & signature' },
   { id: 'access', label: 'Access' },
 ];
 
@@ -149,6 +147,8 @@ type Props = {
   onSectionChange?: (section: EmployeeHubSection) => void;
   selectedEmployeeId?: number | null;
   onSelectedEmployeeIdChange?: (id: number | null) => void;
+  /** Staff photo controls, rendered on the Profile tab. */
+  profilePhoto?: ReactNode;
   extra?: ReactNode;
 };
 
@@ -158,6 +158,7 @@ export default function SettingsEmployeeDirectory({
   onSectionChange,
   selectedEmployeeId,
   onSelectedEmployeeIdChange,
+  profilePhoto,
   extra,
 }: Props) {
   const [rows, setRows] = useState<Employee[]>([]);
@@ -820,7 +821,7 @@ export default function SettingsEmployeeDirectory({
     <div className="settings-employee-directory">
       <p className="settings-section-description" style={{ marginTop: 0 }}>
         Choose a person, then use the tabs for profile, schedule (hours, offices, and zones),
-        appointment types, goals, photo, and signature.
+        appointment types, and goals.
       </p>
 
       <div className="settings-employee-hub">
@@ -1031,11 +1032,22 @@ export default function SettingsEmployeeDirectory({
                     )}
                   </fieldset>
 
+                  {profilePhoto ? (
+                    <fieldset className="settings-employee-modal__fieldset">
+                      <legend className="settings-employee-modal__legend">Photo</legend>
+                      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                        Shown in the post-appointment survey and elsewhere. JPEG, PNG, GIF, or WebP.
+                        Max 5MB.
+                      </p>
+                      {profilePhoto}
+                    </fieldset>
+                  ) : null}
+
                   <fieldset className="settings-employee-modal__fieldset">
                     <legend className="settings-employee-modal__legend">Signature</legend>
                     <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
                       Printed on written prescriptions and certificates when this person is the
-                      signer. You can also add it on the Photo &amp; signature tab.
+                      signer.
                     </p>
                     {signatureEditor}
                   </fieldset>
@@ -1093,16 +1105,6 @@ export default function SettingsEmployeeDirectory({
               ) : (
                 <>
                   {extra}
-                  {section === 'photo' && editingId != null ? (
-                    <div className="settings-card" style={{ marginTop: 16 }}>
-                      <h3 className="settings-card-title">Signature</h3>
-                      <p className="settings-card-subtitle">
-                        Drawn or uploaded signatures print on written prescriptions and
-                        certificates when this person is the signer.
-                      </p>
-                      {signatureEditor}
-                    </div>
-                  ) : null}
                   {section === 'access' && editingId != null ? (
                     <SettingsEmployeeAccess
                       employeeId={editingId}
@@ -1291,7 +1293,7 @@ export default function SettingsEmployeeDirectory({
                       ) : (
                         <span className="settings-muted">
                           PNG or JPEG printed on written prescriptions and certificates. After
-                          they are added, you can also edit this on their Profile or Photo tab.
+                          they are added, you can also edit this on their Profile.
                         </span>
                       )}
                     </label>

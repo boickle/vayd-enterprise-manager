@@ -219,7 +219,7 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
                           placeholder={req.placeholder}
                           onChange={(e) => setPromptValue(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
+                            if (e.key === 'Enter' && reasonOk) {
                               e.preventDefault();
                               finish(promptValue);
                             }
@@ -242,7 +242,11 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
                         className={`app-dialog__btn${
                           req.danger ? ' app-dialog__btn--danger' : ' app-dialog__btn--primary'
                         }`}
-                        onClick={() => finish(req.kind === 'prompt' ? promptValue : true)}
+                        disabled={req.kind === 'prompt' && !reasonOk}
+                        onClick={() => {
+                          if (req.kind === 'prompt' && !promptValue.trim()) return;
+                          finish(req.kind === 'prompt' ? promptValue : true);
+                        }}
                       >
                         {req.confirmLabel ??
                           (req.kind === 'alert' ? 'OK' : req.danger ? 'Continue' : 'OK')}

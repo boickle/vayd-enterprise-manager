@@ -78,7 +78,7 @@ export default function SettingsPracticeLetterhead() {
       <h2 className="settings-section-title">Practice</h2>
       <p className="settings-section-description">
         Name, phone, address, and logo printed on written prescriptions, certificates, and
-        Rx labels. Provider signatures live on Staff → Staff, on Profile and Photo.
+        Rx labels. Provider signatures live on Staff → Staff, on Profile.
       </p>
       <div className="settings-card">
         {error ? <p className="settings-message settings-error-message">{error}</p> : null}

@@ -40,6 +40,7 @@ import { prefetchClientRecap } from '../api/visitWrapUp';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
+import { patientMembershipFromRecord } from '../utils/routingPatientHoverData';
 import { useAuth } from '../auth/useAuth';
 import { pushRecentRecord } from '../utils/recentRecordsStore';
 import {
@@ -545,6 +546,41 @@ export default function SoapEncounterPage() {
       }),
     [roster]
   );
+
+  const currentMembership = useMemo(
+    () => patientMembershipFromRecord(patientProfile),
+    [patientProfile]
+  );
+  /** Housemates' membership, for the hearts on the pet tabs. Same source as the client screen. */
+  const [rosterMembership, setRosterMembership] = useState<
+    Record<number, { isMember: boolean; membershipName: string | null }>
+  >({});
+  const rosterIdsKey = roster.map((r) => r.patientId).join(',');
+  useEffect(() => {
+    const ids = rosterIdsKey ? rosterIdsKey.split(',').map(Number) : [];
+    if (ids.length < 2) {
+      setRosterMembership({});
+      return;
+    }
+    let canceled = false;
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          const profile = await fetchPatientProfileForRow({ id: String(id) });
+          return [id, patientMembershipFromRecord(profile)] as const;
+        } catch {
+          return [id, { isMember: false, membershipName: null }] as const;
+        }
+      })
+    ).then((rows) => {
+      if (!canceled) setRosterMembership(Object.fromEntries(rows));
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [rosterIdsKey]);
+  const membershipFor = (id: number) =>
+    id === patientId ? currentMembership : rosterMembership[id];
 
   const refreshInvoice = useCallback(async () => {
     try {
@@ -1704,6 +1740,15 @@ export default function SoapEncounterPage() {
               >
                 {patientName || `Patient #${patientId}`}
               </Link>
+              {currentMembership.isMember ? (
+                <span
+                  className="soap-header-member"
+                  title={currentMembership.membershipName?.trim() || 'On a membership'}
+                >
+                  <span aria-hidden>❤️</span>
+                  {currentMembership.membershipName?.trim() || 'Member'}
+                </span>
+              ) : null}
               {clientName.trim() ? (
                 <>
                   <span className="soap-header-client-sep" aria-hidden>
@@ -1843,6 +1888,15 @@ export default function SoapEncounterPage() {
               onClick={() => switchToPet(r)}
             >
               <PawPrint size={13} /> {r.patientName}
+              {membershipFor(r.patientId)?.isMember ? (
+                <span
+                  className="soap-pet-tab-heart"
+                  title={membershipFor(r.patientId)?.membershipName?.trim() || 'On a membership'}
+                  aria-label={membershipFor(r.patientId)?.membershipName?.trim() || 'Member'}
+                >
+                  ❤️
+                </span>
+              ) : null}
             </button>
           ))}
         </div>

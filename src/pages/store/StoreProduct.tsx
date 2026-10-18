@@ -386,7 +386,7 @@ export default function StoreProduct() {
                 className={`vayd-store__chip${customOn ? ' is-on' : ''}`}
                 onClick={() => setCustomOn(true)}
               >
-                Build your own
+                Custom
               </button>
             </div>
             {customOn ? (

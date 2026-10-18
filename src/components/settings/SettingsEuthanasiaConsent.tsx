@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { getPracticeSettings, updatePracticeSettings } from '../../api/practiceSettings';
-import { listOnlineStoreListings, type StoreAdminListing } from '../../api/onlineStore';
+import {
+  listOnlineStoreListings,
+  listStoreCategories,
+  type StoreAdminListing,
+} from '../../api/onlineStore';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import {
   ASH_RETURN_LABEL_FIELDS,
@@ -35,6 +39,29 @@ import {
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const PRACTICE_ID = currentPracticeId();
+const MEMORIAL_STORE_CATEGORY = 'Memorial Items';
+
+function memorialSubcategoryNames(
+  listings: StoreAdminListing[],
+  categoryNames: string[],
+): string[] {
+  const names = new Set<string>();
+  const add = (raw: string | null | undefined) => {
+    const cat = String(raw || '').trim();
+    const parent = MEMORIAL_STORE_CATEGORY;
+    let child = '';
+    if (cat.toLowerCase().startsWith(`${parent.toLowerCase()} / `)) {
+      child = cat.slice(parent.length + 3);
+    } else if (cat.toLowerCase().startsWith(`${parent.toLowerCase()}/`)) {
+      child = cat.slice(parent.length + 1).trim();
+    }
+    const chip = child.split(' / ')[0]?.trim();
+    if (chip) names.add(chip);
+  };
+  for (const listing of listings) add(listing.storeCategory);
+  for (const name of categoryNames) add(name);
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
 
 function employeeName(emp: Employee): string {
   return [emp.firstName, emp.lastName].filter(Boolean).join(' ').trim() || `Employee #${emp.id}`;
@@ -267,11 +294,31 @@ export default function SettingsEuthanasiaConsent() {
   const [memorialDefaultSubcategory, setMemorialDefaultSubcategory] = useState(
     DEFAULT_MEMORIAL_SUBCATEGORY,
   );
+  const [memorialSubcategories, setMemorialSubcategories] = useState<string[]>([]);
   const [providers, setProviders] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      listOnlineStoreListings(PRACTICE_ID).catch(() => [] as StoreAdminListing[]),
+      listStoreCategories(PRACTICE_ID).catch(() => []),
+    ]).then(([listings, categories]) => {
+      if (cancelled) return;
+      setMemorialSubcategories(
+        memorialSubcategoryNames(
+          listings,
+          categories.map((row) => row.name),
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -470,23 +517,32 @@ export default function SettingsEuthanasiaConsent() {
       <h4 style={{ margin: '20px 0 8px' }}>Memorial store default</h4>
       <p className="settings-muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
         When a client opens memorial items on the consent form, this subcategory is selected
-        first. Use the exact chip name from the store, for example Paw &amp; Nose Prints. Type
-        All to start with every memorial item. Leave blank to keep the Paw &amp; Nose Prints
-        default.
+        first. The list is the Memorial Items categories from the store.
       </p>
       <label style={{ display: 'block', marginBottom: 16 }}>
         <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
           Default subcategory
         </span>
-        <input
+        <select
           className="input"
           value={memorialDefaultSubcategory}
           onChange={(e) => {
             setMemorialDefaultSubcategory(e.target.value);
             setSaved(false);
           }}
-          placeholder={DEFAULT_MEMORIAL_SUBCATEGORY}
-        />
+        >
+          <option value="All">All memorial items</option>
+          {memorialSubcategories.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+          {memorialDefaultSubcategory &&
+          memorialDefaultSubcategory !== 'All' &&
+          !memorialSubcategories.includes(memorialDefaultSubcategory) ? (
+            <option value={memorialDefaultSubcategory}>{memorialDefaultSubcategory}</option>
+          ) : null}
+        </select>
       </label>
 
       <h4 style={{ margin: '20px 0 8px' }}>Ash return wording</h4>

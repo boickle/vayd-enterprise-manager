@@ -21,6 +21,7 @@ import {
   listBundles,
   listPlanMembers,
   listRenewalGaps,
+  planBillingCadence,
   updateBundle,
   type Bundle,
   type BundleFields,
@@ -53,6 +54,8 @@ import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import { askMembershipApplyReview } from './MembershipApplyReviewDialog';
 import { useCan } from '../../permissions/PermissionContext';
+import { membershipPlanFamily } from '../../utils/membershipAge';
+import { rangeFromPercent, savingsBullets } from '../../api/membershipSavings';
 import './SettingsMemberships.css';
 
 /** Matches how the memberships client resolves it, so search and writes agree. */
@@ -134,6 +137,7 @@ type PlanDraft = {
   renewalSuccessorPackageId: string;
   ageLimitSuccessorPackageId: string;
   price: string;
+  billingCadence: 'monthly' | 'annual';
   outOfPlanDiscount: string;
   onlineStoreDiscount: string;
   renewalMonths: string;
@@ -210,17 +214,7 @@ function yearsToMonths(years: string): number | null {
   return Math.round(parsed * 12);
 }
 
-function planCadence(plan: {
-  name?: string;
-  priceMonthly?: number | null;
-  priceAnnual?: number | null;
-}): 'monthly' | 'annual' | null {
-  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
-  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
-  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
-  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
-  return null;
-}
+const planCadence = planBillingCadence;
 
 function planCadenceLabel(plan: Bundle): string {
   const cadence = planCadence(plan);
@@ -374,6 +368,7 @@ function emptyPlanDraft(): PlanDraft {
     renewalSuccessorPackageId: '',
     ageLimitSuccessorPackageId: '',
     price: '',
+    billingCadence: 'monthly',
     outOfPlanDiscount: '',
     onlineStoreDiscount: '',
     renewalMonths: '12',
@@ -398,6 +393,7 @@ function planDraftFrom(bundle: Bundle): PlanDraft {
     renewalSuccessorPackageId: numText(bundle.renewalSuccessorPackageId),
     ageLimitSuccessorPackageId: numText(bundle.ageLimitSuccessorPackageId),
     price: numText(listedAmount(bundle)),
+    billingCadence: planCadence(bundle) ?? 'monthly',
     outOfPlanDiscount: numText(bundle.outOfPlanDiscount),
     onlineStoreDiscount: numText(bundle.onlineStoreDiscount),
     renewalMonths: numText(bundle.renewalMonths) || '12',
@@ -496,7 +492,7 @@ function groupDraftsFrom(bundle: Bundle): GroupDraft[] {
 }
 
 function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
-  const cadence = planCadence(draft);
+  const cadence = draft.billingCadence;
   const amount = numOrNull(draft.price);
   return {
     name: draft.name.trim(),
@@ -517,6 +513,7 @@ function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
     ageLimitSuccessorPackageId: idOrNull(draft.ageLimitSuccessorPackageId),
     priceMonthly: cadence === 'monthly' ? amount : null,
     priceAnnual: cadence === 'annual' ? amount : null,
+    billingCadence: cadence,
     outOfPlanDiscount: numOrNull(draft.outOfPlanDiscount),
     onlineStoreDiscount: numOrNull(draft.onlineStoreDiscount),
     renewalMonths: numOrNull(draft.termMonths) ?? 12,
@@ -1101,6 +1098,170 @@ function CatalogItemPicker({
   );
 }
 
+const PORTAL_SHARED_INCLUDES = [
+  'A dedicated "One-Team" that gets to know your pet over time',
+  'Priority scheduling with your One-Team',
+  '7-day support from VAYD staff',
+];
+
+const PORTAL_FOUNDATIONS_INCLUDES = [
+  'One comprehensive wellness exam & trip fee',
+  'Annual vaccinations recommended for age and lifestyle',
+  'Annual "basic" lab panel (CBC, abbreviated chemistry)',
+  'Annual fecal test',
+  'Heartworm/Tick test (dogs)',
+  'FIV/FeLV/heartworm test (cats)',
+  ...PORTAL_SHARED_INCLUDES,
+];
+
+const PORTAL_GOLDEN_INCLUDES = [
+  'Two comprehensive wellness exams & trip fees',
+  'Annual vaccinations recommended for age and lifestyle',
+  'Annual "advanced" lab panel (CBC, chemistry, thyroid, urinalysis)',
+  'Annual fecal test',
+  'FeLV/FIV/heartworm test (cats)',
+  'Pancreatitis screening (cats)',
+  '"4dx" Heartworm/Tick test (dogs)',
+  ...PORTAL_SHARED_INCLUDES,
+];
+
+/** Same first-word capital the signup card applies to each include line. */
+function formatSignupLine(text: string): string {
+  const specialTerms = ['Client Portal', 'One-Team', 'VAYD', 'CBC', 'FeLV', 'FIV'];
+  const placeholders = new Map<string, string>();
+  let protectedText = text;
+  specialTerms.forEach((term, index) => {
+    const token = `__KEEP_${index}__`;
+    placeholders.set(token, term);
+    protectedText = protectedText.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), token);
+  });
+  let first = true;
+  return protectedText
+    .split(/(\s+)/)
+    .map((word) => {
+      if (/^\s+$/.test(word)) return word;
+      let next = word;
+      for (const [token, term] of placeholders) {
+        if (next.includes(token)) next = next.split(token).join(term);
+      }
+      if (next !== word) {
+        first = false;
+        return next;
+      }
+      if (first) {
+        first = false;
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word.toLowerCase();
+    })
+    .join('');
+}
+
+function examPercentOff(groups: GroupDraft[]): number | null {
+  let best = 0;
+  for (const group of groups) {
+    for (const item of group.items) {
+      if (item.coverage !== 'percent_off' || !/\bexam/i.test(item.name)) continue;
+      const pct = numOrNull(item.percentOff);
+      if (pct != null && pct > best) best = pct;
+    }
+  }
+  return best > 0 ? best : null;
+}
+
+function storePercentOff(draft: PlanDraft): number | null {
+  const direct = numOrNull(draft.onlineStoreDiscount);
+  if (direct != null && direct > 0) return Math.min(100, direct);
+  const fallback = numOrNull(draft.outOfPlanDiscount);
+  if (fallback != null && fallback > 0) return Math.min(100, fallback);
+  return null;
+}
+
+function portalPriceFigure(amount: number): string {
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+}
+
+/** Live copy of the membership signup card, from the fields on screen. */
+function PortalPlanPreview({ draft, groups }: { draft: PlanDraft; groups: GroupDraft[] }) {
+  const starter = /puppy|kitten|\bstarter\b/i.test(draft.name);
+  const family = membershipPlanFamily(draft.name);
+  const onSignup = family != null;
+  const title = starter && onSignup ? 'Puppy / Kitten Add-on' : family === 'golden' ? 'Golden' : family === 'foundations' ? 'Foundations' : draft.name.trim() || 'Plan name';
+  const defaults = family === 'golden' ? PORTAL_GOLDEN_INCLUDES : family === 'foundations' ? PORTAL_FOUNDATIONS_INCLUDES : [];
+  const written = draft.cardBullets
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const usingDefaults = written.length === 0 && defaults.length > 0 && !starter;
+  const includes = [
+    ...(written.length > 0 ? written : usingDefaults ? defaults : []),
+    ...savingsBullets(rangeFromPercent(examPercentOff(groups)), rangeFromPercent(storePercentOff(draft))),
+  ];
+  const amount = numOrNull(draft.price);
+  const cadence = draft.billingCadence;
+  const species =
+    draft.species === 'dog' ? 'Dogs' : draft.species === 'cat' ? 'Cats' : '';
+  const note = !onSignup
+    ? 'This plan is not on the public signup page. Staff can still enroll a pet in it.'
+    : starter
+      ? 'Clients see this on the Puppy / Kitten add-on. Lines already on the Foundations or Golden card are left off there.'
+      : `Clients see this as the ${title} card. Dog and cat prices share that one card.`;
+
+  return (
+    <div className="portal-preview">
+      <h3 className="portal-preview__heading">Portal preview</h3>
+      <p className="settings-muted portal-preview__note">{note}</p>
+      {!draft.isActive ? (
+        <p className="settings-muted portal-preview__note">
+          Available to enroll is off, so this card is hidden until you turn it back on.
+        </p>
+      ) : null}
+      {draft.marketingSummary.trim() && onSignup && !starter ? (
+        <div className="portal-preview__recommend">
+          <strong>We recommend the {title} Membership Plan for your pet.</strong>
+          <p>{draft.marketingSummary.trim()}</p>
+        </div>
+      ) : null}
+      <article className="portal-preview__card">
+        <div className="portal-preview__head">
+          <h3>{title}</h3>
+          <div className="portal-preview__tag">
+            {draft.cardTagLine.trim() || 'Annual Membership Plan'}
+          </div>
+        </div>
+        <div className="portal-preview__price">
+          <div className="portal-preview__price-main">
+            {amount == null ? '—' : portalPriceFigure(amount)}
+            <span>{cadence === 'annual' ? '/year' : '/month'}</span>
+          </div>
+          {species ? <div className="portal-preview__price-note">{species}</div> : null}
+        </div>
+        <div className="portal-preview__includes">
+          <strong>Includes:</strong>
+          {includes.length === 0 ? (
+            <p className="settings-muted">No include lines yet.</p>
+          ) : (
+            <ul>
+              {includes.map((line, index) => (
+                <li key={`${line}-${index}`}>
+                  <span aria-hidden>⭐</span>
+                  <span>{formatSignupLine(line)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {usingDefaults ? (
+            <p className="settings-muted portal-preview__fallback">
+              These are the built-in lines. Add signup card bullets to replace them.
+            </p>
+          ) : null}
+        </div>
+        <div className="portal-preview__cart">Add to Cart</div>
+      </article>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ screen */
 
 type Props = {
@@ -1371,6 +1532,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setExpandedBenefitKeys(new Set());
     setExpandAllBenefits(false);
   }
+
+  const cadenceLocked = Boolean(
+    detail && detail.activeMemberCount > 0 && planCadence(detail) != null,
+  );
 
   function setField<K extends keyof PlanDraft>(key: K, value: PlanDraft[K]) {
     setPlanDraft((cur) => ({ ...cur, [key]: value }));
@@ -2414,19 +2579,27 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     />
                   </label>
                   <label className="settings-label">
-                    Code
-                    <input
+                    Billed
+                    <select
                       className="settings-input"
-                      value={planDraft.code}
-                      onChange={(e) => setField('code', e.target.value)}
-                    />
+                      value={planDraft.billingCadence}
+                      disabled={cadenceLocked}
+                      onChange={(e) =>
+                        setField('billingCadence', e.target.value === 'annual' ? 'annual' : 'monthly')
+                      }
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="annual">Annually</option>
+                    </select>
+                    {cadenceLocked ? (
+                      <span className="memberships-field__hint">
+                        Members are billed this way now, so it can't change. Make a new plan
+                        instead and set this one to renew onto it.
+                      </span>
+                    ) : null}
                   </label>
                   <label className="settings-label">
-                    {planCadence(planDraft) === 'annual'
-                      ? 'Annual price'
-                      : planCadence(planDraft) === 'monthly'
-                        ? 'Monthly price'
-                        : 'Price'}
+                    {planDraft.billingCadence === 'annual' ? 'Annual price' : 'Monthly price'}
                     <input
                       className="settings-input"
                       type="number"
@@ -2459,7 +2632,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                         step={0.01}
                         value={planDraft.onlineStoreDiscount}
                         onChange={(e) => setField('onlineStoreDiscount', e.target.value)}
-                        placeholder="10"
                       />
                     </label>
                   ) : null}
@@ -2519,15 +2691,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       One per line. The exam and online store discount lines are added from the discounts on this plan.
                     </span>
                   </label>
-                  <label className="settings-label">
-                    Portal slug
-                    <input
-                      className="settings-input"
-                      value={planDraft.portalSlug}
-                      placeholder="foundations"
-                      onChange={(e) => setField('portalSlug', e.target.value)}
-                    />
-                  </label>
                 </div>
 
                 <div className="memberships-flags">
@@ -2537,9 +2700,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       checked={planDraft.isActive}
                       onChange={(e) => setField('isActive', e.target.checked)}
                     />
-                    Available to enrol
+                    Available to enroll
                   </label>
                 </div>
+                <PortalPlanPreview draft={planDraft} groups={groups} />
               </div>
 
               <div className="settings-card memberships-restrictions">
@@ -2662,15 +2826,24 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </select>
                   </label>
                 </div>
-                {planDraft.renewalSuccessorPackageId.trim() ? (
-                  <p className="settings-muted memberships-restrictions__hint">
-                    At each renewal, members still within the age window move to{' '}
-                    {renewalSuccessorOptions.find(
-                      (plan) => String(plan.id) === planDraft.renewalSuccessorPackageId,
-                    )?.name ?? detail?.renewalSuccessorPackageName ?? 'the selected plan'}
-                    .
-                  </p>
-                ) : null}
+                {planDraft.renewalSuccessorPackageId.trim()
+                  ? (() => {
+                      const next = renewalSuccessorOptions.find(
+                        (plan) => String(plan.id) === planDraft.renewalSuccessorPackageId,
+                      );
+                      const nextCadence = next ? planCadence(next) : null;
+                      return (
+                        <p className="settings-muted memberships-restrictions__hint">
+                          At each renewal, members still within the age window move to{' '}
+                          {next?.name ?? detail?.renewalSuccessorPackageName ?? 'the selected plan'}
+                          .
+                          {nextCadence && nextCadence !== planDraft.billingCadence
+                            ? ` That plan is billed ${nextCadence === 'annual' ? 'annually' : 'monthly'}, so their billing switches to ${nextCadence === 'annual' ? 'annual' : 'monthly'} from the renewal date.`
+                            : ''}
+                        </p>
+                      );
+                    })()
+                  : null}
                 {planDraft.ageLimitSuccessorPackageId.trim()
                   ? (() => {
                       const next = renewalSuccessorOptions.find(

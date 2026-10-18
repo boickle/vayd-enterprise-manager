@@ -13,6 +13,7 @@ import {
   executePostVisitSignup,
   listBundles,
   listPatientMemberships,
+  planBillingCadence,
   previewPostVisitSignup,
   type Bundle,
   type MembershipBillingInterval,
@@ -89,11 +90,7 @@ function money(n: number | null | undefined): string {
 }
 
 function billingIntervalForPlan(plan: Bundle): MembershipBillingInterval {
-  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
-  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
-  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
-  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
-  return 'monthly';
+  return planBillingCadence(plan) ?? 'monthly';
 }
 
 function listedPriceForPlan(plan: Bundle): number | null {

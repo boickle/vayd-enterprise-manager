@@ -6,7 +6,9 @@ import {
   confirmEcwidMaps,
   addOnlineStoreVariant,
   createOnlineStoreProduct,
+  downloadStoreCatalog,
   importEcwidCatalog,
+  importStoreCatalog,
   listEcwidMaps,
   listOnlineStoreItems,
   listOnlineStoreListings,
@@ -33,6 +35,7 @@ import {
 import { uploadInventoryItemImage } from '../api/inventoryTools';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import StoreDescriptionEditor from './store/StoreDescriptionEditor';
+import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
 import './Settings.css';
 import './Catalog.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
@@ -47,12 +50,18 @@ function matchKey(match: Pick<EcwidMapMatch, 'inventoryItemId' | 'catalogItemTyp
   return `${matchType(match)}:${match.inventoryItemId}`;
 }
 
-const AUTOSHIP_FREQS = [
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'every_6_months', label: 'Every 6 months' },
-  { value: 'yearly', label: 'Yearly' },
-];
+function autoshipFrequencyOptions(current: string | null | undefined) {
+  const extra =
+    current && !AUTOSHIP_FREQS.some((freq) => freq.value === current)
+      ? [{ value: current, label: formatAutoshipFrequency(current) }]
+      : [];
+  return [...AUTOSHIP_FREQS, ...extra];
+}
+
+function isMemorialCategory(value: string | null | undefined): boolean {
+  const name = (value || '').trim();
+  return /^memorial items(\s*\/|$)/i.test(name);
+}
 
 function StoreCategorySelect({
   value,
@@ -375,7 +384,7 @@ function AutoshipControls({
           value={frequency || 'monthly'}
           onChange={(e) => onChange(e.target.value)}
         >
-          {AUTOSHIP_FREQS.map((freq) => (
+          {autoshipFrequencyOptions(frequency).map((freq) => (
             <option key={freq.value} value={freq.value}>
               {freq.label}
             </option>
@@ -631,6 +640,7 @@ export default function OnlineStoreImportPage() {
   const [workspaceListing, setWorkspaceListing] = useState<StoreAdminListing | null>(null);
   const [itemQuery, setItemQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [bulkAutoshipFrequency, setBulkAutoshipFrequency] = useState('monthly');
   const [itemPage, setItemPage] = useState(1);
   const [imageTick, setImageTick] = useState(0);
 
@@ -1060,27 +1070,47 @@ export default function OnlineStoreImportPage() {
     }
     return next;
   }, [categoryFilter, categoryFilterLabel, categoryListings, items]);
-  const autoshipOnCount = autoshipTargetItems.filter((item) =>
+  const memorialInventoryIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const listing of listings) {
+      if (!isMemorialCategory(listing.storeCategory)) continue;
+      for (const variant of listing.variants) {
+        if (variant.inventoryItemId) ids.add(variant.inventoryItemId);
+      }
+    }
+    for (const item of items) {
+      if (isMemorialCategory(item.storeCategory)) ids.add(item.inventoryItemId);
+    }
+    return ids;
+  }, [items, listings]);
+  const autoshipScopeItems = useMemo(() => {
+    if (categoryFilter) return autoshipTargetItems;
+    return autoshipTargetItems.filter(
+      (item) => !memorialInventoryIds.has(item.inventoryItemId),
+    );
+  }, [autoshipTargetItems, categoryFilter, memorialInventoryIds]);
+  const autoshipOnCount = autoshipScopeItems.filter((item) =>
     Boolean(item.recommendedFrequency)
   ).length;
   const allAutoshipOn =
-    autoshipTargetItems.length > 0 && autoshipOnCount === autoshipTargetItems.length;
+    autoshipScopeItems.length > 0 && autoshipOnCount === autoshipScopeItems.length;
   const someAutoshipOn = autoshipOnCount > 0 && !allAutoshipOn;
   const categoryHasProducts = Boolean(categoryFilter && categoryListings.length);
-  const autoshipIsInventoryEmpty = autoshipTargetItems.length === 0;
+  const autoshipIsInventoryEmpty = autoshipScopeItems.length === 0;
 
   const toggleAllAutoship = async () => {
-    if (autoshipIsInventoryEmpty) return;
+    if (autoshipIsInventoryEmpty && categoryFilter) return;
     const scoped = Boolean(categoryFilter);
-    const scopeLabel = scoped ? categoryFilterLabel : 'all inventory';
+    const scopeLabel = scoped ? categoryFilterLabel : 'inventory outside Memorial Items';
+    const cadenceLabel = formatAutoshipFrequency(bulkAutoshipFrequency);
     if (allAutoshipOn) {
       const first = await appConfirm({
         title: scoped
           ? `Turn off autoship for ${scopeLabel}?`
-          : 'Turn off autoship for all inventory?',
+          : 'Turn off autoship outside Memorial Items?',
         message: scoped
           ? `This turns autoship off on every store inventory option in ${scopeLabel}, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.`
-          : 'This turns autoship off on every store inventory option, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.',
+          : 'This turns autoship off on store inventory outside Memorial Items, not just the 50 on this page. Choose Memorial Items in the category list to change that group on its own.',
         confirmLabel: 'Continue',
         cancelLabel: 'Cancel',
         danger: true,
@@ -1099,19 +1129,20 @@ export default function OnlineStoreImportPage() {
       const first = await appConfirm({
         title: scoped
           ? `Turn on autoship for ${scopeLabel}?`
-          : 'Turn on autoship for all inventory?',
+          : 'Turn on autoship outside Memorial Items?',
         message: scoped
-          ? `This turns on monthly autoship for every store inventory option in ${scopeLabel} that is currently off — the whole category, not just this page. Clients will be offered a recurring order at checkout.`
-          : 'This turns on monthly autoship for every store inventory option that is currently off — the whole catalog, not just this page. Clients will be offered a recurring order at checkout.',
+          ? `This sets ${cadenceLabel} autoship on every store inventory option in ${scopeLabel} that is currently off — the whole category, not just this page.`
+          : `This sets ${cadenceLabel} autoship on inventory that is currently off, except Memorial Items. Items that already have a frequency keep it. Choose a category to change one group, including Memorial Items.`,
         confirmLabel: 'Continue',
         cancelLabel: 'Cancel',
       });
       if (!first) return;
       const second = await appConfirm({
         title: 'Are you sure?',
-        message:
-          'Only options that were off are changed; ones that already have a frequency stay as they are. Procedures without inventory are not included. You can still change a single option afterward.',
-        confirmLabel: 'Turn on monthly autoship',
+        message: scoped
+          ? 'Only options that were off are changed; ones that already have a frequency stay as they are. Procedures without inventory are not included.'
+          : 'Memorial Items are turned off. Other inventory that was already on keeps its frequency. Procedures without inventory are not included.',
+        confirmLabel: `Turn on ${cadenceLabel} autoship`,
         cancelLabel: 'Cancel',
       });
       if (!second) return;
@@ -1119,23 +1150,30 @@ export default function OnlineStoreImportPage() {
     setBusy(true);
     setError(null);
     try {
-      const next = await bulkPatchOnlineStoreItems(practiceId, {
-        inventoryItemIds: scoped
-          ? autoshipTargetItems.map((item) => item.inventoryItemId)
-          : undefined,
-        recommendedFrequency: allAutoshipOn ? null : 'monthly',
-        onlyMissing: !allAutoshipOn,
-      });
+      const scopeIds = autoshipScopeItems.map((item) => item.inventoryItemId);
+      let next = items;
+      if (scopeIds.length) {
+        next = await bulkPatchOnlineStoreItems(practiceId, {
+          inventoryItemIds: scopeIds,
+          recommendedFrequency: allAutoshipOn ? null : bulkAutoshipFrequency,
+          onlyMissing: !allAutoshipOn,
+        });
+      }
+      if (!scoped && !allAutoshipOn && memorialInventoryIds.size) {
+        next = await bulkPatchOnlineStoreItems(practiceId, {
+          inventoryItemIds: [...memorialInventoryIds],
+          recommendedFrequency: null,
+          onlyMissing: false,
+        });
+      }
       setItems(next);
       await load();
       setFlash(
         allAutoshipOn
-          ? scoped
-            ? `Autoship turned off for ${scopeLabel}.`
-            : 'Autoship turned off for every store item.'
+          ? `Autoship turned off for ${scopeLabel}.`
           : scoped
-            ? `Autoship turned on (monthly) for ${scopeLabel} items that were off.`
-            : 'Autoship turned on (monthly) for items that were off.',
+            ? `Autoship set to ${cadenceLabel} for ${scopeLabel} items that were off.`
+            : `Autoship set to ${cadenceLabel} outside Memorial Items. Memorial Items are off.`,
       );
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -1205,39 +1243,92 @@ export default function OnlineStoreImportPage() {
       {tab === 'import' && (
         <>
           <p className="settings-muted">
-            Ecwid is only a bootstrap. Upload the catalog CSV to seed Scout store products from
-            the previous shop; the live store does not call Ecwid. Autoship clones (MONTHLY /
-            QUARTERLY / etc.) are skipped. One Ecwid product can match many Scout items (tablet
-            sizes, bottles, individuals, or memorial procedures). Confirming creates a master
-            product plus variations — prices stay on the Scout item. Procedure matches stay
-            linked for invoicing. Remove from list hides
-            products you do not sell in Scout; a later CSV import will not bring them back.
+            Ecwid is only a bootstrap. Upload the Ecwid CSV to seed Scout, then confirm the
+            matches. Autoship clones (MONTHLY / QUARTERLY / etc.) are skipped. One Ecwid product
+            can match many Scout items. Confirming creates a master product plus variations —
+            list prices stay on the Scout item. When this store is the way you want it, download
+            the catalog and upload that file on production. It carries products, categories,
+            autoship, and photos, and matches inventory by eVet id.
           </p>
-          <label className="settings-label">
-            Ecwid CSV
-            <input
-              className="settings-input"
-              type="file"
-              accept=".csv,text/csv"
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label className="settings-label">
+              Ecwid CSV
+              <input
+                className="settings-input"
+                type="file"
+                accept=".csv,text/csv"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setBusy(true);
+                  setError(null);
+                  void importEcwidCatalog(practiceId, file)
+                    .then((res) => {
+                      setMaps(res.maps);
+                      setFlash(
+                        `Imported ${res.masters} products. Excluded ${res.clonesExcluded} autoship clones.`
+                      );
+                    })
+                    .catch((err) => setError(apiErrorMessage(err)))
+                    .finally(() => setBusy(false));
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn secondary"
               disabled={busy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = '';
-                if (!file) return;
+              onClick={() => {
                 setBusy(true);
                 setError(null);
-                void importEcwidCatalog(practiceId, file)
-                  .then((res) => {
-                    setMaps(res.maps);
-                    setFlash(
-                      `Imported ${res.masters} products. Excluded ${res.clonesExcluded} autoship clones.`
-                    );
-                  })
+                void downloadStoreCatalog(practiceId)
+                  .then(() => setFlash('Downloaded the store catalog.'))
                   .catch((err) => setError(apiErrorMessage(err)))
                   .finally(() => setBusy(false));
               }}
-            />
-          </label>
+            >
+              Download catalog
+            </button>
+            <label className="settings-label">
+              Upload catalog
+              <input
+                className="settings-input"
+                type="file"
+                accept=".zip,.csv,application/zip,text/csv"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setBusy(true);
+                  setError(null);
+                  void importStoreCatalog(practiceId, file)
+                    .then(async (res) => {
+                      const missed = res.unmatched.length;
+                      setFlash(
+                        `Updated ${res.products} products (${res.variants} options, ${res.images} photos).` +
+                          (missed
+                            ? ` ${missed} row${missed === 1 ? '' : 's'} did not match an item here.`
+                            : '')
+                      );
+                      if (missed) {
+                        setError(
+                          res.unmatched
+                            .slice(0, 8)
+                            .map((row) => `${row.productName}: ${row.reason}`)
+                            .join(' · ')
+                        );
+                      }
+                      await load();
+                    })
+                    .catch((err) => setError(apiErrorMessage(err)))
+                    .finally(() => setBusy(false));
+                }}
+              />
+            </label>
+          </div>
           <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
@@ -1319,6 +1410,11 @@ export default function OnlineStoreImportPage() {
                         ) : null}
                         <div>
                           <span>{row.ecwidName}</span>
+                          {row.ecwidCategory ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              {row.ecwidCategory}
+                            </div>
+                          ) : null}
                           {row.variationHints ? (
                             <div className="settings-muted" style={{ fontSize: 12 }}>
                               Options: {row.variationHints}
@@ -1410,8 +1506,9 @@ export default function OnlineStoreImportPage() {
           <p className="settings-muted">
             Each row is a Scout store product. Add a master product first, then attach
             inventory or procedure options — or create a new inventory item and add it.
-            Highlight and approval live on the product; autoship is per option. Filter
-            by category or search every store product; the table shows 50 at a time.
+            Highlight and approval live on the product; autoship is per option. Choose a
+            category to turn autoship on or off for that group. The whole-catalog control
+            leaves Memorial Items off. The table shows 50 at a time.
           </p>
           <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
             <button
@@ -1442,46 +1539,6 @@ export default function OnlineStoreImportPage() {
               + Add inventory item
             </button>
           </div>
-          <button
-            type="button"
-            className={`store-autoship-all${
-              allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
-            }`}
-            disabled={busy || !autoshipTargetItems.length}
-            onClick={() => void toggleAllAutoship()}
-          >
-            <span className="store-autoship-all__mark" aria-hidden>
-              {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
-            </span>
-            <span className="store-autoship-all__copy">
-              <strong>
-                {categoryFilter
-                  ? `Autoship ${categoryFilterLabel}`
-                  : 'Autoship all inventory'}
-              </strong>
-              <span>
-                {autoshipIsInventoryEmpty
-                  ? categoryHasProducts
-                    ? `${categoryListings.length} product${
-                        categoryListings.length === 1 ? '' : 's'
-                      } here, but none have an inventory option — autoship only applies to inventory.`
-                    : `No inventory options${
-                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
-                      }.`
-                  : allAutoshipOn
-                    ? `On for all ${autoshipTargetItems.length} inventory options${
-                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
-                      }. Click to turn off.`
-                    : someAutoshipOn
-                      ? `On for ${autoshipOnCount} of ${autoshipTargetItems.length} inventory options${
-                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
-                        }. Click to turn the rest on.`
-                      : `Off for all ${autoshipTargetItems.length} inventory options${
-                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
-                        }. Click to turn on monthly autoship.`}
-              </span>
-            </span>
-          </button>
           </>
           )}
           {addStoreOpen ? (
@@ -1573,6 +1630,78 @@ export default function OnlineStoreImportPage() {
                     </option>
                   )
                 )}
+              </select>
+            </label>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              marginBottom: 10,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <button
+              type="button"
+              className={`store-autoship-all${
+                allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
+              }`}
+              disabled={busy || autoshipIsInventoryEmpty}
+              onClick={() => void toggleAllAutoship()}
+            >
+              <span className="store-autoship-all__mark" aria-hidden>
+                {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
+              </span>
+              <span className="store-autoship-all__copy">
+                <strong>
+                  {categoryFilter
+                    ? `Autoship ${categoryFilterLabel}`
+                    : 'Autoship inventory'}
+                </strong>
+                <span>
+                  {autoshipIsInventoryEmpty
+                    ? categoryHasProducts
+                      ? `${categoryListings.length} product${
+                          categoryListings.length === 1 ? '' : 's'
+                        } here, but none have an inventory option — autoship only applies to inventory.`
+                      : `No inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                        }.`
+                    : allAutoshipOn
+                      ? `On for all ${autoshipScopeItems.length} inventory options${
+                          categoryFilter
+                            ? ` in ${categoryFilterLabel}`
+                            : ' outside Memorial Items'
+                        }. Click to turn off.`
+                      : someAutoshipOn
+                        ? `On for ${autoshipOnCount} of ${autoshipScopeItems.length} inventory options${
+                            categoryFilter
+                              ? ` in ${categoryFilterLabel}`
+                              : ' outside Memorial Items'
+                          }. Click to turn the rest on.`
+                        : `Off for all ${autoshipScopeItems.length} inventory options${
+                            categoryFilter
+                              ? ` in ${categoryFilterLabel}`
+                              : ' outside Memorial Items'
+                          }. Click to turn on.`}
+                </span>
+              </span>
+            </button>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Cadence when turning on
+              <select
+                className="settings-input"
+                value={bulkAutoshipFrequency}
+                disabled={busy}
+                onChange={(e) => setBulkAutoshipFrequency(e.target.value)}
+                aria-label="Autoship cadence used when turning a group on"
+              >
+                {AUTOSHIP_FREQS.map((freq) => (
+                  <option key={freq.value} value={freq.value}>
+                    {freq.label}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
@@ -1766,7 +1895,7 @@ export default function OnlineStoreImportPage() {
                                             );
                                           }}
                                         >
-                                          {AUTOSHIP_FREQS.map((freq) => (
+                                          {autoshipFrequencyOptions(variant.recommendedFrequency).map((freq) => (
                                             <option key={freq.value} value={freq.value}>
                                               {freq.label}
                                             </option>

@@ -24,6 +24,7 @@ import {
   authorizeSavedCard,
   captureAuthorization,
   chargeSavedCard,
+  createInvoice,
   getInvoiceCardOnFile,
   deleteOrder,
   getInvoice,
@@ -83,6 +84,11 @@ import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
+import {
+  PetRefillsButton,
+  RefillProductionCredit,
+  RefillSummary,
+} from '../pims/InvoiceRefillPanel';
 import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
 import {
   groupLabResultsByLine,
@@ -1527,7 +1533,9 @@ export default function VisitCheckoutPanel({
   // In-house lab forms live on the lab line. The API opens a pending form for
   // each lab line that has one, so a snap test is entered right here in the SOAP.
   const labLineKey = (invoice?.lines ?? [])
-    .filter((l) => !l.isDeleted && l.catalogItemType === 'lab')
+    .filter(
+      (l) => !l.isDeleted && (l.catalogItemType === 'lab' || l.catalogItemType === 'procedure')
+    )
     .map((l) => l.id)
     .join(',');
   useEffect(() => {
@@ -1771,6 +1779,7 @@ export default function VisitCheckoutPanel({
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
   const canChangePrice = useCan('invoice.price.change');
   const canReopen = useCan('invoice.reopen');
+  const canOverrideRefillProduction = useCan('invoice.refill.production.override');
   const [voidPromptOpen, setVoidPromptOpen] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const payDisabled =
@@ -1822,6 +1831,42 @@ export default function VisitCheckoutPanel({
     );
   };
 
+  const visitAppointmentId =
+    roster.find((r) => r.isCurrent)?.appointmentId ?? roster[0]?.appointmentId ?? null;
+
+  /** Fills a prescription already on file for this pet; refills need no SOAP order. */
+  const renderPetRefills = (petId: number | null, petName?: string) => {
+    if (petId == null || !encounterId || disabled || status !== 'open') return null;
+    if (!invoice && visitAppointmentId == null) return null;
+    const name =
+      petName ?? roster.find((r) => r.patientId === petId)?.patientName ?? 'this pet';
+    return (
+      <PetRefillsButton
+        patientId={petId}
+        petName={name}
+        className="soap-btn small soap-invoice-pet-refills"
+        disabled={busy != null}
+        ensureInvoiceId={async () => {
+          if (invoice) return invoice.id;
+          if (visitAppointmentId == null) return null;
+          const opened = await createInvoice({
+            appointmentId: visitAppointmentId,
+            clientId: clientId ?? undefined,
+          });
+          onInvoiceChange(opened);
+          return opened.id;
+        }}
+        onApplied={onInvoiceChange}
+        onError={setError}
+      />
+    );
+  };
+
+  const refillCreditProviders = providers.map((emp) => ({
+    id: Number(emp.id),
+    label: shortProviderName(emp.name, emp.firstName, emp.lastName),
+  }));
+
   const activeCheckoutLines = (invoice?.lines ?? []).filter((row) => !row.isDeleted);
   const checkoutTagalongs = attachTagalongLines(activeCheckoutLines);
   const checkoutLineGroups = attachShippingLines(
@@ -1854,7 +1899,9 @@ export default function VisitCheckoutPanel({
   const lineNotReadyReason = (l: VisitInvoiceLine): string | null => {
     const order = l.orderId != null ? orders.find((o) => o.id === l.orderId) ?? null : null;
     const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
-    const showRxLabel = Boolean(rxLabel) && isCheckoutRxLine(l, order);
+    // A refill's script was written and approved on the original prescription.
+    const showRxLabel =
+      Boolean(rxLabel) && isCheckoutRxLine(l, order) && l.refillOfPrescriptionId == null;
     const instructions =
       recorded?.instructions || l.instructions || l.catalogInstructions || '';
     const isVaccineLine =
@@ -2012,7 +2059,10 @@ export default function VisitCheckoutPanel({
       </div>
 
       {!multiPetRoster && encounterId && onOrdersChange && !disabled ? (
-        <div className="soap-checkout-add-block">{renderAddCharge(patientId ?? null)}</div>
+        <div className="soap-checkout-add-block">
+          {renderAddCharge(patientId ?? null)}
+          <div className="soap-checkout-refills-row">{renderPetRefills(patientId ?? null)}</div>
+        </div>
       ) : null}
 
       {!invoice && previsitOrders.length === 0 && !multiPetRoster ? (
@@ -2048,8 +2098,11 @@ export default function VisitCheckoutPanel({
                         <span className="soap-scribe-tag">this chart</span>
                       ) : null}
                     </span>
-                    <span>
-                      {sectionPrevisit.length ? `${sectionPrevisit.length} pre-visit` : 'No items'}
+                    <span className="soap-invoice-pet-head-right">
+                      {renderPetRefills(section.patientId, section.label)}
+                      <span>
+                        {sectionPrevisit.length ? `${sectionPrevisit.length} pre-visit` : 'No items'}
+                      </span>
                     </span>
                   </div>
                 ) : null}
@@ -2205,7 +2258,10 @@ export default function VisitCheckoutPanel({
                         <span className="soap-scribe-tag">this chart</span>
                       ) : null}
                     </span>
-                    <span>{petHeadRight}</span>
+                    <span className="soap-invoice-pet-head-right">
+                      {section.onRoster ? renderPetRefills(section.patientId, section.label) : null}
+                      <span>{petHeadRight}</span>
+                    </span>
                   </div>
                 ) : null}
                 {multiPetRoster && section.onRoster && section.patientId != null
@@ -2286,7 +2342,9 @@ export default function VisitCheckoutPanel({
                 const allowPrice =
                   order?.catalogFlags?.allowPriceChange === true && canChangePrice;
                 const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
-                const showRxLabel = Boolean(rxLabel) && isCheckoutRxLine(l, order);
+                const isRefillLine = l.refillOfPrescriptionId != null;
+                const showRxLabel =
+                  Boolean(rxLabel) && isCheckoutRxLine(l, order) && !isRefillLine;
                 const instructions =
                   recorded?.instructions || l.instructions || l.catalogInstructions || '';
                 const scriptApproved = Boolean(l.rxApprovedAt);
@@ -2312,10 +2370,10 @@ export default function VisitCheckoutPanel({
                   Boolean(order) && Boolean(encounterId) && canEditLines && !l.isCovered;
                 const stockDraw = l.orderId ? stockDrawsByOrderId[l.orderId] ?? null : null;
                 const stock = linkedStockFromLine(l, stockDraw);
-                const lineLabResults =
-                  l.catalogItemType === 'lab' ? labResultsByLineId[l.id] ?? null : null;
+                const lineLabResults = labResultsByLineId[l.id] ?? null;
                 const hasLabForms = Boolean(lineLabResults?.length);
                 const canExpand =
+                  isRefillLine ||
                   needsClinical ||
                   showClientNote ||
                   isVaccineLine ||
@@ -2374,6 +2432,14 @@ export default function VisitCheckoutPanel({
                           </span>
                         ) : null}
                         {l.description}
+                        {l.refillOfPrescriptionId != null ? (
+                          <span
+                            className="soap-invoice-mail-tag"
+                            title="Filled from a prescription on file; directions are locked to it"
+                          >
+                            Refill
+                          </span>
+                        ) : null}
                         {mailed ? (
                           <span
                             className="soap-invoice-mail-tag"
@@ -2407,7 +2473,20 @@ export default function VisitCheckoutPanel({
                         </span>
                       ) : null}
                     </span>
-                    {needsProvider ? (
+                    {l.refillOfPrescriptionId != null ? (
+                      <span className="soap-checkout-refill-credit">
+                        <RefillProductionCredit
+                          invoiceId={invoice.id}
+                          line={l}
+                          providers={refillCreditProviders}
+                          canOverride={canOverrideRefillProduction}
+                          disabled={disabled || busy != null || isVoid}
+                          className="soap-btn small"
+                          onChanged={onInvoiceChange}
+                          onError={setError}
+                        />
+                      </span>
+                    ) : needsProvider ? (
                       canEditLines ? (
                         <select
                           className={`soap-select soap-checkout-provider-select${
@@ -2649,6 +2728,16 @@ export default function VisitCheckoutPanel({
                       >
                       <div className="soap-invoice-line-drawer-inner">
                       <div className="soap-invoice-line-extra">
+                        {isRefillLine && lineExpanded ? (
+                          <RefillSummary
+                            invoiceId={invoice.id}
+                            lineId={l.id}
+                            canEdit={false}
+                            disabled={disabled || busy != null}
+                            onReleased={onInvoiceChange}
+                            onError={setError}
+                          />
+                        ) : null}
                         {showRxLabel && stock.linked && !mailed ? (
                           <LinkedStockInvoiceDetails
                             line={l}

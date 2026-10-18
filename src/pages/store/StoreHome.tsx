@@ -179,11 +179,7 @@ export default function StoreHome() {
           return (
           <Link key={item.listingId} className="vayd-store__card" to={`/store/${item.listingId}`}>
             <div className="vayd-store__card-media">
-              {imageSrc ? (
-                <img src={imageSrc} alt="" />
-              ) : (
-                <img alt="" />
-              )}
+              {imageSrc ? <img src={imageSrc} alt="" /> : null}
               {item.saleActive ? (
                 <div className="vayd-store__sale-banner">{item.saleLabel || 'SALE'}</div>
               ) : null}

@@ -101,6 +101,9 @@ export type Lab = {
   pimsType?: string | null;
   externalUpdated?: string | null;
   lastPimsSyncedAt?: string | null;
+  /** Stock item an in-house test uses up when charged; null for send-out labs. */
+  linkedInventoryItemId?: number | null;
+  linkedInventoryItemDefaultQuantity?: number | string | null;
   [key: string]: any;
 };
 

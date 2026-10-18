@@ -99,6 +99,25 @@
   color: #64748b;
   text-decoration: none;
 }
+.soap-header-member {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 10px;
+  border: 1px solid #fbcfe8;
+  border-radius: 999px;
+  background: #fdf2f8;
+  color: #9d174d;
+  font-size: 13px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.soap-pet-tab-heart {
+  font-size: 11px;
+  line-height: 1;
+}
 a.soap-header-client:hover {
   color: #2563eb;
   text-decoration: underline;
@@ -1447,6 +1466,31 @@ a.soap-header-client:hover {
 }
 .soap-invoice-pet-head.is-current {
   background: #eef4ff;
+}
+.soap-invoice-pet-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.soap-invoice-pet-refills {
+  font-variant-numeric: normal;
+}
+.soap-checkout-refills-row {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+.soap-checkout-refills-row:empty {
+  display: none;
+}
+.soap-checkout-refill-credit {
+  display: block;
+  min-width: 0;
+}
+.soap-checkout-refill-credit .inv-refill__credit {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .soap-invoice-pet-block {
   scroll-margin-top: 0;

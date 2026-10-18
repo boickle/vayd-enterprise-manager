@@ -159,7 +159,6 @@ const EMPLOYEE_HUB_SECTIONS: EmployeeHubSection[] = [
   'types',
   'zones',
   'goals',
-  'photo',
   'access',
 ];
 
@@ -167,9 +166,9 @@ const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
   'employee-types': 'types',
   'employee-zones': 'schedule',
   'employee-schedule': 'schedule',
-  'employee-images': 'photo',
+  'employee-images': 'profile',
   'employee-goals': 'goals',
-  'provider-signatures': 'photo',
+  'provider-signatures': 'profile',
 };
 
 const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -219,6 +218,7 @@ function parseEmployeeHubSection(
     return LEGACY_EMPLOYEE_TAB_TO_SECTION[tab];
   }
   if (section === 'zones') return 'schedule';
+  if (section === 'photo') return 'profile';
   if (section && (EMPLOYEE_HUB_SECTIONS as string[]).includes(section)) {
     return section as EmployeeHubSection;
   }
@@ -1358,8 +1358,13 @@ export default function Settings() {
           )}
           <SettingsMemberships
             onMessage={(msg, kind) => {
-              if (kind === 'error') setError(msg);
-              else setSuccess(msg);
+              if (kind === 'error') {
+                setError(msg);
+                setSuccess(null);
+              } else {
+                setSuccess(msg);
+                setError(null);
+              }
             }}
           />
         </div>
@@ -2937,6 +2942,38 @@ export default function Settings() {
                   setSuccess(null);
                 }
               }}
+              profilePhoto={
+                hubEmployeeId != null ? (
+                  <div className="settings-employee-image-row">
+                    <div className="settings-employee-image-preview">
+                      <img
+                        src={`${apiBaseUrl}/employees/${hubEmployeeId}/image?t=${employeeImageVersion[hubEmployeeId] ?? 0}`}
+                        alt=""
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
+                        }}
+                      />
+                    </div>
+                    <label className={`settings-file-label ${uploadingEmployeeId === hubEmployeeId ? 'uploading' : ''}`}>
+                      <input
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
+                        className="settings-file-input"
+                        disabled={uploadingEmployeeId === hubEmployeeId}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleUploadEmployeeImage(hubEmployeeId, file);
+                          e.target.value = '';
+                        }}
+                      />
+                      <span className="btn secondary">
+                        {uploadingEmployeeId === hubEmployeeId ? 'Uploading…' : 'Change image'}
+                      </span>
+                    </label>
+                  </div>
+                ) : null
+              }
               extra={
                 employeeHubSection === 'types' ? (
                   selectedEmployee ? (
@@ -3095,38 +3132,6 @@ export default function Settings() {
                         {goalsLoading ? 'Loading goals…' : 'Select an employee.'}
                       </p>
                     )}
-                  </div>
-                ) : employeeHubSection === 'photo' && hubEmployeeId != null ? (
-                  <div className="settings-card">
-                    <h3 className="settings-card-title">Photo</h3>
-                    <div className="settings-employee-image-row">
-                      <div className="settings-employee-image-preview">
-                        <img
-                          src={`${apiBaseUrl}/employees/${hubEmployeeId}/image?t=${employeeImageVersion[hubEmployeeId] ?? 0}`}
-                          alt=""
-                          onError={(e) => {
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
-                          }}
-                        />
-                      </div>
-                      <label className={`settings-file-label ${uploadingEmployeeId === hubEmployeeId ? 'uploading' : ''}`}>
-                        <input
-                          type="file"
-                          accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
-                          className="settings-file-input"
-                          disabled={uploadingEmployeeId === hubEmployeeId}
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleUploadEmployeeImage(hubEmployeeId, file);
-                            e.target.value = '';
-                          }}
-                        />
-                        <span className="btn secondary">
-                          {uploadingEmployeeId === hubEmployeeId ? 'Uploading…' : 'Change image'}
-                        </span>
-                      </label>
-                    </div>
                   </div>
                 ) : null
               }
@@ -3630,8 +3635,13 @@ export default function Settings() {
         {activeTab === 'memberships' && (
           <SettingsMemberships
             onMessage={(msg, kind) => {
-              if (kind === 'error') setError(msg);
-              else setSuccess(msg);
+              if (kind === 'error') {
+                setError(msg);
+                setSuccess(null);
+              } else {
+                setSuccess(msg);
+                setError(null);
+              }
             }}
           />
         )}

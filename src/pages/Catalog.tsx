@@ -1198,6 +1198,22 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     setStockLinkError(null);
   }, [detail]);
 
+  useEffect(() => {
+    if (!detail || detail.itemType !== 'lab') return;
+    const lab = detail.item as Lab;
+    const linkedId =
+      lab.linkedInventoryItemId != null && Number.isFinite(Number(lab.linkedInventoryItemId))
+        ? Number(lab.linkedInventoryItemId)
+        : null;
+    setStockLinkItemId(linkedId);
+    setStockLinkQty(
+      lab.linkedInventoryItemDefaultQuantity != null ? String(lab.linkedInventoryItemDefaultQuantity) : ''
+    );
+    setStockLinkQuery('');
+    setStockLinkResults([]);
+    setStockLinkError(null);
+  }, [detail]);
+
   /** The link is stored as an id; fetch the stock item so the picker can name it. */
   useEffect(() => {
     if (stockLinkItemId == null) {
@@ -1228,11 +1244,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     const t = window.setTimeout(async () => {
       setStockLinkSearching(true);
       try {
-        const rows = await searchItems(q, practiceId, 25);
+        // Stock rows like "4dx Tests" or "Gabapentin 100 mg inventory" are often inactive.
+        const rows = await searchItems(q, practiceId, 25, { includeInactive: true });
         if (stockLinkSearchSeq.current !== seq) return;
         setStockLinkResults(
           rows.filter(
-            (r) => r.itemType === 'inventory' && r.inventoryItem?.id !== selected?.itemId
+            (r) =>
+              r.itemType === 'inventory' &&
+              r.inventoryItem?.id !== selected?.itemId &&
+              r.inventoryItem?.linkedInventoryItemId == null &&
+              r.inventoryItem?.isDeleted !== true
           )
         );
       } catch {
@@ -2125,19 +2146,29 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }
 
   async function saveStockLink() {
-    if (!selected || selected.itemType !== 'inventory') return;
+    if (!selected || (selected.itemType !== 'inventory' && selected.itemType !== 'lab')) return;
+    const isLab = selected.itemType === 'lab';
     setStockLinkSaving(true);
     setStockLinkError(null);
     try {
-      const qty = stockLinkQty.trim() === '' ? null : Number(stockLinkQty);
+      const qty = stockLinkQty.trim() === '' ? (isLab ? 1 : null) : Number(stockLinkQty);
       if (stockLinkItemId != null && (qty == null || !Number.isFinite(qty) || qty <= 0)) {
-        setStockLinkError('Enter how many stock units one sale consumes (e.g. 100).');
+        setStockLinkError(
+          isLab
+            ? 'Enter how many kits one test uses (usually 1).'
+            : 'Enter how many stock units one sale consumes (e.g. 100).'
+        );
         return;
       }
-      await patchPracticeInventoryItem(practiceId, selected.itemId, {
+      const link = {
         linkedInventoryItemId: stockLinkItemId,
         linkedInventoryItemDefaultQuantity: stockLinkItemId == null ? null : qty,
-      });
+      };
+      if (isLab) {
+        await patchCatalogItem('lab', practiceId, selected.itemId, link);
+      } else {
+        await patchPracticeInventoryItem(practiceId, selected.itemId, link);
+      }
       setToast(stockLinkItemId == null ? 'Stock link cleared' : 'Stock item saved');
       window.setTimeout(() => setToast(null), 3500);
       await refreshDetailBundle(selected);
@@ -3455,15 +3486,25 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {detailTab === 'associations' && detail.itemType === 'inventory' && (
+              {detailTab === 'associations' &&
+                (detail.itemType === 'inventory' || detail.itemType === 'lab') && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock item</h4>
-                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                    Which item is counted when this one is sold. Leave empty when this item is its
-                    own stock. Point several sellable codes at one stock item — a single capsule and
-                    a bottle of 100 both draw from the same capsule pool — and counts stay in one
-                    place no matter how you sell.
-                  </p>
+                  {detail.itemType === 'lab' ? (
+                    <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                      For tests run in house (4Dx SNAP, FeLV/FIV combo): the kit this test uses up
+                      when it&apos;s charged, so kits are counted and restocked like other
+                      inventory. Leave empty for send-out labs; they don&apos;t use any of our
+                      stock.
+                    </p>
+                  ) : (
+                    <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                      Which item is counted when this one is sold. Leave empty when this item is its
+                      own stock. Point several sellable codes at one stock item — a single capsule and
+                      a bottle of 100 both draw from the same capsule pool — and counts stay in one
+                      place no matter how you sell.
+                    </p>
+                  )}
                   {stockLinkError && (
                     <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
                       {stockLinkError}
@@ -3480,7 +3521,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                             className="settings-input"
                             value={stockLinkQuery}
                             onChange={(e) => setStockLinkQuery(e.target.value)}
-                            placeholder="Search inventory items (blank = draws on itself)"
+                            placeholder={
+                              detail.itemType === 'lab'
+                                ? 'Search stock items, e.g. 4dx Tests (blank = send-out, uses no stock)'
+                                : 'Search inventory items (blank = draws on itself)'
+                            }
                           />
                           {stockLinkSearching && (
                             <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
@@ -3532,14 +3577,18 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     </div>
                     {stockLinkItemId != null && (
                       <label className="settings-label" style={{ maxWidth: 320 }}>
-                        Stock units consumed per unit sold
+                        {detail.itemType === 'lab'
+                          ? 'Kits used per test'
+                          : 'Stock units consumed per unit sold'}
                         <input
                           type="text"
                           inputMode="decimal"
                           className="settings-input"
                           value={stockLinkQty}
                           onChange={(e) => setStockLinkQty(e.target.value)}
-                          placeholder="e.g. 100 for a bottle of 100"
+                          placeholder={
+                            detail.itemType === 'lab' ? '1' : 'e.g. 100 for a bottle of 100'
+                          }
                         />
                       </label>
                     )}

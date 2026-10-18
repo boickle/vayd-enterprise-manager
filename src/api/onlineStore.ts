@@ -432,6 +432,48 @@ export function storeListingImageUrl(
   return null;
 }
 
+export async function downloadStoreCatalog(practiceId: number) {
+  const res = await http.get<Blob>(
+    `/practice/${practiceId}/online-store/catalog-export`,
+    { responseType: 'blob' },
+  );
+  const blob = res.data;
+  const headerType = String(res.headers?.['content-type'] || '');
+  if (blob instanceof Blob && (blob.type.includes('json') || headerType.includes('json'))) {
+    const text = await blob.text();
+    let message = 'Could not download the catalog.';
+    try {
+      const parsed = JSON.parse(text) as { message?: unknown };
+      if (typeof parsed.message === 'string' && parsed.message.trim()) message = parsed.message;
+    } catch {
+      if (text.trim()) message = text.trim();
+    }
+    throw new Error(message);
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'scout-store-catalog.zip';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function importStoreCatalog(practiceId: number, file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await http.post<{
+    products: number;
+    variants: number;
+    images: number;
+    unmatched: Array<{ productName: string; itemName: string; reason: string }>;
+  }>(`/practice/${practiceId}/online-store/catalog-import`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
 export async function importEcwidCatalog(practiceId: number, file: File) {
   const form = new FormData();
   form.append('file', file);

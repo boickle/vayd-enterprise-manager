@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import {
   addInvoiceRefillLine,
   applyInvoiceLineRefill,
+  clearRefillProductionOverride,
   listInvoiceLineRefillOptions,
   listInvoiceRefillOptions,
   releaseInvoiceLineRefill,
+  setRefillProductionOverride,
   type InvoiceLineRefillOption,
   type VisitInvoice,
+  type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
 import './InvoiceRefillPanel.css';
 
@@ -152,7 +155,9 @@ function RefillPicker({
                     title="Adds the item and directions as a new script. A doctor or technician approves it, or send it to the mail queue."
                     onClick={() => void run(option, applyNewScript)}
                   >
-                    {busyId === option.prescriptionId ? 'Adding…' : 'Add as new script (needs approval)'}
+                    {busyId === option.prescriptionId
+                      ? 'Adding…'
+                      : 'Add as new script (needs approval)'}
                   </button>
                 ) : null}
               </li>
@@ -225,6 +230,304 @@ export function InvoiceRefillsButton({
           onClose={() => setOpen(false)}
         />
       ) : null}
+    </>
+  );
+}
+
+/**
+ * One pet's refills, for the SOAP checkout. Only real refills: on a visit the doctor writes
+ * a new script in the plan, so there is no "add as new script" here.
+ */
+export function PetRefillsButton({
+  patientId,
+  petName,
+  ensureInvoiceId,
+  disabled,
+  className,
+  onApplied,
+  onError,
+}: {
+  patientId: number;
+  petName: string;
+  /** Opens the visit invoice first when nothing has been charged yet. */
+  ensureInvoiceId: () => Promise<string | null>;
+  disabled?: boolean;
+  className?: string;
+  onApplied: (invoice: VisitInvoice) => void;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const invoiceIdRef = useRef<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className={className ?? 'client-fin__btn-ghost'}
+        disabled={disabled}
+        title={`Fill a refill from ${petName}'s prescriptions on file`}
+        onClick={() => setOpen(true)}
+      >
+        Refills
+      </button>
+      {open ? (
+        <RefillPicker
+          title={`Refills for ${petName}`}
+          hint="Using a refill takes one off the prescription, copies and locks the directions, and gives no doctor production credit unless someone gives it on the line with a reason. For a new prescription, add it in the SOAP plan."
+          emptyText={`No prescriptions on file for ${petName}.`}
+          load={async () => {
+            const id = await ensureInvoiceId();
+            invoiceIdRef.current = id;
+            if (!id) return [];
+            const rows = await listInvoiceRefillOptions(id);
+            return rows.filter((row) => row.patientId === patientId);
+          }}
+          apply={(option) => {
+            const id = invoiceIdRef.current;
+            if (!id) return Promise.reject(new Error('Invoice is not saved yet.'));
+            return addInvoiceRefillLine(id, option.prescriptionId);
+          }}
+          onApplied={onApplied}
+          onError={onError}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export const REFILL_OVERRIDE_REASON_MIN = 10;
+
+function overrideWhen(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Production on a refill line. Refills credit no one; staff with permission can give the
+ * production to a provider, and must say why. The reason stays on the line and in the
+ * invoice's staff audit, and shows in Admin → Reports → Production overrides.
+ */
+export function RefillProductionCredit({
+  invoiceId,
+  line,
+  providers,
+  canOverride,
+  disabled,
+  className,
+  onChanged,
+  onError,
+}: {
+  invoiceId: string;
+  line: VisitInvoiceLine;
+  providers: { id: number; label: string }[];
+  canOverride: boolean;
+  disabled?: boolean;
+  /** Class for the trigger button / label, to match the surrounding table. */
+  className?: string;
+  onChanged: (invoice: VisitInvoice) => void;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [providerId, setProviderId] = useState<number | ''>('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const overridden = line.productionOverrideAt != null && line.providerEmployeeId != null;
+  const providerLabel = (id: number | null | undefined) =>
+    id == null ? '—' : (providers.find((p) => p.id === id)?.label ?? `Provider #${id}`);
+
+  const openDialog = () => {
+    setProviderId(overridden ? (line.providerEmployeeId as number) : '');
+    setReason('');
+    setFormError(null);
+    setEditing(!overridden);
+    setOpen(true);
+  };
+
+  const save = async () => {
+    if (providerId === '') {
+      setFormError('Pick the provider who gets the production.');
+      return;
+    }
+    if (reason.trim().length < REFILL_OVERRIDE_REASON_MIN) {
+      setFormError(`Write why (at least ${REFILL_OVERRIDE_REASON_MIN} characters).`);
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      const next = await setRefillProductionOverride(invoiceId, line.id, {
+        providerEmployeeId: providerId,
+        reason: reason.trim(),
+      });
+      setOpen(false);
+      onChanged(next);
+    } catch (e) {
+      setFormError(errMessage(e, 'Could not give production on this refill.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const next = await clearRefillProductionOverride(invoiceId, line.id);
+      setOpen(false);
+      onChanged(next);
+    } catch (e) {
+      onError(errMessage(e, 'Could not remove the production override.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let trigger: JSX.Element;
+  if (overridden) {
+    trigger = (
+      <button
+        type="button"
+        className={`${className ?? 'client-fin__btn-ghost'} inv-refill__credit is-given`}
+        title={`Production given on a refill: ${line.productionOverrideReason ?? ''}`}
+        onClick={openDialog}
+      >
+        {providerLabel(line.providerEmployeeId)} · override
+      </button>
+    );
+  } else if (canOverride && !disabled) {
+    trigger = (
+      <button
+        type="button"
+        className={`${className ?? 'client-fin__btn-ghost'} inv-refill__credit`}
+        title="Refills give no production. Give it to a provider, with a reason."
+        onClick={openDialog}
+      >
+        Give production…
+      </button>
+    );
+  } else {
+    trigger = (
+      <span className="inv-refill__credit-none" title="Refills give no production credit">
+        No production
+      </span>
+    );
+  }
+
+  return (
+    <>
+      {trigger}
+      {open
+        ? createPortal(
+            <div className="inv-refill-backdrop" role="dialog" aria-modal="true">
+              <div className="inv-refill">
+                <h3>Production on this refill</h3>
+                <p className="inv-refill__hint">
+                  {line.description}. Refills normally give no one production. Giving it is recorded
+                  with your name and reason on the invoice&apos;s staff audit and in the Production
+                  overrides report.
+                </p>
+                {overridden && !editing ? (
+                  <div className="inv-refill__summary">
+                    <strong>Credited to {providerLabel(line.providerEmployeeId)}</strong>
+                    <span>{line.productionOverrideReason}</span>
+                    <span className="inv-refill__locked">
+                      {[
+                        line.productionOverrideByName
+                          ? `By ${line.productionOverrideByName}`
+                          : null,
+                        overrideWhen(line.productionOverrideAt),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="inv-refill__form">
+                    <label>
+                      Provider
+                      <select
+                        value={providerId}
+                        disabled={busy}
+                        onChange={(e) =>
+                          setProviderId(e.target.value ? Number(e.target.value) : '')
+                        }
+                      >
+                        <option value="">Pick a provider…</option>
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Why does this refill get production?
+                      <textarea
+                        rows={3}
+                        value={reason}
+                        disabled={busy}
+                        placeholder="e.g. Dr. reviewed bloodwork and adjusted the dose during this refill"
+                        onChange={(e) => setReason(e.target.value)}
+                      />
+                    </label>
+                    {formError ? <p className="inv-refill__error">{formError}</p> : null}
+                  </div>
+                )}
+                <div className="inv-refill__actions">
+                  {overridden && !editing && canOverride && !disabled ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={busy}
+                        onClick={() => void remove()}
+                      >
+                        {busy ? 'Removing…' : 'Remove production'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={busy}
+                        onClick={() => setEditing(true)}
+                      >
+                        Change
+                      </button>
+                    </>
+                  ) : null}
+                  {editing ? (
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={busy}
+                      onClick={() => void save()}
+                    >
+                      {busy ? 'Saving…' : 'Give production'}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={busy}
+                    onClick={() => setOpen(false)}
+                  >
+                    {editing ? 'Cancel' : 'Close'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }

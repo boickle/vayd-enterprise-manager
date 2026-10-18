@@ -20,13 +20,18 @@ type Props = {
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
 };
 
+type CatalogRef = {
+  id: number;
+  catalogItemType: 'lab' | 'procedure';
+};
+
 type Draft = {
   name: string;
   category: string;
   description: string;
   mode: LabFormMode;
   elements: LabFormElement[];
-  labIds: number[];
+  catalogItems: CatalogRef[];
   isPublished: boolean;
 };
 
@@ -46,7 +51,16 @@ function toDraft(t: LabFormTemplate): Draft {
     description: t.description ?? '',
     mode: t.mode,
     elements: (t.elements ?? []).map((el) => ({ ...el })),
-    labIds: (t.labs ?? []).map((l) => l.id),
+    catalogItems: [
+      ...(t.labs ?? []).map((l) => ({
+        id: l.id,
+        catalogItemType: 'lab' as const,
+      })),
+      ...(t.procedures ?? []).map((p) => ({
+        id: p.id,
+        catalogItemType: 'procedure' as const,
+      })),
+    ],
     isPublished: t.isPublished,
   };
 }
@@ -58,7 +72,7 @@ function newDraft(): Draft {
     description: '',
     mode: 'analytes',
     elements: [{ ...BLANK_ELEMENT }],
-    labIds: [],
+    catalogItems: [],
     isPublished: true,
   };
 }
@@ -211,7 +225,10 @@ export default function SettingsLabForms({ onMessage }: Props) {
         description: draft.description.trim() || null,
         mode: draft.mode,
         elements: draft.mode === 'summary' ? [] : draft.elements.filter((el) => el.name.trim()),
-        labIds: draft.labIds,
+        labIds: draft.catalogItems.filter((i) => i.catalogItemType === 'lab').map((i) => i.id),
+        procedureIds: draft.catalogItems
+          .filter((i) => i.catalogItemType === 'procedure')
+          .map((i) => i.id),
         isPublished: draft.isPublished,
       };
       const saved =
@@ -267,10 +284,22 @@ export default function SettingsLabForms({ onMessage }: Props) {
     }
   }
 
-  const selectedLabs = useMemo(
-    () => catalog.filter((l) => draft?.labIds.includes(l.id)),
-    [catalog, draft]
-  );
+  const selectedLabs = useMemo(() => {
+    if (!draft) return [] as LabCatalogItem[];
+    return draft.catalogItems.map((ref) => {
+      const found = catalog.find(
+        (l) => l.id === ref.id && (l.catalogItemType ?? 'lab') === ref.catalogItemType
+      );
+      return (
+        found ?? {
+          id: ref.id,
+          name: `Catalog item ${ref.id}`,
+          code: null,
+          catalogItemType: ref.catalogItemType,
+        }
+      );
+    });
+  }, [catalog, draft]);
 
   return (
     <div className="settings-card lab-forms">
@@ -317,8 +346,10 @@ export default function SettingsLabForms({ onMessage }: Props) {
                     <span className="lab-forms__row-name">{t.name}</span>
                     <span className="lab-forms__row-meta">
                       {t.mode === 'summary' ? 'Write-up' : `${t.elements?.length ?? 0} rows`}
-                      {t.labs?.length
-                        ? ` · ${t.labs.length} test${t.labs.length === 1 ? '' : 's'}`
+                      {(t.labs?.length ?? 0) + (t.procedures?.length ?? 0)
+                        ? ` · ${(t.labs?.length ?? 0) + (t.procedures?.length ?? 0)} test${
+                            (t.labs?.length ?? 0) + (t.procedures?.length ?? 0) === 1 ? '' : 's'
+                          }`
                         : ''}
                     </span>
                     {!t.isPublished ? <span className="lab-forms__badge">Archived</span> : null}
@@ -518,12 +549,15 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 <p className="lab-forms__section-title">Show this form for</p>
                 <p className="settings-muted lab-forms__assign-hint">
                   Ordering one of these catalog tests creates a result waiting to be filled in.
+                  In-house cytology, FNA, Schirmer tear test, and fluorescein stain are procedures,
+                  not labs.
                 </p>
 
                 {selectedLabs.length ? (
                   <div className="lab-forms__chips">
                     {selectedLabs.map((l) => (
-                      <span key={l.id} className="lab-forms__chip">
+                      <span key={`${l.catalogItemType ?? 'lab'}-${l.id}`} className="lab-forms__chip">
+                        {l.catalogItemType === 'procedure' ? 'Procedure · ' : 'Lab · '}
                         {l.code ? `${l.code} — ` : ''}
                         {l.name}
                         <button
@@ -531,7 +565,13 @@ export default function SettingsLabForms({ onMessage }: Props) {
                           aria-label={`Remove ${l.name}`}
                           onClick={() =>
                             patchDraft({
-                              labIds: draft.labIds.filter((id) => id !== l.id),
+                              catalogItems: draft.catalogItems.filter(
+                                (item) =>
+                                  !(
+                                    item.id === l.id &&
+                                    item.catalogItemType === (l.catalogItemType ?? 'lab')
+                                  )
+                              ),
                             })
                           }
                         >
@@ -549,24 +589,33 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 <input
                   className="settings-input"
                   value={labQuery}
-                  placeholder="Search catalog tests to attach…"
+                  placeholder="Search labs and procedures to attach…"
                   onChange={(e) => setLabQuery(e.target.value)}
                 />
                 {labMatches.length ? (
                   <ul className="lab-forms__hits">
                     {labMatches.map((l) => {
-                      const already = draft.labIds.includes(l.id);
+                      const kind = l.catalogItemType ?? 'lab';
+                      const already = draft.catalogItems.some(
+                        (item) => item.id === l.id && item.catalogItemType === kind
+                      );
                       return (
-                        <li key={l.id}>
+                        <li key={`${kind}-${l.id}`}>
                           <button
                             type="button"
                             disabled={already}
                             onClick={() => {
-                              patchDraft({ labIds: [...draft.labIds, l.id] });
+                              patchDraft({
+                                catalogItems: [
+                                  ...draft.catalogItems,
+                                  { id: l.id, catalogItemType: kind },
+                                ],
+                              });
                               setLabQuery('');
                             }}
                           >
                             <span>
+                              {kind === 'procedure' ? 'Procedure · ' : 'Lab · '}
                               {l.code ? `${l.code} — ` : ''}
                               {l.name}
                             </span>

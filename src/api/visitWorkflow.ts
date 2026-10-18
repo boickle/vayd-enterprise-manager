@@ -110,6 +110,11 @@ export type VisitInvoiceLine = {
   created?: string | null;
   /** Filled as a refill of this prescription; sig and refills are locked. */
   refillOfPrescriptionId?: number | null;
+  /** Set when staff gave this refill production on purpose, with their reason. */
+  productionOverrideReason?: string | null;
+  productionOverrideAt?: string | null;
+  productionOverrideByEmployeeId?: number | null;
+  productionOverrideByName?: string | null;
   writtenPrescriptionId?: number | null;
   enteredByName?: string | null;
   returnOfLineId?: string | null;
@@ -1529,6 +1534,86 @@ export async function addInvoiceRefillLine(
     { practiceId: pid(), prescriptionId, newScript: opts?.newScript === true }
   );
   return data;
+}
+
+/** Credits a refill line to a provider, which refills normally don't get. Reason is required. */
+export async function setRefillProductionOverride(
+  invoiceId: string,
+  lineId: string,
+  body: { providerEmployeeId: number; reason: string }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/production-override`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function clearRefillProductionOverride(
+  invoiceId: string,
+  lineId: string
+): Promise<VisitInvoice> {
+  const { data } = await http.delete<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/production-override`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export type RefillProductionOverrideRow = {
+  lineId: string;
+  invoiceId: string;
+  invoiceNumber: string | null;
+  invoiceStatus: string;
+  clientId: number | null;
+  clientName: string | null;
+  patientId: number | null;
+  patientName: string | null;
+  itemName: string;
+  amount: number;
+  providerEmployeeId: number | null;
+  providerName: string | null;
+  reason: string;
+  overriddenAt: string;
+  overriddenByName: string | null;
+};
+
+export type CreditDiscountRow = {
+  id: string;
+  kind: 'credit' | 'discount';
+  source: 'scout' | 'evet';
+  at: string;
+  clientId: number | null;
+  clientName: string | null;
+  patientId: number | null;
+  patientName: string | null;
+  staffEmployeeId: number | null;
+  staffName: string | null;
+  amount: number;
+  detail: string;
+  reason: string | null;
+  invoiceNumber: string | null;
+};
+
+export async function listCreditsAndDiscounts(
+  startDate: string,
+  endDate: string
+): Promise<CreditDiscountRow[]> {
+  const { data } = await http.get<CreditDiscountRow[]>('/visit-invoices/credits-discounts', {
+    params: { practiceId: pid(), startDate, endDate },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function listRefillProductionOverrides(
+  startDate: string,
+  endDate: string
+): Promise<RefillProductionOverrideRow[]> {
+  const { data } = await http.get<RefillProductionOverrideRow[]>(
+    '/visit-invoices/production-overrides',
+    { params: { practiceId: pid(), startDate, endDate } }
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 export async function listInvoiceLineRefillOptions(

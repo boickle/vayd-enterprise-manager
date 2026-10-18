@@ -349,6 +349,51 @@ export function accountBalanceFromClient(c: Record<string, unknown>): number | n
   return null;
 }
 
+/** Unused eVet account credit; the API already nets it into `accountBalance`. */
+export type EvetAccountCredit = { amount: number; asOf: string | null };
+
+export function evetAccountCreditFromClient(c: Record<string, unknown>): EvetAccountCredit | null {
+  const billing = c.billing && typeof c.billing === 'object' ? (c.billing as Record<string, unknown>) : null;
+  const raw = (billing?.evetAccountCredit ?? c.evetAccountCredit) as Record<string, unknown> | null | undefined;
+  if (!raw || typeof raw !== 'object') return null;
+  const amount = toNum(raw.amount);
+  if (amount == null || amount <= 0.005) return null;
+  return { amount, asOf: typeof raw.asOf === 'string' ? raw.asOf : null };
+}
+
+/** eVet receipt not applied to an invoice; positive `amount` put credit on the account. */
+export type EvetCreditActivity = {
+  id: number;
+  receiptNumber: number | null;
+  at: string | null;
+  amount: number;
+  paymentTypeName: string | null;
+  notes: string | null;
+  cashierName: string | null;
+  isVoided: boolean;
+  voidedComments: string | null;
+};
+
+export function evetCreditActivityFromClient(c: Record<string, unknown>): EvetCreditActivity[] {
+  const billing = c.billing && typeof c.billing === 'object' ? (c.billing as Record<string, unknown>) : null;
+  const raw = billing?.evetCreditActivity ?? c.evetCreditActivity;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === 'object')
+    .map((r) => ({
+      id: Number(r.id),
+      receiptNumber: toNum(r.receiptNumber),
+      at: typeof r.at === 'string' ? r.at : null,
+      amount: toNum(r.amount) ?? 0,
+      paymentTypeName: typeof r.paymentTypeName === 'string' ? r.paymentTypeName : null,
+      notes: typeof r.notes === 'string' ? r.notes : null,
+      cashierName: typeof r.cashierName === 'string' ? r.cashierName : null,
+      isVoided: r.isVoided === true,
+      voidedComments: typeof r.voidedComments === 'string' ? r.voidedComments : null,
+    }))
+    .filter((r) => Math.abs(r.amount) > 0.005);
+}
+
 export function normalizeInvoicesFromClient(c: Record<string, unknown>): NormalizedInvoice[] {
   const raw = extractInvoices(c);
   const out: NormalizedInvoice[] = [];
