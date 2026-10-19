@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { truthyApiFlag } from '../api/appointments';
+import { isAppointmentCancelledOnPracticeCalendar, truthyApiFlag } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
 import { fetchPatientMedicalRecordStaff, fetchPatientProfileForRow } from '../api/patients';
@@ -268,12 +268,15 @@ export function splitActiveAndOverdueReminders(
 
 function isBookablePastAppointment(a: Appointment, asOfMs: number): boolean {
   if (a.isDeleted === true) return false;
+  if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   const startMs = Date.parse(a.appointmentStart);
   return Number.isFinite(startMs) && startMs <= asOfMs;
 }
 
+/** Future visit that still counts as the patient's next appointment (excludes canceled HOLDs). */
 function isFutureAppointment(a: Appointment, asOfMs: number): boolean {
   if (a.isDeleted === true) return false;
+  if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   const startMs = Date.parse(a.appointmentStart);
   return Number.isFinite(startMs) && startMs > asOfMs;
 }

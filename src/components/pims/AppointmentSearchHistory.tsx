@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
+import { isAppointmentCancelledOnPracticeCalendar } from '../../api/appointments';
 import type { Appointment } from '../../api/roomLoader';
 import {
   appointmentMatchesPatientId,
@@ -55,8 +56,8 @@ function patientLine(a: Appointment): string {
 
 function isCancelledOrDeleted(appt: Appointment): boolean {
   if (appt.isDeleted) return true;
-  const status = pickStr(appt.statusName)?.toLowerCase() ?? '';
-  return status.includes('cancel');
+  // Match Scheduler / care outreach: confirmStatusName "Canceled Appointment" alone must hide.
+  return isAppointmentCancelledOnPracticeCalendar(appt);
 }
 
 function appointmentStartMs(appt: Appointment): number {
