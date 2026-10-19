@@ -3,12 +3,15 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Copy,
+  Download,
   History,
   Layers,
   Plus,
   Search,
   Shuffle,
   Trash2,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -16,6 +19,7 @@ import {
   applyBundleToExistingMemberships,
   archiveBundle,
   createBundle,
+  exportMembershipPlans,
   getBundle,
   getBundleAudit,
   listBundles,
@@ -53,6 +57,8 @@ import {
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import { askMembershipApplyReview } from './MembershipApplyReviewDialog';
+import MembershipPlanUploadDialog from './MembershipPlanUploadDialog';
+import TestRenewalRunCard from './TestRenewalRunCard';
 import { useCan } from '../../permissions/PermissionContext';
 import { membershipPlanFamily } from '../../utils/membershipAge';
 import { rangeFromPercent, savingsBullets } from '../../api/membershipSavings';
@@ -1533,6 +1539,77 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setExpandAllBenefits(false);
   }
 
+  /** Starts a new plan from this one's fields and benefits, including unsaved edits. */
+  function copyPlan() {
+    if (!detail) return;
+    setSelection({ mode: 'new' });
+    setDetail(null);
+    setDetailError(null);
+    setPlanDraft((cur) => ({
+      ...cur,
+      name: `${cur.name.trim() || detail.name} (copy)`,
+      code: '',
+      portalSlug: '',
+    }));
+    setGroups((cur) =>
+      cur.map((group) => ({
+        ...group,
+        key: nextKey('group'),
+        id: undefined,
+        items: group.items.map((item) => ({ ...item, key: nextKey('item'), id: undefined })),
+      })),
+    );
+    setBaselineSnaps([]);
+    setPickerGroupKey(null);
+    setRemoveDropped(false);
+    setAuditOpen(false);
+    onMessage?.('Copied. Rename it and press Save to create the new plan.', 'success');
+  }
+
+  /** `true` from the plan list; a plan id when opened from that plan. */
+  const [uploadOpen, setUploadOpen] = useState<boolean | number>(false);
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadPlans(ids: number[], label: string) {
+    if (!ids.length) return;
+    setDownloading(true);
+    try {
+      const file = await exportMembershipPlans(ids);
+      const slug = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      const day = new Date().toISOString().slice(0, 10);
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `scout-membership-plans-${slug || 'plans'}-${day}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      onMessage?.(
+        `Downloaded ${file.plans.length} plan${file.plans.length === 1 ? '' : 's'}.`,
+        'success',
+      );
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function closeUpload(changed: boolean) {
+    setUploadOpen(false);
+    if (!changed) return;
+    await loadPlans(showArchived);
+    if (selectedId != null) {
+      const fresh = await getBundle(selectedId).catch(() => null);
+      if (fresh) absorbSaved(fresh);
+    }
+  }
+
   const cadenceLocked = Boolean(
     detail && detail.activeMemberCount > 0 && planCadence(detail) != null,
   );
@@ -2384,6 +2461,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
         )}
       </div>
 
+      {canManagePlans ? <TestRenewalRunCard /> : null}
+
       <div className="memberships-layout">
         <div className="settings-card memberships-rail">
           <div className="memberships-rail__head">
@@ -2413,6 +2492,32 @@ export default function SettingsMemberships({ onMessage }: Props) {
             />
             Show archived
           </label>
+
+          {canManagePlans ? (
+            <div className="memberships-rail__transfer">
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={downloading || visiblePlans.length === 0}
+                title="Download the plans listed below as a file you can upload here or on another system"
+                onClick={() =>
+                  void downloadPlans(
+                    visiblePlans.map((plan) => plan.id),
+                    visiblePlans.length === plans.length ? 'all' : 'selected',
+                  )
+                }
+              >
+                <Download size={13} aria-hidden /> Download {visiblePlans.length}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setUploadOpen(true)}
+              >
+                <Upload size={13} aria-hidden /> Upload
+              </button>
+            </div>
+          ) : null}
 
           {listError ? (
             <p className="settings-message settings-error-message">{listError}</p>
@@ -2546,26 +2651,60 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       </p>
                     ) : null}
                   </div>
-                  {detail?.isArchived && canManagePlans ? (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={saving}
-                      onClick={() => void restore()}
-                    >
-                      Restore plan
-                    </button>
-                  ) : null}
-                  {detail && !detail.isArchived && canArchivePlans ? (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={saving}
-                      onClick={() => void archive()}
-                    >
-                      <Trash2 size={13} aria-hidden /> Archive
-                    </button>
-                  ) : null}
+                  <div className="memberships-detail__actions">
+                    {detail && canManagePlans ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={downloading}
+                        title="Download this plan as a file you can upload onto other plans or another system"
+                        onClick={() => void downloadPlans([detail.id], detail.name)}
+                      >
+                        <Download size={13} aria-hidden /> Download
+                      </button>
+                    ) : null}
+                    {detail && canManagePlans ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        title="Upload a downloaded plans file onto this plan or others"
+                        onClick={() => setUploadOpen(detail.id)}
+                      >
+                        <Upload size={13} aria-hidden /> Upload
+                      </button>
+                    ) : null}
+                    {detail && canManagePlans ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={saving}
+                        title="Start a new plan with this plan's settings and benefits"
+                        onClick={copyPlan}
+                      >
+                        <Copy size={13} aria-hidden /> Copy plan
+                      </button>
+                    ) : null}
+                    {detail?.isArchived && canManagePlans ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={saving}
+                        onClick={() => void restore()}
+                      >
+                        Restore plan
+                      </button>
+                    ) : null}
+                    {detail && !detail.isArchived && canArchivePlans ? (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={saving}
+                        onClick={() => void archive()}
+                      >
+                        <Trash2 size={13} aria-hidden /> Archive
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="memberships-fields">
@@ -3287,6 +3426,12 @@ export default function SettingsMemberships({ onMessage }: Props) {
           )}
         </div>
       </div>
+      {uploadOpen !== false ? (
+        <MembershipPlanUploadDialog
+          preferTargetId={typeof uploadOpen === 'number' ? uploadOpen : undefined}
+          onClose={(changed) => void closeUpload(changed)}
+        />
+      ) : null}
     </div>
   );
 }

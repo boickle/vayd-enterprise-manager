@@ -87,6 +87,31 @@
   font-size: 13px;
 }
 
+.memberships-rail__transfer {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.memberships-rail__transfer .btn,
+.memberships-detail__actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.memberships-rail__transfer .btn {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.memberships-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+}
+
 .memberships-rail__list {
   list-style: none;
   margin: 0;

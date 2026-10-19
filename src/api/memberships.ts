@@ -328,6 +328,33 @@ export async function listBundles(opts?: {
   return Array.isArray(data) ? data : [];
 }
 
+export type TestRenewalAvailability = { available: boolean; reason: string | null };
+
+export type TestRenewalResult = {
+  asOf: string;
+  notices: { sent: number; skipped: number };
+  renewals: { applied: number; canceled: number };
+};
+
+export async function getTestRenewalAvailability(): Promise<TestRenewalAvailability> {
+  const { data } = await http.get<TestRenewalAvailability>(
+    '/memberships/patient-memberships/renewals/test-run',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+export async function runTestRenewal(body: {
+  asOf: string;
+  wellnessPlanId?: number;
+}): Promise<TestRenewalResult> {
+  const { data } = await http.post<TestRenewalResult>(
+    '/memberships/patient-memberships/renewals/test-run',
+    { practiceId: currentPracticeId(), ...body },
+  );
+  return data;
+}
+
 /** A plan whose members would renew onto an archived plan. */
 export type RenewalGap = {
   packageId: number;
@@ -462,6 +489,73 @@ export async function applyBundleToExistingMemberships(
         : {}),
     }
   );
+  return data;
+}
+
+/** A downloaded plans file. Only the fields the upload screen reads are typed. */
+export type MembershipPlanFile = {
+  format: string;
+  version: number;
+  exportedAt: string;
+  environment: string | null;
+  practiceId: number;
+  plans: Array<{ id: number; name: string } & Record<string, unknown>>;
+};
+
+export type PlanImportCopy = 'everything' | 'benefits';
+
+export type PlanImportMapping = { sourceIndex: number; targetPackageId?: number };
+
+export type PlanImportRow = {
+  sourceIndex: number;
+  sourceName: string;
+  targetPackageId: number | null;
+  targetName: string;
+  matchedBy: 'eVet id' | 'portal link' | 'name' | 'chosen' | 'none';
+  samePlan: boolean;
+  activeMemberCount: number;
+  settingChanges: string[];
+  benefitsAdded: string[];
+  benefitsRemoved: string[];
+  benefitsChanged: string[];
+  unmatched: string[];
+  warnings: string[];
+  status: 'ready' | 'no_changes' | 'blocked' | 'saved' | 'failed';
+  error: string | null;
+};
+
+export type PlanImportResult = {
+  dryRun: boolean;
+  copy: PlanImportCopy;
+  file: { exportedAt: string; environment: string | null; planCount: number };
+  rows: PlanImportRow[];
+};
+
+/** Every membership plan, or just `ids`, as a file another system can upload. */
+export async function exportMembershipPlans(ids?: number[]): Promise<MembershipPlanFile> {
+  const { data } = await http.get<MembershipPlanFile>('/memberships/bundles/export', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(ids?.length ? { ids: ids.join(',') } : {}),
+    },
+  });
+  return data;
+}
+
+/** Without `mappings` this returns the suggested matches and saves nothing. */
+export async function importMembershipPlans(opts: {
+  file: MembershipPlanFile;
+  copy: PlanImportCopy;
+  mappings?: PlanImportMapping[];
+  dryRun?: boolean;
+}): Promise<PlanImportResult> {
+  const { data } = await http.post<PlanImportResult>('/memberships/bundles/import', {
+    practiceId: currentPracticeId(),
+    file: opts.file,
+    copy: opts.copy,
+    ...(opts.mappings ? { mappings: opts.mappings } : {}),
+    ...(opts.dryRun ? { dryRun: true } : {}),
+  });
   return data;
 }
 
