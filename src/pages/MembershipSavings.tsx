@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import {
   fetchMyMembershipSavings,
   type ClientPortalPetSavings,
+  type MembershipPlanExtras,
   type MembershipSavingsLineItem,
   type PetMembershipSavingsEstimate,
 } from '../api/membershipSavings';
@@ -79,6 +80,140 @@ const cell: CSSProperties = {
   verticalAlign: 'top',
 };
 
+function PlanExtras({
+  extras,
+  petName,
+  planShort,
+  hasVisit,
+}: {
+  extras: MembershipPlanExtras;
+  petName: string;
+  planShort: string;
+  hasVisit: boolean;
+}) {
+  const { includedItems, includedValue, memberDiscounts } = extras;
+  if (includedItems.length === 0 && memberDiscounts.length === 0) return null;
+  return (
+    <div style={{ marginTop: 20 }}>
+      {includedItems.length > 0 && (
+        <>
+          <h3 style={{ margin: '0 0 4px', fontSize: 17, color: '#14532d' }}>
+            {hasVisit
+              ? `More care ${planShort} includes for ${petName}`
+              : `What ${planShort} includes for ${petName}`}
+          </h3>
+          <p style={{ margin: '0 0 8px', fontSize: 14, color: '#5a6b6c', lineHeight: 1.45 }}>
+            {hasVisit
+              ? 'Not part of this visit, but included during the membership year when your veterinarian recommends it.'
+              : 'Included during the membership year when your veterinarian recommends it.'}
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <tbody>
+              {includedItems.map((item, idx) => (
+                <tr key={`${item.name}-${idx}`}>
+                  <td style={cell}>
+                    {item.name}
+                    {item.quantity > 1 ? ` × ${item.quantity}` : ''}
+                  </td>
+                  <td
+                    style={{
+                      ...cell,
+                      textAlign: 'right',
+                      color: '#6c757d',
+                      textDecoration: 'line-through',
+                    }}
+                  >
+                    {formatUsd(item.regularPrice)}
+                  </td>
+                  <td
+                    style={{
+                      ...cell,
+                      textAlign: 'right',
+                      fontWeight: 600,
+                      color: '#0f5132',
+                      width: 90,
+                    }}
+                  >
+                    Included
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div
+            style={{
+              marginTop: 10,
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              fontSize: 16,
+              fontWeight: 700,
+              color: '#0f5132',
+            }}
+          >
+            <span>{hasVisit ? 'Additional care included' : 'Care included'}</span>
+            <span>Up to {formatUsd(includedValue)}</span>
+          </div>
+        </>
+      )}
+
+      {memberDiscounts.length > 0 && (
+        <>
+          <h3 style={{ margin: '20px 0 4px', fontSize: 17, color: '#14532d' }}>
+            Member pricing on other visits
+          </h3>
+          <p style={{ margin: '0 0 8px', fontSize: 14, color: '#5a6b6c', lineHeight: 1.45 }}>
+            If {petName} needs care between wellness visits, members pay less.
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <tbody>
+              {memberDiscounts.map((d) => (
+                <tr key={d.name}>
+                  <td style={cell}>
+                    {d.name}
+                    <div style={{ fontSize: 13, marginTop: 2, color: '#0f5132', fontWeight: 600 }}>
+                      Save {formatUsd(d.regularPrice - d.memberPrice)} each
+                    </div>
+                  </td>
+                  <td
+                    style={{
+                      ...cell,
+                      textAlign: 'right',
+                      color: '#6c757d',
+                      textDecoration: 'line-through',
+                    }}
+                  >
+                    {formatUsd(d.regularPrice)}
+                  </td>
+                  <td
+                    style={{
+                      ...cell,
+                      textAlign: 'right',
+                      fontWeight: 600,
+                      color: '#0f5132',
+                      width: 90,
+                    }}
+                  >
+                    {formatUsd(d.memberPrice)}
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td style={cell} colSpan={3}>
+                  Online store
+                  <div style={{ fontSize: 13, marginTop: 2, color: '#0f5132', fontWeight: 600 }}>
+                    10% member pricing on food, preventives, and supplies
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PetSavingsCard({
   pet,
   highlighted,
@@ -94,17 +229,31 @@ function PetSavingsCard({
     : {};
 
   if (!e) {
+    const planShort = planShortName(pet.recommendedPlanName);
     return (
       <div id={`pet-savings-${pet.portalPetId}`} style={{ ...cardStyle, ...outline }}>
         <h2 style={{ margin: '0 0 8px', fontSize: 20, color: '#14532d' }}>{pet.petName}</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 16, color: '#3d5347', lineHeight: 1.5 }}>
+        <p style={{ margin: 0, fontSize: 16, color: '#3d5347', lineHeight: 1.5 }}>
           We don&apos;t have a recent wellness visit with vaccines for {pet.petName} to compare yet.
-          Membership covers the annual wellness exam and trip fee, recommended vaccines, and annual
-          lab work, plus priority scheduling with your dedicated One-Team.
+          {pet.planExtras
+            ? ` Here is what ${pet.recommendedPlanName} would include.`
+            : ' Membership covers the annual wellness exam and trip fee, recommended vaccines, and annual lab work, plus priority scheduling with your dedicated One-Team.'}
         </p>
-        <button type="button" style={primaryButton} onClick={() => onJoin(pet)}>
-          Explore membership for {pet.petName}
-        </button>
+        {pet.planExtras && (
+          <PlanExtras
+            extras={pet.planExtras}
+            petName={pet.petName}
+            planShort={planShort}
+            hasVisit={false}
+          />
+        )}
+        <div style={{ marginTop: 18 }}>
+          <button type="button" style={primaryButton} onClick={() => onJoin(pet)}>
+            {pet.planExtras
+              ? `Join ${planShort} for ${pet.petName}`
+              : `Explore membership for ${pet.petName}`}
+          </button>
+        </div>
       </div>
     );
   }
@@ -241,6 +390,47 @@ function PetSavingsCard({
           <span>{formatUsd(e.memberVisitAmount)}</span>
         </div>
       </div>
+
+      {pet.planExtras && (
+        <PlanExtras extras={pet.planExtras} petName={pet.petName} planShort={planShort} hasVisit />
+      )}
+
+      {pet.planExtras && pet.planExtras.includedValue > 0 && (
+        <div
+          style={{
+            marginTop: 16,
+            padding: '14px 16px',
+            background: '#14532d',
+            color: '#fff',
+            borderRadius: 10,
+            fontSize: 16,
+            lineHeight: 1.5,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              fontWeight: 700,
+              fontSize: 18,
+            }}
+          >
+            <span>Care included over the year</span>
+            <span>Up to {formatUsd(e.coveredAmount + pet.planExtras.includedValue)}</span>
+          </div>
+          <div style={{ fontSize: 14, opacity: 0.9 }}>
+            {formatUsd(e.coveredAmount)} on this visit plus up to{' '}
+            {formatUsd(pet.planExtras.includedValue)} more
+            {e.annualPrice != null
+              ? `, for ${formatUsd(e.annualPrice)} a year paid annually`
+              : e.monthlyPrice != null
+                ? `, for ${formatUsd(e.monthlyPrice)} a month`
+                : ''}
+            .
+          </div>
+        </div>
+      )}
 
       <div
         style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}

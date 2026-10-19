@@ -26,12 +26,28 @@ export type PetMembershipSavingsEstimate = {
   lineItems?: MembershipSavingsLineItem[];
 };
 
+export type MembershipPlanExtras = {
+  /** Plan care that was not on the compared visit, priced at regular prices. */
+  includedItems: Array<{ name: string; quantity: number; regularPrice: number }>;
+  includedValue: number;
+  /** Member prices the plan gives on later care. */
+  memberDiscounts: Array<{
+    name: string;
+    regularPrice: number;
+    memberPrice: number;
+    perYear: number;
+  }>;
+};
+
 export type ClientPortalPetSavings = {
   patientId: number;
   /** Matches `Pet.id` in the portal (PIMS id when present). */
   portalPetId: string;
   petName: string;
   estimate: PetMembershipSavingsEstimate | null;
+  recommendedPlanId: 'foundations' | 'golden';
+  recommendedPlanName: string;
+  planExtras: MembershipPlanExtras | null;
 };
 
 export async function fetchMyMembershipSavings(): Promise<ClientPortalPetSavings[]> {
