@@ -36,6 +36,10 @@ import {
   clearSlotOfferReviewReturnSession,
   readSlotOfferReviewReturnSession,
 } from '../utils/slotOfferReviewReturnSession';
+import {
+  buildTextedOfferFollowUpSmsPayload,
+  textedOfferFollowUpFromLineLabel,
+} from '../utils/textedOfferFollowUpSms';
 import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -470,6 +474,7 @@ function OfferDetailPanel({
   onTextClient,
   onViewAppointment,
   onReviewAppointment,
+  canTextClient,
 }: {
   detail: SlotOfferDetail;
   practiceTz: string;
@@ -484,6 +489,7 @@ function OfferDetailPanel({
   onTextClient: () => void;
   onViewAppointment: () => void;
   onReviewAppointment: () => void;
+  canTextClient: boolean;
 }) {
   const hasBookedAppointment =
     detail.bookedAppointmentId != null && Number(detail.bookedAppointmentId) > 0;
@@ -569,13 +575,13 @@ function OfferDetailPanel({
             </div>
           </div>
         ) : null}
-        {detail.clientId != null ||
+        {canTextClient ||
         hasBookedAppointment ||
         canMarkBooked(detail) ||
         canStaffConfirm(detail) ||
         showRemove ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 4 }}>
-            {detail.clientId != null ? (
+            {canTextClient ? (
               <button type="button" className="btn secondary" onClick={onTextClient}>
                 Text client
               </button>
@@ -687,7 +693,10 @@ export default function TextedOffersPage() {
   const [smsTarget, setSmsTarget] = useState<{
     clientId: number;
     clientLabel: string;
-    fromLine: string | null;
+    /** Original offer smsFrom when known — preferred send-from. */
+    offerSmsFrom: string | null;
+    /** Compose-modal from label (offer line, else scheduling outreach). */
+    fromLineLabel: string | null;
   } | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
@@ -841,16 +850,24 @@ export default function TextedOffersPage() {
   }, []);
 
   const openTextClientModal = useCallback(
-    (detail: SlotOfferDetail, fromLine: string | null) => {
-      if (detail.clientId == null) return;
+    (
+      detail: SlotOfferDetail,
+      listRow?: Pick<SlotOfferListItem, 'clientId' | 'clientName'> | null
+    ) => {
+      // Prefer the list row identity staff see in the table over detail-only fields.
+      const clientId = listRow?.clientId ?? detail.clientId;
+      if (clientId == null) return;
       const clientLabel =
+        listRow?.clientName?.trim() ||
         detail.clientName?.trim() ||
-        (detail.clientId != null ? `Client #${detail.clientId}` : 'client');
+        `Client #${clientId}`;
+      const offerSmsFrom = detail.smsFrom?.trim() || null;
+      const fromLineLabel = textedOfferFollowUpFromLineLabel(offerSmsFrom, practiceMainPhone);
       setSmsError(null);
       setSmsMessage('');
-      setSmsTarget({ clientId: detail.clientId, clientLabel, fromLine });
+      setSmsTarget({ clientId, clientLabel, offerSmsFrom, fromLineLabel });
     },
-    []
+    [practiceMainPhone]
   );
 
   const handleSendSms = useCallback(
@@ -859,12 +876,15 @@ export default function TextedOffersPage() {
       setSmsSending(true);
       setSmsError(null);
       try {
-        await sendClientSms(smsTarget.clientId, {
-          message: smsMessage.trim(),
-          useRemindersFrom: true,
-          source: 'slot_offer',
-          ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-        });
+        await sendClientSms(
+          smsTarget.clientId,
+          buildTextedOfferFollowUpSmsPayload({
+            message: smsMessage.trim(),
+            offerSmsFrom: smsTarget.offerSmsFrom,
+            schedulingOutreachFrom: practiceMainPhone,
+            overrideNonProd: opts.overrideNonProd,
+          })
+        );
         closeSmsModal();
       } catch (e: unknown) {
         const ax = e as { response?: { data?: { message?: string } }; message?: string };
@@ -873,7 +893,7 @@ export default function TextedOffersPage() {
         setSmsSending(false);
       }
     },
-    [closeSmsModal, smsMessage, smsTarget]
+    [closeSmsModal, practiceMainPhone, smsMessage, smsTarget]
   );
 
   const onMarkBooked = useCallback(
@@ -1188,15 +1208,11 @@ export default function TextedOffersPage() {
                               removing={Boolean(removing[row.id])}
                               removeError={removeError[row.id] ?? null}
                               showRemove={showRemove}
+                              canTextClient={(row.clientId ?? detail.clientId) != null}
                               onResolve={() => void onMarkBooked(row.id)}
                               onRemove={() => void onRemove(row.id)}
                               onTextClient={() => {
-                                const fromLine = resolveSlotOfferSmsFromLine(
-                                  detail,
-                                  providers,
-                                  practiceMainPhone
-                                );
-                                openTextClientModal(detail, fromLine);
+                                openTextClientModal(detail, row);
                               }}
                               onViewAppointment={() => onViewAppointment(detail)}
                               onReviewAppointment={() => onReviewAppointment(detail, row.id)}
@@ -1228,7 +1244,7 @@ export default function TextedOffersPage() {
         <ClientSmsComposeModal
           open
           clientLabel={smsTarget.clientLabel}
-          fromLineLabel={smsTarget.fromLine}
+          fromLineLabel={smsTarget.fromLineLabel}
           message={smsMessage}
           onMessageChange={setSmsMessage}
           onClose={closeSmsModal}
@@ -1236,7 +1252,7 @@ export default function TextedOffersPage() {
           onOpenMessagesHistory={() => {
             setMessagesClientId(smsTarget.clientId);
             setMessagesClientLabel(smsTarget.clientLabel);
-            setMessagesFromLine(smsTarget.fromLine);
+            setMessagesFromLine(smsTarget.fromLineLabel);
           }}
           sending={smsSending}
           sendError={smsError}
