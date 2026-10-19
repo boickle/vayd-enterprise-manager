@@ -1567,6 +1567,55 @@ export default function ClientPortal() {
 
       {!loading && !error && (
         <>
+          {petsWithProvider.some(
+            (p) => p.membershipPlanName == null && !(p.wellnessPlans || []).some((plan) => planIsActive(plan))
+          ) && (
+            <section className="cp-section" style={{ marginTop: 24 }}>
+              <div
+                className="cp-card"
+                style={{
+                  padding: '18px 20px',
+                  borderRadius: 14,
+                  background: '#F3FAF6',
+                  border: '1px solid #c9e3d6',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 14,
+                }}
+              >
+                <div style={{ flex: '1 1 320px' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: '#14532d', marginBottom: 4 }}>
+                    See what One-Team Membership would cover
+                  </div>
+                  <div style={{ fontSize: 15, color: '#3d5347', lineHeight: 1.45 }}>
+                    An item-by-item look at your savings, based on your pets&apos; wellness care.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    trackEvent('membership_savings_clicked', { location: 'portal_home' });
+                    navigate('/client-portal/membership-savings');
+                  }}
+                  style={{
+                    padding: '12px 20px',
+                    backgroundColor: '#4FB128',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 10,
+                    fontSize: 16,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  See my membership savings
+                </button>
+              </div>
+            </section>
+          )}
+
           {/* SERVICE ACTION BUTTONS */}
           <section className="cp-section cp-service-actions-section" style={{ marginTop: 28 }}>
             {/* Mobile View - Card with List */}
@@ -2346,6 +2395,28 @@ export default function ClientPortal() {
                             }}
                           >
                             Explore membership options for {p.name}
+                          </button>
+                        )}
+                        {showMembershipButton && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              trackEvent('membership_savings_clicked', { location: 'pet_card', pet_id: p.id });
+                              navigate(`/client-portal/membership-savings?petId=${encodeURIComponent(p.id)}`);
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              backgroundColor: '#fff',
+                              color: '#0f766e',
+                              border: '1px solid #0f766e',
+                              borderRadius: 8,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            See {p.name}&apos;s itemized savings
                           </button>
                         )}
                         <div style={{ position: 'relative', width: '100%' }}>
