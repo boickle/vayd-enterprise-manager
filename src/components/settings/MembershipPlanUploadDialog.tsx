@@ -94,7 +94,7 @@ export default function MembershipPlanUploadDialog({
   const [file, setFile] = useState<MembershipPlanFile | null>(null);
   const [fileName, setFileName] = useState('');
   const [plansHere, setPlansHere] = useState<Bundle[]>([]);
-  const [copy, setCopy] = useState<PlanImportCopy>('everything');
+  const [copy, setCopy] = useState<PlanImportCopy>('benefits');
   const [mappings, setMappings] = useState<Mapping[]>([]);
   const [preview, setPreview] = useState<PlanImportResult | null>(null);
   const [result, setResult] = useState<PlanImportResult | null>(null);
