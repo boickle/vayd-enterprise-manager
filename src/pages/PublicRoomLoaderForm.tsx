@@ -791,8 +791,10 @@ function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefin
 }
 
 /**
- * Foundations wellness members (not on Golden): routine senior-age labs use Early Detection unless staff
- * answered Yes to “medical concern / lab work” (then the Senior Screen path via 8659999 applies).
+ * Foundations wellness members (not on Golden).
+ * - Labs page *offers*: always Early Detection (including staff labs = Yes) — never Senior Screen / 8659999.
+ * - Visit-list senior screens already on the plan as reminders stay visible (membership equivalence / staff intent).
+ * - Routine labs = No: Early Detection replaces age-based Senior Screen visit rows on the care plan.
  */
 function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments: any[] | undefined): boolean {
   const detail = getRoomLoaderMembershipDetailText(p, appointments);
@@ -807,7 +809,10 @@ function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments:
   return false;
 }
 
-/** Foundations (non-Golden) with staff lab-work = No → Early Detection replaces Senior Screen at senior age. */
+/**
+ * Foundations + labs = No: hide age-based Senior Screen visit rows so Early Detection shows on the care plan.
+ * When labs = Yes, leave staff-scheduled senior reminder rows alone (do not strip the visit list).
+ */
 function roomLoaderFoundationsUsesEarlyDetectionOverSenior(
   patient: any,
   appointments: any[] | undefined,
@@ -7298,16 +7303,50 @@ export default function PublicRoomLoaderForm() {
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      /** Visit-list / age-based senior suppression (labs = No only — keep staff senior reminders when labs = Yes). */
       const foundationsUsesEarlyDetection = foundationsNotGoldenMember && !labWorkYes;
-      /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
-      const ageBasedSeniorScreenForMember = !foundationsUsesEarlyDetection;
+      /**
+       * Never age-recommend Senior Screen for Foundations — plan benefit is Early Detection.
+       * (labs = Yes Foundations offers EDP in the block below; labs = No uses foundationsUsesEarlyDetection.)
+       */
+      const ageBasedSeniorScreenForMember = !foundationsNotGoldenMember;
 
       if (labWorkYes) {
-        recs.push({
-          code: '8659999',
-          title: 'Senior Screen',
-          message: "You indicated that lab work would help with this visit. We recommend our Senior Screen to get a comprehensive picture of your pet's health.",
-        });
+        if (foundationsNotGoldenMember) {
+          // Foundations benefit is Early Detection — do not offer Senior Screen / 8659999 for labs = Yes.
+          if (isCat && shouldRecommendYoungOrEarly) {
+            const msg = listHasFIVOrFecal
+              ? "You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT) — the labs included in the plan. Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
+              : 'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT) — the labs included in the plan.';
+            recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
+          } else if (isDog && shouldRecommendYoungOrEarly) {
+            const msg = listHas4dxOrFecal
+              ? "You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx) — the labs included in the plan. Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
+              : 'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx) — the labs included in the plan.';
+            recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
+          } else if (isCat) {
+            recs.push({
+              code: 'FIL48119999',
+              title: 'Early Detection Panel - Feline',
+              message:
+                'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline — the labs included in the plan.',
+            });
+          } else if (isDog) {
+            recs.push({
+              code: 'FIL48719999',
+              title: 'Early Detection Panel - Canine',
+              message:
+                'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine — the labs included in the plan.',
+            });
+          }
+        } else {
+          recs.push({
+            code: '8659999',
+            title: 'Senior Screen',
+            message:
+              "You indicated that lab work would help with this visit. We recommend our Senior Screen to get a comprehensive picture of your pet's health.",
+          });
+        }
       }
 
       if (
@@ -7358,7 +7397,7 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      // Foundations (non-Golden) members at senior age: routine care → Early Detection, unless staff flagged lab work (8659999 above).
+      // Foundations (non-Golden) members at senior age: Early Detection (labs = Yes is handled above with membership copy).
       if (
         foundationsNotGoldenMember &&
         !labWorkYes &&
@@ -7499,14 +7538,18 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (labWorkYes) {
+      // Non-Foundations medical-concern path offers Senior Screen; drop Early Detection so the client sees one panel choice.
+      // Foundations labs = Yes keeps Early Detection (plan benefit) — do not strip it.
+      if (labWorkYes && !foundationsNotGoldenMember) {
         for (let i = recs.length - 1; i >= 0; i--) {
           const c = recs[i].code;
           if (c === 'FIL48119999' || c === 'FIL48719999') recs.splice(i, 1);
         }
       }
 
-      if (foundationsUsesEarlyDetection) {
+      // Never leave Senior Screen / extended panel *offers* on the Labs page for Foundations (EDP is the plan benefit).
+      // Does not remove senior screens already on the visit as reminders — only recommendation codes.
+      if (foundationsNotGoldenMember) {
         const stripped = stripSeniorLabRecommendationCodes(recs);
         recs.length = 0;
         recs.push(...stripped);

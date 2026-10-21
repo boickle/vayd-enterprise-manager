@@ -3760,7 +3760,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   {/* Lab Work Question */}
                   <div>
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
-                      Is there a medical concern that may warrant lab work? (this will ask client about senior panel){' '}
+                      Is there a medical concern that may warrant lab work?{' '}
+                      {membershipLabelIsFoundationsNotGolden(patient.membershipName)
+                        ? '(Foundations members are offered Early Detection Panel — the labs in their plan)'
+                        : '(this will ask client about senior panel)'}{' '}
                       <span style={{ color: '#dc3545' }}>*</span>
                       <br />
                       <span style={{ fontWeight: 400, fontSize: '14px', color: '#666' }}>Examples include PU/PD, lethargy, ADR, vomiting, weight loss</span>
