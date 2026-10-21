@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { fetchUnscheduledReminders, patchReminder, type UnscheduledReminder } from '../api/careOutreach';
-import type { SendSlotOfferPayload } from '../api/slotOffers';
+import type { SendSlotOfferPayload, SlotOfferChannel } from '../api/slotOffers';
 import type { Provider } from '../api/employee';
 import {
   appendStaffNoteLine,
@@ -25,6 +25,7 @@ export function buildSlotOfferOutreachNoteLine(opts: {
   practiceTz: string;
   actor: AppointmentChangeActor;
   loggedAt?: DateTime;
+  channel?: SlotOfferChannel;
 }): string {
   const tz = opts.practiceTz;
   const sched = DateTime.fromISO(opts.offeredSlotDatetime, { zone: 'utc' }).setZone(tz);
@@ -46,7 +47,8 @@ export function buildSlotOfferOutreachNoteLine(opts: {
   const loggedLabel = logged.isValid ? logged.toFormat('MM/dd/yyyy h:mm a') : DateTime.now().toFormat('MM/dd/yyyy h:mm a');
   const staff = formatEmployeeFirstNameLastInitial(opts.actor);
 
-  return `Texted offer for ${apptDateLabel} at ${scheduledTimeLabel} with arrival window ${windowLabel} on ${loggedLabel} - ${staff}`;
+  const verb = opts.channel === 'email' ? 'Emailed' : 'Texted';
+  return `${verb} offer for ${apptDateLabel} at ${scheduledTimeLabel} with arrival window ${windowLabel} on ${loggedLabel} - ${staff}`;
 }
 
 async function reminderIdsForSlotOfferPatients(
@@ -98,6 +100,7 @@ export async function applySlotOfferOutreachNotes(opts: {
     arrivalWindowEnd: payload.arrivalWindowEnd,
     slotDate: payload.slotDate,
     practiceTz,
+    channel: payload.channel,
     actor: resolveAppointmentChangeActorFromAuth({
       token: opts.token,
       userEmail: opts.userEmail,

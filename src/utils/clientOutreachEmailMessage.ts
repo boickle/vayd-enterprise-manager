@@ -110,6 +110,25 @@ export function careOutreachSmsToEmail(
   });
 }
 
+/**
+ * Texted-offer draft as an email offer. The server appends a "Confirm this visit"
+ * button after the body, so "tap below" becomes "click below" and no reply footer is added.
+ */
+export function slotOfferSmsToEmail(
+  smsText: string,
+  providerLastName?: string | null,
+): { subject: string; bodyText: string } {
+  const text = smsText
+    .replace(CARE_OUTREACH_SMS_SUFFIX, '')
+    .replace(/\bTap below\b/g, 'Click below')
+    .replace(/\btap below\b/g, 'click below')
+    .trim();
+  return {
+    subject: careOutreachEmailSubject(providerLastName),
+    bodyText: splitCareOutreachSmsBody(text).join('\n\n'),
+  };
+}
+
 export function forwardBookingSmsToEmail(smsText: string): {
   subject: string;
   bodyText: string;
