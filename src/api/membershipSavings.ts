@@ -48,6 +48,8 @@ export type ClientPortalPetSavings = {
   recommendedPlanId: 'foundations' | 'golden';
   recommendedPlanName: string;
   planExtras: MembershipPlanExtras | null;
+  /** Additional-pet credit toward care when enrolled; 0 for the household's first pet. */
+  multiPetCredit: number;
 };
 
 export async function fetchMyMembershipSavings(): Promise<ClientPortalPetSavings[]> {

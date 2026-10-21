@@ -214,6 +214,88 @@ function PlanExtras({
   );
 }
 
+function MultiPetCreditRow({ credit, petName }: { credit: number; petName: string }) {
+  if (!(credit > 0)) return null;
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        padding: '12px 14px',
+        background: '#f0fdf4',
+        border: '1px solid #bbf7d0',
+        borderRadius: 8,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: 12,
+        fontSize: 16,
+      }}
+    >
+      <span>
+        <strong style={{ color: '#14532d' }}>Multi-pet credit</strong>
+        <span style={{ display: 'block', fontSize: 14, color: '#3d5347' }}>
+          Enrolling {petName} as an additional pet adds a credit toward a future visit. It never expires.
+        </span>
+      </span>
+      <strong style={{ color: '#0f5132', whiteSpace: 'nowrap' }}>{formatUsd(credit)}</strong>
+    </div>
+  );
+}
+
+/**
+ * Yearly value next to the plan price. Hidden when included care and credit add up to less than
+ * the plan costs, so the card does not lead with a comparison that looks like a loss.
+ */
+function YearlyValueBox({
+  estimate: e,
+  extras,
+  credit,
+}: {
+  estimate: PetMembershipSavingsEstimate;
+  extras: MembershipPlanExtras | null;
+  credit: number;
+}) {
+  const extraValue = extras?.includedValue ?? 0;
+  if (extraValue <= 0 && credit <= 0) return null;
+  const total = e.coveredAmount + extraValue + credit;
+  const planCost = e.annualPrice ?? (e.monthlyPrice != null ? e.monthlyPrice * 12 : null);
+  if (planCost != null && total < planCost) return null;
+
+  const parts = [`${formatUsd(e.coveredAmount)} on this visit`];
+  if (extraValue > 0) parts.push(`up to ${formatUsd(extraValue)} more in included care`);
+  if (credit > 0) parts.push(`a ${formatUsd(credit)} multi-pet credit`);
+  const joined =
+    parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        padding: '14px 16px',
+        background: '#14532d',
+        color: '#fff',
+        borderRadius: 10,
+        fontSize: 16,
+        lineHeight: 1.5,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontWeight: 700, fontSize: 18 }}>
+        <span>Value over the year</span>
+        <span>Up to {formatUsd(total)}</span>
+      </div>
+      <div style={{ fontSize: 14, opacity: 0.9 }}>
+        {joined}
+        {e.annualPrice != null
+          ? `, for ${formatUsd(e.annualPrice)} a year paid annually`
+          : e.monthlyPrice != null
+            ? `, for ${formatUsd(e.monthlyPrice)} a month`
+            : ''}
+        .
+      </div>
+    </div>
+  );
+}
+
 function PetSavingsCard({
   pet,
   highlighted,
@@ -247,6 +329,7 @@ function PetSavingsCard({
             hasVisit={false}
           />
         )}
+        <MultiPetCreditRow credit={pet.multiPetCredit} petName={pet.petName} />
         <div style={{ marginTop: 18 }}>
           <button type="button" style={primaryButton} onClick={() => onJoin(pet)}>
             {pet.planExtras
@@ -395,42 +478,9 @@ function PetSavingsCard({
         <PlanExtras extras={pet.planExtras} petName={pet.petName} planShort={planShort} hasVisit />
       )}
 
-      {pet.planExtras && pet.planExtras.includedValue > 0 && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: '14px 16px',
-            background: '#14532d',
-            color: '#fff',
-            borderRadius: 10,
-            fontSize: 16,
-            lineHeight: 1.5,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              gap: 12,
-              fontWeight: 700,
-              fontSize: 18,
-            }}
-          >
-            <span>Care included over the year</span>
-            <span>Up to {formatUsd(e.coveredAmount + pet.planExtras.includedValue)}</span>
-          </div>
-          <div style={{ fontSize: 14, opacity: 0.9 }}>
-            {formatUsd(e.coveredAmount)} on this visit plus up to{' '}
-            {formatUsd(pet.planExtras.includedValue)} more
-            {e.annualPrice != null
-              ? `, for ${formatUsd(e.annualPrice)} a year paid annually`
-              : e.monthlyPrice != null
-                ? `, for ${formatUsd(e.monthlyPrice)} a month`
-                : ''}
-            .
-          </div>
-        </div>
-      )}
+      <MultiPetCreditRow credit={pet.multiPetCredit} petName={pet.petName} />
+
+      <YearlyValueBox estimate={e} extras={pet.planExtras} credit={pet.multiPetCredit} />
 
       <div
         style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}
