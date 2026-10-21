@@ -2397,28 +2397,6 @@ export default function ClientPortal() {
                             Explore membership options for {p.name}
                           </button>
                         )}
-                        {showMembershipButton && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              trackEvent('membership_savings_clicked', { location: 'pet_card', pet_id: p.id });
-                              navigate(`/client-portal/membership-savings?petId=${encodeURIComponent(p.id)}`);
-                            }}
-                            style={{
-                              width: '100%',
-                              padding: '8px 12px',
-                              backgroundColor: '#fff',
-                              color: '#0f766e',
-                              border: '1px solid #0f766e',
-                              borderRadius: 8,
-                              fontSize: 14,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            See {p.name}&apos;s itemized savings
-                          </button>
-                        )}
                         <div style={{ position: 'relative', width: '100%' }}>
                           {isChatHoursOpen ? (
                             <button
