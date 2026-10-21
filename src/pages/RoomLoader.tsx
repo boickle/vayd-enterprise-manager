@@ -31,7 +31,45 @@ import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
 } from '../utils/roomLoaderSharps';
+import {
+  foundationsFalseZeroCorrectedUnitPrice,
+  membershipLabelIsFoundationsNotGolden,
+  stripFalseFoundationsSeniorInclusionFromWellness,
+} from '../utils/membershipFoundationsLabs';
 import './RoomLoader.css';
+
+/** Correct backend false $0 “included” senior panels for Foundations (non-Golden) members. */
+function applyFoundationsSeniorFalseZeroCorrection<
+  T extends {
+    name?: string;
+    code?: string;
+    price?: number;
+    originalPrice?: number;
+    lab?: { code?: string; name?: string; price?: number };
+    wellnessPlanPricing?: any;
+  },
+>(item: T, membershipName: string | null | undefined): T {
+  if (!membershipLabelIsFoundationsNotGolden(membershipName)) return item;
+  const wp = item.wellnessPlanPricing;
+  if (!wp) return item;
+  const code = String(item.code ?? item.lab?.code ?? '').trim().toUpperCase();
+  const name = String(item.name ?? item.lab?.name ?? '');
+  const corrected = foundationsFalseZeroCorrectedUnitPrice({
+    foundationsNotGolden: true,
+    wellnessPlanPricing: wp,
+    adjustedPrice: item.price ?? wp.adjustedPrice,
+    originalPrice: item.originalPrice ?? wp.originalPrice ?? item.lab?.price,
+    itemCode: code,
+    itemName: name,
+  });
+  if (corrected == null) return item;
+  return {
+    ...item,
+    price: corrected,
+    originalPrice: item.originalPrice ?? wp.originalPrice ?? corrected,
+    wellnessPlanPricing: stripFalseFoundationsSeniorInclusionFromWellness(wp, corrected),
+  };
+}
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
 
@@ -1387,10 +1425,16 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
    * Normalize a reminder (and optional correction) into the same shape as an added item so we can reuse getPreDiscountForOneUnit / getTotalPreDiscountForQuantity / getAddedItemFinalPrice.
    * Reads price, serviceFee, minimumPrice from reminder.matchedItem (or correction.selectedItem) so quantity scaling matches added items.
    */
-  function reminderToPricingItem(r: ReminderWithPrice, correction?: { selectedItem?: SearchableItem | any } | null): any {
+  function reminderToPricingItem(
+    r: ReminderWithPrice,
+    correction?: { selectedItem?: SearchableItem | any } | null,
+    membershipName?: string | null
+  ): any {
     const itemType = (correction?.selectedItem?.itemType ?? r.itemType ?? 'procedure').toString().toLowerCase();
     const base: any = {
       itemType,
+      name: correction?.selectedItem?.name ?? r.matchedItem?.name ?? r.reminder?.description,
+      code: correction?.selectedItem?.code ?? r.matchedItem?.code,
       price: r.price ?? 0,
       originalPrice: r.wellnessPlanPricing?.originalPrice,
       wellnessPlanPricing: r.wellnessPlanPricing,
@@ -1404,14 +1448,18 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         minimumPrice: (r.matchedItem as any)?.minimumPrice,
       };
     } else if (itemType === 'lab') {
-      base.lab = correction?.selectedItem?.lab ?? { price: r.matchedItem?.price ?? 0 };
+      base.lab = correction?.selectedItem?.lab ?? {
+        price: r.matchedItem?.price ?? 0,
+        code: r.matchedItem?.code,
+        name: r.matchedItem?.name,
+      };
     } else {
       base.procedure = correction?.selectedItem?.procedure ?? {
         price: r.matchedItem?.price ?? 0,
         serviceFee: (r.matchedItem as any)?.serviceFee ?? 0,
       };
     }
-    return base;
+    return applyFoundationsSeniorFalseZeroCorrection(base, membershipName);
   }
 
   /**
@@ -1553,6 +1601,22 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         item: itemPayload,
       });
 
+      const membershipName =
+        patientData.patient.membershipName ??
+        (patientData as { membershipName?: string | null }).membershipName ??
+        null;
+      const correctedPricingItem = applyFoundationsSeniorFalseZeroCorrection(
+        {
+          name: item.name ?? pricingResponse.item?.name,
+          code: item.code ?? item.lab?.code ?? pricingResponse.item?.code ?? pricingResponse.item?.lab?.code,
+          lab: item.lab ?? pricingResponse.item?.lab,
+          price: pricingResponse.adjustedPrice,
+          originalPrice: pricingResponse.originalPrice,
+          wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+        },
+        membershipName
+      );
+
       // Update the item with the adjusted price and wellness plan info
       setAddedItems((prev) => {
         const items = prev[petId] || [];
@@ -1565,9 +1629,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           const updatedItems = [...items];
           updatedItems[itemIndex] = {
             ...updatedItems[itemIndex],
-            price: pricingResponse.adjustedPrice,
-            originalPrice: pricingResponse.originalPrice,
-            wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+            price: correctedPricingItem.price,
+            originalPrice: correctedPricingItem.originalPrice ?? pricingResponse.originalPrice,
+            wellnessPlanPricing: correctedPricingItem.wellnessPlanPricing,
             discountPricing: pricingResponse.discountPricing,
             tieredPricing: pricingResponse.tieredPricing,
           };
@@ -1992,9 +2056,30 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
         // Use adjusted price when membership/discount applies (only when no correction; corrections use different item)
         // Note: discountPricing.priceAdjustedByDiscount is a boolean, not the price; use wellnessPlanPricing.adjustedPrice only
-        const wpAdjusted = reminderWithPrice.wellnessPlanPricing?.adjustedPrice;
+        const foundationsCorrectedReminder = !correction?.selectedItem
+          ? applyFoundationsSeniorFalseZeroCorrection(
+              {
+                name: finalItem?.name ?? reminderWithPrice.matchedItem?.name ?? reminderWithPrice.reminder.description,
+                code: finalItem?.code ?? reminderWithPrice.matchedItem?.code,
+                price:
+                  (reminderWithPrice.wellnessPlanPricing?.adjustedPrice != null &&
+                  typeof reminderWithPrice.wellnessPlanPricing.adjustedPrice === 'number'
+                    ? reminderWithPrice.wellnessPlanPricing.adjustedPrice
+                    : null) ??
+                  (finalItem?.price ?? reminderWithPrice.price ?? undefined) ??
+                  undefined,
+                originalPrice: reminderWithPrice.wellnessPlanPricing?.originalPrice,
+                wellnessPlanPricing: reminderWithPrice.wellnessPlanPricing,
+              },
+              patient.membershipName
+            )
+          : null;
+        const wpForReminder = foundationsCorrectedReminder?.wellnessPlanPricing ?? reminderWithPrice.wellnessPlanPricing;
+        const wpAdjusted = wpForReminder?.adjustedPrice;
         const effectivePrice = !correction?.selectedItem
-          ? ((wpAdjusted != null && typeof wpAdjusted === 'number' ? wpAdjusted : null) ?? (finalItem?.price ?? reminderWithPrice.price))
+          ? ((wpAdjusted != null && typeof wpAdjusted === 'number' ? wpAdjusted : null) ??
+              foundationsCorrectedReminder?.price ??
+              (finalItem?.price ?? reminderWithPrice.price))
           : (finalItem?.price ?? reminderWithPrice.price);
         if (finalItem && effectivePrice != null) {
           finalItem = { ...finalItem, price: Number(effectivePrice) };
@@ -2016,8 +2101,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           confidence: reminderWithPrice.confidence,
         };
         // Include discount info so client can surface why price is discounted (only when no correction)
-        if (reminderWithPrice.wellnessPlanPricing && !correction?.selectedItem) {
-          reminderPayload.wellnessPlanPricing = reminderWithPrice.wellnessPlanPricing;
+        if (wpForReminder && !correction?.selectedItem) {
+          reminderPayload.wellnessPlanPricing = wpForReminder;
         }
         if (reminderWithPrice.discountPricing && !correction?.selectedItem) {
           reminderPayload.discountPricing = reminderWithPrice.discountPricing;
@@ -2027,9 +2112,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
       const addedItemsList = getAddedItemsForPatient(patient.id).map((item, itemIdx) => {
-        const basePrice = item.price != null ? Number(item.price) : null;
+        const foundationsCorrectedAdded = applyFoundationsSeniorFalseZeroCorrection(
+          {
+            name: item.name,
+            code: item.code ?? item.lab?.code,
+            lab: item.lab,
+            price: item.price != null ? Number(item.price) : undefined,
+            originalPrice: (item as any).originalPrice,
+            wellnessPlanPricing: (item as any).wellnessPlanPricing,
+          },
+          patient.membershipName
+        );
+        const basePrice = foundationsCorrectedAdded.price != null ? Number(foundationsCorrectedAdded.price) : null;
         // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
-        const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
+        const wpAdjusted = foundationsCorrectedAdded.wellnessPlanPricing?.adjustedPrice;
         const effectivePrice = (wpAdjusted != null && typeof wpAdjusted === 'number')
           ? Number(wpAdjusted)
           : basePrice;
@@ -2046,8 +2142,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           const cat = (item.inventoryItem as { categoryName?: string } | undefined)?.categoryName;
           if (cat) payload.categoryName = cat;
         }
-        if ((item as any).wellnessPlanPricing) {
-          payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
+        if (foundationsCorrectedAdded.wellnessPlanPricing) {
+          payload.wellnessPlanPricing = foundationsCorrectedAdded.wellnessPlanPricing;
         }
         if ((item as any).discountPricing) {
           payload.discountPricing = (item as any).discountPricing;
@@ -3853,7 +3949,27 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                     )}
                                   </div>
                                 ) : null}
-                                {(reminderWithPrice.wellnessPlanPricing?.hasCoverage || reminderWithPrice.wellnessPlanPricing?.priceAdjustedByMembership) && (
+                                {(() => {
+                                  const correctedReminder = applyFoundationsSeniorFalseZeroCorrection(
+                                    {
+                                      name:
+                                        reminderWithPrice.matchedItem?.name ??
+                                        reminderWithPrice.reminder?.description,
+                                      code: reminderWithPrice.matchedItem?.code,
+                                      price:
+                                        reminderWithPrice.wellnessPlanPricing?.adjustedPrice ??
+                                        reminderWithPrice.price ??
+                                        undefined,
+                                      originalPrice: reminderWithPrice.wellnessPlanPricing?.originalPrice,
+                                      wellnessPlanPricing: reminderWithPrice.wellnessPlanPricing,
+                                    },
+                                    patient.membershipName
+                                  );
+                                  const wpDisplay = correctedReminder.wellnessPlanPricing;
+                                  if (!(wpDisplay?.hasCoverage || wpDisplay?.priceAdjustedByMembership)) {
+                                    return null;
+                                  }
+                                  return (
                                   <div style={{ 
                                     fontSize: '13px', 
                                     color: '#1976d2', 
@@ -3864,50 +3980,50 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                     border: '1px solid #90caf9',
                                     display: 'inline-block'
                                   }}>
-                                    {reminderWithPrice.wellnessPlanPricing.priceAdjustedByMembership === true && 
-                                     reminderWithPrice.wellnessPlanPricing.originalPrice !== reminderWithPrice.wellnessPlanPricing.adjustedPrice ? (
+                                    {wpDisplay.priceAdjustedByMembership === true && 
+                                     wpDisplay.originalPrice !== wpDisplay.adjustedPrice ? (
                                       <>
-                                        <strong>Membership Discount:</strong> {reminderWithPrice.wellnessPlanPricing.membershipPlanName || 'Membership Plan'}
-                                        {reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount != null && reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount > 0 && (
+                                        <strong>Membership Discount:</strong> {wpDisplay.membershipPlanName || 'Membership Plan'}
+                                        {wpDisplay.membershipDiscountAmount != null && wpDisplay.membershipDiscountAmount > 0 && (
                                           <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
                                             Savings: $
-                                            {(reminderWithPrice.wellnessPlanPricing.includedQuantity == null || reminderWithPrice.wellnessPlanPricing.includedQuantity === 0
-                                              ? reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount * resolveQty(reminderQuantities[reminderId])
-                                              : reminderWithPrice.wellnessPlanPricing.membershipDiscountAmount
+                                            {(wpDisplay.includedQuantity == null || wpDisplay.includedQuantity === 0
+                                              ? wpDisplay.membershipDiscountAmount * resolveQty(reminderQuantities[reminderId])
+                                              : wpDisplay.membershipDiscountAmount
                                             ).toFixed(2)}
                                             </span>
                                         )}
-                                        {reminderWithPrice.wellnessPlanPricing.usedQuantity != null && reminderWithPrice.wellnessPlanPricing.includedQuantity != null &&
-                                         ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
+                                        {wpDisplay.usedQuantity != null && wpDisplay.includedQuantity != null &&
+                                         ((wpDisplay.usedQuantity ?? 0) !== 0 || (wpDisplay.includedQuantity ?? 0) !== 0 || (wpDisplay.remainingQuantity ?? 0) !== 0) && (
                                           <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                            ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                            ({wpDisplay.usedQuantity} of {wpDisplay.includedQuantity} used, {wpDisplay.remainingQuantity} remaining)
                                           </span>
                                         )}
                                       </>
                                     ) : (
                                       <>
-                                        {reminderWithPrice.wellnessPlanPricing.originalPrice !== reminderWithPrice.wellnessPlanPricing.adjustedPrice ? (
+                                        {wpDisplay.originalPrice !== wpDisplay.adjustedPrice ? (
                                           <>
-                                            <strong>Wellness Plan:</strong> ${reminderWithPrice.wellnessPlanPricing.originalPrice.toFixed(2)} → ${reminderWithPrice.wellnessPlanPricing.adjustedPrice.toFixed(2)}
-                                            {reminderWithPrice.wellnessPlanPricing.isWithinLimit &&
-                                             ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.remainingQuantity ?? 0) !== 0) && (
+                                            <strong>Wellness Plan:</strong> ${Number(wpDisplay.originalPrice).toFixed(2)} → ${Number(wpDisplay.adjustedPrice).toFixed(2)}
+                                            {wpDisplay.isWithinLimit &&
+                                             ((wpDisplay.usedQuantity ?? 0) !== 0 || (wpDisplay.includedQuantity ?? 0) !== 0 || (wpDisplay.remainingQuantity ?? 0) !== 0) && (
                                               <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                                ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                                ({wpDisplay.usedQuantity} of {wpDisplay.includedQuantity} used, {wpDisplay.remainingQuantity} remaining)
                                               </span>
                                             )}
                                           </>
                                         ) : (
                                           <>
                                             <strong>Membership Coverage:</strong>
-                                            {reminderWithPrice.wellnessPlanPricing.remainingQuantity === 0 || !reminderWithPrice.wellnessPlanPricing.isWithinLimit ? (
-                                              ((reminderWithPrice.wellnessPlanPricing.usedQuantity ?? 0) !== 0 || (reminderWithPrice.wellnessPlanPricing.includedQuantity ?? 0) !== 0) && (
+                                            {wpDisplay.remainingQuantity === 0 || !wpDisplay.isWithinLimit ? (
+                                              ((wpDisplay.usedQuantity ?? 0) !== 0 || (wpDisplay.includedQuantity ?? 0) !== 0) && (
                                                 <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#d32f2f', fontWeight: 500 }}>
-                                                  Already used ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used)
+                                                  Already used ({wpDisplay.usedQuantity} of {wpDisplay.includedQuantity} used)
                                                 </span>
                                               )
                                             ) : (
                                               <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1565c0' }}>
-                                                ({reminderWithPrice.wellnessPlanPricing.usedQuantity} of {reminderWithPrice.wellnessPlanPricing.includedQuantity} used, {reminderWithPrice.wellnessPlanPricing.remainingQuantity} remaining)
+                                                ({wpDisplay.usedQuantity} of {wpDisplay.includedQuantity} used, {wpDisplay.remainingQuantity} remaining)
                                               </span>
                                             )}
                                           </>
@@ -3915,12 +4031,32 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                       </>
                                     )}
                                   </div>
-                                )}
+                                  );
+                                })()}
                                 {reminderWithPrice.discountPricing && 
                                  reminderWithPrice.discountPricing.priceAdjustedByDiscount && (
                                   <>
-                                    {reminderWithPrice.wellnessPlanPricing && 
-                                     reminderWithPrice.wellnessPlanPricing.adjustedPrice === 0 ? (
+                                    {(() => {
+                                      const correctedForDiscountNote = applyFoundationsSeniorFalseZeroCorrection(
+                                        {
+                                          name:
+                                            reminderWithPrice.matchedItem?.name ??
+                                            reminderWithPrice.reminder?.description,
+                                          code: reminderWithPrice.matchedItem?.code,
+                                          price:
+                                            reminderWithPrice.wellnessPlanPricing?.adjustedPrice ??
+                                            reminderWithPrice.price ??
+                                            undefined,
+                                          originalPrice: reminderWithPrice.wellnessPlanPricing?.originalPrice,
+                                          wellnessPlanPricing: reminderWithPrice.wellnessPlanPricing,
+                                        },
+                                        patient.membershipName
+                                      );
+                                      return (
+                                        correctedForDiscountNote.wellnessPlanPricing &&
+                                        Number(correctedForDiscountNote.wellnessPlanPricing.adjustedPrice) === 0
+                                      );
+                                    })() ? (
                                       <div style={{ 
                                         fontSize: '13px', 
                                         color: '#1976d2', 
@@ -4095,7 +4231,12 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                 )}
                                 {/* Price Display — same formula as added items: pre-discount (Lab/Procedure/Inventory + min), then discount; service fee once for procedure/inventory */}
                                 {(() => {
-                                  const wellnessPricing = reminderWithPrice.wellnessPlanPricing;
+                                  const pricingItem = reminderToPricingItem(
+                                    reminderWithPrice,
+                                    correction,
+                                    patient.membershipName
+                                  );
+                                  const wellnessPricing = pricingItem.wellnessPlanPricing ?? reminderWithPrice.wellnessPlanPricing;
                                   const discountPricing = reminderWithPrice.discountPricing;
                                   const hasPrice = reminderWithPrice.price != null;
                                   const hasWellnessAdjusted = wellnessPricing?.adjustedPrice != null && typeof wellnessPricing.adjustedPrice === 'number';
@@ -4107,7 +4248,6 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                     );
                                   }
                                   const quantity = resolveQty(reminderQuantities[reminderId]);
-                                  const pricingItem = reminderToPricingItem(reminderWithPrice, correction);
                                   const { totalFinal: totalFinalPrice, totalOriginal: totalOriginalPrice } = getAddedItemFinalPrice(pricingItem, quantity);
                                   const hasAnyDiscount = (wellnessPricing && wellnessPricing.originalPrice !== wellnessPricing.adjustedPrice) ||
                                                          discountPricing?.priceAdjustedByDiscount;
@@ -4814,8 +4954,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                               {/* Price Display: pre-discount formula (Lab = price; Procedure/Inventory = price + serviceFee, min for inventory), then discounts; service fee stays same when qty changes */}
                               {(() => {
                                 const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
-                                const { totalFinal, totalOriginal } = getAddedItemFinalPrice(item, quantity);
-                                const hasAnyDiscount = (item.wellnessPlanPricing && item.wellnessPlanPricing.originalPrice !== item.wellnessPlanPricing.adjustedPrice) ||
+                                const correctedItem = applyFoundationsSeniorFalseZeroCorrection(
+                                  {
+                                    name: item.name,
+                                    code: item.code ?? item.lab?.code,
+                                    lab: item.lab,
+                                    price: item.price != null ? Number(item.price) : undefined,
+                                    originalPrice: (item as any).originalPrice,
+                                    wellnessPlanPricing: (item as any).wellnessPlanPricing,
+                                  },
+                                  patient.membershipName
+                                );
+                                const { totalFinal, totalOriginal } = getAddedItemFinalPrice(correctedItem, quantity);
+                                const wp = correctedItem.wellnessPlanPricing ?? item.wellnessPlanPricing;
+                                const hasAnyDiscount = (wp && wp.originalPrice !== wp.adjustedPrice) ||
                                                        item.discountPricing?.priceAdjustedByDiscount;
                                 return (
                                   <>
@@ -4868,13 +5020,24 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                             const correctionKey = `reminder-${reminderId}`;
                             const correction = reminderCorrections[correctionKey];
                             const quantity = resolveQty(reminderQuantities[reminderId]);
-                            const pricingItem = reminderToPricingItem(r, correction);
+                            const pricingItem = reminderToPricingItem(r, correction, patient.membershipName);
                             const { totalFinal } = getAddedItemFinalPrice(pricingItem, quantity);
                             return sum + totalFinal;
                           }, 0) || 0) +
                         getAddedItemsForPatient(patient.id).reduce((sum, item, itemIdx) => {
                           const quantity = resolveQty(addedItemQuantities[`${patient.id}-${itemIdx}`]);
-                          const { totalFinal } = getAddedItemFinalPrice(item, quantity);
+                          const correctedItem = applyFoundationsSeniorFalseZeroCorrection(
+                            {
+                              name: item.name,
+                              code: item.code ?? item.lab?.code,
+                              lab: item.lab,
+                              price: item.price != null ? Number(item.price) : undefined,
+                              originalPrice: (item as any).originalPrice,
+                              wellnessPlanPricing: (item as any).wellnessPlanPricing,
+                            },
+                            patient.membershipName
+                          );
+                          const { totalFinal } = getAddedItemFinalPrice(correctedItem, quantity);
                           return sum + totalFinal;
                         }, 0)
                       ).toFixed(2)}
