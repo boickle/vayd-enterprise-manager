@@ -37,6 +37,10 @@ import {
 import { appointmentTypeIsCalmingPremed, findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
+import {
+  withEuthanasiaReasonMirroredToNeedsTodayDetails,
+  withEuthanasiaReasonMirroredToVisitDetails,
+} from '../utils/appointmentRequestEuthanasiaAutobookNotes';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
 import { fetchPublicRoutingOfferableScoreThresholds } from '../api/routingOfferableScoreThresholds';
 import { fetchPublicOnlineBookingAutoBookSettings } from '../api/onlineBookingAutoBookSettings';
@@ -1711,13 +1715,15 @@ export default function AppointmentRequestForm() {
         continue;
       }
       if (isEuthanasiaAppointmentType(sel)) {
-        out[petId] = {
+        // Mirror euthanasiaReason → needsTodayDetails so auto-book calendar notes
+        // include the narrative (API historically reads needsTodayDetails only).
+        out[petId] = withEuthanasiaReasonMirroredToNeedsTodayDetails({
           ...base,
           euthanasiaReason: petData.euthanasiaReason,
           beenToVetLastThreeMonths: petData.beenToVetLastThreeMonths,
           interestedInOtherOptions: petData.interestedInOtherOptions,
           aftercarePreference: petData.aftercarePreference,
-        };
+        });
       } else {
         out[petId] = {
           ...base,
@@ -4847,6 +4853,12 @@ export default function AppointmentRequestForm() {
         // Euthanasia Specific Fields
         ...(isEuthanasia ? {
           euthanasiaReason: formData.euthanasiaReason || undefined,
+          // Mirror into visitDetails so auto-book notes match regular-visit behavior
+          // when the API only appends visitDetails / needsTodayDetails.
+          ...withEuthanasiaReasonMirroredToVisitDetails({
+            euthanasiaReason: formData.euthanasiaReason,
+            visitDetails: formData.visitDetails,
+          }),
           interestedInOtherOptions: formData.interestedInOtherOptions || undefined,
           urgency: formData.urgency || undefined,
           preferredDateTime: (() => {

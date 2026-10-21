@@ -491,8 +491,11 @@ export function buildAppointmentRequestDetailSections(
 
     if (specific) {
       const details = pickStr(specific.needsTodayDetails);
-      if (details) notes.push(asRow('Visit details', details, 'note'));
       const euthReason = pickStr(specific.euthanasiaReason);
+      // Autobook compat may mirror euthanasiaReason → needsTodayDetails; show once.
+      if (details && details !== euthReason) {
+        notes.push(asRow('Visit details', details, 'note'));
+      }
       if (euthReason) notes.push(asRow('What is going on', euthReason, 'note'));
       const otherOptions = pickStr(specific.interestedInOtherOptions);
       if (otherOptions) notes.push(asRow('Interested in other options', otherOptions, 'note'));
@@ -602,11 +605,12 @@ export function buildAppointmentRequestDetailSections(
   const other: AppointmentRequestDetailRow[] = [];
   const anythingElse = requestDataAnythingElse(requestData);
   if (anythingElse) other.push(asRow('Client note', anythingElse, 'note'));
+  const topEuthReason = pickStr(requestData.euthanasiaReason);
   const visitDetails = pickStr(requestData.visitDetails);
-  if (visitDetails && visitDetails !== anythingElse) {
+  // Autobook compat may mirror euthanasiaReason → visitDetails; show once.
+  if (visitDetails && visitDetails !== anythingElse && visitDetails !== topEuthReason) {
     other.push(asRow('Visit details', visitDetails, 'note'));
   }
-  const topEuthReason = pickStr(requestData.euthanasiaReason);
   if (topEuthReason) other.push(asRow('Euthanasia — what is going on', topEuthReason, 'note'));
   const topOtherOptions = pickStr(requestData.interestedInOtherOptions);
   if (topOtherOptions) {

@@ -42,9 +42,9 @@ export function formatAppointmentRequestPetStaffNoteLines(
 ): string[] {
   const lines: string[] = [];
   const details = notes.needsTodayDetails?.trim();
-  if (details) lines.push(details);
-
   const euthReason = notes.euthanasiaReason?.trim();
+  // Auto-book may mirror euthanasiaReason into needsTodayDetails; do not double the narrative.
+  if (details && details !== euthReason) lines.push(details);
   if (euthReason) lines.push(euthReason);
 
   const beenToVet = notes.beenToVetLastThreeMonths?.trim();

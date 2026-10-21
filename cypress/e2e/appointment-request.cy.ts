@@ -687,6 +687,8 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
         
         expect(petData.needsToday).to.equal('End-of-life care / euthanasia');
         expect(petData.euthanasiaReason).to.equal('Terminal cancer, in significant pain');
+        // Autobook calendar notes historically read needsTodayDetails; mirror the reason.
+        expect(petData.needsTodayDetails).to.equal('Terminal cancer, in significant pain');
         expect(petData.interestedInOtherOptions).to.include('No. While this is very difficult');
         
         expect(payload.selectedDateTimePreferences).to.be.null;
