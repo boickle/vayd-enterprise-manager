@@ -244,3 +244,38 @@ export function forwardBookingListTab(
   }
   return 'pending';
 }
+
+export type ForwardBookingStatusFilterMatchOpts = {
+  /**
+   * When viewing Needs booking, optionally include On hold rows (default false).
+   * Appointment-request holds should still be excluded via `allowOnHold`.
+   */
+  includeHoldsInNeedsBooking?: boolean;
+  /** Extra gate for on-hold rows pulled into Needs booking (e.g. scheduling-tools sources only). */
+  allowOnHold?: (entry: ForwardBookingEntry) => boolean;
+};
+
+/**
+ * Whether a row belongs in the active Forward booking status filter.
+ * Search and list views should both use this so Needs booking never mixes in
+ * booked / book-later / removed rows, and HOLDs only appear when opted in.
+ */
+export function forwardBookingMatchesStatusFilter(
+  entry: ForwardBookingEntry,
+  statusFilter: ForwardBookingListTab,
+  practiceTz: string,
+  bookedApptMeta?: Map<number, BookedAppointmentMeta> | null,
+  catalog?: AppointmentTypeCatalog | null,
+  opts?: ForwardBookingStatusFilterMatchOpts
+): boolean {
+  const tab = forwardBookingListTab(entry, practiceTz, bookedApptMeta, catalog);
+  if (tab === statusFilter) return true;
+  if (
+    statusFilter === 'pending' &&
+    opts?.includeHoldsInNeedsBooking &&
+    tab === 'onHold'
+  ) {
+    return opts.allowOnHold?.(entry) ?? true;
+  }
+  return false;
+}
