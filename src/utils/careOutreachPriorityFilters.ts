@@ -12,18 +12,22 @@ export function calendarDayDiffFromToday(dueIso: string | null | undefined): num
 }
 
 /**
- * "Due in 21 days" bucket: calendar day-diff from today to due date.
- * Anchor = today + 21 days. If that anchor is a Friday, include Sat/Sun too (diff 22 and 23).
+ * "Due in next 21 days" bucket: calendar day-diff from today to due date.
+ * Includes diffs 1–21 (tomorrow through three weeks out). If day +21 is a Friday,
+ * also include Sat/Sun (diff 22 and 23) so weekend dues are not skipped.
  */
 export function dayDiffsForDueIn21DayBucket(todayStart = dayjs().startOf('day')): Set<number> {
+  const diffs = new Set<number>();
+  for (let d = 1; d <= 21; d += 1) diffs.add(d);
   const anchor = todayStart.add(21, 'day');
   if (anchor.day() === 5) {
-    return new Set([21, 22, 23]);
+    diffs.add(22);
+    diffs.add(23);
   }
-  return new Set([21]);
+  return diffs;
 }
 
-/** API date range that covers "newly overdue today" and "due in 21 days" buckets. */
+/** API date range that covers "newly overdue today" and "due in next 21 days" buckets. */
 export function careOutreachPriorityNavCountFetchRange(todayStart = dayjs().startOf('day')): {
   from: string;
   to: string;
@@ -90,7 +94,7 @@ function countUniqueCareOutreachClients(
   return keys.size;
 }
 
-/** Visible clients to contact in "newly overdue today" or "due in 21 days" buckets. */
+/** Visible clients to contact in "newly overdue today" or "due in next 21 days" buckets. */
 export function countCareOutreachPriorityClients(
   reminders: readonly UnscheduledReminder[],
   todayStart = dayjs().startOf('day')
