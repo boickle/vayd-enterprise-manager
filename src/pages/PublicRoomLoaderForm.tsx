@@ -52,6 +52,13 @@ import {
 } from '../utils/roomLoaderSharps';
 import { computeFoundationsSeniorScreenFalseCoverageVisitDelta } from '../utils/membershipFoundationsSimulate';
 import {
+  foundationsFalseZeroCorrectedUnitPrice,
+  foundationsSeniorPanelLooksFalselyCovered,
+  membershipLabelIsFoundationsNotGolden,
+  shouldSuppressFalseIncludedWellnessForFoundations,
+  stripFalseFoundationsSeniorInclusionFromWellness,
+} from '../utils/membershipFoundationsLabs';
+import {
   BUNDLED_LAB_PANEL_CODES,
   codeIsBundledFecal,
   patientHasReminderDueAtLeastMonthsAhead,
@@ -784,18 +791,28 @@ function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefin
 }
 
 /**
- * Foundations wellness members (not on Golden): routine senior-age labs use Early Detection unless staff
- * answered Yes to “medical concern / lab work” (then the Senior Screen path via 8659999 applies).
+ * Foundations wellness members (not on Golden).
+ * - Labs page *offers*: always Early Detection (including staff labs = Yes) — never Senior Screen / 8659999.
+ * - Visit-list senior screens already on the plan as reminders stay visible (membership equivalence / staff intent).
+ * - Routine labs = No: Early Detection replaces age-based Senior Screen visit rows on the care plan.
  */
 function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments: any[] | undefined): boolean {
   const detail = getRoomLoaderMembershipDetailText(p, appointments);
-  if (!detail) return false;
-  const s = detail.toLowerCase();
-  if (s.includes('golden')) return false;
-  return s.includes('foundations');
+  if (membershipLabelIsFoundationsNotGolden(detail)) return true;
+  // Fallback: wellnessPlanPricing.membershipPlanName on visit lines (when patient.membershipName is sparse).
+  const rows = [...(p?.reminders ?? []), ...(p?.addedItems ?? [])];
+  for (const row of rows) {
+    const planName =
+      row?.wellnessPlanPricing?.membershipPlanName ?? row?.item?.wellnessPlanPricing?.membershipPlanName;
+    if (membershipLabelIsFoundationsNotGolden(planName)) return true;
+  }
+  return false;
 }
 
-/** Foundations (non-Golden) with staff lab-work = No → Early Detection replaces Senior Screen at senior age. */
+/**
+ * Foundations + labs = No: hide age-based Senior Screen visit rows so Early Detection shows on the care plan.
+ * When labs = Yes, leave staff-scheduled senior reminder rows alone (do not strip the visit list).
+ */
 function roomLoaderFoundationsUsesEarlyDetectionOverSenior(
   patient: any,
   appointments: any[] | undefined,
@@ -900,6 +917,9 @@ function isMembershipCarePlanContext(pricing: SummaryLineDisplayPricing | null |
  * (that bypassed check-item-pricing and hid membership pricing after enrollment). Prefer row
  * `wellnessPlanPricing.adjustedPrice` when coverage is already embedded; else prefer check-item-pricing
  * when the cache has a result; else fall back to embedded row price.
+ *
+ * Foundations (non-Golden): senior panels falsely marked $0 “included” are corrected to original/catalog
+ * price even when only embedded wellnessPlanPricing is present (no check-item-pricing cache hit).
  */
 function resolveSummaryLinePrice(
   patientId: number,
@@ -910,59 +930,121 @@ function resolveSummaryLinePrice(
 ): { unitPrice: number; displayPricing: SummaryLineDisplayPricing } {
   const fg = foundationsNotGolden === true;
   const searchableItem = displayRow?.searchableItem as SearchableItem | null | undefined;
+  const rowCode = (getCodeFromDisplayItem(displayRow) ?? getSearchItemCode(searchableItem) ?? '')
+    .trim()
+    .toUpperCase();
+  const rowName = String(displayRow?.name ?? searchableItem?.name ?? '');
   const wp = displayRow?.wellnessPlanPricing;
+
+  const correctFoundationsSeniorZero = (
+    unitPrice: number,
+    pricingHint: CheckItemPricingResponse | null | undefined
+  ): number => {
+    if (!fg || !(unitPrice < 0.005)) return unitPrice;
+    const hintCode = pricingCheckItemCodeUpper(pricingHint ?? null) || rowCode;
+    const hintName = String((pricingHint as any)?.item?.name ?? rowName);
+    const corrected =
+      foundationsFalseZeroCorrectedUnitPrice({
+        foundationsNotGolden: true,
+        wellnessPlanPricing: wp ?? pricingHint?.wellnessPlanPricing,
+        adjustedPrice: unitPrice,
+        originalPrice:
+          wp?.originalPrice ??
+          pricingHint?.wellnessPlanPricing?.originalPrice ??
+          pricingHint?.originalPrice ??
+          displayRow?.originalPrice ??
+          displayRow?.price,
+        itemCode: hintCode,
+        itemName: hintName,
+      }) ??
+      (foundationsSeniorPanelLooksFalselyCovered({ code: hintCode, name: hintName })
+        ? (() => {
+            const orig = Number(
+              wp?.originalPrice ??
+                pricingHint?.wellnessPlanPricing?.originalPrice ??
+                pricingHint?.originalPrice ??
+                displayRow?.originalPrice ??
+                displayRow?.price
+            );
+            return Number.isFinite(orig) && orig > 0.005 ? orig : null;
+          })()
+        : null);
+    return corrected != null && corrected > 0.005 ? corrected : unitPrice;
+  };
+
+  const withSanitizedDisplay = (
+    unitPrice: number,
+    displayPricing: SummaryLineDisplayPricing
+  ): { unitPrice: number; displayPricing: SummaryLineDisplayPricing } => {
+    if (!fg || !displayPricing?.wellnessPlanPricing) return { unitPrice, displayPricing };
+    const wp0 = displayPricing.wellnessPlanPricing as any;
+    const wasFalseZero =
+      Number(wp0.adjustedPrice) < 0.005 &&
+      unitPrice > 0.005 &&
+      foundationsSeniorPanelLooksFalselyCovered({
+        code: pricingCheckItemCodeUpper(displayPricing as CheckItemPricingResponse) || rowCode,
+        name: String((displayPricing as any)?.item?.name ?? rowName),
+      });
+    if (!wasFalseZero) return { unitPrice, displayPricing };
+    return {
+      unitPrice,
+      displayPricing: {
+        ...displayPricing,
+        wellnessPlanPricing: stripFalseFoundationsSeniorInclusionFromWellness(wp0, unitPrice),
+      },
+    };
+  };
+
   if (
     wp &&
     wp.adjustedPrice != null &&
     !Number.isNaN(Number(wp.adjustedPrice)) &&
     wellnessPlanHasDiscountSignal(wp)
   ) {
+    const cached = searchableItem != null ? getClientPricing(patientId, searchableItem) : null;
     let unitPrice = Number(wp.adjustedPrice);
-    if (fg && unitPrice < 0.005 && searchableItem != null) {
-      const cached = getClientPricing(patientId, searchableItem);
-      if (suppressFalseIncludedWellnessForFoundations(cached, true)) {
-        const corrected = catalogLabDisplayUnitPriceForFoundations(cached, true);
+    if (fg && unitPrice < 0.005) {
+      if (suppressFalseIncludedWellnessForFoundations(cached, true, rowCode, rowName)) {
+        const corrected = catalogLabDisplayUnitPriceForFoundations(cached, true, rowCode, rowName);
         if (corrected != null && corrected > 0.005) unitPrice = corrected;
       }
+      unitPrice = correctFoundationsSeniorZero(unitPrice, cached);
     }
-    return {
-      unitPrice,
-      displayPricing: {
-        wellnessPlanPricing: wp,
-        discountPricing: displayRow.discountPricing,
-      },
-    };
+    return withSanitizedDisplay(unitPrice, {
+      wellnessPlanPricing: wp,
+      discountPricing: displayRow.discountPricing,
+    });
   }
 
   const sid = searchableItem != null ? getItemId(searchableItem) : undefined;
   if (searchableItem != null && sid != null) {
     const cached = getClientPricing(patientId, searchableItem);
     if (cached != null) {
-      const catalogDisp = catalogLabDisplayUnitPriceForFoundations(cached, fg);
-      const adjusted = suppressFalseIncludedWellnessForFoundations(cached, fg)
+      const catalogDisp = catalogLabDisplayUnitPriceForFoundations(cached, fg, rowCode, rowName);
+      let adjusted = suppressFalseIncludedWellnessForFoundations(cached, fg, rowCode, rowName)
         ? catalogDisp
         : getClientAdjustedPrice(patientId, searchableItem) ?? catalogDisp;
       if (adjusted != null) {
-        return { unitPrice: adjusted, displayPricing: cached };
+        adjusted = correctFoundationsSeniorZero(Number(adjusted), cached);
+        return withSanitizedDisplay(adjusted, cached);
       }
     }
   }
 
   if (displayRow?.wellnessPlanPricing != null || displayRow?.discountPricing != null) {
-    return {
-      unitPrice: Number(displayRow.price) ?? 0,
-      displayPricing: {
-        wellnessPlanPricing: displayRow.wellnessPlanPricing ?? undefined,
-        discountPricing: displayRow.discountPricing ?? undefined,
-      },
-    };
+    let unitPrice = Number(displayRow.price) ?? 0;
+    unitPrice = correctFoundationsSeniorZero(unitPrice, null);
+    return withSanitizedDisplay(unitPrice, {
+      wellnessPlanPricing: displayRow.wellnessPlanPricing ?? undefined,
+      discountPricing: displayRow.discountPricing ?? undefined,
+    });
   }
 
   if (searchableItem != null) {
-    return {
-      unitPrice: getClientAdjustedPrice(patientId, searchableItem) ?? Number(displayRow.price) ?? 0,
-      displayPricing: getClientPricing(patientId, searchableItem),
-    };
+    let unitPrice = getClientAdjustedPrice(patientId, searchableItem) ?? Number(displayRow.price) ?? 0;
+    const cached = getClientPricing(patientId, searchableItem);
+    unitPrice = correctFoundationsSeniorZero(unitPrice, cached);
+    return withSanitizedDisplay(unitPrice, cached);
   }
 
   return {
@@ -2653,48 +2735,60 @@ function pricingCheckItemCodeUpper(pricing: CheckItemPricingResponse | null): st
   return String(it?.code ?? it?.lab?.code ?? '').trim().toUpperCase();
 }
 
-/**
- * Senior bundled / chem panel codes that Foundations (non-Golden) may mark as $0 with `hasCoverage: true` even though
- * they are not Golden-included. Trip/sharps/visit use other codes — they keep real $0 when hasCoverage is true.
- */
-const FOUNDATIONS_FALSE_ZERO_SENIOR_PANEL_CODES = new Set([
-  'FIL8659999',
-  'FIL25659999',
-  'FIL45129999',
-]);
-
-function foundationsMayFalseZeroSeniorPanel(pricing: CheckItemPricingResponse | null): boolean {
-  const code = pricingCheckItemCodeUpper(pricing);
-  return code !== '' && FOUNDATIONS_FALSE_ZERO_SENIOR_PANEL_CODES.has(code);
+function pricingCheckItemName(pricing: CheckItemPricingResponse | null): string {
+  const it = pricing?.item as any;
+  return String(it?.name ?? it?.lab?.name ?? '').trim();
 }
 
 /**
  * Backend check-item-pricing can return $0 “wellness” adjusted price for senior comprehensive panels on Foundations
  * (non-Golden) as if they were Golden-included. Prefer catalog original for display in that case.
+ * Optional `hintCode` / `hintName` cover embedded wellness rows where `pricing.item` is missing.
  */
 function suppressFalseIncludedWellnessForFoundations(
   pricing: CheckItemPricingResponse | null,
-  foundationsNotGolden: boolean
+  foundationsNotGolden: boolean,
+  hintCode?: string | null,
+  hintName?: string | null
 ): boolean {
-  if (!foundationsNotGolden || !pricing?.wellnessPlanPricing) return false;
-  const wp = pricing.wellnessPlanPricing as any;
-  /** Real plan-covered rows (trip, sharps, visit) stay at $0; senior panel codes may still be wrongly covered at $0. */
-  if (wp.hasCoverage === true && !foundationsMayFalseZeroSeniorPanel(pricing)) return false;
-  const picked = pickAdjustedUnitPriceFromCheckResponse(pricing);
-  if (!(picked != null && picked < 0.005)) return false;
-  const orig = wp.originalPrice != null ? Number(wp.originalPrice) : Number(pricing.originalPrice);
-  return Number.isFinite(orig) && orig > 0.005 && wellnessPlanHasDiscountSignal(wp);
+  if (!foundationsNotGolden) return false;
+  const wp = pricing?.wellnessPlanPricing ?? null;
+  if (!wp && !hintCode && !hintName) return false;
+  return shouldSuppressFalseIncludedWellnessForFoundations({
+    foundationsNotGolden: true,
+    wellnessPlanPricing: wp,
+    adjustedPrice: pricing?.adjustedPrice,
+    originalPrice: pricing?.originalPrice,
+    itemCode: pricingCheckItemCodeUpper(pricing) || hintCode || '',
+    itemName: pricingCheckItemName(pricing) || hintName || '',
+  });
 }
 
 function catalogLabDisplayUnitPriceForFoundations(
   pricing: CheckItemPricingResponse | null,
-  foundationsNotGolden: boolean
+  foundationsNotGolden: boolean,
+  hintCode?: string | null,
+  hintName?: string | null
 ): number | null {
-  if (!pricing) return null;
-  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
-    const wp = pricing.wellnessPlanPricing as any;
-    const orig = wp?.originalPrice != null ? Number(wp.originalPrice) : Number(pricing.originalPrice);
-    if (Number.isFinite(orig) && orig > 0.005) return orig;
+  if (!pricing) {
+    return foundationsFalseZeroCorrectedUnitPrice({
+      foundationsNotGolden,
+      wellnessPlanPricing: null,
+      itemCode: hintCode,
+      itemName: hintName,
+    });
+  }
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden, hintCode, hintName)) {
+    return (
+      foundationsFalseZeroCorrectedUnitPrice({
+        foundationsNotGolden: true,
+        wellnessPlanPricing: pricing.wellnessPlanPricing,
+        adjustedPrice: pricing.adjustedPrice,
+        originalPrice: pricing.originalPrice,
+        itemCode: pricingCheckItemCodeUpper(pricing) || hintCode || '',
+        itemName: pricingCheckItemName(pricing) || hintName || '',
+      }) ?? pickAdjustedUnitPriceFromCheckResponse(pricing)
+    );
   }
   return pickAdjustedUnitPriceFromCheckResponse(pricing);
 }
@@ -2702,10 +2796,12 @@ function catalogLabDisplayUnitPriceForFoundations(
 function catalogLabPricingFootnoteLine(
   pricing: CheckItemPricingResponse | null,
   foundationsNotGolden: boolean,
-  getDiscountNoteFn: (p: CheckItemPricingResponse | { discountPricing?: any } | null) => string | null
+  getDiscountNoteFn: (p: CheckItemPricingResponse | { discountPricing?: any } | null) => string | null,
+  hintCode?: string | null,
+  hintName?: string | null
 ): string | null {
   if (!pricing) return null;
-  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden, hintCode, hintName)) {
     if (pricing.discountPricing?.priceAdjustedByDiscount) {
       return getDiscountNoteFn({ discountPricing: pricing.discountPricing });
     }
@@ -2716,10 +2812,12 @@ function catalogLabPricingFootnoteLine(
 
 function catalogLabShowPricingFootnote(
   pricing: CheckItemPricingResponse | null,
-  foundationsNotGolden: boolean
+  foundationsNotGolden: boolean,
+  hintCode?: string | null,
+  hintName?: string | null
 ): boolean {
   if (!pricing) return false;
-  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden)) {
+  if (suppressFalseIncludedWellnessForFoundations(pricing, foundationsNotGolden, hintCode, hintName)) {
     return !!pricing.discountPricing?.priceAdjustedByDiscount;
   }
   return hasDiscountPricingNote(pricing);
@@ -7205,16 +7303,50 @@ export default function PublicRoomLoaderForm() {
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      /** Visit-list / age-based senior suppression (labs = No only — keep staff senior reminders when labs = Yes). */
       const foundationsUsesEarlyDetection = foundationsNotGoldenMember && !labWorkYes;
-      /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
-      const ageBasedSeniorScreenForMember = !foundationsUsesEarlyDetection;
+      /**
+       * Never age-recommend Senior Screen for Foundations — plan benefit is Early Detection.
+       * (labs = Yes Foundations offers EDP in the block below; labs = No uses foundationsUsesEarlyDetection.)
+       */
+      const ageBasedSeniorScreenForMember = !foundationsNotGoldenMember;
 
       if (labWorkYes) {
-        recs.push({
-          code: '8659999',
-          title: 'Senior Screen',
-          message: "You indicated that lab work would help with this visit. We recommend our Senior Screen to get a comprehensive picture of your pet's health.",
-        });
+        if (foundationsNotGoldenMember) {
+          // Foundations benefit is Early Detection — do not offer Senior Screen / 8659999 for labs = Yes.
+          if (isCat && shouldRecommendYoungOrEarly) {
+            const msg = listHasFIVOrFecal
+              ? "You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT) — the labs included in the plan. Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
+              : 'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT) — the labs included in the plan.';
+            recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
+          } else if (isDog && shouldRecommendYoungOrEarly) {
+            const msg = listHas4dxOrFecal
+              ? "You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx) — the labs included in the plan. Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
+              : 'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx) — the labs included in the plan.';
+            recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
+          } else if (isCat) {
+            recs.push({
+              code: 'FIL48119999',
+              title: 'Early Detection Panel - Feline',
+              message:
+                'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Feline — the labs included in the plan.',
+            });
+          } else if (isDog) {
+            recs.push({
+              code: 'FIL48719999',
+              title: 'Early Detection Panel - Canine',
+              message:
+                'You indicated that lab work would help with this visit. With Foundations membership we recommend our Early Detection Panel - Canine — the labs included in the plan.',
+            });
+          }
+        } else {
+          recs.push({
+            code: '8659999',
+            title: 'Senior Screen',
+            message:
+              "You indicated that lab work would help with this visit. We recommend our Senior Screen to get a comprehensive picture of your pet's health.",
+          });
+        }
       }
 
       if (
@@ -7265,7 +7397,7 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      // Foundations (non-Golden) members at senior age: routine care → Early Detection, unless staff flagged lab work (8659999 above).
+      // Foundations (non-Golden) members at senior age: Early Detection (labs = Yes is handled above with membership copy).
       if (
         foundationsNotGoldenMember &&
         !labWorkYes &&
@@ -7406,14 +7538,18 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
-      if (labWorkYes) {
+      // Non-Foundations medical-concern path offers Senior Screen; drop Early Detection so the client sees one panel choice.
+      // Foundations labs = Yes keeps Early Detection (plan benefit) — do not strip it.
+      if (labWorkYes && !foundationsNotGoldenMember) {
         for (let i = recs.length - 1; i >= 0; i--) {
           const c = recs[i].code;
           if (c === 'FIL48119999' || c === 'FIL48719999') recs.splice(i, 1);
         }
       }
 
-      if (foundationsUsesEarlyDetection) {
+      // Never leave Senior Screen / extended panel *offers* on the Labs page for Foundations (EDP is the plan benefit).
+      // Does not remove senior screens already on the visit as reminders — only recommendation codes.
+      if (foundationsNotGoldenMember) {
         const stripped = stripSeniorLabRecommendationCodes(recs);
         recs.length = 0;
         recs.push(...stripped);
