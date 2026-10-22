@@ -113,9 +113,9 @@ const PRIORITY_TABS: { key: PriorityFilter; label: string; title?: string }[] = 
   { key: 'overdue_today', label: 'Newly overdue today' },
   {
     key: 'due_21',
-    label: 'Due in 21 days',
+    label: 'Due in next 21 days',
     title:
-      'Reminders due 21 calendar days from today. If that day is a Friday, Saturday and Sunday are included (21–23 days out).',
+      'Reminders due in the next 1–21 calendar days. If day 21 is a Friday, Saturday and Sunday are included (up to 23 days out).',
   },
   {
     key: 'past_due_30',
