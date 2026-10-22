@@ -4,12 +4,30 @@ import {
   DEFAULT_TIERS,
   GOAL_PERIOD_LABELS,
   deleteProductionIncentiveGoal,
+  describePayoutSchedule,
   fetchProductionIncentiveGoals,
+  fetchProductionIncentiveSettings,
   resolveTierPool,
   saveProductionIncentiveGoal,
+  saveProductionIncentiveSettings,
   type ProductionIncentiveDoctor,
   type ProductionIncentiveGoalPeriod,
+  type ProductionIncentiveSettings,
 } from '../../api/productionIncentive';
+
+const GOAL_PERIODS_PER_YEAR: Record<ProductionIncentiveGoalPeriod, number> = {
+  weekly: 52,
+  monthly: 12,
+  quarterly: 4,
+  annual: 1,
+};
+
+type PayoutMode = 'monthly' | 'quarterly' | 'custom';
+
+function payoutModeOf(s: ProductionIncentiveSettings): PayoutMode {
+  const label = describePayoutSchedule(s);
+  return label === 'Monthly' ? 'monthly' : label === 'Quarterly' ? 'quarterly' : 'custom';
+}
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
@@ -79,12 +97,29 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [draft, setDraft] = useState<GoalDraft>(draftFromDoctor(undefined));
   const [saving, setSaving] = useState(false);
+  const [settings, setSettings] = useState<ProductionIncentiveSettings | null>(null);
+  const [payoutMode, setPayoutMode] = useState<PayoutMode>('quarterly');
+  const [payoutMonths, setPayoutMonths] = useState('3');
+  const [payoutStartMonth, setPayoutStartMonth] = useState(`${new Date().getFullYear()}-01`);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const applySettings = (s: ProductionIncentiveSettings) => {
+    setSettings(s);
+    setPayoutMode(payoutModeOf(s));
+    setPayoutMonths(String(s.payoutMonths));
+    setPayoutStartMonth(s.payoutStartMonth);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      setDoctors(await fetchProductionIncentiveGoals());
+      const [docs, s] = await Promise.all([
+        fetchProductionIncentiveGoals(),
+        fetchProductionIncentiveSettings(),
+      ]);
+      setDoctors(docs);
+      applySettings(s);
     } catch (err) {
       setLoadError(extractErr(err));
     } finally {
@@ -177,7 +212,50 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
     }
   };
 
+  const payoutDraft: ProductionIncentiveSettings | null = (() => {
+    if (payoutMode === 'monthly') {
+      return { payoutMonths: 1, payoutStartMonth: `${new Date().getFullYear()}-01` };
+    }
+    if (payoutMode === 'quarterly') {
+      return { payoutMonths: 3, payoutStartMonth: `${new Date().getFullYear()}-01` };
+    }
+    const months = Number(payoutMonths);
+    if (!Number.isInteger(months) || months < 1 || months > 12) return null;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(payoutStartMonth)) return null;
+    return { payoutMonths: months, payoutStartMonth };
+  })();
+  const payoutDirty =
+    !!settings &&
+    !!payoutDraft &&
+    (payoutDraft.payoutMonths !== settings.payoutMonths ||
+      (payoutMode === 'custom' && payoutDraft.payoutStartMonth !== settings.payoutStartMonth) ||
+      payoutModeOf(payoutDraft) !== payoutModeOf(settings));
+
+  const handleSaveSettings = async () => {
+    if (!payoutDraft) {
+      onMessage?.('Payout cycle must be 1–12 months with a valid start month.', 'error');
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      applySettings(await saveProductionIncentiveSettings(payoutDraft));
+      onMessage?.(
+        `Payout schedule saved: ${describePayoutSchedule(payoutDraft).toLowerCase()}.`,
+        'success'
+      );
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   const periodLabel = GOAL_PERIOD_LABELS[draft.goalPeriod].toLowerCase();
+  const payoutMonthsSaved = settings?.payoutMonths ?? 3;
+  const payoutLabel = settings ? describePayoutSchedule(settings).toLowerCase() : 'quarterly';
+  /** Pools are stated in the goal period; scale them to one payout cycle. */
+  const toPayoutCycle = (amount: number) =>
+    (amount * GOAL_PERIODS_PER_YEAR[draft.goalPeriod] * payoutMonthsSaved) / 12;
 
   return (
     <div className="settings-section">
@@ -186,9 +264,92 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
         Set each doctor&apos;s VSD goal (100%) and their incentive tiers. Reaching a tier pays its
         share of that tier&apos;s margin above goal: landing anywhere from 105% to 109% pays 30% of
         the 5% margin, not of the actual margin. The bonus pool is split between the DVM and tech.
-        Goals are prorated to week, month, and quarter on the Production Incentive analytics tab (52
-        weeks / 12 months / 4 quarters per year).
+        Bonuses are earned per payout period: a doctor has to reach a tier over the whole payout
+        period to be paid for it. Goals are prorated to each period (52 weeks / 12 months / 4
+        quarters per year).
       </p>
+
+      {settings && (
+        <div className="settings-card" style={{ marginBottom: 20 }}>
+          <h3 className="settings-card-title">Payout schedule</h3>
+          <p className="settings-muted" style={{ marginBottom: 8 }}>
+            Applies to every doctor on the plan. Currently:{' '}
+            <strong>{describePayoutSchedule(settings)}</strong>.
+          </p>
+          <div
+            className="settings-form-group"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gap: 12,
+              alignItems: 'end',
+            }}
+          >
+            <div>
+              <label className="settings-label" htmlFor="production-incentive-payout-mode">
+                Pay out
+              </label>
+              <select
+                id="production-incentive-payout-mode"
+                className="settings-select"
+                value={payoutMode}
+                onChange={(e) => setPayoutMode(e.target.value as PayoutMode)}
+              >
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly (calendar quarters)</option>
+                <option value="custom">Every N months</option>
+              </select>
+            </div>
+            {payoutMode === 'custom' && (
+              <>
+                <div>
+                  <label className="settings-label" htmlFor="production-incentive-payout-months">
+                    Months per payout
+                  </label>
+                  <input
+                    id="production-incentive-payout-months"
+                    type="number"
+                    min={1}
+                    max={12}
+                    step={1}
+                    className="settings-input"
+                    value={payoutMonths}
+                    onChange={(e) => setPayoutMonths(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="settings-label" htmlFor="production-incentive-payout-start">
+                    A payout period starts in
+                  </label>
+                  <input
+                    id="production-incentive-payout-start"
+                    type="month"
+                    className="settings-input"
+                    value={payoutStartMonth}
+                    onChange={(e) => setPayoutStartMonth(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+            <div>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void handleSaveSettings()}
+                disabled={savingSettings || !payoutDirty}
+              >
+                {savingSettings ? 'Saving...' : 'Save schedule'}
+              </button>
+            </div>
+          </div>
+          {payoutMode === 'custom' && (
+            <p className="settings-muted" style={{ marginTop: 8, fontSize: 12 }}>
+              Payout periods repeat every {payoutMonths || 'N'} months from the start month, in both
+              directions (e.g. every 2 months from February: Dec–Jan, Feb–Mar, Apr–May…).
+            </p>
+          )}
+        </div>
+      )}
 
       {loadError && (
         <div className="settings-message settings-error-message">
@@ -332,7 +493,8 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
               </h4>
               <p className="settings-muted" style={{ marginBottom: 8 }}>
                 Threshold value defaults to the goal plus the percent above; enter an amount to
-                override it. The bonus pool is the share of margin times (threshold − goal).
+                override it. The bonus pool is the share of margin times (threshold − goal), shown
+                for one {payoutLabel} payout.
               </p>
               <div className="settings-table-container">
                 <table className="settings-table">
@@ -341,7 +503,7 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                       <th>% above goal</th>
                       <th>Share of margin</th>
                       <th>Threshold value ({periodLabel})</th>
-                      <th>Bonus pool ({periodLabel})</th>
+                      <th>Bonus pool (per {payoutLabel} payout)</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -350,14 +512,11 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                       const tier = parseTier(t);
                       const valid = baseGoalValid && Number.isFinite(tier.percent);
                       const autoThreshold = valid ? fmtUSD((baseGoalNum * tier.percent) / 100) : '';
+                      const cyclePool = toPayoutCycle(resolveTierPool(baseGoalNum, tier));
                       const pool =
-                        valid && Number.isFinite(tier.marginShare)
-                          ? fmtUSD(resolveTierPool(baseGoalNum, tier))
-                          : '—';
+                        valid && Number.isFinite(tier.marginShare) ? fmtUSD(cyclePool) : '—';
                       const dvmPool =
-                        valid && dvmShareValid
-                          ? resolveTierPool(baseGoalNum, tier) * (dvmShareNum / 100)
-                          : null;
+                        valid && dvmShareValid ? cyclePool * (dvmShareNum / 100) : null;
                       return (
                         <tr key={idx}>
                           <td>
@@ -404,8 +563,7 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                             {pool}
                             {dvmPool != null && (
                               <div className="settings-muted" style={{ fontSize: 12 }}>
-                                DVM {fmtUSD(dvmPool)} · tech{' '}
-                                {fmtUSD(resolveTierPool(baseGoalNum, tier) - dvmPool)}
+                                DVM {fmtUSD(dvmPool)} · tech {fmtUSD(cyclePool - dvmPool)}
                               </div>
                             )}
                           </td>

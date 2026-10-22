@@ -6,7 +6,22 @@ import { http } from './http';
  * ========================= */
 
 export type ProductionIncentiveGoalPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual';
-export type ProductionIncentiveGranularity = 'week' | 'month' | 'quarter';
+/** `payout` = the plan's payout cycle (every N months from the cycle start month). */
+export type ProductionIncentiveGranularity = 'week' | 'month' | 'quarter' | 'payout';
+
+/** Plan-wide: bonuses are earned over each payout cycle of `payoutMonths` months. */
+export type ProductionIncentiveSettings = {
+  payoutMonths: number;
+  /** YYYY-MM a cycle starts on; cycles repeat every payoutMonths from it. */
+  payoutStartMonth: string;
+};
+
+export function describePayoutSchedule(s: ProductionIncentiveSettings): string {
+  if (s.payoutMonths === 1) return 'Monthly';
+  const startsInQuarterMonth = (Number(s.payoutStartMonth.slice(5, 7)) - 1) % 3 === 0;
+  if (s.payoutMonths === 3 && startsInQuarterMonth) return 'Quarterly';
+  return `Every ${s.payoutMonths} months`;
+}
 
 export const GOAL_PERIOD_LABELS: Record<ProductionIncentiveGoalPeriod, string> = {
   weekly: 'Per week',
@@ -97,13 +112,19 @@ export type ProductionIncentiveReport = {
   start: string;
   end: string;
   today: string;
+  settings: ProductionIncentiveSettings;
   periods: ProductionIncentivePeriod[];
+  /** Payout cycle the last (selected) period counts toward. */
+  payoutPeriod: ProductionIncentivePeriod;
   doctors: Array<{
     employeeId: number;
     name: string;
     email: string | null;
     goal: ProductionIncentiveGoal;
+    /** Bonus and tier pools are only set on periods that are exactly one payout cycle. */
     periods: ProductionIncentiveEvaluation[];
+    /** Progress and bonus for `payoutPeriod`. */
+    payout: ProductionIncentiveEvaluation;
   }>;
 };
 
@@ -116,6 +137,18 @@ export type SendProductionIncentiveReportBody = {
   additionalRecipients?: string[];
   notes?: string;
 };
+
+export async function fetchProductionIncentiveSettings(): Promise<ProductionIncentiveSettings> {
+  const { data } = await http.get('/analytics/production-incentive/settings');
+  return data;
+}
+
+export async function saveProductionIncentiveSettings(
+  body: ProductionIncentiveSettings
+): Promise<ProductionIncentiveSettings> {
+  const { data } = await http.put('/analytics/production-incentive/settings', body);
+  return data;
+}
 
 export async function fetchProductionIncentiveGoals(): Promise<ProductionIncentiveDoctor[]> {
   const { data } = await http.get('/analytics/production-incentive/goals');
