@@ -1,0 +1,135 @@
+import { http } from './http';
+
+/* =========================
+ * Production incentive plan (admin only)
+ * Base path: /analytics/production-incentive
+ * ========================= */
+
+export type ProductionIncentiveGoalPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual';
+export type ProductionIncentiveGranularity = 'week' | 'month' | 'quarter';
+
+export const GOAL_PERIOD_LABELS: Record<ProductionIncentiveGoalPeriod, string> = {
+  weekly: 'Per week',
+  monthly: 'Per month',
+  quarterly: 'Per quarter',
+  annual: 'Per year',
+};
+
+export const DEFAULT_TIER_PERCENTS = [105, 110, 115, 120];
+
+/** Stretch tier above 100%. `amount` null = 100% goal × percent. */
+export type ProductionIncentiveTier = {
+  percent: number;
+  amount: number | null;
+};
+
+export type ProductionIncentiveGoal = {
+  goalPeriod: ProductionIncentiveGoalPeriod;
+  baseGoal: number;
+  tiers: ProductionIncentiveTier[];
+  updated: string | null;
+};
+
+export type ProductionIncentiveDoctor = {
+  employeeId: number;
+  name: string;
+  email: string | null;
+  goal: ProductionIncentiveGoal | null;
+};
+
+export type ProductionIncentivePeriod = {
+  key: string;
+  label: string;
+  start: string;
+  end: string;
+  totalDays: number;
+  elapsedDays: number;
+  status: 'complete' | 'in_progress' | 'future';
+};
+
+export type ProductionIncentiveTierResult = {
+  percent: number;
+  goal: number;
+  achieved: boolean;
+  remaining: number;
+};
+
+export type ProductionIncentiveEvaluation = {
+  key: string;
+  actual: number;
+  goal: number;
+  percentOfGoal: number | null;
+  projected: number | null;
+  projectedPercentOfGoal: number | null;
+  tiers: ProductionIncentiveTierResult[];
+  highestTierAchieved: number | null;
+  nextTier: ProductionIncentiveTierResult | null;
+};
+
+export type ProductionIncentiveReport = {
+  granularity: ProductionIncentiveGranularity;
+  start: string;
+  end: string;
+  today: string;
+  periods: ProductionIncentivePeriod[];
+  doctors: Array<{
+    employeeId: number;
+    name: string;
+    email: string | null;
+    goal: ProductionIncentiveGoal;
+    periods: ProductionIncentiveEvaluation[];
+  }>;
+};
+
+export type SendProductionIncentiveReportBody = {
+  granularity: ProductionIncentiveGranularity;
+  /** Any date inside the period being reported. */
+  date: string;
+  employeeIds: number[];
+  mode: 'individual' | 'combined';
+  additionalRecipients?: string[];
+  notes?: string;
+};
+
+export async function fetchProductionIncentiveGoals(): Promise<ProductionIncentiveDoctor[]> {
+  const { data } = await http.get('/analytics/production-incentive/goals');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function saveProductionIncentiveGoal(
+  employeeId: number,
+  body: {
+    goalPeriod: ProductionIncentiveGoalPeriod;
+    baseGoal: number;
+    tiers: ProductionIncentiveTier[];
+  }
+): Promise<ProductionIncentiveGoal> {
+  const { data } = await http.put(`/analytics/production-incentive/goals/${employeeId}`, body);
+  return data;
+}
+
+export async function deleteProductionIncentiveGoal(employeeId: number): Promise<void> {
+  await http.delete(`/analytics/production-incentive/goals/${employeeId}`);
+}
+
+export async function fetchProductionIncentiveReport(params: {
+  granularity: ProductionIncentiveGranularity;
+  start: string;
+  end: string;
+}): Promise<ProductionIncentiveReport> {
+  const { data } = await http.get('/analytics/production-incentive/report', { params });
+  return data;
+}
+
+export async function sendProductionIncentiveReport(
+  body: SendProductionIncentiveReportBody
+): Promise<{ sent: Array<{ to: string[]; subject: string }>; skipped: string[] }> {
+  const { data } = await http.post('/analytics/production-incentive/report/send', body);
+  return data;
+}
+
+/** Tier amount in the goal's own period (override, else 100% goal × percent). */
+export function resolveTierAmount(baseGoal: number, tier: ProductionIncentiveTier): number {
+  if (tier.amount != null) return tier.amount;
+  return Math.round(baseGoal * tier.percent) / 100;
+}
