@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  DEFAULT_TIER_PERCENTS,
+  DEFAULT_DVM_SHARE_PERCENT,
+  DEFAULT_TIERS,
   GOAL_PERIOD_LABELS,
   deleteProductionIncentiveGoal,
   fetchProductionIncentiveGoals,
-  resolveTierAmount,
+  resolveTierPool,
   saveProductionIncentiveGoal,
   type ProductionIncentiveDoctor,
   type ProductionIncentiveGoalPeriod,
@@ -25,10 +26,12 @@ function fmtUSD(n: number) {
   }).format(n);
 }
 
-type TierDraft = { percent: string; amount: string };
+/** Tiers are edited as "% above goal" (5) and stored as percent of goal (105). */
+type TierDraft = { aboveGoal: string; marginShare: string; amount: string };
 type GoalDraft = {
   goalPeriod: ProductionIncentiveGoalPeriod;
   baseGoal: string;
+  dvmShare: string;
   tiers: TierDraft[];
 };
 
@@ -37,16 +40,31 @@ function draftFromDoctor(doc: ProductionIncentiveDoctor | undefined): GoalDraft 
     return {
       goalPeriod: 'quarterly',
       baseGoal: '',
-      tiers: DEFAULT_TIER_PERCENTS.map((p) => ({ percent: String(p), amount: '' })),
+      dvmShare: String(DEFAULT_DVM_SHARE_PERCENT),
+      tiers: DEFAULT_TIERS.map((t) => ({
+        aboveGoal: String(t.percent - 100),
+        marginShare: String(t.marginShare),
+        amount: '',
+      })),
     };
   }
   return {
     goalPeriod: doc.goal.goalPeriod,
     baseGoal: String(doc.goal.baseGoal),
+    dvmShare: String(doc.goal.dvmSharePercent),
     tiers: doc.goal.tiers.map((t) => ({
-      percent: String(t.percent),
+      aboveGoal: String(Math.round((t.percent - 100) * 100) / 100),
+      marginShare: String(t.marginShare),
       amount: t.amount == null ? '' : String(t.amount),
     })),
+  };
+}
+
+function parseTier(t: TierDraft) {
+  return {
+    percent: 100 + Number(t.aboveGoal),
+    marginShare: t.marginShare === '' ? 0 : Number(t.marginShare),
+    amount: t.amount === '' ? null : Number(t.amount),
   };
 }
 
@@ -90,20 +108,31 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
 
   const baseGoalNum = Number(draft.baseGoal);
   const baseGoalValid = draft.baseGoal !== '' && Number.isFinite(baseGoalNum) && baseGoalNum >= 0;
+  const dvmShareNum = Number(draft.dvmShare);
+  const dvmShareValid =
+    draft.dvmShare !== '' && Number.isFinite(dvmShareNum) && dvmShareNum >= 0 && dvmShareNum <= 100;
 
   const updateTier = (idx: number, patch: Partial<TierDraft>) =>
-    setDraft((d) => ({ ...d, tiers: d.tiers.map((t, i) => (i === idx ? { ...t, ...patch } : t)) }));
+    setDraft((d) => ({
+      ...d,
+      tiers: d.tiers.map((t, i) => (i === idx ? { ...t, ...patch } : t)),
+    }));
 
   const handleSave = async () => {
     if (!selected || !baseGoalValid) return;
-    const tiers = draft.tiers
-      .filter((t) => t.percent !== '')
-      .map((t) => ({
-        percent: Number(t.percent),
-        amount: t.amount === '' ? null : Number(t.amount),
-      }));
+    if (!dvmShareValid) {
+      onMessage?.('DVM share must be between 0 and 100%.', 'error');
+      return;
+    }
+    const tiers = draft.tiers.filter((t) => t.aboveGoal !== '').map(parseTier);
     if (tiers.some((t) => !Number.isFinite(t.percent) || t.percent <= 100)) {
-      onMessage?.('Tier percentages must be above 100%.', 'error');
+      onMessage?.('Each tier must be more than 0% above goal.', 'error');
+      return;
+    }
+    if (
+      tiers.some((t) => !Number.isFinite(t.marginShare) || t.marginShare < 0 || t.marginShare > 100)
+    ) {
+      onMessage?.('Share of margin must be between 0 and 100%.', 'error');
       return;
     }
     if (tiers.some((t) => t.amount != null && (!Number.isFinite(t.amount) || t.amount < 0))) {
@@ -116,6 +145,7 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
         goalPeriod: draft.goalPeriod,
         baseGoal: baseGoalNum,
         tiers,
+        dvmSharePercent: dvmShareNum,
       });
       setDoctors((prev) =>
         prev.map((d) => (d.employeeId === selected.employeeId ? { ...d, goal } : d))
@@ -147,14 +177,17 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
     }
   };
 
+  const periodLabel = GOAL_PERIOD_LABELS[draft.goalPeriod].toLowerCase();
+
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">Production Incentive</h2>
       <p className="settings-section-description">
-        Set each doctor&apos;s VSD goal (100%) and the stretch tiers for the incentive plan. Tier
-        values are calculated from the 100% goal unless you enter a specific amount. Goals are
-        prorated to week, month, and quarter on the Production Incentive analytics tab (52 weeks /
-        12 months / 4 quarters per year).
+        Set each doctor&apos;s VSD goal (100%) and their incentive tiers. Reaching a tier pays its
+        share of that tier&apos;s margin above goal: landing anywhere from 105% to 109% pays 30% of
+        the 5% margin, not of the actual margin. The bonus pool is split between the DVM and tech.
+        Goals are prorated to week, month, and quarter on the Production Incentive analytics tab (52
+        weeks / 12 months / 4 quarters per year).
       </p>
 
       {loadError && (
@@ -180,7 +213,8 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                   <th>Doctor</th>
                   <th>Goal period</th>
                   <th>100% goal</th>
-                  <th>Tiers</th>
+                  <th>Tiers (above goal → share of margin)</th>
+                  <th>DVM / tech</th>
                   <th></th>
                 </tr>
               </thead>
@@ -201,10 +235,13 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                         ? d.goal.tiers
                             .map(
                               (t) =>
-                                `${t.percent}%: ${fmtUSD(resolveTierAmount(d.goal!.baseGoal, t))}`
+                                `+${Math.round((t.percent - 100) * 100) / 100}% → ${t.marginShare}%`
                             )
                             .join(' · ')
                         : '—'}
+                    </td>
+                    <td>
+                      {d.goal ? `${d.goal.dvmSharePercent} / ${100 - d.goal.dvmSharePercent}` : '—'}
                     </td>
                     <td>
                       <button
@@ -270,41 +307,83 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                     onChange={(e) => setDraft((d) => ({ ...d, baseGoal: e.target.value }))}
                   />
                 </div>
+                <div>
+                  <label className="settings-label" htmlFor="production-incentive-dvm-share">
+                    DVM share of bonus (%)
+                  </label>
+                  <input
+                    id="production-incentive-dvm-share"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    className="settings-input"
+                    value={draft.dvmShare}
+                    onChange={(e) => setDraft((d) => ({ ...d, dvmShare: e.target.value }))}
+                  />
+                  <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                    Tech gets {dvmShareValid ? `${100 - dvmShareNum}%` : 'the rest'}.
+                  </p>
+                </div>
               </div>
 
               <h4 className="settings-card-title" style={{ marginTop: 16, fontSize: 16 }}>
-                Stretch tiers
+                Tiers
               </h4>
               <p className="settings-muted" style={{ marginBottom: 8 }}>
-                Leave the value blank to use the percentage of the 100% goal.
+                Threshold value defaults to the goal plus the percent above; enter an amount to
+                override it. The bonus pool is the share of margin times (threshold − goal).
               </p>
               <div className="settings-table-container">
                 <table className="settings-table">
                   <thead>
                     <tr>
-                      <th>Percent of goal</th>
-                      <th>Value ({GOAL_PERIOD_LABELS[draft.goalPeriod].toLowerCase()})</th>
+                      <th>% above goal</th>
+                      <th>Share of margin</th>
+                      <th>Threshold value ({periodLabel})</th>
+                      <th>Bonus pool ({periodLabel})</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {draft.tiers.map((t, idx) => {
-                      const pct = Number(t.percent);
-                      const auto =
-                        baseGoalValid && Number.isFinite(pct)
-                          ? fmtUSD((baseGoalNum * pct) / 100)
-                          : '';
+                      const tier = parseTier(t);
+                      const valid = baseGoalValid && Number.isFinite(tier.percent);
+                      const autoThreshold = valid ? fmtUSD((baseGoalNum * tier.percent) / 100) : '';
+                      const pool =
+                        valid && Number.isFinite(tier.marginShare)
+                          ? fmtUSD(resolveTierPool(baseGoalNum, tier))
+                          : '—';
+                      const dvmPool =
+                        valid && dvmShareValid
+                          ? resolveTierPool(baseGoalNum, tier) * (dvmShareNum / 100)
+                          : null;
                       return (
                         <tr key={idx}>
                           <td>
                             <input
                               type="number"
-                              min={100.01}
+                              min={0.01}
                               step={1}
                               className="settings-input"
-                              style={{ width: 100 }}
-                              value={t.percent}
-                              onChange={(e) => updateTier(idx, { percent: e.target.value })}
+                              style={{ width: 90 }}
+                              value={t.aboveGoal}
+                              onChange={(e) => updateTier(idx, { aboveGoal: e.target.value })}
+                              aria-label={`Tier ${idx + 1} percent above goal`}
+                            />
+                            %
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={5}
+                              className="settings-input"
+                              style={{ width: 90 }}
+                              value={t.marginShare}
+                              onChange={(e) => updateTier(idx, { marginShare: e.target.value })}
+                              aria-label={`Tier ${idx + 1} share of margin`}
                             />
                             %
                           </td>
@@ -315,10 +394,20 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                               step={100}
                               className="settings-input"
                               style={{ width: 160 }}
-                              placeholder={auto ? `Auto: ${auto}` : 'Auto'}
+                              placeholder={autoThreshold ? `Auto: ${autoThreshold}` : 'Auto'}
                               value={t.amount}
                               onChange={(e) => updateTier(idx, { amount: e.target.value })}
+                              aria-label={`Tier ${idx + 1} threshold value`}
                             />
+                          </td>
+                          <td>
+                            {pool}
+                            {dvmPool != null && (
+                              <div className="settings-muted" style={{ fontSize: 12 }}>
+                                DVM {fmtUSD(dvmPool)} · tech{' '}
+                                {fmtUSD(resolveTierPool(baseGoalNum, tier) - dvmPool)}
+                              </div>
+                            )}
                           </td>
                           <td>
                             <button
@@ -347,10 +436,18 @@ export default function SettingsProductionIncentive({ onMessage }: Props) {
                   disabled={draft.tiers.length >= 10}
                   onClick={() =>
                     setDraft((d) => {
-                      const top = Math.max(100, ...d.tiers.map((t) => Number(t.percent) || 0));
+                      const last = d.tiers[d.tiers.length - 1];
+                      const top = Math.max(0, ...d.tiers.map((t) => Number(t.aboveGoal) || 0));
                       return {
                         ...d,
-                        tiers: [...d.tiers, { percent: String(top + 5), amount: '' }],
+                        tiers: [
+                          ...d.tiers,
+                          {
+                            aboveGoal: String(top + 5),
+                            marginShare: last?.marginShare ?? '',
+                            amount: '',
+                          },
+                        ],
                       };
                     })
                   }

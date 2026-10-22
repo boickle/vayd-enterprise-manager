@@ -125,13 +125,24 @@ export default function ProductionIncentiveAnalyticsPage() {
     let actual = 0;
     let goal = 0;
     let projected = 0;
+    let dvmBonus = 0;
+    let techBonus = 0;
     for (const d of report.doctors) {
       const ev = d.periods[selectedIdx];
       actual += ev.actual;
       goal += ev.goal;
       projected += ev.projected ?? ev.actual;
+      dvmBonus += ev.bonus?.dvm ?? 0;
+      techBonus += ev.bonus?.tech ?? 0;
     }
-    return { actual, goal, projected, pct: goal > 0 ? (actual / goal) * 100 : null };
+    return {
+      actual,
+      goal,
+      projected,
+      dvmBonus,
+      techBonus,
+      pct: goal > 0 ? (actual / goal) * 100 : null,
+    };
   }, [report, selectedIdx]);
 
   return (
@@ -229,6 +240,8 @@ export default function ProductionIncentiveAnalyticsPage() {
                 selectedPeriod.status === 'in_progress'
                   ? ` · on pace for ${fmtUSD(totals.projected)}`
                   : ''
+              } · Bonuses: DVM ${fmtUSD(totals.dvmBonus)}, tech ${fmtUSD(totals.techBonus)}${
+                selectedPeriod.status === 'in_progress' ? ' (earned so far)' : ''
               }`}
             />
             <CardContent sx={{ overflowX: 'auto' }}>
@@ -243,6 +256,8 @@ export default function ProductionIncentiveAnalyticsPage() {
                       <TableCell align="right">On pace for</TableCell>
                     )}
                     <TableCell>Tiers</TableCell>
+                    <TableCell align="right">DVM bonus</TableCell>
+                    <TableCell align="right">Tech bonus</TableCell>
                     <TableCell>Next tier</TableCell>
                   </TableRow>
                 </TableHead>
@@ -288,11 +303,11 @@ export default function ProductionIncentiveAnalyticsPage() {
                             {ev.tiers.map((t) => (
                               <Tooltip
                                 key={t.percent}
-                                title={
+                                title={`${
                                   t.achieved
                                     ? `Reached ${fmtUSD(t.goal)}`
                                     : `${fmtUSD(t.remaining)} to reach ${fmtUSD(t.goal)}`
-                                }
+                                }${t.percent > 100 ? ` · pays ${fmtUSD(t.pool)} (${t.marginShare}% of margin)` : ''}`}
                               >
                                 <Chip
                                   size="small"
@@ -304,10 +319,35 @@ export default function ProductionIncentiveAnalyticsPage() {
                             ))}
                           </Box>
                         </TableCell>
+                        <TableCell align="right">
+                          {ev.bonus ? fmtUSD(ev.bonus.dvm) : '—'}
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {ev.dvmSharePercent}%
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          {ev.bonus ? fmtUSD(ev.bonus.tech) : '—'}
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {100 - ev.dvmSharePercent}%
+                          </Typography>
+                        </TableCell>
                         <TableCell>
-                          {ev.nextTier
-                            ? `${ev.nextTier.percent}%: ${fmtUSD(ev.nextTier.remaining)} to go`
-                            : 'All tiers reached'}
+                          {ev.nextTier ? (
+                            <>
+                              {ev.nextTier.percent}%: {fmtUSD(ev.nextTier.remaining)} to go
+                              {ev.nextTier.pool > 0 && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  display="block"
+                                >
+                                  pays {fmtUSD(ev.nextTier.pool)} pool
+                                </Typography>
+                              )}
+                            </>
+                          ) : (
+                            'All tiers reached'
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -362,6 +402,11 @@ export default function ProductionIncentiveAnalyticsPage() {
                                 ? ` · ${ev.highestTierAchieved}% tier`
                                 : ''}
                             </Typography>
+                            {ev.bonus && (
+                              <Typography variant="caption" display="block">
+                                Bonus {fmtUSD(ev.bonus.pool)}
+                              </Typography>
+                            )}
                           </TableCell>
                         );
                       })}

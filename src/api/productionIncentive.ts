@@ -15,18 +15,31 @@ export const GOAL_PERIOD_LABELS: Record<ProductionIncentiveGoalPeriod, string> =
   annual: 'Per year',
 };
 
-export const DEFAULT_TIER_PERCENTS = [105, 110, 115, 120];
+/** Default plan: tier threshold (percent of goal) → share of the margin above goal. */
+export const DEFAULT_TIERS: ReadonlyArray<{ percent: number; marginShare: number }> = [
+  { percent: 105, marginShare: 30 },
+  { percent: 110, marginShare: 35 },
+  { percent: 115, marginShare: 40 },
+  { percent: 120, marginShare: 50 },
+];
 
-/** Stretch tier above 100%. `amount` null = 100% goal × percent. */
+export const DEFAULT_DVM_SHARE_PERCENT = 70;
+
+/**
+ * Stretch tier above 100%. `amount` null = 100% goal × percent.
+ * Reaching it pays `marginShare`% of (tier goal − 100% goal).
+ */
 export type ProductionIncentiveTier = {
   percent: number;
   amount: number | null;
+  marginShare: number;
 };
 
 export type ProductionIncentiveGoal = {
   goalPeriod: ProductionIncentiveGoalPeriod;
   baseGoal: number;
   tiers: ProductionIncentiveTier[];
+  dvmSharePercent: number;
   updated: string | null;
 };
 
@@ -52,6 +65,16 @@ export type ProductionIncentiveTierResult = {
   goal: number;
   achieved: boolean;
   remaining: number;
+  marginShare: number;
+  /** Bonus pool paid when this tier is reached. */
+  pool: number;
+};
+
+export type ProductionIncentiveBonus = {
+  tierPercent: number;
+  pool: number;
+  dvm: number;
+  tech: number;
 };
 
 export type ProductionIncentiveEvaluation = {
@@ -64,6 +87,9 @@ export type ProductionIncentiveEvaluation = {
   tiers: ProductionIncentiveTierResult[];
   highestTierAchieved: number | null;
   nextTier: ProductionIncentiveTierResult | null;
+  /** Bonus for the highest stretch tier reached; null below the first stretch tier. */
+  bonus: ProductionIncentiveBonus | null;
+  dvmSharePercent: number;
 };
 
 export type ProductionIncentiveReport = {
@@ -102,6 +128,7 @@ export async function saveProductionIncentiveGoal(
     goalPeriod: ProductionIncentiveGoalPeriod;
     baseGoal: number;
     tiers: ProductionIncentiveTier[];
+    dvmSharePercent: number;
   }
 ): Promise<ProductionIncentiveGoal> {
   const { data } = await http.put(`/analytics/production-incentive/goals/${employeeId}`, body);
@@ -129,7 +156,16 @@ export async function sendProductionIncentiveReport(
 }
 
 /** Tier amount in the goal's own period (override, else 100% goal × percent). */
-export function resolveTierAmount(baseGoal: number, tier: ProductionIncentiveTier): number {
+export function resolveTierAmount(
+  baseGoal: number,
+  tier: Pick<ProductionIncentiveTier, 'percent' | 'amount'>
+): number {
   if (tier.amount != null) return tier.amount;
   return Math.round(baseGoal * tier.percent) / 100;
+}
+
+/** Bonus pool for a tier in the goal's own period. */
+export function resolveTierPool(baseGoal: number, tier: ProductionIncentiveTier): number {
+  const margin = Math.max(0, resolveTierAmount(baseGoal, tier) - baseGoal);
+  return Math.round(margin * tier.marginShare) / 100;
 }
