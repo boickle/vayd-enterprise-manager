@@ -106,7 +106,7 @@ function toneFor(ev: ProductionIncentiveEvaluation): { bg: string; fg: string } 
 }
 
 export default function ProductionIncentiveAnalyticsPage() {
-  const [granularity, setGranularity] = useState<ProductionIncentiveGranularity>('month');
+  const [granularity, setGranularity] = useState<ProductionIncentiveGranularity>('quarter');
   const [anchor, setAnchor] = useState<Dayjs>(() => dayjs().startOf('day'));
   const [report, setReport] = useState<ProductionIncentiveReport | null>(null);
   const [loading, setLoading] = useState(true);
