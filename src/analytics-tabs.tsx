@@ -31,6 +31,9 @@ const VsdPaymentsMatchAnalyticsPage = React.lazy(
 );
 const BookingCalendarAnalyticsPage = React.lazy(() => import('./pages/BookingCalendarAnalytics'));
 const ForwardBookingAnalyticsPage = React.lazy(() => import('./pages/ForwardBookingAnalytics'));
+const ProductionIncentiveAnalyticsPage = React.lazy(
+  () => import('./pages/ProductionIncentiveAnalytics')
+);
 
 export type AnalyticsTabPage = {
   path: string;
@@ -46,6 +49,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     path: 'vsd-payments',
     label: 'VSD vs Payments',
     element: <VsdPaymentsMatchAnalyticsPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'production-incentive',
+    label: 'Production Incentive',
+    element: <ProductionIncentiveAnalyticsPage />,
     role: ['admin', 'superadmin'],
   },
   {

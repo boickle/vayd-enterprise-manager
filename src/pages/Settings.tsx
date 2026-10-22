@@ -60,6 +60,7 @@ import SettingsRoleManualBooking from '../components/settings/SettingsRoleManual
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
+import SettingsProductionIncentive from '../components/settings/SettingsProductionIncentive';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
@@ -71,6 +72,7 @@ const SETTINGS_TAB_IDS = [
   'inventory',
   'employee-images',
   'employee-goals',
+  'production-incentive',
   'employee-directory',
   'cl-seat-assignment',
   'gmail-mailboxes',
@@ -1158,6 +1160,12 @@ export default function Settings() {
             Employee Goals
           </button>
           <button
+            className={`settings-tab ${activeTab === 'production-incentive' ? 'active' : ''}`}
+            onClick={() => goToTab('production-incentive')}
+          >
+            Production Incentive
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
             onClick={() => goToTab('employee-directory')}
           >
@@ -1967,6 +1975,21 @@ export default function Settings() {
               </>
             )}
           </div>
+        )}
+
+        {activeTab === 'production-incentive' && (
+          <SettingsProductionIncentive
+            onMessage={(msg, kind) => {
+              if (kind === 'success') {
+                setSuccess(msg);
+                setError(null);
+                window.setTimeout(() => setSuccess(null), 4000);
+              } else {
+                setError(msg);
+                setSuccess(null);
+              }
+            }}
+          />
         )}
 
         {/* Employee Schedule Tab */}
