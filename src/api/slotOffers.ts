@@ -41,7 +41,18 @@ export type SendSlotOfferPayload = {
   smsDraftBody?: string;
   smsDraftSource?: SlotOfferDraftSource;
   smsDraftFlags?: string[];
+  /** sms (default) texts the confirm link; email sends it from a connected Gmail mailbox. */
+  channel?: SlotOfferChannel;
+  emailMailbox?: string;
+  emailFrom?: string;
+  emailTo?: string[];
+  emailSubject?: string;
+  /** Plain-text body; the server adds the confirm button/link. */
+  emailBody?: string;
+  emailSignatureHtml?: string;
 };
+
+export type SlotOfferChannel = 'sms' | 'email';
 
 /** model = drafting model; template = server fallback; local = browser fallback. */
 export type SlotOfferDraftSource = 'model' | 'template' | 'local';
@@ -82,6 +93,8 @@ export type SlotOfferListItem = {
   arrivalWindowEnd?: string | null;
   slotDate?: string | null;
   status: SlotOfferStatus;
+  channel?: SlotOfferChannel;
+  emailTo?: string | null;
   attemptNumber?: number;
   sentAt?: string | null;
   respondedAt?: string | null;
@@ -195,6 +208,8 @@ function normalizeSlotOfferRow(raw: Record<string, unknown>): SlotOfferListItem 
     arrivalWindowEnd: pickStr(raw.arrivalWindowEnd ?? raw.arrival_window_end),
     slotDate: pickStr(raw.slotDate ?? raw.slot_date),
     status,
+    channel: pickStr(raw.channel) === 'email' ? 'email' : 'sms',
+    emailTo: pickStr(raw.emailTo ?? raw.email_to),
     attemptNumber: pickNum(raw.attemptNumber ?? raw.attempt_number),
     sentAt: pickStr(
       raw.sentAt ?? raw.sent_at ?? raw.offeredAt ?? raw.offered_at ?? raw.createdAt ?? raw.created_at
@@ -279,6 +294,7 @@ export type PendingSlotOfferForClient = {
     arrivalWindowEnd?: string | null;
     slotDate?: string | null;
     attemptNumber?: number;
+    channel?: SlotOfferChannel;
   };
 };
 
@@ -291,6 +307,38 @@ export async function fetchPendingSlotOfferForClient(opts: {
     { params: { practiceId: opts.practiceId, clientId: opts.clientId } }
   );
   return data ?? { hasPending: false };
+}
+
+export type ClientLastOutreachKind = 'text_offer' | 'email_offer' | 'text';
+
+export type ClientLastOutreach = {
+  clientId: number;
+  lastOutreachAt: string;
+  kind: ClientLastOutreachKind;
+};
+
+/** Most recent texted/emailed offer or Care Outreach text per client (last 120 days). */
+export async function fetchClientLastOutreach(
+  practiceId: number,
+): Promise<Map<number, ClientLastOutreach>> {
+  const { data } = await http.get<{ items?: unknown[] }>('/slot-offers/last-outreach', {
+    params: { practiceId },
+  });
+  const out = new Map<number, ClientLastOutreach>();
+  for (const row of data?.items ?? []) {
+    if (!row || typeof row !== 'object') continue;
+    const raw = row as Record<string, unknown>;
+    const clientId = pickNum(raw.clientId);
+    const lastOutreachAt = pickStr(raw.lastOutreachAt);
+    if (clientId == null || !lastOutreachAt) continue;
+    const kind = pickStr(raw.kind);
+    out.set(clientId, {
+      clientId,
+      lastOutreachAt,
+      kind: kind === 'email_offer' || kind === 'text' ? kind : 'text_offer',
+    });
+  }
+  return out;
 }
 
 export async function resolveSlotOffer(offerId: string, practiceId: number): Promise<void> {
@@ -347,12 +395,12 @@ export function formatSendSlotOfferError(err: unknown): string {
   if (status === 409 && data?.code === 'PENDING_SLOT_OFFER_EXISTS') {
     return nestedMsg
       ? String(nestedMsg)
-      : 'A pending texted offer already exists for this client.';
+      : 'A pending offer already exists for this client.';
   }
   if (status === 422) {
     return 'Client opted out of SMS — manual outreach only.';
   }
   const msg = nestedMsg ?? (typeof data?.message === 'string' ? data.message : undefined) ??
     (err as Error)?.message;
-  return msg ? String(msg) : 'Could not send text offer.';
+  return msg ? String(msg) : 'Could not send offer.';
 }

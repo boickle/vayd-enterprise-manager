@@ -8174,7 +8174,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   const handleSlotOfferSent = useCallback(
-    (detail?: { outreachNotesWarning?: string }) => {
+    (detail?: { outreachNotesWarning?: string; channel?: 'sms' | 'email' }) => {
     const fbi = readRoutingForwardBookingIntent();
     const previewAtSend = routingPreview ?? readRoutingCalendarPreview();
     closeBookModal();
@@ -8182,7 +8182,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     clearRoutingCalendarPreview();
     setRoutingPreview(null);
     clearRoutingForwardBookingIntent();
-    const toastBase = 'Text offer sent to client.';
+    const toastBase =
+      detail?.channel === 'email' ? 'Email offer sent to client.' : 'Text offer sent to client.';
     setToast(
       detail?.outreachNotesWarning ? `${toastBase} ${detail.outreachNotesWarning}` : toastBase
     );

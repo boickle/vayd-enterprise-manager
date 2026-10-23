@@ -83,7 +83,17 @@ import {
 import { buildSlotOfferSmsMessage } from '../utils/slotOfferSmsMessage';
 import { readRoutingForwardBookingIntent } from '../utils/routingForwardBookingIntent';
 import { applySlotOfferOutreachNotes } from '../utils/slotOfferOutreachNote';
-import type { SendSlotOfferPayload, SlotOfferMessageDraft } from '../api/slotOffers';
+import type {
+  SendSlotOfferPayload,
+  SlotOfferChannel,
+  SlotOfferMessageDraft,
+} from '../api/slotOffers';
+import {
+  SlotOfferEmailComposeModal,
+  type SlotOfferEmailSend,
+} from '../components/SlotOfferEmailComposeModal';
+import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { slotOfferSmsToEmail } from '../utils/clientOutreachEmailMessage';
 import { findScheduleOptimizeQueueItemForAppointments } from '../utils/scheduleOptimizeQueue';
 import {
   appendExploreAlternativeCreatedStaffNote,
@@ -346,7 +356,7 @@ type Props = {
   onPreviewOnCalendar?: (draft: ManualBookPreviewDraft) => void;
   onClose: () => void;
   /** After a successful POST /slot-offers/send from care outreach or schedule loader routing. */
-  onSlotOfferSent?: (detail?: { outreachNotesWarning?: string }) => void;
+  onSlotOfferSent?: (detail?: { outreachNotesWarning?: string; channel?: SlotOfferChannel }) => void;
   /** Jump the practice calendar to an existing household visit from the pre-book warning. */
   onViewConflictPlacement?: (conflict: HouseholdScheduledVisitConflict) => void;
   onBooked: (detail?: {
@@ -710,6 +720,15 @@ export function SchedulerBookModal({
   } | null>(null);
   const [slotOfferDraftMeta, setSlotOfferDraftMeta] = useState<SlotOfferMessageDraft | null>(null);
   const slotOfferConfirmOverwriteRef = useRef(false);
+  const { allowed: canEmailOffers } = useGmailInboxAccess();
+  const slotOfferChannelRef = useRef<SlotOfferChannel>('sms');
+  const [slotOfferEmailOpen, setSlotOfferEmailOpen] = useState(false);
+  const [slotOfferPendingChannel, setSlotOfferPendingChannel] = useState<SlotOfferChannel>('sms');
+  const [slotOfferEmailDraft, setSlotOfferEmailDraft] = useState({ subject: '', body: '' });
+  const [slotOfferEmailClientId, setSlotOfferEmailClientId] = useState<number | null>(null);
+  const [slotOfferEmailSentDraft, setSlotOfferEmailSentDraft] = useState<SlotOfferMessageDraft | null>(
+    null
+  );
   const [formError, setFormError] = useState<string | null>(null);
 
   const [scheduleOverrideDraft, setScheduleOverrideDraft] = useState<ScheduleOverrideDraft | null>(
@@ -2873,13 +2892,25 @@ export function SchedulerBookModal({
   ) {
     slotOfferConfirmOverwriteRef.current = confirmOverwrite;
     slotOfferPendingPayloadRef.current = compose.payload;
+    if (slotOfferChannelRef.current === 'email') {
+      const providerLastName =
+        providers.find((p) => String(p.id) === String(compose.payload.doctorId))?.lastName?.trim() ||
+        null;
+      const email = slotOfferSmsToEmail(compose.draft.message, providerLastName);
+      setSlotOfferEmailSentDraft({ ...compose.draft, message: email.bodyText });
+      setSlotOfferEmailDraft({ subject: email.subject, body: email.bodyText });
+      setSlotOfferEmailClientId(compose.payload.clientId);
+      setSlotOfferEmailOpen(true);
+      return;
+    }
     setSlotOfferDraftMeta(compose.draft);
     setSlotOfferComposeMessage(compose.draft.message);
     setSlotOfferComposeOpen(true);
   }
 
-  async function openSlotOfferCompose() {
+  async function openSlotOfferCompose(channel: SlotOfferChannel = 'sms') {
     if (!routingLinkPreview || !showSlotOfferActions) return;
+    slotOfferChannelRef.current = channel;
     setFormError(null);
     setSlotOfferComposeError(null);
     setSendingOffer(true);
@@ -2947,6 +2978,7 @@ export function SchedulerBookModal({
       const compose = { payload: p, draft: drafted };
       if (pending.hasPending) {
         slotOfferComposeDraftRef.current = compose;
+        setSlotOfferPendingChannel(pending.offer?.channel === 'email' ? 'email' : 'sms');
         setSlotOfferOverwriteOpen(true);
         return;
       }
@@ -3045,9 +3077,91 @@ export function SchedulerBookModal({
     slotOfferConfirmOverwriteRef.current = false;
   }
 
+  async function confirmSlotOfferEmailSend(email: SlotOfferEmailSend) {
+    const base = slotOfferPendingPayloadRef.current;
+    if (!base) {
+      setSlotOfferComposeError('Offer details expired — close and try again.');
+      return;
+    }
+    const payload: SendSlotOfferPayload = { ...base, channel: 'email' };
+    setSlotOfferComposeError(null);
+    setSendingOffer(true);
+    try {
+      await sendSlotOffer({
+        ...payload,
+        emailMailbox: email.mailbox,
+        emailFrom: email.from,
+        emailTo: email.to,
+        emailSubject: email.subject,
+        emailBody: email.body,
+        ...(email.signatureHtml ? { emailSignatureHtml: email.signatureHtml } : {}),
+        confirmOverwrite: slotOfferConfirmOverwriteRef.current || undefined,
+        ...(slotOfferEmailSentDraft
+          ? {
+              smsDraftBody: slotOfferEmailSentDraft.message,
+              smsDraftSource: slotOfferEmailSentDraft.source,
+              smsDraftFlags: slotOfferEmailSentDraft.flags,
+            }
+          : {}),
+      });
+      const notesResult = await applySlotOfferOutreachNotes({
+        payload,
+        practiceTz,
+        token,
+        userEmail,
+        doctorId,
+        providers,
+      });
+      setSlotOfferEmailOpen(false);
+      setSlotOfferEmailSentDraft(null);
+      slotOfferPendingPayloadRef.current = null;
+      slotOfferConfirmOverwriteRef.current = false;
+      onSlotOfferSent?.({
+        channel: 'email',
+        ...(notesResult.warning ? { outreachNotesWarning: notesResult.warning } : {}),
+      });
+      onClose();
+    } catch (err) {
+      setSlotOfferComposeError(formatSendSlotOfferError(err));
+    } finally {
+      setSendingOffer(false);
+    }
+  }
+
+  function closeSlotOfferEmailCompose() {
+    if (sendingOffer) return;
+    setSlotOfferEmailOpen(false);
+    setSlotOfferComposeError(null);
+    setSlotOfferEmailSentDraft(null);
+    slotOfferPendingPayloadRef.current = null;
+    slotOfferConfirmOverwriteRef.current = false;
+  }
+
+  const pendingOfferNoun = slotOfferPendingChannel === 'email' ? 'emailed' : 'texted';
+  const slotOfferOverwriteTitle = `Replace existing ${pendingOfferNoun} offer?`;
+  const slotOfferOverwriteBody = `You have already sent a ${pendingOfferNoun} offer for this patient. Do you want to overwrite your last one? The previous link will expire and this new ${
+    slotOfferChannelRef.current === 'email' ? 'emailed' : 'texted'
+  } offer will be sent instead.`;
+
+  const slotOfferEmailModal = (
+    <SlotOfferEmailComposeModal
+      open={slotOfferEmailOpen}
+      clientId={slotOfferEmailClientId}
+      clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}
+      initialSubject={slotOfferEmailDraft.subject}
+      initialBody={slotOfferEmailDraft.body}
+      onClose={closeSlotOfferEmailCompose}
+      onSend={(email) => void confirmSlotOfferEmailSend(email)}
+      sending={sendingOffer}
+      sendError={slotOfferComposeError}
+      reviewNotes={slotOfferEmailSentDraft?.flags}
+    />
+  );
+
   if (!open || !slot || !startLocal) {
-    return slotOfferComposeOpen || slotOfferOverwriteOpen ? (
+    return slotOfferComposeOpen || slotOfferEmailOpen || slotOfferOverwriteOpen ? (
       <>
+        {slotOfferEmailModal}
         <ClientSmsComposeModal
           open={slotOfferComposeOpen}
           clientId={selectedClientId ? Number(selectedClientId) : null}
@@ -3095,11 +3209,10 @@ export function SchedulerBookModal({
                   }}
                 >
                   <h3 id="slot-offer-overwrite-title" style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 600 }}>
-                    Replace existing texted offer?
+                    {slotOfferOverwriteTitle}
                   </h3>
                   <p style={{ margin: '0 0 20px', lineHeight: 1.5, color: '#374151' }}>
-                    You have already submitted a texted offer for this patient. Do you want to overwrite your last
-                    one? The previous link will expire and this new offer will be sent instead.
+                    {slotOfferOverwriteBody}
                   </p>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                     <button type="button" className="btn secondary" onClick={cancelSlotOfferOverwrite}>
@@ -4142,8 +4255,9 @@ export function SchedulerBookModal({
             </p>
           ) : showSlotOfferActions ? (
             <p className="scheduler-book-hint muted">
-              Book to place the visit on the calendar, or Text offer to send the client an SMS link to confirm
-              this window (slot is not held until they confirm).
+              {canEmailOffers
+                ? 'Book to place the visit on the calendar, or Text offer / Email offer to send the client a link to confirm this window (slot is not held until they confirm).'
+                : 'Book to place the visit on the calendar, or Text offer to send the client an SMS link to confirm this window (slot is not held until they confirm).'}
             </p>
           ) : null}
 
@@ -4161,14 +4275,29 @@ export function SchedulerBookModal({
                 type="button"
                 className="scheduler-book-btn secondary"
                 disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
-                onClick={() => void openSlotOfferCompose()}
+                onClick={() => void openSlotOfferCompose('sms')}
                 title={
                   patientRequiredButMissing
                     ? 'Select a patient — this appointment type requires one.'
                     : undefined
                 }
               >
-                {sendingOffer ? 'Sending…' : 'Text offer'}
+                {sendingOffer && slotOfferChannelRef.current === 'sms' ? 'Sending…' : 'Text offer'}
+              </button>
+            ) : null}
+            {showSlotOfferActions && canEmailOffers ? (
+              <button
+                type="button"
+                className="scheduler-book-btn secondary"
+                disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
+                onClick={() => void openSlotOfferCompose('email')}
+                title={
+                  patientRequiredButMissing
+                    ? 'Select a patient — this appointment type requires one.'
+                    : 'Email the client a link to confirm this window'
+                }
+              >
+                {sendingOffer && slotOfferChannelRef.current === 'email' ? 'Sending…' : 'Email offer'}
               </button>
             ) : null}
             <button
@@ -4273,6 +4402,7 @@ export function SchedulerBookModal({
           }}
         />
       ) : null}
+      {slotOfferEmailModal}
       <ClientSmsComposeModal
         open={slotOfferComposeOpen}
         clientId={selectedClientId ? Number(selectedClientId) : null}
@@ -4320,11 +4450,10 @@ export function SchedulerBookModal({
                 }}
               >
                 <h3 id="slot-offer-overwrite-title" style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 600 }}>
-                  Replace existing texted offer?
+                  {slotOfferOverwriteTitle}
                 </h3>
                 <p style={{ margin: '0 0 20px', lineHeight: 1.5, color: '#374151' }}>
-                  You have already submitted a texted offer for this patient. Do you want to overwrite your last
-                  one? The previous link will expire and this new offer will be sent instead.
+                  {slotOfferOverwriteBody}
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                   <button type="button" className="btn secondary" onClick={cancelSlotOfferOverwrite}>

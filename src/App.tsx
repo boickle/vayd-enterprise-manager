@@ -22,6 +22,7 @@ import { getSchedulingToolsTabPages } from './scheduling-tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
+import MembershipSavings from './pages/MembershipSavings';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipRenewalReview from './pages/MembershipRenewalReview';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
@@ -644,6 +645,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <MembershipSignup />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/client-portal/membership-savings"
+            element={
+              <ProtectedRoute>
+                <MembershipSavings />
               </ProtectedRoute>
             }
           />

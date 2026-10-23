@@ -806,6 +806,27 @@ export default function ClientPortal() {
               </div>
             ) : null}
 
+            {petsWithProvider.some(
+              (p) => p.membershipPlanName == null && !(p.wellnessPlans || []).some((plan) => planIsActive(plan)),
+            ) ? (
+              <div className="pp-notice">
+                <div>
+                  <strong>See what One-Team Membership would cover.</strong> An item-by-item look at your savings, based on
+                  your pets&apos; wellness care.
+                </div>
+                <button
+                  type="button"
+                  className="pp-btn pp-btn--primary pp-btn--sm"
+                  onClick={() => {
+                    trackEvent('membership_savings_clicked', { location: 'portal_home' });
+                    navigate('/client-portal/membership-savings');
+                  }}
+                >
+                  See my membership savings
+                </button>
+              </div>
+            ) : null}
+
             {/* ---------- cards ---------- */}
             <div className="pp-grid">
               <div className="pp-col-7" ref={aboutRef} style={{ scrollMarginTop: 16 }}>

@@ -90,6 +90,7 @@ import SettingsLabForms from '../components/settings/SettingsLabForms';
 import WasteAdminPage from './WasteAdminPage';
 import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
+import SettingsProductionIncentive from '../components/settings/SettingsProductionIncentive';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
@@ -110,6 +111,7 @@ const SETTINGS_TAB_IDS = [
   'inventory-waste',
   'employee-images',
   'employee-goals',
+  'production-incentive',
   'employee-directory',
   'roles',
   'permission-audit',
@@ -175,6 +177,7 @@ const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'payment-types', label: 'Payment Types' },
   { id: 'client-statuses', label: 'Client Discounts' },
   { id: 'memberships', label: 'Memberships' },
+  { id: 'production-incentive', label: 'Production Incentive' },
 ];
 
 const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -2298,6 +2301,21 @@ export default function Settings() {
               </>
             )}
           </div>
+        )}
+
+        {activeTab === 'production-incentive' && (
+          <SettingsProductionIncentive
+            onMessage={(msg, kind) => {
+              if (kind === 'success') {
+                setSuccess(msg);
+                setError(null);
+                window.setTimeout(() => setSuccess(null), 4000);
+              } else {
+                setError(msg);
+                setSuccess(null);
+              }
+            }}
+          />
         )}
 
         {/* Employee Schedule Tab */}

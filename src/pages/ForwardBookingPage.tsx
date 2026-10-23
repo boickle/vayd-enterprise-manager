@@ -130,6 +130,7 @@ import {
   forwardBookingLinkedAppointmentPoints,
   forwardBookingLinkedVisitIsOnHold,
   forwardBookingListTab,
+  forwardBookingMatchesStatusFilter,
   opsPointsForAppointment,
   type BookedAppointmentMeta,
   type ForwardBookingListTab,
@@ -199,6 +200,8 @@ const FORWARD_BOOKING_NOTE_AUTOSAVE_MS = 800;
 
 const ON_HOLD_OVER24_SEARCH_PARAM = 'over24';
 const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
+/** Needs booking only — when `1`, also list On hold rows for forward-booking sources. */
+const INCLUDE_HOLDS_SEARCH_PARAM = 'includeHolds';
 
 const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[] = [
   { key: 'care_outreach', label: 'Care outreach' },
@@ -227,15 +230,6 @@ function onHoldFilterButtonStyle(active: boolean, accent?: { background: string;
   };
 }
 
-
-const FORWARD_BOOKING_TAB_ORDER: ForwardBookingListTab[] = [
-  'pending',
-  'onHold',
-  'bookLater',
-  'booked',
-  'complete',
-  'removed',
-];
 
 function forwardBookingTabLabel(tab: ForwardBookingListTab): string {
   const local = STATUS_TABS.find((t) => t.key === tab)?.label;
@@ -511,9 +505,28 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         params.delete(ON_HOLD_OVER24_SEARCH_PARAM);
         params.delete(ON_HOLD_SOURCE_SEARCH_PARAM);
       }
+      if (next !== 'pending') {
+        params.delete(INCLUDE_HOLDS_SEARCH_PARAM);
+      }
       setSearchParams(params);
     },
     [isOnHoldView, isBookedView, searchParams, setSearchParams]
+  );
+
+  const includeHoldsInNeedsBooking =
+    !isOnHoldView &&
+    !isBookedView &&
+    statusFilter === 'pending' &&
+    searchParams.get(INCLUDE_HOLDS_SEARCH_PARAM) === '1';
+  const setIncludeHoldsInNeedsBooking = useCallback(
+    (include: boolean) => {
+      if (isOnHoldView || isBookedView || statusFilter !== 'pending') return;
+      const params = new URLSearchParams(searchParams);
+      if (include) params.set(INCLUDE_HOLDS_SEARCH_PARAM, '1');
+      else params.delete(INCLUDE_HOLDS_SEARCH_PARAM);
+      setSearchParams(params, { replace: true });
+    },
+    [isOnHoldView, isBookedView, statusFilter, searchParams, setSearchParams]
   );
 
   useEffect(() => {
@@ -687,21 +700,28 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       ? 'Visits booked from forward booking workflows. Cancel or remove on the calendar to drop off this list.'
       : 'End-of-visit forward bookings and manual entries. Use the status filters to move each visit from needs booking → booked.';
 
+  const activeStatusLabel = forwardBookingTabLabel(statusFilter);
   const searchPlaceholder = isBookedView
     ? 'Search booked visits: client, patient, provider, notes…'
     : isOnHoldView
       ? 'Search on hold: client, patient, provider, notes…'
-      : 'Search all tabs: client, patient, provider, notes…';
+      : includeHoldsInNeedsBooking
+        ? 'Search needs booking + holds: client, patient, provider, notes…'
+        : `Search ${activeStatusLabel.toLowerCase()}: client, patient, provider, notes…`;
   const searchAriaLabel = isBookedView
     ? 'Search booked visits'
     : isOnHoldView
       ? 'Search on hold visits'
-      : 'Search forward booking list across all tabs';
+      : includeHoldsInNeedsBooking
+        ? 'Search needs booking including holds'
+        : `Search ${activeStatusLabel.toLowerCase()}`;
   const searchActiveHint = isBookedView
     ? 'Searching booked visits'
     : isOnHoldView
       ? 'Searching on hold'
-      : 'Searching across all tabs';
+      : includeHoldsInNeedsBooking
+        ? 'Searching Needs booking (+ holds)'
+        : `Searching ${activeStatusLabel}`;
 
   useEffect(() => {
     void fetchSchedulingOutreachSmsFrom().then((phone) => {
@@ -1400,6 +1420,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const filtered = useMemo(() => {
     const searchQuery = search.trim().toLowerCase();
     const searchActive = searchQuery.length > 0;
+    const catalog = typeCatalogRef.current;
+    const statusMatchOpts = {
+      includeHoldsInNeedsBooking,
+      allowOnHold: forwardBookingOnHoldBelongsInSchedulingTools,
+    };
 
     const sortList = (items: ForwardBookingEntry[], tab: ForwardBookingListTab) => {
       if (tab === 'bookLater') {
@@ -1409,6 +1434,21 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         return sortForwardBookingOnHoldListEntries(items, (e) => clientDisplay(e).name);
       }
       return sortForwardBookingListEntries(items, practiceTz, (e) => clientDisplay(e).name);
+    };
+
+    /** When Needs booking optionally includes holds, keep pending first then on-hold order. */
+    const sortMixedNeedsBooking = (items: ForwardBookingEntry[]) => {
+      const pending: ForwardBookingEntry[] = [];
+      const onHold: ForwardBookingEntry[] = [];
+      for (const row of items) {
+        const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta, catalog);
+        if (tab === 'onHold') onHold.push(row);
+        else pending.push(row);
+      }
+      return [
+        ...sortList(pending, 'pending'),
+        ...sortList(onHold, 'onHold'),
+      ];
     };
 
     const matchesOnHoldFilters = (r: ForwardBookingEntry) => {
@@ -1423,55 +1463,35 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       return true;
     };
 
+    const matchesStatus = (r: ForwardBookingEntry) =>
+      exitingRows.has(r.id) ||
+      (forwardBookingMatchesStatusFilter(
+        r,
+        statusFilter,
+        practiceTz,
+        bookedApptMeta,
+        catalog,
+        statusMatchOpts
+      ) &&
+        matchesOnHoldFilters(r));
+
     const matchesSearch = (r: ForwardBookingEntry) =>
       forwardBookingEntryMatchesSearch(
         r,
         searchQuery,
         practiceTz,
         noteDrafts[r.id] ?? resolveListNote(r),
-        typeCatalogRef.current
+        catalog
       );
 
-    if (searchActive) {
-      if (isBookedView || isOnHoldView) {
-        const scopedTab: ForwardBookingListTab = isBookedView ? 'booked' : 'onHold';
-        const matching = visibleRows.filter(
-          (r) =>
-            exitingRows.has(r.id) ||
-            (matchesSearch(r) &&
-              matchesOnHoldFilters(r) &&
-              forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
-                scopedTab)
-        );
-        return sortList(matching, scopedTab);
-      }
-
-      const matching = visibleRows.filter(
-        (r) => exitingRows.has(r.id) || (matchesSearch(r) && matchesOnHoldFilters(r))
-      );
-      const byTab = new Map<ForwardBookingListTab, ForwardBookingEntry[]>();
-      for (const row of matching) {
-        const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current);
-        const bucket = byTab.get(tab) ?? [];
-        bucket.push(row);
-        byTab.set(tab, bucket);
-      }
-      const list: ForwardBookingEntry[] = [];
-      for (const tab of FORWARD_BOOKING_TAB_ORDER) {
-        const bucket = byTab.get(tab);
-        if (bucket?.length) list.push(...sortList(bucket, tab));
-      }
-      return list;
-    }
-
-    const list = visibleRows.filter(
-      (r) =>
-        exitingRows.has(r.id) ||
-        (forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
-          statusFilter &&
-          matchesOnHoldFilters(r))
+    const matching = visibleRows.filter(
+      (r) => matchesStatus(r) && (!searchActive || matchesSearch(r) || exitingRows.has(r.id))
     );
-    return sortList(list, statusFilter);
+
+    if (statusFilter === 'pending' && includeHoldsInNeedsBooking) {
+      return sortMixedNeedsBooking(matching);
+    }
+    return sortList(matching, statusFilter);
   }, [
     visibleRows,
     statusFilter,
@@ -1483,8 +1503,8 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     onHoldSourceFilter,
     returnHighlightBypassFilters,
     exitingRows,
-    isBookedView,
-    isOnHoldView,
+    includeHoldsInNeedsBooking,
+    resolveListNote,
   ]);
 
   const useWorkflowListPagination = filtered.length > WORKFLOW_LIST_PAGE_SIZE;
@@ -1900,6 +1920,23 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               </button>
             ))
           : null}
+        {!isOnHoldView && !isBookedView && statusFilter === 'pending' ? (
+          <label className="settings-checkbox-item" style={{ margin: 0, marginLeft: 4 }}>
+            <input
+              type="checkbox"
+              checked={includeHoldsInNeedsBooking}
+              onChange={(e) => setIncludeHoldsInNeedsBooking(e.target.checked)}
+            />
+            <span>
+              Include HOLDs
+              {tabCounts.onHold > 0 ? (
+                <span className="settings-muted" style={{ fontWeight: 600, marginLeft: 4 }}>
+                  ({tabCounts.onHold})
+                </span>
+              ) : null}
+            </span>
+          </label>
+        ) : null}
         {isBookedView ? (
           <span
             className="settings-muted"
@@ -2173,7 +2210,9 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
                   <div style={{ flex: '1 1 240px', minWidth: 0 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                      {searchActive && !isBookedView && !isOnHoldView ? (
+                      {(searchActive || includeHoldsInNeedsBooking) &&
+                      !isBookedView &&
+                      !isOnHoldView ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -2246,6 +2285,21 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                           }}
                         >
                           ON HOLD &gt; 24 HOURS
+                        </div>
+                      ) : null}
+                      {isOnHold && entry.bookedBy ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#f1f5f9',
+                            color: '#475569',
+                          }}
+                        >
+                          By {employeeLabel(entry.bookedBy)}
                         </div>
                       ) : null}
                       {sourceChip ? (

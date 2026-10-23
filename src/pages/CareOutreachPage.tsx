@@ -97,6 +97,7 @@ import {
   careOutreachClientHasSmsPhone,
 } from '../utils/careOutreachSmsMessage';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { fetchClientLastOutreach, type ClientLastOutreach } from '../api/slotOffers';
 import { resolveScheduleLoaderSmsBookedSlot } from '../utils/scheduleLoaderSmsMessage';
 import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
 import './Settings.css';
@@ -113,9 +114,9 @@ const PRIORITY_TABS: { key: PriorityFilter; label: string; title?: string }[] = 
   { key: 'overdue_today', label: 'Newly overdue today' },
   {
     key: 'due_21',
-    label: 'Due in 21 days',
+    label: 'Due in next 21 days',
     title:
-      'Reminders due 21 calendar days from today. If that day is a Friday, Saturday and Sunday are included (21–23 days out).',
+      'Reminders due in the next 1–21 calendar days. If day 21 is a Friday, Saturday and Sunday are included (up to 23 days out).',
   },
   {
     key: 'past_due_30',
@@ -335,6 +336,56 @@ function clientBucketQuoFromLine(client: CareOutreachClientBucket): string | nul
   return null;
 }
 
+function compareClientNames(a: CareOutreachClientBucket, b: CareOutreachClientBucket): number {
+  return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+}
+
+function lastOutreachTime(
+  client: CareOutreachClientBucket,
+  lastOutreach: ReadonlyMap<number, ClientLastOutreach>
+): number | null {
+  if (client.clientId == null) return null;
+  const row = lastOutreach.get(client.clientId);
+  if (!row) return null;
+  const t = Date.parse(row.lastOutreachAt);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Clients not yet reached out to come first (A–Z), then by last outreach from most
+ * recent to oldest, so the longest without a response sit at the end for a second touch.
+ */
+function compareClientsByOutreach(
+  a: CareOutreachClientBucket,
+  b: CareOutreachClientBucket,
+  lastOutreach: ReadonlyMap<number, ClientLastOutreach>
+): number {
+  const ta = lastOutreachTime(a, lastOutreach);
+  const tb = lastOutreachTime(b, lastOutreach);
+  if (ta == null && tb == null) return compareClientNames(a, b);
+  if (ta == null) return -1;
+  if (tb == null) return 1;
+  return tb - ta || compareClientNames(a, b);
+}
+
+const LAST_OUTREACH_KIND_LABEL: Record<ClientLastOutreach['kind'], string> = {
+  text_offer: 'text offer',
+  email_offer: 'email offer',
+  text: 'text',
+};
+
+function formatLastOutreach(row: ClientLastOutreach): { label: string; within24h: boolean } {
+  const at = dayjs(row.lastOutreachAt);
+  const hours = dayjs().diff(at, 'hour', true);
+  const days = dayjs().startOf('day').diff(at.startOf('day'), 'day');
+  const when =
+    days <= 0 ? `today ${at.format('h:mm A')}` : days === 1 ? 'yesterday' : `${days} days ago (${at.format('MMM D')})`;
+  return {
+    label: `Last contacted ${when} · ${LAST_OUTREACH_KIND_LABEL[row.kind]}`,
+    within24h: hours < 24,
+  };
+}
+
 /** Earliest due first (most overdue first), then provider, then service name. */
 function compareRemindersForDisplay(a: UnscheduledReminder, b: UnscheduledReminder): number {
   const td = dueSortTime(a.dueDate) - dueSortTime(b.dueDate);
@@ -469,6 +520,16 @@ export default function CareOutreachPage() {
   const [noteError, setNoteError] = useState<Record<number, string | null>>({});
   const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
+  const [lastOutreachByClient, setLastOutreachByClient] = useState<
+    ReadonlyMap<number, ClientLastOutreach>
+  >(() => new Map());
+  const refreshLastOutreach = useCallback(() => {
+    void fetchClientLastOutreach(PRACTICE_ID)
+      .then(setLastOutreachByClient)
+      .catch(() => {
+        /* list falls back to A–Z for clients without outreach data */
+      });
+  }, []);
   const [showHiddenReminders, setShowHiddenReminders] = useState(false);
   const [providerFilterId, setProviderFilterId] = useState<string>(
     () => persistedFilter?.providerFilterId ?? 'all',
@@ -515,6 +576,7 @@ export default function CareOutreachPage() {
   const load = useCallback(async (opts?: { force?: boolean }) => {
     const cacheKey = careOutreachListCacheKey(priority, effectiveDueRange.from, effectiveDueRange.to);
     const cached = opts?.force ? null : readCareOutreachListCache(cacheKey);
+    refreshLastOutreach();
     if (cached) {
       setRows(cached.rows);
       setPriorityChipCounts(cached.priorityChipCounts);
@@ -608,7 +670,7 @@ export default function CareOutreachPage() {
       setLoading(false);
       clearCareOutreachHouseholdCache();
     }
-  }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz]);
+  }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz, refreshLastOutreach]);
 
   useEffect(() => {
     void fetchSchedulingOutreachSmsFrom().then((phone) => {
@@ -785,9 +847,7 @@ export default function CareOutreachPage() {
       }
     }
     const list = Array.from(clients.values());
-    list.sort((a, b) =>
-      a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
-    );
+    list.sort((a, b) => compareClientsByOutreach(a, b, lastOutreachByClient));
     for (const b of list) {
       const parr = Array.from(b.patients.entries()).sort(([, pa], [, pb]) =>
         pa.patientName.localeCompare(pb.patientName, undefined, { sensitivity: 'base' })
@@ -800,12 +860,10 @@ export default function CareOutreachPage() {
       !clients.has(holdExitSnapshot.clientKey)
     ) {
       list.push(holdExitSnapshot);
-      list.sort((a, b) =>
-        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
-      );
+      list.sort((a, b) => compareClientsByOutreach(a, b, lastOutreachByClient));
     }
     return list;
-  }, [sortedForDisplay, holdExitSnapshot, exitingClientKeys]);
+  }, [sortedForDisplay, holdExitSnapshot, exitingClientKeys, lastOutreachByClient]);
 
   useEffect(() => {
     if (!postHoldReturn || loading || postHoldReturnHandledRef.current) return;
@@ -1411,6 +1469,34 @@ export default function CareOutreachPage() {
                 ) : (
                   <span className="settings-muted">No phone on file</span>
                 )}
+                {(() => {
+                  const row =
+                    client.clientId != null ? lastOutreachByClient.get(client.clientId) : undefined;
+                  if (!row) {
+                    return (
+                      <span className="settings-muted" style={{ fontSize: 13 }}>
+                        Not contacted yet
+                      </span>
+                    );
+                  }
+                  const { label, within24h } = formatLastOutreach(row);
+                  return (
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: within24h ? 600 : undefined,
+                        color: within24h ? '#b45309' : 'var(--muted, #6b7280)',
+                      }}
+                      title={
+                        within24h
+                          ? 'Reached out in the last 24 hours — give them a day or two before a second touch.'
+                          : undefined
+                      }
+                    >
+                      {label}
+                    </span>
+                  );
+                })()}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   <button
@@ -1648,6 +1734,7 @@ export default function CareOutreachPage() {
           providerLastName={contactProviderLastName}
           canText={contactCanText}
           onClose={closeContactModal}
+          onSent={refreshLastOutreach}
           smsFromLine={smsFromLine}
           smsSource="care_outreach"
           onOpenMessagesHistory={() => {
