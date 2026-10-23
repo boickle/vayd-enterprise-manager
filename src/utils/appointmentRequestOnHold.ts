@@ -12,7 +12,6 @@ import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import {
   requestDataAppointmentTypeForRouting,
-  requestDataClientType,
   requestDataSelfScheduledSlot,
 } from './appointmentRequestDisplay';
 import {
@@ -26,10 +25,6 @@ import {
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
 import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
-import {
-  appointmentRequestAutoBookedOnline,
-  appointmentRequestNeedsStaffConfirmation,
-} from './appointmentRequestStaffConfirm';
 
 export type AppointmentRequestBookedApptSummary = {
   start: string;
@@ -194,28 +189,6 @@ export function appointmentRequestSubmissionIsOnHold(
 ): boolean {
   if (item.bookedAppointmentId == null) return false;
 
-  const isExistingClientAutobook =
-    appointmentRequestAutoBookedOnline(item) &&
-    requestDataClientType(item.requestData ?? {}) === 'existing';
-
-  // New-client online auto-books start as calendar holds until liaison confirms. Prefer a
-  // live calendar signal when we have one (converted / cancelled) so Autobooking doesn't
-  // keep saying "On hold" after the visit was already handled on the schedule.
-  if (
-    !isExistingClientAutobook &&
-    appointmentRequestNeedsStaffConfirmation(item)
-  ) {
-    if (typeof item.linkedVisitIsHold === 'boolean') {
-      return item.linkedVisitIsHold;
-    }
-    const summary = bookedApptMeta.get(Number(item.bookedAppointmentId));
-    if (summary != null) {
-      if (summary.appointmentCancelled) return false;
-      return summary.points <= 0;
-    }
-    return true;
-  }
-
   if (typeof item.linkedVisitIsHold === 'boolean') return item.linkedVisitIsHold;
   const linkedPoints = item.linkedVisitPoints;
   if (linkedPoints != null && Number.isFinite(linkedPoints)) {
@@ -244,13 +217,6 @@ export function appointmentRequestSubmissionCountsAsBooked(
   catalog?: AppointmentTypeCatalog | null,
 ): boolean {
   if ((item.status ?? 'new') !== 'booked') return false;
-  if (
-    appointmentRequestAutoBookedOnline(item) &&
-    !item.staffConfirmedAt?.trim() &&
-    requestDataClientType(item.requestData ?? {}) !== 'existing'
-  ) {
-    return false;
-  }
   return !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
 }
 

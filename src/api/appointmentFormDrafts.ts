@@ -1,5 +1,5 @@
 // src/api/appointmentFormDrafts.ts
-import { apiBaseUrl, http } from './http';
+import { apiBaseUrl, http, practiceHostHeaders } from './http';
 
 /** Set to 'false' to disable draft save / abandon beacons (GA tracking unchanged). */
 export const APPOINTMENT_FORM_DRAFTS_ENABLED =
@@ -139,6 +139,7 @@ export function keepaliveAppointmentFormAbandon(
       headers: {
         'Content-Type': 'application/json',
         'X-Form-Session-Id': body.formSessionId,
+        ...practiceHostHeaders(),
       },
       body: JSON.stringify(body),
       keepalive: true,

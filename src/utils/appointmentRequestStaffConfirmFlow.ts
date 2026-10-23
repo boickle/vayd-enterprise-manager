@@ -25,8 +25,9 @@ import {
   writeSchedulerFocusSession,
   writeSchedulerFocusReturnSession,
 } from './schedulerFocusAppointment';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export type BeginStaffConfirmFlowResult =
   /** Linked visit found — open the calendar staff-confirm review flow. */

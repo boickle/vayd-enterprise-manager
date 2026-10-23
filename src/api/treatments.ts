@@ -66,7 +66,15 @@ export type TreatmentItem = {
   lab?: TreatmentItemLab | null;
   procedure?: TreatmentItemProcedure | null;
   inventoryItem?: TreatmentItemInventory | null;
+  /** Set when this line is a sold package or membership with no catalog item of its own. */
+  package?: { id?: number; name?: string | null; kind?: string | null } | null;
   prescriptions?: unknown[];
+  /** Set when the Scout invoice that charged this item was voided. */
+  voidedAt?: string | null;
+  voidReason?: string | null;
+  voidedByName?: string | null;
+  /** A membership benefit covered this item (eVet `WellnessPlanItem_Id`). */
+  isCovered?: boolean;
   [key: string]: unknown;
 };
 

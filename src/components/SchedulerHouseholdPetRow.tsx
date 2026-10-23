@@ -1,6 +1,7 @@
 import { Heart } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { BookPatientChartButton } from './BookPatientChartButton';
+import type { ForwardBookingInterval } from '../utils/forwardBookingFromAppointment';
 
 type Membership = {
   isMember: boolean;
@@ -22,6 +23,8 @@ type Props = {
   rowClassName?: string;
   badges?: ReactNode;
   trailingMeta?: ReactNode;
+  forwardBookingSourceStartIso?: string | null;
+  onApplyForwardBookingInterval?: (interval: ForwardBookingInterval) => void;
 };
 
 export function SchedulerHouseholdPetRow({
@@ -39,6 +42,8 @@ export function SchedulerHouseholdPetRow({
   rowClassName = '',
   badges = null,
   trailingMeta = null,
+  forwardBookingSourceStartIso = null,
+  onApplyForwardBookingInterval,
 }: Props) {
   const displayName = patientName.trim() || `Pet ${patientId}`;
   const isMember = membership?.isMember === true;
@@ -93,6 +98,8 @@ export function SchedulerHouseholdPetRow({
           membershipName={membership?.membershipName ?? null}
           label="View details"
           showAlerts
+          forwardBookingSourceStartIso={forwardBookingSourceStartIso}
+          onApplyForwardBookingInterval={onApplyForwardBookingInterval}
         />
       </span>
     </>

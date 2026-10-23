@@ -13,6 +13,12 @@ export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-previ
 /** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */
 export const ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT = 'vayd:routing-calendar-preview-updated';
 
+/** Scheduler → Routing: step the embedded calendar preview to the previous or next result card. */
+export const ROUTING_PREVIEW_STEP_EVENT = 'vayd:routing-preview-step';
+
+/** Scheduler → Routing: leave the calendar overlay and bring the results list back on screen. */
+export const ROUTING_PREVIEW_SHOW_RESULTS_EVENT = 'vayd:routing-preview-show-results';
+
 /** Scheduler → Routing: reconciled POST /routing/eta window warnings for the active preview card. */
 export const ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT = 'vayd:routing-preview-eta-window-warnings';
 

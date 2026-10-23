@@ -1,5 +1,7 @@
 import { CARE_OUTREACH_SMS_SUFFIX } from './careOutreachSmsMessage';
 import { isEffectiveClientEmail } from './clientEmailGmailSearch';
+import { applySystemSubjectIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 
 export function clientHasEffectiveEmail(email: string | null | undefined): boolean {
   return isEffectiveClientEmail(email);
@@ -7,13 +9,22 @@ export function clientHasEffectiveEmail(email: string | null | undefined): boole
 
 export function careOutreachEmailSubject(providerLastName?: string | null): string {
   const ln = providerLastName?.trim();
-  return ln
+  const fallback = ln
     ? `Scheduling visit with Dr. ${ln}'s team at Vet At Your Door`
     : `Scheduling visit with Vet At Your Door team`;
+  return applySystemSubjectIfCustom(
+    'care_outreach_email_subject',
+    withClinicDefaults({ doctor_last_name: ln || '' }),
+    fallback,
+  );
 }
 
 export function forwardBookingEmailSubject(): string {
-  return 'Following up on your Vet At Your Door visit';
+  return applySystemSubjectIfCustom(
+    'forward_booking_email_subject',
+    withClinicDefaults({}),
+    'Following up on your Vet At Your Door visit',
+  );
 }
 
 export function holdEmailSubject(providerLastName?: string | null): string {

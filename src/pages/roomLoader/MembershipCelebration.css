@@ -1,0 +1,136 @@
+/* src/pages/roomLoader/MembershipCelebration.css */
+/* Mirrors the pitch card so the summary layout does not shift when one replaces
+   the other, but swaps the green "offer" tone for a warmer "you're in" tone. */
+
+.rl-celebrate {
+  position: relative;
+  margin: 0 0 18px;
+  padding: 18px 16px;
+  background: linear-gradient(180deg, #fffbeb 0%, #f0fdf4 100%);
+  border: 2px solid #15803d;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(22, 101, 52, 0.14);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.rl-celebrate__eyebrow {
+  margin: 0;
+  color: #b45309;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rl-celebrate__headline {
+  margin: 4px 0 0;
+  color: #14532d;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.22;
+}
+
+.rl-celebrate__body {
+  margin: 8px 0 0;
+  color: #166534;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.rl-celebrate__savings {
+  margin: 10px 0 0;
+  color: #14532d;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.rl-celebrate__savings strong {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+/* --- star burst ------------------------------------------------------------
+   Stars fan out from the top-left of the card on a shared keyframe; each one is
+   offset by its index so they leave together but travel different directions. */
+
+.rl-celebrate__burst {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.rl-celebrate__star {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #f59e0b;
+  font-size: 26px;
+  line-height: 1;
+  opacity: 0;
+  text-shadow: 0 1px 2px rgba(20, 83, 45, 0.25);
+  transform: translate(0, 0) scale(0.4);
+  animation: rl-celebrate-star 1700ms ease-out forwards;
+  animation-delay: calc(var(--i) * 45ms);
+  /* 14 stars at 26deg each sweep a full circle out from the middle of the card. */
+  --angle: calc(var(--i) * 26deg - 30deg);
+  --distance: 190px;
+}
+
+.rl-celebrate__star:nth-child(even) {
+  color: #16a34a;
+  font-size: 20px;
+  --distance: 130px;
+}
+
+.rl-celebrate__star:nth-child(3n) {
+  color: #0ea5e9;
+  font-size: 22px;
+  --distance: 250px;
+}
+
+@keyframes rl-celebrate-star {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.3) rotate(0deg);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(cos(var(--angle)) * var(--distance)),
+        calc(sin(var(--angle)) * var(--distance))
+      )
+      scale(1.1) rotate(220deg);
+  }
+}
+
+/* Browsers without trigonometric CSS functions get a straight fade-and-rise
+   instead of the fan, rather than every star stacking at the origin. */
+@supports not (width: calc(cos(45deg) * 10px)) {
+  @keyframes rl-celebrate-star {
+    0% {
+      opacity: 0;
+      transform: translate(0, 0) scale(0.3);
+    }
+    15% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translate(calc(var(--i) * 16px), -70px) scale(1.1) rotate(220deg);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-celebrate__burst {
+    display: none;
+  }
+}

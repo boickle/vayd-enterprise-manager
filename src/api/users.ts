@@ -42,12 +42,41 @@ export async function getCurrentUser() {
   return http.get('/users');
 }
 
+export async function patchUserUiPrefs(body: {
+  clientLayout?: Record<string, unknown>;
+  patientLayout?: Record<string, unknown>;
+}) {
+  const { data } = await http.patch('/users/ui-prefs', body);
+  return data as {
+    clientLayout?: Record<string, unknown>;
+    patientLayout?: Record<string, unknown>;
+  };
+}
+
 // Update communication preferences
-export async function updateCommunicationPreferences(allowEmail?: boolean, allowText?: boolean) {
-  const body: { allowEmail?: boolean; allowText?: boolean } = {};
+export async function updateCommunicationPreferences(
+  allowEmail?: boolean,
+  allowText?: boolean,
+  extras?: { preferPhone?: boolean; doNotSendReminders?: boolean }
+) {
+  const body: {
+    allowEmail?: boolean;
+    allowText?: boolean;
+    preferPhone?: boolean;
+    doNotSendReminders?: boolean;
+  } = {};
   if (allowEmail !== undefined) body.allowEmail = allowEmail;
   if (allowText !== undefined) body.allowText = allowText;
+  if (extras?.preferPhone !== undefined) body.preferPhone = extras.preferPhone;
+  if (extras?.doNotSendReminders !== undefined) body.doNotSendReminders = extras.doNotSendReminders;
   return http.post('/users/communication-preferences', body);
+}
+
+export async function sendClientPortalAccess(
+  clientId: number
+): Promise<{ ok: boolean; invited: boolean }> {
+  const { data } = await http.post('/users/send-client-portal-access', { clientId });
+  return data;
 }
 
 /** Scout login roles managed in Admin → Users. */
@@ -76,6 +105,7 @@ export type AdminManagedUser = {
 };
 
 export type UpdateAdminUserPayload = {
+  email?: string;
   role?: ScoutUserRole | string;
   employeeId?: number | null;
   doctorId?: number | null;
@@ -86,6 +116,7 @@ export type ListAdminUsersParams = {
   q?: string;
   role?: string;
   isActive?: boolean;
+  employeeId?: number;
 };
 
 export async function fetchAdminUsers(
@@ -95,6 +126,7 @@ export async function fetchAdminUsers(
     params: {
       q: params.q || undefined,
       role: params.role || undefined,
+      employeeId: params.employeeId,
       isActive:
         params.isActive === undefined ? undefined : params.isActive ? 'true' : 'false',
     },

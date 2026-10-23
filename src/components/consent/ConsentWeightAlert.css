@@ -1,0 +1,35 @@
+.consent-weight-alert {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fef2f2;
+  border: 2px solid #ef4444;
+  color: #7f1d1d;
+}
+
+.consent-weight-alert strong {
+  display: block;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.consent-weight-alert p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.consent-weight-alert.is-compact {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+}
+
+.consent-weight-alert.is-compact strong {
+  font-size: 12px;
+}
+
+.consent-weight-alert.is-compact p {
+  font-size: 13px;
+}

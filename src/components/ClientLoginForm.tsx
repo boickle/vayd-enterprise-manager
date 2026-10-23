@@ -38,6 +38,7 @@ export function ClientLoginForm({
     setSubmitting(true);
     try {
       const res = await login(email.trim(), password);
+      if (res.redirecting) return;
 
       if (res?.resetRequired) {
         if (res.resetCode) {

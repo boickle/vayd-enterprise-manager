@@ -11,12 +11,22 @@ import {
   isPatientRowActiveForListing,
 } from '../api/pimsAppointments';
 import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } from '../api/patients';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
 import type { Appointment } from '../api/roomLoader';
+import { SchedulerHouseholdPetRow } from './SchedulerHouseholdPetRow';
+import {
+  enrichRoutingClientPatientsMembership,
+  extractActivePatientsFromClientStaffRecord,
+  patientAlertsFromRecord,
+  patientMembershipFromRecord,
+  type RoutingClientPatientRow,
+} from '../utils/routingPatientHoverData';
 import {
   buildCreateForwardBookingPayloadFromAppointment,
   buildCreateForwardBookingPayloadFromPatient,
   FORWARD_BOOKING_AMOUNT_OPTIONS,
   FORWARD_BOOKING_UNIT_OPTIONS,
+  type ForwardBookingInterval,
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
 import type { CreateForwardBookingPrefill } from '../utils/forwardBookingCreateLink';
@@ -24,8 +34,9 @@ import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
 import '../pages/Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /** Select value when staff adds forward booking without a linked source visit. */
 const NO_ASSOCIATED_VISIT = '__no_source_visit__';
@@ -123,10 +134,105 @@ export function CreateForwardBookingModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Household context for the selected patient — mirrors Start / End Visit so staff can
+  // open "View details" for this pet and glance at other pets in the household.
+  const [patientContext, setPatientContext] = useState<{
+    patientId: number;
+    clientId: number | null;
+    alerts: string | null;
+    membership: { isMember: boolean; membershipName: string | null };
+  } | null>(null);
+  const [clientHouseholdPets, setClientHouseholdPets] = useState<RoutingClientPatientRow[]>([]);
+  const [householdLoading, setHouseholdLoading] = useState(false);
+
   const selectedAppointment = useMemo(
     () => appointments.find((a) => String(a.id) === selectedAppointmentId) ?? null,
     [appointments, selectedAppointmentId]
   );
+
+  const forwardBookingSourceStartIso = useMemo(() => {
+    if (!selectedAppointment || selectedAppointmentId === NO_ASSOCIATED_VISIT) return null;
+    return selectedAppointment.appointmentStart?.trim() || null;
+  }, [selectedAppointment, selectedAppointmentId]);
+
+  const applyForwardBookingIntervalFromChart = useCallback((interval: ForwardBookingInterval) => {
+    setForwardAmount(String(interval.amount));
+    setForwardUnit(interval.unit);
+  }, []);
+
+  const selectedPatientId = selectedPatient?.id ?? null;
+
+  useEffect(() => {
+    if (selectedPatientId == null || selectedPatientId <= 0) {
+      setPatientContext(null);
+      setClientHouseholdPets([]);
+      setHouseholdLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setHouseholdLoading(true);
+    void (async () => {
+      let clientId: number | null = null;
+      let alerts: string | null = null;
+      let membership = { isMember: false, membershipName: null as string | null };
+      try {
+        const patientData = await fetchPatientByIdStaff(selectedPatientId);
+        alerts = patientAlertsFromRecord(patientData);
+        membership = patientMembershipFromRecord(patientData);
+        const ownerId = clientsForPatientSearchRow(patientData as PatientSearchRow)[0]?.id;
+        const n = ownerId != null ? Number(ownerId) : NaN;
+        if (Number.isFinite(n) && n > 0) clientId = n;
+      } catch {
+        /* ignore — context is best-effort */
+      }
+      if (cancelled) return;
+      setPatientContext({ patientId: selectedPatientId, clientId, alerts, membership });
+
+      if (clientId == null) {
+        setClientHouseholdPets([]);
+        setHouseholdLoading(false);
+        return;
+      }
+      try {
+        const raw = await fetchClientByIdStaff(clientId);
+        const rows = await enrichRoutingClientPatientsMembership(
+          extractActivePatientsFromClientStaffRecord(raw)
+        );
+        if (!cancelled) setClientHouseholdPets(rows);
+      } catch {
+        if (!cancelled) setClientHouseholdPets([]);
+      } finally {
+        if (!cancelled) setHouseholdLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPatientId]);
+
+  const selectedPatientMembership = useMemo(() => {
+    if (selectedPatientId == null) return null;
+    const row = clientHouseholdPets.find((p) => String(p.id) === String(selectedPatientId));
+    if (row?.isMember) {
+      return { isMember: true, membershipName: row.membershipName ?? null };
+    }
+    return patientContext?.patientId === selectedPatientId ? patientContext.membership : null;
+  }, [clientHouseholdPets, patientContext, selectedPatientId]);
+
+  const otherHouseholdPets = useMemo(() => {
+    if (selectedPatientId == null) return [];
+    return clientHouseholdPets.filter((p) => String(p.id) !== String(selectedPatientId));
+  }, [clientHouseholdPets, selectedPatientId]);
+
+  const selectedPatientDisplayName = useMemo(() => {
+    if (!selectedPatient) return '';
+    const fromHousehold = clientHouseholdPets.find(
+      (p) => String(p.id) === String(selectedPatient.id)
+    )?.name;
+    if (fromHousehold?.trim()) return fromHousehold.trim();
+    // Search label is "Name (Owner)" — strip the owner suffix for the row.
+    return selectedPatient.label.replace(/\s*\([^)]*\)\s*$/, '').trim() || selectedPatient.label;
+  }, [clientHouseholdPets, selectedPatient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -341,15 +447,20 @@ export function CreateForwardBookingModal({
     setBusy(true);
     setError(null);
     try {
-      let clientId = NaN;
+      let clientId =
+        patientContext?.patientId === selectedPatient.id && patientContext.clientId != null
+          ? patientContext.clientId
+          : NaN;
       if (noAssociatedVisit) {
-        try {
-          const patientData = await fetchPatientByIdStaff(selectedPatient.id);
-          const owners = clientsForPatientSearchRow(patientData as PatientSearchRow);
-          const ownerId = owners[0]?.id;
-          if (ownerId != null) clientId = Number(ownerId);
-        } catch {
-          /* ignore */
+        if (!Number.isFinite(clientId)) {
+          try {
+            const patientData = await fetchPatientByIdStaff(selectedPatient.id);
+            const owners = clientsForPatientSearchRow(patientData as PatientSearchRow);
+            const ownerId = owners[0]?.id;
+            if (ownerId != null) clientId = Number(ownerId);
+          } catch {
+            /* ignore */
+          }
         }
         if (!Number.isFinite(clientId)) {
           setError('Could not resolve the client for this patient.');
@@ -362,7 +473,7 @@ export function CreateForwardBookingModal({
           { amount, unit: forwardUnit },
           practiceId,
           {
-            bookingNotes: bookingNotes.trim() || null,
+            bookingNotes: bookingNotes.trim(),
             ...(Number.isFinite(providerId) && providerId > 0
               ? { primaryProviderId: providerId }
               : {}),
@@ -385,7 +496,8 @@ export function CreateForwardBookingModal({
         (await fetchAppointmentById(selectedAppointment!.id, { practiceId })) ?? selectedAppointment!;
       const apptForPayload: Appointment = { ...selectedAppointment!, ...fullAppt };
 
-      clientId = Number(clientIdFromAppointment(apptForPayload));
+      const apptClientId = Number(clientIdFromAppointment(apptForPayload));
+      if (Number.isFinite(apptClientId)) clientId = apptClientId;
       if (!Number.isFinite(clientId)) {
         try {
           const patientData = await fetchPatientByIdStaff(selectedPatient.id);
@@ -403,7 +515,7 @@ export function CreateForwardBookingModal({
         { amount, unit: forwardUnit },
         practiceId,
         {
-          bookingNotes: bookingNotes.trim() || null,
+          bookingNotes: bookingNotes.trim(),
           appointmentTypes,
           patientId: selectedPatient.id,
           clientId: Number.isFinite(clientId) ? clientId : undefined,
@@ -521,6 +633,70 @@ export function CreateForwardBookingModal({
             </label>
           </div>
 
+          {selectedPatient ? (
+            <div className="scheduler-forward-booking-patient-context" style={{ marginTop: 10 }}>
+              <SchedulerHouseholdPetRow
+                patientId={String(selectedPatient.id)}
+                patientName={selectedPatientDisplayName}
+                practiceId={practiceId}
+                practiceTz={practiceTz}
+                membership={selectedPatientMembership}
+                excludeAppointmentId={
+                  selectedAppointmentId && selectedAppointmentId !== NO_ASSOCIATED_VISIT
+                    ? selectedAppointmentId
+                    : null
+                }
+                isAnchor
+                showCheckbox={false}
+                forwardBookingSourceStartIso={forwardBookingSourceStartIso}
+                onApplyForwardBookingInterval={
+                  forwardBookingSourceStartIso ? applyForwardBookingIntervalFromChart : undefined
+                }
+              />
+              {patientContext?.patientId === selectedPatient.id && patientContext.alerts ? (
+                <div
+                  className="scheduler-modal-alerts-box scheduler-book-patient-alerts"
+                  role="alert"
+                >
+                  <span className="scheduler-modal-alerts-box-label">Patient alerts</span>
+                  {patientContext.alerts}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {selectedPatient && householdLoading ? (
+            <p className="settings-muted scheduler-household-other-pets-hint">
+              Loading household pets…
+            </p>
+          ) : selectedPatient && otherHouseholdPets.length > 0 ? (
+            <details className="scheduler-household-other-pets">
+              <summary>Other household pets ({otherHouseholdPets.length})</summary>
+              <p className="settings-muted scheduler-household-other-pets-lead">
+                Review reminders and visit history to align follow-up timing across the
+                household. This forward booking is only for {selectedPatientDisplayName} — add a
+                separate entry for any other pet.
+              </p>
+              <div className="scheduler-household-pet-list">
+                {otherHouseholdPets.map((pet) => (
+                  <SchedulerHouseholdPetRow
+                    key={`other-${pet.id}`}
+                    patientId={String(pet.id)}
+                    patientName={pet.name}
+                    practiceId={practiceId}
+                    practiceTz={practiceTz}
+                    membership={{
+                      isMember: pet.isMember === true,
+                      membershipName: pet.membershipName ?? null,
+                    }}
+                    showCheckbox={false}
+                    rowClassName="scheduler-household-pet-row--reference"
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
+
           <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 12 }}>
             <span>Source visit *</span>
             {appointmentsLoading ? (
@@ -619,6 +795,7 @@ export function CreateForwardBookingModal({
               onChange={(e) => setBookingNotes(e.target.value)}
               disabled={busy}
               required
+              aria-required="true"
               placeholder="e.g. Prefers AM slots, same provider"
               style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14 }}
             />

@@ -2,8 +2,9 @@ import { patchReminderOutreachNotes } from '../api/careOutreach';
 import { patchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
 import { patchForwardBooking } from '../api/forwardBooking';
 import type { ContactLogWriteTarget } from './clientContactLog';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function noteForPatch(value: string): string | null {
   const trimmed = value.trim();

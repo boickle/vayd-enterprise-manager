@@ -95,6 +95,8 @@ import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT,
+  ROUTING_PREVIEW_SHOW_RESULTS_EVENT,
+  ROUTING_PREVIEW_STEP_EVENT,
   routingCalendarPreviewOptionKey,
   type RoutingPreviewEtaWindowWarningsDetail,
   writeRoutingCalendarPreview,
@@ -181,6 +183,10 @@ import {
   writeRoutingUiSnapshot,
 } from '../utils/routingUiSnapshot';
 import {
+  markChartBookIntentAppliedToRoutingForm,
+  readRoutingChartBookIntent,
+} from '../utils/routingChartBookIntent';
+import {
   adjustRoutingSlotSearchDates,
   diffRoutingDaysInclusive,
   routingCalendarDatePart,
@@ -218,6 +224,7 @@ import {
   SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT,
 } from '../utils/schedulerCalendarHandoff';
 import './Routing.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -645,6 +652,14 @@ type Client = {
   lat?: number | string;
   lon?: number | string;
   alerts?: string | null;
+  extraAddressLabel?: string;
+  extraAddress1?: string;
+  extraAddress2?: string;
+  extraCity?: string;
+  extraState?: string;
+  extraZipcode?: string;
+  extraLat?: number | string;
+  extraLon?: number | string;
 };
 
 type Doctor = {
@@ -903,6 +918,11 @@ function formatClientAddress(c: Partial<Client>): string {
   return [line, c.zip].filter(Boolean).join(' ').trim();
 }
 
+function formatExtraClientAddress(c: Partial<Client>): string {
+  const line = [c.extraAddress1, c.extraCity, c.extraState].filter(Boolean).join(', ');
+  return [line, c.extraZipcode].filter(Boolean).join(' ').trim();
+}
+
 function staffRecordToRoutingClient(raw: unknown): Client | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -919,6 +939,14 @@ function staffRecordToRoutingClient(raw: unknown): Client | null {
     zip: zipRaw != null ? String(zipRaw).trim() : undefined,
     lat: (o.lat ?? o.latitude) as number | string | undefined,
     lon: (o.lon ?? o.longitude) as number | string | undefined,
+    extraAddressLabel: o.extraAddressLabel != null ? String(o.extraAddressLabel).trim() : undefined,
+    extraAddress1: o.extraAddress1 != null ? String(o.extraAddress1).trim() : undefined,
+    extraAddress2: o.extraAddress2 != null ? String(o.extraAddress2).trim() : undefined,
+    extraCity: o.extraCity != null ? String(o.extraCity).trim() : undefined,
+    extraState: o.extraState != null ? String(o.extraState).trim() : undefined,
+    extraZipcode: o.extraZipcode != null ? String(o.extraZipcode).trim() : undefined,
+    extraLat: (o.extraLat ?? o.extraLatitude) as number | string | undefined,
+    extraLon: (o.extraLon ?? o.extraLongitude) as number | string | undefined,
     alerts:
       o.alerts != null
         ? String(o.alerts)
@@ -1564,7 +1592,7 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-const ROUTING_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const ROUTING_PRACTICE_ID = currentPracticeId();
 
 function SlotChip({ slot }: { slot?: Slot | null }) {
   return null; // Slot labels (Early / Mid / Late) not shown
@@ -1840,7 +1868,9 @@ type RoutingProps = {
 
 type RoutingPrefillFlashField = 'doctor' | 'client' | 'address' | 'minutes' | 'apptType' | 'pets';
 
-export default function Routing({ calendarWorkspaceMode = false }: RoutingProps) {
+export default function Routing({
+  calendarWorkspaceMode = false,
+}: RoutingProps) {
   const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
   const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
 
@@ -2183,6 +2213,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   useEffect(() => {
     if (!calendarWorkspaceMode || !activeCalendarPreviewOptionKey) return;
+    // On a phone the calendar preview covers the page. Scrolling the card into view
+    // yanks the results list up under that overlay.
+    if (window.matchMedia('(max-width: 900px)').matches) return;
     const root = routingPageRootRef.current;
     const el = root?.querySelector(
       `[data-routing-calendar-preview-card="${CSS.escape(activeCalendarPreviewOptionKey)}"]`
@@ -2193,6 +2226,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(
     () => bootstrap.selectedClientAlerts
   );
+  const [routingClientRecord, setRoutingClientRecord] = useState<Client | null>(null);
+  const [routingVisitKey, setRoutingVisitKey] = useState<'home' | 'extra' | 'other'>('home');
   const [latestRoutingRequestId, setLatestRoutingRequestId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
@@ -3217,6 +3252,49 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
   }, [triggerRoutingPrefillFlash, routingAppointmentTypes]);
 
+  /** Patient chart → + Appointment: hydrate this household and select this pet. */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function mergeChartBookIntent() {
+      const intent = readRoutingChartBookIntent();
+      if (!intent || intent.appliedToRoutingForm) return;
+      if (readRoutingRescheduleIntent()) return;
+      if (readRoutingForwardBookingIntent()?.workspaceActive) return;
+      if (readRoutingAppointmentRequestIntent()?.workspaceActive) return;
+
+      try {
+        const raw = await fetchClientByIdStaff(intent.clientId);
+        if (cancelled) return;
+        const syncedClient = staffRecordToRoutingClient(raw);
+        if (syncedClient) {
+          pickClientRef.current(syncedClient, { skipAlternateConfirm: true });
+        } else {
+          setClientQuery(intent.clientDisplayLabel?.trim() || '');
+          setForm((f) => ({
+            ...f,
+            newAppt: { ...f.newAppt, clientId: intent.clientId },
+          }));
+        }
+      } catch {
+        if (cancelled) return;
+        const label = intent.clientDisplayLabel?.trim();
+        if (label) setClientQuery(label);
+        setForm((f) => ({
+          ...f,
+          newAppt: { ...f.newAppt, clientId: intent.clientId },
+        }));
+      }
+
+      if (!cancelled) markChartBookIntentAppliedToRoutingForm();
+    }
+
+    void mergeChartBookIntent();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /** Appointment request: hydrate Calculate Time type once doctor types load. */
   useEffect(() => {
     if (!hasActiveAppointmentRequestWorkspace) {
@@ -3844,12 +3922,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const cid = form.newAppt.clientId?.trim();
     if (!cid) {
       linkedClientHomeAddressRef.current = null;
+      setRoutingClientRecord(null);
+      setRoutingVisitKey('home');
       return;
     }
     let cancelled = false;
     void fetchClientByIdStaff(cid).then((payload) => {
       if (cancelled || !payload || typeof payload !== 'object') return;
-      linkedClientHomeAddressRef.current = formatClientAddress(payload as Client);
+      const mapped = staffRecordToRoutingClient(payload);
+      if (mapped) setRoutingClientRecord(mapped);
+      linkedClientHomeAddressRef.current = formatClientAddress(mapped ?? (payload as Client));
     });
     return () => {
       cancelled = true;
@@ -4464,6 +4546,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         }
       }
 
+      const chartBook = readRoutingChartBookIntent();
+      if (chartBook?.patientId) {
+        const id = String(chartBook.patientId);
+        if (patients.some((p) => String(p.id) === id)) {
+          setSelectedRoutingPatientIds([id]);
+          applyRoutingPatientChipSelection([id], { pulse: true });
+          return;
+        }
+      }
+
       setSelectedRoutingPatientIds([]);
     },
     [
@@ -4835,6 +4927,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         return;
       }
     }
+    setRoutingClientRecord(c);
+    setRoutingVisitKey(opts?.alternateAddress?.trim() ? 'other' : 'home');
     applyPickClient(c, opts);
   }
   pickClientRef.current = pickClient;
@@ -5667,6 +5761,38 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
   }, [displayOptions]);
 
+  const displayOptionsRef = useRef(displayOptions);
+  displayOptionsRef.current = displayOptions;
+  const openMyWeekRef = useRef(openMyWeek);
+  openMyWeekRef.current = openMyWeek;
+  const previewOptionKeyRef = useRef(activeCalendarPreviewOptionKey);
+  previewOptionKeyRef.current = activeCalendarPreviewOptionKey;
+
+  useEffect(() => {
+    const onStep = (ev: Event) => {
+      const direction = (ev as CustomEvent<{ direction?: string }>).detail?.direction;
+      const opts = displayOptionsRef.current;
+      if (!opts.length || (direction !== 'next' && direction !== 'previous')) return;
+      const key = previewOptionKeyRef.current;
+      const idx = key ? opts.findIndex((opt) => routingOptionKey(opt) === key) : -1;
+      const next = direction === 'next' ? idx + 1 : idx - 1;
+      if (next < 0 || next >= opts.length) return;
+      void openMyWeekRef.current(opts[next]);
+    };
+    const onShowResults = () => {
+      document.querySelector('.routing-results-card')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    };
+    window.addEventListener(ROUTING_PREVIEW_STEP_EVENT, onStep);
+    window.addEventListener(ROUTING_PREVIEW_SHOW_RESULTS_EVENT, onShowResults);
+    return () => {
+      window.removeEventListener(ROUTING_PREVIEW_STEP_EVENT, onStep);
+      window.removeEventListener(ROUTING_PREVIEW_SHOW_RESULTS_EVENT, onShowResults);
+    };
+  }, []);
+
   /**
    * Leads with the fact that the requested doctor had nothing, before any slot is
    * visible. Without that framing a booker sees a normal-looking list and has no
@@ -6375,6 +6501,31 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               </div>
             ) : null}
 
+          {form.newAppt.clientId && routingClientRecord?.extraAddress1 ? (
+            <Field label="Visit address">
+              <select
+                className="input"
+                value={routingVisitKey}
+                onChange={(e) => {
+                  const key = e.target.value as 'home' | 'extra' | 'other';
+                  setRoutingVisitKey(key);
+                  if (!routingClientRecord) return;
+                  if (key === 'home') applyPickClient(routingClientRecord);
+                  else if (key === 'extra') {
+                    applyPickClient(routingClientRecord, {
+                      alternateAddress: formatExtraClientAddress(routingClientRecord),
+                    });
+                  }
+                }}
+              >
+                <option value="home">Home (where we show up)</option>
+                <option value="extra">
+                  {routingClientRecord.extraAddressLabel?.trim() || 'Other address'}
+                </option>
+                <option value="other">Type a different address</option>
+              </select>
+            </Field>
+          ) : null}
           <Field label="Address">
             <div className="routing-address-field">
               <div className="routing-address-row">

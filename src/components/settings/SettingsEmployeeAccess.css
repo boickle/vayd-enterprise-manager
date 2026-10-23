@@ -1,0 +1,105 @@
+/* src/components/settings/SettingsEmployeeAccess.css */
+
+.emp-access {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.emp-access-license {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.emp-access-license label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.emp-access-grants {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.emp-access-grants li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+}
+.emp-access-grant-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.emp-access-grant-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+
+.emp-access-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.emp-access-add label {
+  display: grid;
+  gap: 4px;
+}
+.emp-access-add select.input {
+  min-width: 300px;
+}
+
+.emp-access-section {
+  margin-top: 14px;
+}
+.emp-access-section-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+}
+.emp-access-section ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.emp-access-section li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-subtle, #f1f4f8);
+}
+
+.emp-access-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.emp-access-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-hover, #f1f4f8);
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+.emp-access-tag.is-grant {
+  background: #eaf3ff;
+  color: #1d4ed8;
+}
+.emp-access-tag.is-reason {
+  background: #fff4e5;
+  color: #b45309;
+}

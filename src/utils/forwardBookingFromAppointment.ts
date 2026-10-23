@@ -97,6 +97,38 @@ export function forwardBookingTargetDueDateIso(
   return target.toUTC().toISO();
 }
 
+/** POST /forward-bookings caps `intervalAmount` at 12 for days, weeks, and months. */
+export const MAX_FORWARD_BOOKING_INTERVAL_AMOUNT = 12;
+
+/**
+ * Map a target date (next appointment, reminder due, etc.) to amount/unit from a source visit.
+ * Uses the same day/week/month bucketing as care-outreach forward booking.
+ */
+export function forwardBookingIntervalFromSourceToTarget(
+  sourceDateIso: string,
+  targetDueDateIso: string,
+  practiceTz: string
+): ForwardBookingInterval | null {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const source = DateTime.fromISO(sourceDateIso, { zone: 'utc' }).setZone(tz).startOf('day');
+  const target = DateTime.fromISO(targetDueDateIso, { zone: 'utc' }).setZone(tz).startOf('day');
+  if (!source.isValid || !target.isValid) return null;
+  const diffDays = Math.round(target.diff(source, 'days').days);
+  if (diffDays <= 0) return null;
+  if (diffDays <= MAX_FORWARD_BOOKING_INTERVAL_AMOUNT) {
+    return { amount: diffDays, unit: 'days' };
+  }
+  const weeks = Math.max(1, Math.round(diffDays / 7));
+  if (weeks <= MAX_FORWARD_BOOKING_INTERVAL_AMOUNT) {
+    return { amount: weeks, unit: 'weeks' };
+  }
+  const months = Math.max(1, Math.round(diffDays / 30));
+  return {
+    amount: Math.min(months, MAX_FORWARD_BOOKING_INTERVAL_AMOUNT),
+    unit: 'months',
+  };
+}
+
 /** Target due date from API or source visit + interval when the API omits it. */
 export function resolveForwardBookingTargetDueDateIso(
   entry: Pick<

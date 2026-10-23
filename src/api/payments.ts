@@ -109,7 +109,6 @@ export type StripeSubscriptionPlanCatalogResponse = {
 const CATALOG_PLAN_SLUG_KEYS = [
   'foundations',
   'golden',
-  'comfort-care',
   'plus-addon',
   'starter-addon',
 ] as const;
@@ -145,15 +144,6 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     planId: productId,
     planVariationId: priceId,
   });
-
-  const setComfort = (cadence: 'monthly' | 'annual', combo: 'base' | 'plus', productId: string, priceId: string) => {
-    const key = 'comfort-care';
-    if (!out[key]) out[key] = {} as SubscriptionPlanSpecies;
-    const plan = out[key]!;
-    const general = ((plan as Record<string, unknown>).general ??= {}) as Record<string, SubscriptionPlanCombination>;
-    const cad = (general[cadence] ??= {}) as SubscriptionPlanCombination;
-    (cad as Record<string, SubscriptionPlanEntry>)[combo] = entry(productId, priceId);
-  };
 
   const setSpecies = (
     planKey: 'foundations' | 'golden',
@@ -205,11 +195,8 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
       continue;
     }
 
-    if (nameRaw.includes('comfort care')) {
-      const isPlus = nameRaw.includes('comfort care plus');
-      setComfort(cadence, isPlus ? 'plus' : 'base', productId, priceId);
-      continue;
-    }
+    // Comfort Care is discontinued; skip old prices so they don't land under Foundations.
+    if (nameRaw.includes('comfort care')) continue;
 
     const planKey: 'foundations' | 'golden' = nameRaw.includes('golden') ? 'golden' : 'foundations';
 
@@ -403,6 +390,7 @@ export interface PaymentResponse {
   success: boolean;
   providerResponse: Record<string, any>;
   providerPaymentId?: string;
+  providerSubscriptionId?: string;
   status?: string;
 }
 
@@ -493,6 +481,15 @@ export async function fetchPaymentsLeaderboards(params?: {
 export async function createPayment(payload: PaymentRequest): Promise<PaymentResponse> {
   const path = `${paymentProcessingApiBasePath()}/payments`;
   const { data } = await http.post(path, payload);
+  return data;
+}
+
+/** After the bank approves the card, ask Scout to record the membership. */
+export async function confirmMembershipPayment(body: {
+  idempotencyKey: string;
+  subscriptionId: string;
+}): Promise<PaymentResponse> {
+  const { data } = await http.post(`${paymentProcessingApiBasePath()}/payments/confirm`, body);
   return data;
 }
 
@@ -660,35 +657,6 @@ function normalizeFormattedSubscriptionPlansResponse(data: unknown): FormattedSu
 export async function fetchFormattedSubscriptionPlans(): Promise<FormattedSubscriptionPlan[]> {
   const { data } = await http.get(`${paymentProcessingApiBasePath()}/subscription-plans/formatted`);
   return normalizeFormattedSubscriptionPlansResponse(data);
-}
-
-export interface MembershipUpgradeRequest {
-  patientId: number | string;
-  newPlansSelected: Array<{
-    planId: string;
-    planName: string;
-    pricingOption: 'monthly' | 'annual';
-    price: number;
-  }>;
-  sourceId: string;
-  customerEmail: string;
-  // Prorated calculation fields
-  proratedRefundAmount?: number; // in dollars
-  proratedChargeAmount?: number; // in dollars
-  upgradeDate?: string; // ISO date string
-  nextBillingDate?: string; // ISO date string
-  currentMembershipId?: number; // ID of the membership being upgraded
-}
-
-export interface MembershipUpgradeResponse {
-  success: boolean;
-  message?: string;
-  [key: string]: any;
-}
-
-export async function upgradeMembership(payload: MembershipUpgradeRequest): Promise<MembershipUpgradeResponse> {
-  const { data } = await http.post('/payment-processing/membership/upgrade', payload);
-  return data;
 }
 
 // =========================
