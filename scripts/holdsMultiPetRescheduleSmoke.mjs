@@ -58,7 +58,13 @@ function holdListItemsToRescheduleVisits(holds) {
   return out;
 }
 
-/** Mirrors mergeRescheduleSameDayVisits */
+function coalesceVisitDescription(existing, incoming) {
+  if (existing?.trim()) return existing;
+  if (incoming?.trim()) return incoming;
+  return existing ?? incoming ?? null;
+}
+
+/** Mirrors mergeRescheduleSameDayVisits (first wins; later lists fill blank description). */
 function mergeRescheduleSameDayVisits(...lists) {
   const byPatient = new Map();
   const noPatient = [];
@@ -73,7 +79,18 @@ function mergeRescheduleSameDayVisits(...lists) {
         noPatient.push(v);
         continue;
       }
-      if (!byPatient.has(patientId)) byPatient.set(patientId, v);
+      const prev = byPatient.get(patientId);
+      if (!prev) {
+        byPatient.set(patientId, v);
+        continue;
+      }
+      byPatient.set(patientId, {
+        ...prev,
+        description: coalesceVisitDescription(prev.description, v.description),
+        appointmentTypeName: prev.appointmentTypeName?.trim() || v.appointmentTypeName,
+        appointmentTypeId: prev.appointmentTypeId ?? v.appointmentTypeId,
+        patientName: prev.patientName?.trim() || v.patientName,
+      });
     }
   }
 
@@ -209,6 +226,23 @@ const fixedIntent = {
   rescheduleScope: 'household_day',
 };
 assert(fixedIntent.sameDayVisits.length === 3, 'merged visits include all household holds');
+
+// Hold list omitted description; calendar sibling still fills it (first-wins id, later fills desc).
+{
+  const blankHoldVisit = holdListItemsToRescheduleVisits([sylvia])[0];
+  assert(!blankHoldVisit.description?.trim(), 'Sylvia hold-list description is blank in fixture');
+  const calendarFill = [
+    {
+      ...blankHoldVisit,
+      description: 'RV + vaccines — keep original note',
+    },
+  ];
+  const merged = mergeRescheduleSameDayVisits([blankHoldVisit], calendarFill);
+  assert(
+    merged[0]?.description === 'RV + vaccines — keep original note',
+    `merge must fill blank hold description from calendar, got ${JSON.stringify(merged[0]?.description)}`
+  );
+}
 
 const allSelected = rescheduleTargetsForChipSelection(fixedIntent, ['501', '502', '503']);
 assert(

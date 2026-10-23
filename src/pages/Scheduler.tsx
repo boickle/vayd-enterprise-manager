@@ -7210,7 +7210,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       routingStatsTypeKey.trim() && (rescheduleTargets?.visits.length ?? 0) <= 1
         ? chosenRoutingTypeId
         : undefined;
-    const rescheduleVisitPatches =
+    const rescheduleVisitPatchesRaw =
       rescheduleTargets && rescheduleTargets.visits.length > 0
         ? buildRescheduleVisitPatches(
             rescheduleTargets.visits,
@@ -7220,6 +7220,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             typeList
           )
         : undefined;
+    // Holds → reschedule often books on another day, so the source row is missing from
+    // rawAppointments; fill blank patch descriptions from the routing intent.
+    const intentRescheduleDescription = ri?.description?.trim() || '';
+    const intentRescheduleAppointmentId =
+      ri?.appointmentId != null && Number.isFinite(Number(ri.appointmentId))
+        ? Number(ri.appointmentId)
+        : null;
+    const rescheduleVisitPatches = rescheduleVisitPatchesRaw?.map((p) => {
+      if (p.description?.trim()) return p;
+      if (
+        intentRescheduleDescription &&
+        intentRescheduleAppointmentId != null &&
+        Number(p.appointmentId) === intentRescheduleAppointmentId
+      ) {
+        return { ...p, description: intentRescheduleDescription };
+      }
+      if (intentRescheduleDescription && rescheduleVisitPatchesRaw.length === 1) {
+        return { ...p, description: intentRescheduleDescription };
+      }
+      return p;
+    });
     const rescheduleId = rescheduleIds[0];
     const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
     const exploreBook = Boolean(opts?.exploreAlternatives ?? ri?.exploreAlternatives);

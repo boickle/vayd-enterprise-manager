@@ -1263,12 +1263,17 @@ export function SchedulerBookModal({
           : undefined;
       const calcTimeLabel =
         calcTimeRow?.name?.trim() || calcTimeRow?.prettyName?.trim() || null;
+      // When the source visit is not on the loaded calendar day (common for Holds →
+      // reschedule), patches may omit description; fall back to defaultDescription
+      // (intent / original visit) so Book matches schedule reschedule autofill.
+      const fallbackDescription = prefill?.defaultDescription?.trim() ?? '';
       setRescheduleVisitEdits(
         patches.map((p) => {
           const tid =
             p.appointmentTypeId != null && Number.isFinite(Number(p.appointmentTypeId))
               ? Number(p.appointmentTypeId)
               : undefined;
+          const fromPatch = p.description?.trim() ?? '';
           return {
             appointmentId: Number(p.appointmentId),
             patientId: String(p.patientId).trim(),
@@ -1279,7 +1284,7 @@ export function SchedulerBookModal({
               : p.appointmentTypeLabel?.trim() || '—',
             scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
             originalAppointmentStartIso: p.originalAppointmentStartIso?.trim() || undefined,
-            description: p.description?.trim() ?? '',
+            description: fromPatch || (singleVisitReschedule ? fallbackDescription : ''),
             instructions: p.instructions?.trim() ?? '',
           };
         })
