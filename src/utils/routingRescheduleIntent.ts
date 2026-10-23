@@ -145,6 +145,15 @@ export type RoutingRescheduleIntentV1 = {
   /** When set (e.g. reschedule opened from the Holds board), Dismiss returns here. */
   returnPath?: string;
   /**
+   * Optional slot-search window when entering from a list (e.g. waitlist fill-a-cancellation).
+   * Routing applies these to the form instead of the default ±7 days around the original visit.
+   */
+  routingSearch?: {
+    startDate: string;
+    endDate: string;
+    numDays?: number;
+  };
+  /**
    * "Explore alternatives" mode: keep the original appointment and CREATE a new one at the chosen
    * slot (instead of moving it). Search behaves like reschedule (score vs original + ±window
    * exclusion on the source provider), but confirming books a second appointment.
@@ -525,11 +534,20 @@ export function routingSlotSearchIncludesRescheduleDay(
 /**
  * Reschedule / Alternatives: default Get Best Route to ±7 days around the original visit day.
  * Clamps the start to today in practice TZ so past calendar days aren't searched.
+ * When `routingSearch` is set (list entry with an explicit window), prefer that range.
  */
 export function rescheduleIntentDefaultDateRange(
-  intent: Pick<RoutingRescheduleIntentV1, 'practiceDateKey' | 'originalStartIso'>,
+  intent: Pick<
+    RoutingRescheduleIntentV1,
+    'practiceDateKey' | 'originalStartIso' | 'routingSearch'
+  >,
   practiceTz: string
 ): { startDate: string; endDate: string } | null {
+  const overrideStart = intent.routingSearch?.startDate?.trim();
+  const overrideEnd = intent.routingSearch?.endDate?.trim();
+  if (overrideStart && overrideEnd) {
+    return { startDate: overrideStart, endDate: overrideEnd };
+  }
   const fromKey = intent.practiceDateKey?.trim();
   const fromStart = intent.originalStartIso?.trim();
   let anchorIso: string | null = fromKey || null;
