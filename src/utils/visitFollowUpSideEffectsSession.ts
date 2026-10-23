@@ -4,11 +4,13 @@ export type VisitFollowUpSideEffectKind = 'labs_pending_task' | 'forward_booking
 export function followUpSideEffectsSessionKey(
   appointmentIds: readonly number[],
   kind: VisitFollowUpSideEffectKind,
+  patientId?: string,
 ): string {
   const ids = [...new Set(appointmentIds.filter((id) => Number.isFinite(id) && id > 0))].sort(
     (a, b) => a - b,
   );
-  return `vayd:visit-follow-up-${kind}:${ids.join(',') || 'none'}`;
+  const patient = patientId?.trim() ? `:patient:${patientId.trim()}` : '';
+  return `vayd:visit-follow-up-${kind}:${ids.join(',') || 'none'}${patient}`;
 }
 
 export function readFollowUpSideEffectsDone(key: string): boolean {

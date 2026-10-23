@@ -4,7 +4,11 @@ import type {
 } from '../api/forwardBookingDisposition';
 import type { ForwardBookingIntervalUnit } from '../api/forwardBooking';
 import type { Appointment } from '../api/roomLoader';
-import { fromDatetimeLocalValue, toDatetimeLocalValue } from './taskDateTime';
+import {
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+  validateTaskScheduleOrder,
+} from './taskDateTime';
 
 const DISPOSITION_MODES = new Set<ForwardBookingDispositionMode>([
   'booked_at_appointment',
@@ -194,6 +198,51 @@ export function forwardBookingFormStateIsComplete(
   state: ForwardBookingDispositionFormState
 ): boolean {
   return forwardBookingDispositionIsComplete(buildForwardBookingDispositionPayload(state));
+}
+
+/** Staff-facing reason the follow-up form cannot be saved, or null when it can. */
+export function forwardBookingFormValidationMessage(
+  state: ForwardBookingDispositionFormState
+): string | null {
+  if (state.mode === 'labs_pending') {
+    const assigneeId = Number(state.labsAssigneeEmployeeId);
+    if (!Number.isFinite(assigneeId) || assigneeId <= 0) {
+      return 'Select a staff member to assign the labs pending task.';
+    }
+    if (!state.labsTaskTitle.trim()) {
+      return 'Enter a task description.';
+    }
+    const startAt = fromDatetimeLocalValue(state.labsTaskStartLocal);
+    if (!startAt) return 'Choose a valid task start date and time.';
+    const dueAt = fromDatetimeLocalValue(state.labsTaskDueLocal);
+    const scheduleErr = validateTaskScheduleOrder(startAt, dueAt);
+    if (scheduleErr) return scheduleErr;
+    return null;
+  }
+
+  if (state.mode === 'not_appropriate') {
+    if (!state.bookingNotes.trim()) {
+      return 'Enter why forward booking is not appropriate for this visit.';
+    }
+    return null;
+  }
+
+  if (state.mode === 'booked_at_appointment' || state.mode === 'already_booked') {
+    return null;
+  }
+
+  if (state.mode === 'forward_book_fields') {
+    const amount = Number(state.forwardAmount);
+    if (!Number.isFinite(amount) || amount <= 0 || !state.forwardUnit) {
+      return 'Select how far out to forward book (number and days, weeks, or months) before saving.';
+    }
+    if (!state.bookingNotes.trim()) {
+      return 'Enter a forward booking note before saving.';
+    }
+    return null;
+  }
+
+  return 'Choose how follow-up should be handled.';
 }
 
 /** True when the appointment already has a persisted follow-up disposition from the API. */
