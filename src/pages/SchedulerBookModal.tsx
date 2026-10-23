@@ -312,6 +312,8 @@ export type SchedulerBookPrefill = {
     forwardBookingTrackingToken: string;
     patientId: string;
     patientName?: string;
+    /** Per-pet Description prefill (care outreach / schedule loader notes). */
+    description?: string;
   }>;
   forwardBookingCreatedVia?: ForwardBookingCreatedVia;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
@@ -1491,15 +1493,21 @@ export function SchedulerBookModal({
       const name = row.name?.trim();
       if (id && name) routingPreviewNameById.set(id, name);
     }
+    const fbDescriptionByPatientId = new Map<string, string>();
     for (const row of prefill?.forwardBookingVisitCompletes ?? []) {
       const id = String(row.patientId).trim();
       const name = row.patientName?.trim();
       if (id && name) routingPreviewNameById.set(id, name);
+      const fbDesc = row.description?.trim();
+      if (id && fbDesc) fbDescriptionByPatientId.set(id, fbDesc);
     }
     for (const p of clientPets) {
       if (p.isDeleted === true || p.isActive === false) continue;
       routingPreviewNameById.set(String(p.id), p.name);
     }
+
+    const descriptionForPatient = (patientId: string): string =>
+      fbDescriptionByPatientId.get(patientId) ?? defaultDesc;
 
     const patientRows = petChoices.map((p) => {
       const patientId = String(p.id);
@@ -1508,7 +1516,7 @@ export function SchedulerBookModal({
         patientName: p.name,
         selected: autoSelectPatient(patientId),
         appointmentTypeId: defaultType,
-        description: defaultDesc,
+        description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
       };
     });
@@ -1519,7 +1527,7 @@ export function SchedulerBookModal({
         patientName: routingPreviewNameById.get(patientId) ?? `Patient ${patientId}`,
         selected: true,
         appointmentTypeId: defaultType,
-        description: defaultDesc,
+        description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
       });
     }

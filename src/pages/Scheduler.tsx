@@ -7405,10 +7405,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ? { appointmentTypeId: chosenRoutingTypeId }
           : {}),
       preserveDurationFromSlot: true,
+      // Multi-pet forward booking: per-pet Description via forwardBookingVisitCompletes
+      // (do not copy the anchor pet's care-outreach notes onto siblings).
       defaultDescription:
         isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
           ? rescheduleVisitPatches?.[0]?.description?.trim() || ri?.description?.trim()
-          : fbi && !isReschedule
+          : fbi && !isReschedule && !fbiGroupBook
             ? resolveForwardBookingBookDefaultDescription(fbi)
             : undefined,
       rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
@@ -7444,6 +7446,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     forwardBookingTrackingToken: row.trackingToken,
                     patientId: row.patientId,
                     patientName: row.patientName,
+                    description: resolveForwardBookingBookDefaultDescription(row),
                   })),
                 }
               : {}),
