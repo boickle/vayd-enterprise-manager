@@ -383,6 +383,10 @@ import {
   forwardBookingBookedPatientNames,
   isHoldAppointmentTypeForBook,
 } from '../utils/forwardBookingBookToast';
+import {
+  claimHoldOwnerBestEffort,
+  resolveStaffEmployeeIdForHoldClaim,
+} from '../utils/holdOwnership';
 import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingReturnPathAfterBook } from '../utils/forwardBookingReturnSession';
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
@@ -7801,6 +7805,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         token: authToken,
         userEmail: authUserEmail,
         doctorId: authDoctorId,
+        employeeId: authEmployeeId,
         appointmentTypes: typeList,
         existingAppointments: rawAppointments,
       });
@@ -8511,6 +8516,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ...prompt.nonHoldAppointmentIds,
           ...prompt.sourceAppointmentIds,
         ]);
+        const holdClaimEmployeeId = resolveStaffEmployeeIdForHoldClaim({
+          token: authToken,
+          employeeId: authEmployeeId,
+        });
         for (const id of prompt.nonHoldAppointmentIds) {
           const current =
             rawAppointments.find((a) => Number(a.id) === Number(id)) ??
@@ -8531,6 +8540,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             },
             { practiceId: PRACTICE_ID },
           );
+          await claimHoldOwnerBestEffort(id, holdClaimEmployeeId);
         }
         if (optimizeNotes) {
           for (const id of prompt.sourceAppointmentIds) {
@@ -8581,7 +8591,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setConvertingExploreHold(false);
       }
     },
-    [exploreHoldPrompt, convertingExploreHold, loadRange, showToast, holdAppointmentTypes, rawAppointments, scheduleOptimizeSavingsActor]
+    [
+      exploreHoldPrompt,
+      convertingExploreHold,
+      loadRange,
+      showToast,
+      holdAppointmentTypes,
+      rawAppointments,
+      scheduleOptimizeSavingsActor,
+      authToken,
+      authEmployeeId,
+    ]
   );
 
   const mergeStaffConfirmAppointmentUpdates = useCallback(
