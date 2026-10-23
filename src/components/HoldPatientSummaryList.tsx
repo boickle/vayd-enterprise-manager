@@ -1,6 +1,8 @@
 import type { HoldListItem } from '../api/holds';
 import { holdPatientInlineNotes, resolveHoldPatientLabel } from '../utils/holdsDisplay';
+import { evetPatientLink } from '../utils/evet';
 import { BookPatientChartButton } from './BookPatientChartButton';
+import { EvetNameLink } from './EvetNameLink';
 
 type Props = {
   holds: readonly HoldListItem[];
@@ -29,13 +31,24 @@ export function HoldPatientSummaryList({
       {holds.map((hold) => {
         const name = resolveHoldPatientLabel(hold);
         const patientId = hold.patient?.id;
+        const patientPimsId = hold.patient?.pimsId?.trim() || null;
         const notes = holdPatientInlineNotes(hold);
         const typeLabel = appointmentTypeLabel?.(hold)?.trim() || null;
 
         return (
           <li key={hold.id} className="appt-request-pet-summary-item">
             <div className="appt-request-pet-summary-head">
-              <span className="appt-request-pet-summary-name">{name}</span>
+              {patientPimsId ? (
+                <EvetNameLink
+                  href={evetPatientLink(patientPimsId)}
+                  className="appt-request-pet-summary-name appt-request-evet-link"
+                  title="Open patient in eVet"
+                >
+                  {name}
+                </EvetNameLink>
+              ) : (
+                <span className="appt-request-pet-summary-name">{name}</span>
+              )}
               {patientId != null ? (
                 <BookPatientChartButton
                   patientId={String(patientId)}
