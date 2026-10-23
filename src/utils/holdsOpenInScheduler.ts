@@ -79,7 +79,20 @@ export function holdListItemsToRescheduleVisits(
   return out;
 }
 
-/** Merge visit lists, keeping the first entry per patient id. */
+/** Prefer a non-empty description when filling gaps from a later merge source. */
+function coalesceVisitDescription(
+  existing: string | null | undefined,
+  incoming: string | null | undefined
+): string | null {
+  if (existing?.trim()) return existing;
+  if (incoming?.trim()) return incoming;
+  return existing ?? incoming ?? null;
+}
+
+/**
+ * Merge visit lists, keeping the first entry per patient id.
+ * Later lists fill blank description (holds board rows often omit it; calendar rows have it).
+ */
 export function mergeRescheduleSameDayVisits(
   ...lists: ReadonlyArray<ReadonlyArray<RescheduleSameDayVisit>>
 ): RescheduleSameDayVisit[] {
@@ -96,7 +109,18 @@ export function mergeRescheduleSameDayVisits(
         noPatient.push(v);
         continue;
       }
-      if (!byPatient.has(patientId)) byPatient.set(patientId, v);
+      const prev = byPatient.get(patientId);
+      if (!prev) {
+        byPatient.set(patientId, v);
+        continue;
+      }
+      byPatient.set(patientId, {
+        ...prev,
+        description: coalesceVisitDescription(prev.description, v.description),
+        appointmentTypeName: prev.appointmentTypeName?.trim() || v.appointmentTypeName,
+        appointmentTypeId: prev.appointmentTypeId ?? v.appointmentTypeId,
+        patientName: prev.patientName?.trim() || v.patientName,
+      });
     }
   }
 
@@ -107,6 +131,23 @@ export function mergeRescheduleSameDayVisits(
   );
   out.push(...noPatient);
   return out;
+}
+
+/**
+ * After holds → reschedule merge, stamp the fetched calendar appointment's
+ * description onto the matching visit when the hold-list row left it blank.
+ */
+export function applyFetchedAppointmentDescriptionToVisits(
+  visits: readonly RescheduleSameDayVisit[],
+  appt: { id: number; description?: string | null }
+): RescheduleSameDayVisit[] {
+  const desc = appt.description?.trim();
+  if (!desc) return [...visits];
+  return visits.map((v) => {
+    if (v.appointmentId !== appt.id) return v;
+    if (v.description?.trim()) return v;
+    return { ...v, description: appt.description ?? desc };
+  });
 }
 
 /** Parse submission id from online-submission-hold pimsIds when the API row omits it. */
@@ -347,7 +388,11 @@ export async function beginHoldReschedule(args: {
     sameCalendarDayAppointments.length > 0
       ? collectSameDayHouseholdVisits(appt, sameCalendarDayAppointments, practiceTz)
       : (intent.sameDayVisits ?? []);
-  const sameDayVisits = mergeRescheduleSameDayVisits(holdVisits, calendarVisits);
+  // Hold rows first (cross-day household ids); calendar/fetched appt fill blank descriptions.
+  const sameDayVisits = applyFetchedAppointmentDescriptionToVisits(
+    mergeRescheduleSameDayVisits(holdVisits, calendarVisits),
+    appt
+  );
   const moveHousehold = sameDayVisits.length > 1;
 
   const nextIntent = {
