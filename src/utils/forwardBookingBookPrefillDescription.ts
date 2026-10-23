@@ -22,3 +22,27 @@ export function resolveForwardBookingBookDefaultDescription(
   if (fromDesc) return fromDesc;
   return undefined;
 }
+
+export type ForwardBookingDescriptionSource = {
+  patientId: string;
+  bookingNotes?: string | null;
+  description?: string | null;
+};
+
+/**
+ * Map each household forward-booking row to its own Description prefill.
+ * Multi-pet books must not reuse the anchor pet's notes for siblings.
+ */
+export function resolveForwardBookingVisitDescriptionsByPatientId(
+  entries: readonly ForwardBookingDescriptionSource[] | null | undefined
+): Map<string, string> {
+  const byPatient = new Map<string, string>();
+  for (const entry of entries ?? []) {
+    const patientId = String(entry.patientId ?? '').trim();
+    if (!patientId) continue;
+    const text = resolveForwardBookingBookDefaultDescription(entry);
+    if (!text) continue;
+    byPatient.set(patientId, text);
+  }
+  return byPatient;
+}
