@@ -8,7 +8,7 @@ import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 
-export type SoapEncounterMode = 'quick' | 'comprehensive';
+export type SoapEncounterMode = 'quick' | 'comprehensive' | 'medical_note';
 export type SoapEncounterStatus = 'draft' | 'completed';
 
 export type PatientProblemKind = 'presenting_complaint' | 'rule_out' | 'diagnosis';
@@ -84,6 +84,9 @@ export type EncounterOrder = {
   invoiceLineId: string | null;
   medLabel: Record<string, unknown> | null;
   dischargeInstruction: string | null;
+  bundleSaleId?: string | null;
+  sourceBundleId?: number | null;
+  sourceBundleName?: string | null;
   created: string;
   updated: string;
   catalogFlags?: {
@@ -112,6 +115,8 @@ export type VisitInvoiceLine = {
   refillOfPrescriptionId?: number | null;
   /** Set when staff gave this refill production on purpose, with their reason. */
   productionOverrideReason?: string | null;
+  /** The item is set to never exclude production on refills, so no reason is needed. */
+  refillProductionReasonOptional?: boolean;
   productionOverrideAt?: string | null;
   productionOverrideByEmployeeId?: number | null;
   productionOverrideByName?: string | null;
@@ -320,17 +325,19 @@ export async function fetchSoapCalendarLockIndex(
 /** Appointment ids that already have a SOAP encounter (draft or signed). */
 export async function fetchSoapCalendarEncounterIndex(
   practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
-): Promise<{ appointmentIds: number[] }> {
-  const { data } = await http.get<{ appointmentIds?: number[] }>(
-    '/soap-encounters/calendar-encounter-index',
-    { params: { practiceId } }
-  );
-  const ids = Array.isArray(data?.appointmentIds)
-    ? data.appointmentIds
-        .map((id) => Number(id))
-        .filter((id) => Number.isFinite(id) && id > 0)
-    : [];
-  return { appointmentIds: ids };
+): Promise<{ appointmentIds: number[]; medicalNoteAppointmentIds: number[] }> {
+  const { data } = await http.get<{
+    appointmentIds?: number[];
+    medicalNoteAppointmentIds?: number[];
+  }>('/soap-encounters/calendar-encounter-index', { params: { practiceId } });
+  const toIds = (raw: unknown) =>
+    Array.isArray(raw)
+      ? raw.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      : [];
+  return {
+    appointmentIds: toIds(data?.appointmentIds),
+    medicalNoteAppointmentIds: toIds(data?.medicalNoteAppointmentIds),
+  };
 }
 
 export async function createEncounter(body: {
@@ -513,6 +520,9 @@ export async function createOrder(
     medLabel?: Record<string, unknown>;
     dischargeInstruction?: string;
     note?: string;
+    bundleSaleId?: string;
+    sourceBundleId?: number;
+    sourceBundleName?: string;
   }
 ): Promise<EncounterOrder> {
   const { data } = await http.post<EncounterOrder>(

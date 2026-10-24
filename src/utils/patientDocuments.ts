@@ -569,6 +569,7 @@ export async function loadPatientDocumentContext(patientId: number): Promise<Pat
   const rabiesLogs = logs.filter((l) => isRabiesName(vaccineNameFromLog(l)));
   const latestByName = new Map<string, Record<string, unknown>>();
   for (const log of logs) {
+    if (log.supersededByLogId != null) continue;
     const key = vaccineNameFromLog(log).replace(/\s+/g, ' ').trim().toLowerCase();
     if (!latestByName.has(key)) latestByName.set(key, log);
   }

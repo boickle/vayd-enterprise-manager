@@ -77,6 +77,27 @@ export function storeUnitPrice(
   return fallback;
 }
 
+/**
+ * Unit price for a cart line of `qty`, matching checkout: the quantity break and sale set the
+ * per-unit price, then the service fee (once per line) and the minimum apply to the line.
+ * Spread over the qty so qty × unit = line total.
+ */
+export function storeLineUnitPrice(args: {
+  itemType?: 'inventory' | 'procedure';
+  base: number | null | undefined;
+  breaks?: StorePriceBreak[];
+  sale?: StoreSale | null;
+  serviceFee?: number | null;
+  minimumPrice?: number | null;
+  qty: number;
+}): number {
+  const qty = Math.max(1, Math.floor(Number(args.qty) || 1));
+  const unit = applyStoreSale(storeUnitPrice(args.base, args.breaks, qty), args.sale);
+  const withFee = unit * qty + (Number(args.serviceFee) || 0);
+  const min = args.itemType === 'procedure' ? 0 : Number(args.minimumPrice) || 0;
+  return (min > 0 ? Math.max(min, withFee) : withFee) / qty;
+}
+
 export function storeTaxRateForLevel(
   taxLevelValue: number | null | undefined,
   rates: { level1: number; level2: number; level3: number }

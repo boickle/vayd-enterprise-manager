@@ -38,7 +38,7 @@ type FormState = {
   code: string;
   price: string;
   cost: string;
-  /** Markup % (price over cost). Editable helper; price is what gets saved. */
+  /** Markup as price % of cost. Editable helper; price is what gets saved. */
   markup: string;
   category: string;
   taxLevelValue: number;
@@ -62,22 +62,22 @@ const EMPTY_FORM: FormState = {
   excludePercentageDiscount: false,
 };
 
-/** Markup % from cost/price, blank when cost is missing or not positive. */
+/** Markup as price % of cost (200 = cost × 2), blank when cost is missing or not positive. */
 function markupPctFromCostPrice(costStr: string, priceStr: string): string {
   const cost = Number(costStr);
   const price = Number(priceStr);
   if (costStr.trim() === '' || priceStr.trim() === '') return '';
   if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(price)) return '';
-  return (((price - cost) / cost) * 100).toFixed(1);
+  return ((price / cost) * 100).toFixed(1);
 }
 
-/** Price from cost and markup %, blank when either input is missing. */
+/** Price = cost × markup %, blank when either input is missing. */
 function priceFromCostMarkup(costStr: string, markupStr: string): string {
   const cost = Number(costStr);
   const markup = Number(markupStr);
   if (costStr.trim() === '' || markupStr.trim() === '') return '';
   if (!Number.isFinite(cost) || !Number.isFinite(markup)) return '';
-  return (cost * (1 + markup / 100)).toFixed(2);
+  return ((cost * markup) / 100).toFixed(2);
 }
 
 /** Read-only markup label for the results table. */
@@ -85,7 +85,7 @@ function markupDisplay(price: unknown, cost: unknown): string {
   const c = Number(cost);
   const p = Number(price);
   if (!Number.isFinite(c) || c <= 0 || !Number.isFinite(p)) return '—';
-  return `${(((p - c) / c) * 100).toFixed(1)}%`;
+  return `${((p / c) * 100).toFixed(1)}%`;
 }
 
 function practiceIdFromToken(token: string | null): number {

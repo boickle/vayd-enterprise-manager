@@ -192,7 +192,7 @@ export default function QuantityPriceBreaksEditor({
                 <th>Low Qty</th>
                 <th>High Qty</th>
                 <th>Price</th>
-                <th>Markup %</th>
+                <th>Markup (% of cost)</th>
                 <th>Active</th>
                 <th>Actions</th>
               </tr>
@@ -251,8 +251,7 @@ export default function QuantityPriceBreaksEditor({
                               e.target.value === '' ? null : Number(e.target.value);
                             const updated = { ...editing, markup: markupValue };
                             if (markupValue != null && cost != null) {
-                              updated.price =
-                                Math.round(cost * (1 + markupValue / 100) * 100) / 100;
+                              updated.price = Math.round(cost * markupValue) / 100;
                             }
                             setEditing(updated);
                           }}
@@ -391,7 +390,7 @@ export default function QuantityPriceBreaksEditor({
               />
             </div>
             <div>
-              <label className="settings-label">Markup % (optional)</label>
+              <label className="settings-label">Markup, % of cost (optional)</label>
               <input
                 type="number"
                 className="settings-input"
@@ -403,8 +402,7 @@ export default function QuantityPriceBreaksEditor({
                   if (markupValue && cost != null && !priceManuallyEdited) {
                     const markupPercent = Number(markupValue);
                     if (!isNaN(markupPercent)) {
-                      const calculated =
-                        Math.round(cost * (1 + markupPercent / 100) * 100) / 100;
+                      const calculated = Math.round(cost * markupPercent) / 100;
                       setCreating((prev) =>
                         prev
                           ? { ...prev, markup: markupValue, price: calculated.toFixed(2) }

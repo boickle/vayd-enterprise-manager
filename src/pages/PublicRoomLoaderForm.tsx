@@ -3038,6 +3038,7 @@ export default function PublicRoomLoaderForm() {
           ...(spec.code ? { code: spec.code } : {}),
           practiceId,
           limit: 10,
+          token,
         }).catch(() => [] as SearchableItem[])
       )
     ).then((results) => {
@@ -3062,7 +3063,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [data, roomLoaderConfig]);
+  }, [data, roomLoaderConfig, token]);
 
   /** Fetch client-adjusted pricing (discounts/membership) for every row a pet can be shown. */
   useEffect(() => {
@@ -3245,7 +3246,7 @@ export default function PublicRoomLoaderForm() {
       const fromCatalog = (storeCatalog ?? []).filter(
         (listing) => fuzzyScoreQuery(q, storeListingSearchText(listing)) > 0
       );
-      const catalogSearch = searchItemsPublic({ q, practiceId: pid, limit: 50, code: q }).catch(
+      const catalogSearch = searchItemsPublic({ q, practiceId: pid, limit: 50, code: q, token }).catch(
         () => [] as SearchableItem[]
       );
       const storeSearch =
@@ -3288,7 +3289,7 @@ export default function PublicRoomLoaderForm() {
     if (!name) return;
     const pid = Number(practiceId) || 1;
     let cancelled = false;
-    void searchItemsPublic({ q: name, practiceId: pid, limit: 25, code: name })
+    void searchItemsPublic({ q: name, practiceId: pid, limit: 25, code: name, token })
       .then((items) => {
         if (cancelled || !items.length) return;
         setStoreCatalogPrices((prev) => {
@@ -3301,7 +3302,7 @@ export default function PublicRoomLoaderForm() {
     return () => {
       cancelled = true;
     };
-  }, [storeOptionModalGroup, practiceId]);
+  }, [storeOptionModalGroup, practiceId, token]);
 
   /**
    * Whether this practice actually has an online store to search. `storeCatalog` is null while

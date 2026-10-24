@@ -88,6 +88,7 @@ import {
 import {
   buildCheckItemPayload,
   buildCheckItemPayloadFromSearch,
+  getBundleLinePrice,
   getCatalogLinePrice,
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
@@ -447,14 +448,6 @@ function listPriceAbove(list: number | null | undefined, charged: number): boole
   return list != null && Number(list) > charged + 0.009;
 }
 
-/** Pencil only when the catalog item allows a price change (or there is no catalog item). */
-function lineAllowsPriceEdit(line: Pick<VisitInvoiceLine, 'catalogItemId' | 'catalogItemType' | 'catalogAllowPriceChange'>): boolean {
-  if (line.catalogItemId == null) return true;
-  if (line.catalogItemType !== 'inventory' && line.catalogItemType !== 'procedure') {
-    return true;
-  }
-  return line.catalogAllowPriceChange === true;
-}
 
 function EditableUnitPrice({
   line,
@@ -837,6 +830,17 @@ const DRAFT_INVOICE_ID = 'draft';
 
 function isUnsavedInvoice(invoice: VisitInvoice | null | undefined): boolean {
   return invoice?.id === DRAFT_INVOICE_ID;
+}
+
+/** Which branch's prices apply: the saved invoice, or the draft's chosen branch. */
+function invoicePricingVisit(
+  invoice: VisitInvoice | null | undefined
+): { invoiceId?: string; branchId?: number } {
+  if (!invoice) return {};
+  if (isUnsavedInvoice(invoice)) {
+    return invoice.inventoryBranchId != null ? { branchId: invoice.inventoryBranchId } : {};
+  }
+  return { invoiceId: invoice.id };
 }
 
 function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
@@ -1427,6 +1431,7 @@ export default function ClientFinancialWorkspace({
   const canOverrideRefillProduction = useCan('invoice.refill.production.override');
   const canEditPostedPayment = useCan('payment.posted.edit');
   const canApproveRx = useCan('rx.invoice.approve');
+  const canChangePrice = useCan('invoice.price.change');
   const [providerChangeLine, setProviderChangeLine] = useState<VisitInvoiceLine | null>(null);
   const [paymentEditTender, setPaymentEditTender] = useState<VisitInvoiceTender | null>(null);
   const [correctionBusy, setCorrectionBusy] = useState(false);
@@ -2070,6 +2075,7 @@ export default function ClientFinancialWorkspace({
           limit: 50,
           patientId: linePatientId ?? undefined,
           clientId,
+          ...invoicePricingVisit(selected),
         }),
         listBundles({ kind: 'bundle', q }).catch(() => [] as Bundle[]),
       ])
@@ -2101,7 +2107,7 @@ export default function ClientFinancialWorkspace({
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [query, linePatientId, clientId]);
+  }, [query, linePatientId, clientId, selected?.id, selected?.inventoryBranchId]);
 
   useEffect(() => {
     if (!terminalJob || !selected?.id) return;
@@ -3151,6 +3157,7 @@ export default function ClientFinancialWorkspace({
             clientId,
             itemType: item.itemType,
             item: buildCheckItemPayloadFromSearch(item),
+            ...invoicePricingVisit(selected),
           },
           itemName: item.name,
           askCoverageChoice: (prompt) =>
@@ -3254,11 +3261,24 @@ export default function ClientFinancialWorkspace({
               return v.toString(16);
             });
       try {
+        if (resolution.fixedPrice) {
+          next = await addCounterInvoiceLine(next.id, {
+            description: resolution.bundleName,
+            qty: 1,
+            unitPrice: Number(resolution.bundlePrice) || 0,
+            patientId: linePatientId,
+            providerEmployeeId,
+            bundleSaleId,
+            sourceBundleId: resolution.bundleId,
+            sourceBundleName: resolution.bundleName,
+            miscCharge: true,
+          });
+        }
         for (const line of resolution.lines as BundleSaleLine[]) {
           let unitPrice = line.unitPrice;
           let listUnit = line.listUnitPrice;
           let isCovered = false;
-          if (linePatientId != null) {
+          if (linePatientId != null && !resolution.fixedPrice) {
             try {
               const checked = await checkItemPricing({
                 patientId: linePatientId,
@@ -3266,18 +3286,10 @@ export default function ClientFinancialWorkspace({
                 clientId,
                 itemType: line.itemType,
                 item: buildCheckItemPayload(line.itemType, line.catalogItemId),
+                invoiceId: invoice.id,
               });
-              const priced = getCatalogLinePrice(
-                {
-                  itemType: line.itemType,
-                  price: checked.adjustedPrice ?? line.unitPrice,
-                  originalPrice: checked.originalPrice ?? line.listUnitPrice,
-                  wellnessPlanPricing: checked.wellnessPlanPricing,
-                },
-                line.quantity,
-              );
+              const priced = getBundleLinePrice(line, checked, resolution.discountPercent);
               unitPrice = priced.unitFinal;
-              listUnit = Number(checked.originalPrice ?? listUnit);
               isCovered = priced.isCovered;
             } catch {
               /* use bundle catalog price */
@@ -5746,7 +5758,7 @@ export default function ClientFinancialWorkspace({
                           <td className="client-fin__col-price client-fin__num">
                             <EditableUnitPrice
                               line={line}
-                              canEdit={canEdit && lineAllowsPriceEdit(line)}
+                              canEdit={canEdit && canChangePrice}
                               editing={editingPriceLineId === line.id}
                               disabled={busy}
                               onEdit={() => setEditingPriceLineId(line.id)}
@@ -6265,7 +6277,7 @@ export default function ClientFinancialWorkspace({
                           <td className="client-fin__col-price client-fin__num">
                             <EditableUnitPrice
                               line={ship}
-                              canEdit={canEdit && lineAllowsPriceEdit(ship)}
+                              canEdit={canEdit && canChangePrice}
                               editing={editingPriceLineId === ship.id}
                               disabled={busy}
                               onEdit={() => setEditingPriceLineId(ship.id)}

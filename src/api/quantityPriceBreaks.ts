@@ -104,6 +104,14 @@ export type Lab = {
   /** Stock item an in-house test uses up when charged; null for send-out labs. */
   linkedInventoryItemId?: number | null;
   linkedInventoryItemDefaultQuantity?: number | string | null;
+  isIntegratedLabItem?: boolean;
+  /** e.g. `idexx`, `antech`. */
+  integrationCompany?: string | null;
+  /** eVet LabOrderType for the main code, e.g. `IDEXXREF` (reference) or `IDEXX` (in-house). */
+  integrationOrderType?: string | null;
+  /** Code sent to the company: FIL8659999 → 8659999. */
+  integrationOrderCode?: string | null;
+  integrationOrderCodes?: { company: string | null; orderType: string | null; code: string }[] | null;
   [key: string]: any;
 };
 
@@ -185,7 +193,13 @@ export async function searchItems(
   query: string,
   practiceId: number,
   limit: number = 50,
-  opts?: { includeInactive?: boolean }
+  opts?: {
+    includeInactive?: boolean;
+    /** List every item when the query is empty. */
+    all?: boolean;
+    offset?: number;
+    types?: ItemType[];
+  }
 ): Promise<SearchResultItem[]> {
   const { data } = await http.get('/quantity-price-breaks/items/search', {
     params: {
@@ -193,6 +207,9 @@ export async function searchItems(
       practiceId,
       limit,
       includeInactive: opts?.includeInactive === true ? true : undefined,
+      all: opts?.all === true ? true : undefined,
+      offset: opts?.offset || undefined,
+      types: opts?.types?.length ? opts.types.join(',') : undefined,
     },
   });
   return Array.isArray(data) ? data : [];

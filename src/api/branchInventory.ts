@@ -43,6 +43,10 @@ export type BranchPriceOverride = {
   branchId?: number;
   entityType: BranchPriceOverrideEntityType;
   entityId: number;
+  /** Percent of cost (175 = cost × 1.75); when set the branch price follows cost. */
+  markup?: number | string | null;
+  /** Left out of catalog search for visits at this branch. */
+  hidden?: boolean;
 } & MoneyFields;
 
 /** Per-location quantity within the branch (from GET …/stock). */
@@ -312,6 +316,50 @@ export async function listInventoryMovements(
   return { total, rows };
 }
 
+type InventoryItemHistoryBase = {
+  id: string;
+  at: string;
+  branchId: number | null;
+  branchName: string | null;
+  who: string | null;
+};
+
+export type InventoryItemHistoryRow =
+  | (InventoryItemHistoryBase & {
+      kind: 'movement';
+      movementType: string;
+      quantity: number;
+      fromLocation: string | null;
+      toLocation: string | null;
+      note: string | null;
+      lotNumber: string | null;
+    })
+  | (InventoryItemHistoryBase & {
+      kind: 'change';
+      source: string;
+      field: string;
+      label: string;
+      oldValue: string | null;
+      newValue: string | null;
+    });
+
+export type InventoryItemHistoryKind = 'all' | 'movements' | 'changes';
+
+export async function listInventoryItemHistory(
+  practiceId: number,
+  inventoryItemId: number,
+  params: { kind?: InventoryItemHistoryKind; branchId?: number; limit?: number; offset?: number }
+): Promise<{ total: number; rows: InventoryItemHistoryRow[] }> {
+  const { data } = await http.get<{ total: number; rows: InventoryItemHistoryRow[] }>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/history`,
+    { params }
+  );
+  return {
+    total: typeof data?.total === 'number' ? data.total : 0,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+  };
+}
+
 export async function listBranchPriceOverrides(
   practiceId: number,
   branchId: number,
@@ -336,8 +384,10 @@ export async function upsertBranchPriceOverride(
     cost?: number | null;
     serviceFee?: number | null;
     minimumPrice?: number | null;
+    markup?: number | null;
+    hidden?: boolean;
   }
-): Promise<BranchPriceOverride> {
+): Promise<BranchPriceOverride | null> {
   const { data } = await http.put<BranchPriceOverride>(
     `/practice/${practiceId}/branches/${branchId}/price-overrides`,
     body
@@ -361,8 +411,8 @@ export async function postEffectiveBranchPrice(
     entityId: number;
     base: MoneyFields;
   }
-): Promise<{ effective: MoneyFields }> {
-  const { data } = await http.post<{ effective: MoneyFields }>(
+): Promise<{ effective: MoneyFields; override?: BranchPriceOverride | null }> {
+  const { data } = await http.post<{ effective: MoneyFields; override?: BranchPriceOverride | null }>(
     `/practice/${practiceId}/branches/${branchId}/price-overrides/effective`,
     body
   );
@@ -392,6 +442,8 @@ export async function setEmployeeBranches(
     branchIds: number[];
     primaryBranchId?: number;
     defaultInventoryLocationId?: number | null;
+    /** Every office, none primary — managers, admins, CSRs. */
+    practiceWide?: boolean;
   }
 ): Promise<void> {
   await http.put(`/practice/${practiceId}/employees/${employeeId}/branches`, body);
@@ -544,25 +596,6 @@ export async function updateInventoryLot(
   );
   return data;
 }
-
-export type InitialEntryLot = {
-  id: number;
-  lotNumber: string;
-  serialNumber: string | null;
-  expirationDate: string | null;
-  quantityOnHand: number;
-  locked: boolean;
-};
-
-export type InitialEntryItem = {
-  inventoryItemId: number;
-  name: string;
-  code: string | null;
-  requireLotNumber: boolean;
-  trackLots: boolean;
-  lots: InitialEntryLot[];
-  seededQty: number;
-};
 
 export type FirstCountProgress = {
   totalItems: number;
@@ -779,6 +812,33 @@ export type ParSeedResult = {
   summary: { changed: number; errors: number; unchanged: number };
 };
 
+/** An item that lost its stock item because that stock item was deleted in eVet. */
+export type InventoryLinkRelease = {
+  id: number;
+  itemType: 'inventory' | 'procedure' | 'lab';
+  itemId: number;
+  itemName: string;
+  formerStockItemId: number;
+  formerStockItemName: string;
+  releasedAt: string;
+};
+
+export async function listInventoryLinkReleases(
+  practiceId: number
+): Promise<InventoryLinkRelease[]> {
+  const { data } = await http.get<InventoryLinkRelease[]>(
+    `/practice/${practiceId}/inventory-link-releases`
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function keepInventoryLinkReleaseOnItself(
+  practiceId: number,
+  releaseId: number
+): Promise<void> {
+  await http.post(`/practice/${practiceId}/inventory-link-releases/${releaseId}/keep-on-itself`);
+}
+
 export async function getParSeedSheet(
   practiceId: number,
   branchId: number,
@@ -896,15 +956,4 @@ export async function submitParSeed(
   return data;
 }
 
-
-export async function listInitialInventoryEntry(
-  practiceId: number,
-  branchId: number,
-  locationId: number,
-): Promise<InitialEntryItem[]> {
-  const { data } = await http.get<InitialEntryItem[]>(
-    `/practice/${practiceId}/branches/${branchId}/locations/${locationId}/initial-entry`,
-  );
-  return Array.isArray(data) ? data : [];
-}
 

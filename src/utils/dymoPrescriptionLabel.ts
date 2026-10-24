@@ -102,21 +102,45 @@ function childText(element: Element, selector: string): string {
   return element.querySelector(selector)?.textContent?.trim() ?? '';
 }
 
-export async function listDymoPrinters(): Promise<DymoPrinter[]> {
-  const service = await findDymoService();
-  const response = await fetch(serviceUrl(service, 'GetPrinters'));
-  if (!response.ok) throw new Error('Could not read the DYMO printer list.');
+/**
+ * DYMO Connect answers GetPrinters with plain XML on some builds and with the XML wrapped
+ * in a JSON string on others (DYMO's own framework JSON-parses it first). Printer names
+ * shared from other Macs can also carry a bare `&`, which plain XML parsing rejects.
+ */
+export function parseDymoPrinterList(body: string): DymoPrinter[] {
+  let text = body.replace(/^\uFEFF/, '').trim();
+  if (text.startsWith('"')) {
+    try {
+      const unwrapped: unknown = JSON.parse(text);
+      if (typeof unwrapped === 'string') text = unwrapped.trim();
+    } catch {
+      /* not JSON; parse as XML */
+    }
+  }
+  text = text.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/gi, '&amp;');
 
-  const xml = new DOMParser().parseFromString(await response.text(), 'text/xml');
-  if (xml.querySelector('parsererror')) throw new Error('DYMO returned an invalid printer list.');
+  const xml = new DOMParser().parseFromString(text, 'text/xml');
+  if (xml.querySelector('parsererror')) {
+    const preview = body.trim().slice(0, 120);
+    throw new Error(
+      `DYMO returned a printer list Scout could not read${preview ? ` (starts with: ${preview})` : ''}.`
+    );
+  }
 
-  return [...xml.querySelectorAll('LabelWriterPrinter')]
+  return [...xml.getElementsByTagName('LabelWriterPrinter')]
     .map((element) => ({
       name: childText(element, 'Name'),
       modelName: childText(element, 'ModelName') || null,
       isConnected: childText(element, 'IsConnected').toLowerCase() === 'true',
     }))
     .filter((printer) => printer.name);
+}
+
+export async function listDymoPrinters(): Promise<DymoPrinter[]> {
+  const service = await findDymoService();
+  const response = await fetch(serviceUrl(service, 'GetPrinters'));
+  if (!response.ok) throw new Error('Could not read the DYMO printer list.');
+  return parseDymoPrinterList(await response.text());
 }
 
 function pngFromDataUrl(value: string | null | undefined): string | null {

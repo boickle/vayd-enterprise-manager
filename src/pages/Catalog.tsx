@@ -48,25 +48,24 @@ import CatalogBundles from '../components/catalog/CatalogBundles';
 import { listBundles, type Bundle } from '../api/memberships';
 import CatalogInventoryClinicalFields from '../components/catalog/CatalogInventoryClinicalFields';
 import CatalogItemRemindersEditor from '../components/catalog/CatalogItemRemindersEditor';
+import LabIntegrationEditor from '../components/catalog/LabIntegrationEditor';
 import CatalogItemLotsEditor from '../components/catalog/CatalogItemLotsEditor';
 import CatalogTagalongsEditor from '../components/catalog/CatalogTagalongsEditor';
+import InventoryItemHistory from '../components/inventory/InventoryItemHistory';
+import RecommendedAbcInfo from '../components/inventory/RecommendedAbcInfo';
 import { listPatientStatuses, type PatientStatusRow } from '../api/patientStatuses';
 import {
   listPracticeBranches,
-  listInventoryBranchLocations,
   getInventoryBranchStock,
   upsertInventoryBranchStock,
   postInventoryMovement,
-  listInventoryMovements,
   upsertBranchPriceOverride,
   postEffectiveBranchPrice,
   type PracticeBranch,
+  type BranchPriceOverride,
   type BranchPriceOverrideEntityType,
   type MoneyFields,
   type InventoryBranchStock,
-  type InventoryBranchLocation,
-  type InventoryMovementType,
-  type InventoryStockMovement,
   type PostInventoryMovementBody,
 } from '../api/branchInventory';
 import { resolveDefaultLocationId } from '../utils/inventoryLocationTargets';
@@ -215,6 +214,8 @@ function catalogSellUnit(row: SearchResultItem): string {
  */
 type CatalogTypeFilter = ItemType | 'all' | 'bundle';
 
+const CATALOG_PAGE_SIZE = 100;
+
 function defaultStockLocation(stock?: InventoryBranchStock | null) {
   const locs = stock?.locations ?? [];
   const id = resolveDefaultLocationId(locs);
@@ -263,18 +264,9 @@ function formatUsd(n: number): string {
 
 function catalogMarkupPct(price: number, cost: number): string {
   if (!Number.isFinite(cost) || cost <= 0) return '—';
-  const pct = ((price - cost) / cost) * 100;
+  const pct = (price / cost) * 100;
   return `${pct.toFixed(1)}%`;
 }
-
-const MOVEMENT_TYPES: { value: InventoryMovementType; label: string }[] = [
-  { value: 'receive', label: 'Receive (into location)' },
-  { value: 'transfer', label: 'Transfer (between locations)' },
-  { value: 'sold', label: 'Sold (out)' },
-  { value: 'visit_use', label: 'Visit use (out)' },
-  { value: 'adjustment_increase', label: 'Adjustment increase' },
-  { value: 'adjustment_decrease', label: 'Adjustment decrease / expired / disposal' },
-];
 
 const SELL_UNIT_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: '(not set)' },
@@ -285,7 +277,7 @@ const SELL_UNIT_OPTIONS: { value: string; label: string }[] = [
   { value: 'ml', label: 'mL' },
   { value: 'gram', label: 'Gram' },
   { value: 'each', label: 'Each' },
-  { value: 'other', label: 'Other (describe below)' },
+  { value: 'other', label: 'Other' },
 ];
 
 const VACCINE_TYPE_OPTIONS = [
@@ -307,10 +299,6 @@ const EMPTY_INVENTORY_CREATE = {
   minimumPrice: '',
   isMedication: false,
   excludePercentageDiscount: false,
-  staffDiscountEnabled: false,
-  staffDiscountMode: 'charge' as StaffDiscountMode,
-  staffDiscountPercent: '',
-  staffCharge: '0',
   isShippingType: false,
   taxLevelValue: 1,
   category: '',
@@ -332,7 +320,6 @@ const EMPTY_INVENTORY_CREATE = {
   hideOnMedicalRecordView: false,
   hideOnMedicalRecordPrint: false,
   excludeFromProduction: false,
-  allowPriceChange: false,
   changePatientStatusTo: '',
   changePatientSex: false,
   vaccineName: '',
@@ -340,11 +327,9 @@ const EMPTY_INVENTORY_CREATE = {
   vaccineType: '',
   dosageType: '',
   createRabiesCertificate: false,
-  createVaccinationLog: true,
   usdaLicensingMonths: '',
   animalControlLicensingMonths: '',
   tagIssuePeriodMonths: '',
-  defaultSerial: '',
 };
 
 function optionalNumber(value: string): number | null {
@@ -354,76 +339,28 @@ function optionalNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-type StaffDiscountMode = 'percent' | 'charge' | 'cost_plus';
-
 type CatalogDiscountDraft = {
   excludePercentageDiscount: boolean;
-  staffDiscountEnabled: boolean;
-  staffDiscountMode: StaffDiscountMode;
-  staffDiscountPercent: string;
-  staffCharge: string;
-};
-
-const EMPTY_CATALOG_DISCOUNT: CatalogDiscountDraft = {
-  excludePercentageDiscount: false,
-  staffDiscountEnabled: false,
-  staffDiscountMode: 'charge',
-  staffDiscountPercent: '',
-  staffCharge: '0',
 };
 
 function catalogDiscountFromItem(item: Lab | Procedure | InventoryItem): CatalogDiscountDraft {
-  const row = item as Lab & Procedure & InventoryItem;
-  return {
-    excludePercentageDiscount: Boolean(row.excludePercentageDiscount),
-    staffDiscountEnabled: Boolean(row.staffDiscountEnabled),
-    staffDiscountMode:
-      row.staffDiscountMode === 'percent' || row.staffDiscountMode === 'cost_plus'
-        ? row.staffDiscountMode
-        : 'charge',
-    staffDiscountPercent:
-      row.staffDiscountPercent != null && row.staffDiscountPercent !== ''
-        ? String(row.staffDiscountPercent)
-        : '',
-    staffCharge:
-      row.staffCharge != null && row.staffCharge !== '' ? String(row.staffCharge) : '0',
-  };
+  return { excludePercentageDiscount: Boolean(item.excludePercentageDiscount) };
 }
 
 function catalogDiscountBody(d: CatalogDiscountDraft): Record<string, unknown> {
-  return {
-    excludePercentageDiscount: d.excludePercentageDiscount,
-    staffDiscountEnabled: d.staffDiscountEnabled,
-    staffDiscountMode: d.staffDiscountMode,
-    staffDiscountPercent:
-      d.staffDiscountEnabled &&
-      (d.staffDiscountMode === 'percent' || d.staffDiscountMode === 'cost_plus')
-        ? optionalNumber(d.staffDiscountPercent) ??
-          (d.staffDiscountMode === 'cost_plus' ? 10 : null)
-        : null,
-    staffCharge:
-      d.staffDiscountEnabled && d.staffDiscountMode === 'charge'
-        ? optionalNumber(d.staffCharge) ?? 0
-        : null,
-  };
+  return { excludePercentageDiscount: d.excludePercentageDiscount };
 }
 
 function CatalogDiscountRulesFields({
   value,
   onChange,
-  namePrefix = 'staff-discount-mode',
 }: {
   value: CatalogDiscountDraft;
   onChange: (patch: Partial<CatalogDiscountDraft>) => void;
-  namePrefix?: string;
 }) {
   return (
     <div style={{ marginTop: 16, marginBottom: 8 }}>
       <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px' }}>Discounts</h4>
-      <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
-        These rules apply in room loader, SOAP, and invoicing. Staff pricing only
-        applies when the household is a staff member.
-      </p>
       <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
         <input
           type="checkbox"
@@ -435,132 +372,29 @@ function CatalogDiscountRulesFields({
         <span>
           Exclude percentage discounts
           <small style={{ display: 'block', color: '#6b7280' }}>
-            Client status (including Employee type rates) and personal % off will
-            not apply to this item.
+            Percent-off client statuses and personal % off won’t apply to this item.
+            Staff still get the Employee cost + % price on products.
           </small>
         </span>
       </label>
-      <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
-        <input
-          type="checkbox"
-          checked={value.staffDiscountEnabled}
-          onChange={(e) => onChange({ staffDiscountEnabled: e.target.checked })}
-        />
-        <span>
-          Discounted for staff
-          <small style={{ display: 'block', color: '#6b7280' }}>
-            Staff households pay a staff discount, cost plus a markup, or a
-            staff charge (often $0) instead of the usual status %.
-          </small>
-        </span>
-      </label>
-      {value.staffDiscountEnabled && (
-        <div
-          style={{
-            marginLeft: 28,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            maxWidth: 320,
-          }}
-        >
-          <label className="settings-checkbox-item">
-            <input
-              type="radio"
-              name={namePrefix}
-              checked={value.staffDiscountMode === 'percent'}
-              onChange={() => onChange({ staffDiscountMode: 'percent' })}
-            />
-            <span>Staff discount %</span>
-          </label>
-          {value.staffDiscountMode === 'percent' && (
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step="0.1"
-              className="settings-input"
-              value={value.staffDiscountPercent}
-              onChange={(e) => onChange({ staffDiscountPercent: e.target.value })}
-            />
-          )}
-          <label className="settings-checkbox-item">
-            <input
-              type="radio"
-              name={namePrefix}
-              checked={value.staffDiscountMode === 'cost_plus'}
-              onChange={() =>
-                onChange({
-                  staffDiscountMode: 'cost_plus',
-                  staffDiscountPercent: value.staffDiscountPercent.trim() || '10',
-                })
-              }
-            />
-            <span>Cost + %</span>
-          </label>
-          {value.staffDiscountMode === 'cost_plus' && (
-            <input
-              type="number"
-              min={0}
-              step="0.1"
-              className="settings-input"
-              placeholder="10"
-              value={value.staffDiscountPercent}
-              onChange={(e) => onChange({ staffDiscountPercent: e.target.value })}
-            />
-          )}
-          <label className="settings-checkbox-item">
-            <input
-              type="radio"
-              name={namePrefix}
-              checked={value.staffDiscountMode === 'charge'}
-              onChange={() => onChange({ staffDiscountMode: 'charge' })}
-            />
-            <span>Staff charge</span>
-          </label>
-          {value.staffDiscountMode === 'charge' && (
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              className="settings-input"
-              placeholder="0.00"
-              value={value.staffCharge}
-              onChange={(e) => onChange({ staffCharge: e.target.value })}
-            />
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-/** Markup % over cost, blank when cost is missing or not positive. */
+/** Markup the way eVet stores and shows it: price as a percent of cost (200 = cost × 2). */
 function markupPctFromCostPrice(costStr: string, priceStr: string): string {
   const cost = optionalNumber(costStr);
   const price = optionalNumber(priceStr);
   if (cost === null || price === null || cost <= 0) return '';
-  return (((price - cost) / cost) * 100).toFixed(2);
+  return ((price / cost) * 100).toFixed(2);
 }
 
-/** Price implied by cost and markup %, blank when either is missing. */
+/** Price = cost × markup %, blank when either is missing. */
 function priceFromCostMarkup(costStr: string, markupStr: string): string {
   const cost = optionalNumber(costStr);
   const markup = optionalNumber(markupStr);
   if (cost === null || markup === null) return '';
-  return (cost * (1 + markup / 100)).toFixed(2);
-}
-
-function movementNeedsFrom(t: InventoryMovementType): boolean {
-  return ['transfer', 'sold', 'visit_use', 'adjustment_decrease'].includes(t);
-}
-
-function movementNeedsTo(t: InventoryMovementType): boolean {
-  return ['transfer', 'receive', 'adjustment_increase'].includes(t);
-}
-
-function locationLabel(loc: InventoryBranchLocation): string {
-  return `${loc.name} (${loc.code})`;
+  return ((cost * markup) / 100).toFixed(2);
 }
 
 export type CatalogEmbedProps = {
@@ -571,7 +405,7 @@ export type CatalogEmbedProps = {
 };
 
 export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
-  const { token, doctorId } = useAuth() as { token: string | null; doctorId: string | null };
+  const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeId(token), [token]);
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
@@ -583,6 +417,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [focusBundleId, setFocusBundleId] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [showAllItems, setShowAllItems] = useState(false);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
+  const [loadingMoreResults, setLoadingMoreResults] = useState(false);
   const searchSeq = useRef(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -620,14 +457,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     minimumPrice: '',
     isMedication: false,
     excludePercentageDiscount: false,
-    staffDiscountEnabled: false,
-    staffDiscountMode: 'charge' as StaffDiscountMode,
-    staffDiscountPercent: '',
-    staffCharge: '0',
     isShippingType: false,
     hideOnInvoice: false,
     excludeFromProduction: false,
-    allowPriceChange: false,
     changePatientStatusTo: '',
     changePatientSex: false,
     isAftercare: false,
@@ -636,11 +468,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     taxLevelValue: 1,
     category: '',
     assignedAbc: '',
+    sellUnitType: '',
+    sellUnitTypeDetail: '',
   });
   const [taxSettings, setTaxSettings] = useState<PracticeTaxSettings | null>(null);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [storeCategories, setStoreCategories] = useState<StoreCategory[]>([]);
   const [storeListing, setStoreListing] = useState<StoreAdminListing | null>(null);
+  /** A store product grouping several SKUs; its description and category are shared. */
+  const sharedStoreListing =
+    storeListing && storeListing.variants.length > 1 ? storeListing : null;
 
   function setTypeFilter(next: CatalogTypeFilter) {
     const nextParams = new URLSearchParams(searchParams);
@@ -766,7 +603,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [detail, setDetail] = useState<ItemWithPriceBreaks | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<'details' | 'clinical' | 'lots' | 'stock' | 'pricing' | 'online-store' | 'associations'>('details');
+  const [detailTab, setDetailTab] = useState<'details' | 'clinical' | 'lots' | 'stock' | 'pricing' | 'online-store' | 'associations' | 'history'>('details');
 
   const procedureDetailOpen = detail?.itemType === 'procedure';
   useEffect(() => {
@@ -801,28 +638,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [stockError, setStockError] = useState<string | null>(null);
 
   /** Page-level locations (cost summary branch). */
-  const [branchLocations, setBranchLocations] = useState<InventoryBranchLocation[]>([]);
-
-  /** Branch used inside the item modal for record movement + history. */
-  const [movementBranchId, setMovementBranchId] = useState<number | null>(null);
-  const [movementLocations, setMovementLocations] = useState<InventoryBranchLocation[]>([]);
-
-  const [movementType, setMovementType] = useState<InventoryMovementType>('receive');
-  const [movementQty, setMovementQty] = useState('1');
-  const [movementFromId, setMovementFromId] = useState('');
-  const [movementToId, setMovementToId] = useState('');
-  const [movementNote, setMovementNote] = useState('');
-  const [movementSubmitting, setMovementSubmitting] = useState(false);
-  const [movementError, setMovementError] = useState<string | null>(null);
-
-  const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
-  const [movementTotal, setMovementTotal] = useState(0);
-  const [movementsLoading, setMovementsLoading] = useState(false);
-  const [movementHistoryOpen, setMovementHistoryOpen] = useState(false);
 
   const [effective, setEffective] = useState<MoneyFields | null>(null);
   /** Effective money for every active practice branch (item pricing table). */
   const [branchEffectiveById, setBranchEffectiveById] = useState<Record<number, MoneyFields>>({});
+  /** Each branch's own override row (null = follows the practice). */
+  const [branchOverrideById, setBranchOverrideById] = useState<
+    Record<number, BranchPriceOverride | null>
+  >({});
+  const [branchHiddenSaving, setBranchHiddenSaving] = useState<number | null>(null);
+  /** Branch modal markup (percent of cost); blank = fixed price. */
+  const [priceMarkup, setPriceMarkup] = useState('');
   const [branchPricesLoading, setBranchPricesLoading] = useState(false);
   const [branchPricesError, setBranchPricesError] = useState<string | null>(null);
   const [priceModalOpen, setPriceModalOpen] = useState(false);
@@ -857,8 +683,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [storeStock, setStoreStock] = useState<StoreAvailabilityDetail | null>(null);
   const [catalogSaving, setCatalogSaving] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [unitsSaving, setUnitsSaving] = useState(false);
-  const [unitsError, setUnitsError] = useState<string | null>(null);
   const [catalogDraft, setCatalogDraft] = useState({
     description: '',
     shippable: false,
@@ -873,11 +697,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     autoshipFrequency: 'monthly',
     onlineStorePrice: '',
     storeCategory: '',
-    sellUnitType: '',
-    sellUnitTypeDetail: '',
-    unitsPerPackage: '',
-    alternateSellUnitType: '',
-    alternateUnitsPerPackage: '',
   });
   /**
    * Master stock item this code draws down (null = draws on itself). Counts, reorder points and
@@ -897,34 +716,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [itemImageVersion, setItemImageVersion] = useState(0);
   const [imageUploading, setImageUploading] = useState(false);
   const itemImageInputRef = useRef<HTMLInputElement | null>(null);
-
-  const reloadMovements = useCallback(async () => {
-    if (
-      !selected ||
-      selected.itemType !== 'inventory' ||
-      movementBranchId == null ||
-      stockItemId == null
-    ) {
-      setMovements([]);
-      setMovementTotal(0);
-      return;
-    }
-    setMovementsLoading(true);
-    try {
-      const r = await listInventoryMovements(practiceId, movementBranchId, {
-        inventoryItemId: stockItemId,
-        limit: 10,
-        offset: 0,
-      });
-      setMovements(r.rows);
-      setMovementTotal(r.total);
-    } catch {
-      setMovements([]);
-      setMovementTotal(0);
-    } finally {
-      setMovementsLoading(false);
-    }
-  }, [selected, movementBranchId, practiceId, stockItemId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -988,25 +779,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }, [onlineStoreImplemented, practiceId]);
 
   useEffect(() => {
-    if (branchId == null) {
-      setBranchLocations([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await listInventoryBranchLocations(practiceId, branchId);
-        if (!cancelled) setBranchLocations(Array.isArray(list) ? list : []);
-      } catch {
-        if (!cancelled) setBranchLocations([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [practiceId, branchId]);
-
-  useEffect(() => {
     if (!detail) return;
     const item = detail.item as InventoryItem | Lab | Procedure;
     setCoreDraft({
@@ -1015,8 +787,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       price: item.price != null && item.price !== '' ? String(item.price) : '',
       cost: item.cost != null && item.cost !== '' ? String(item.cost) : '',
       markup:
-        detail.itemType === 'inventory' && (item as InventoryItem).markup != null
-          ? String((item as InventoryItem).markup)
+        detail.itemType === 'inventory'
+          ? (item as InventoryItem).markup != null
+            ? String(Number((item as InventoryItem).markup))
+            : ''
           : markupPctFromCostPrice(
               item.cost != null ? String(item.cost) : '',
               item.price != null ? String(item.price) : ''
@@ -1038,7 +812,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       isShippingType: Boolean((item as Procedure).isShippingType),
       hideOnInvoice: Boolean((item as Procedure).hideOnInvoice),
       excludeFromProduction: Boolean((item as Procedure).excludeFromProduction),
-      allowPriceChange: Boolean((item as Procedure).allowPriceChange),
       changePatientStatusTo:
         detail.itemType === 'procedure'
           ? ((item as Procedure).changePatientStatusTo ?? '').trim()
@@ -1058,6 +831,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         detail.itemType === 'inventory' && (item as InventoryItem).assignedAbc
           ? String((item as InventoryItem).assignedAbc)
           : '',
+      sellUnitType:
+        detail.itemType === 'inventory' ? (item as InventoryItem).sellUnitType || '' : '',
+      sellUnitTypeDetail:
+        detail.itemType === 'inventory' ? (item as InventoryItem).sellUnitTypeDetail || '' : '',
     });
   }, [detail]);
 
@@ -1079,11 +856,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       onlineStorePrice:
         item.price != null && String(item.price).trim() !== '' ? String(item.price) : '',
       storeCategory: '',
-      sellUnitType: '',
-      sellUnitTypeDetail: '',
-      unitsPerPackage: '',
-      alternateSellUnitType: '',
-      alternateUnitsPerPackage: '',
     });
     setItemHasImage(false);
   }, [detail]);
@@ -1168,17 +940,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           ? String(item.onlineStorePrice)
           : '',
       storeCategory: '',
-      sellUnitType: (item.sellUnitType as string) || '',
-      sellUnitTypeDetail: (item.sellUnitTypeDetail as string) || '',
-      unitsPerPackage:
-        item.unitsPerPackage != null && String(item.unitsPerPackage).trim() !== ''
-          ? String(item.unitsPerPackage)
-          : '',
-      alternateSellUnitType: (item.alternateSellUnitType as string) || '',
-      alternateUnitsPerPackage:
-        item.alternateUnitsPerPackage != null && String(item.alternateUnitsPerPackage).trim() !== ''
-          ? String(item.alternateUnitsPerPackage)
-          : '',
     });
     setItemHasImage(Boolean(item.imageUrl && String(item.imageUrl).trim()));
 
@@ -1265,50 +1026,24 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     return () => window.clearTimeout(t);
   }, [stockLinkQuery, practiceId, selected?.itemId]);
 
-  useEffect(() => {
-    if (movementBranchId == null) {
-      setMovementLocations([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await listInventoryBranchLocations(practiceId, movementBranchId);
-        if (!cancelled) setMovementLocations(Array.isArray(list) ? list : []);
-      } catch {
-        if (!cancelled) setMovementLocations([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [practiceId, movementBranchId]);
-
-  useEffect(() => {
-    if (!movementLocations.length) {
-      setMovementFromId('');
-      setMovementToId('');
-      return;
-    }
-    const def = movementLocations.find((l) => l.code === 'main') ?? movementLocations[0];
-    setMovementFromId(String(def.id));
-    setMovementToId(String(def.id));
-  }, [movementBranchId, movementLocations]);
-
-  useEffect(() => {
-    void reloadMovements();
-  }, [reloadMovements]);
-
-  useEffect(() => {
-    setMovementHistoryOpen(false);
-  }, [selected?.itemId, stockItemId]);
+  const fetchCatalogPage = useCallback(
+    (offset: number, limit: number) =>
+      searchItems(searchQuery.trim(), practiceId, limit, {
+        includeInactive: showArchived,
+        all: showAllItems,
+        offset,
+        types: typeFilter === 'all' || typeFilter === 'bundle' ? undefined : [typeFilter],
+      }),
+    [searchQuery, practiceId, showArchived, showAllItems, typeFilter]
+  );
 
   useEffect(() => {
     const q = searchQuery.trim();
-    if (!q || typeFilter === 'bundle') {
+    if ((!q && !showAllItems) || typeFilter === 'bundle') {
       setSearchResults([]);
       setBundleHits([]);
       setSearchError(null);
+      setHasMoreResults(false);
       return;
     }
     const seq = ++searchSeq.current;
@@ -1317,29 +1052,30 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setSearchError(null);
       try {
         const [rows, bundles] = await Promise.all([
-          searchItems(q, practiceId, 50, {
-            includeInactive: showArchived,
-          }),
+          fetchCatalogPage(0, CATALOG_PAGE_SIZE),
           typeFilter === 'all'
             ? listBundles({
                 kind: 'bundle',
                 includeArchived: showArchived,
-                q,
+                q: q || undefined,
               }).catch(() => [] as Bundle[])
             : Promise.resolve([] as Bundle[]),
         ]);
         if (searchSeq.current !== seq) return;
         setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
+        setHasMoreResults(rows.length === CATALOG_PAGE_SIZE);
         const needle = q.toLowerCase();
         setBundleHits(
-          bundles
-            .filter(
-              (b) =>
-                b.name.toLowerCase().includes(needle) ||
-                (b.code ?? '').toLowerCase().includes(needle) ||
-                (b.marketingSummary ?? '').toLowerCase().includes(needle),
-            )
-            .slice(0, 25),
+          q
+            ? bundles
+                .filter(
+                  (b) =>
+                    b.name.toLowerCase().includes(needle) ||
+                    (b.code ?? '').toLowerCase().includes(needle) ||
+                    (b.marketingSummary ?? '').toLowerCase().includes(needle),
+                )
+                .slice(0, 25)
+            : bundles,
         );
       } catch (e: unknown) {
         if (searchSeq.current === seq) {
@@ -1354,7 +1090,23 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       }
     }, 300);
     return () => window.clearTimeout(t);
-  }, [searchQuery, practiceId, showArchived, typeFilter]);
+  }, [searchQuery, showAllItems, showArchived, typeFilter, fetchCatalogPage]);
+
+  async function loadMoreCatalogRows() {
+    const seq = searchSeq.current;
+    setLoadingMoreResults(true);
+    try {
+      const rows = await fetchCatalogPage(searchResults.length, CATALOG_PAGE_SIZE);
+      if (searchSeq.current !== seq) return;
+      setSearchResults((prev) => [...prev, ...applyCatalogTypeFilter(rows, typeFilter)]);
+      setHasMoreResults(rows.length === CATALOG_PAGE_SIZE);
+    } catch (e: unknown) {
+      setToast(e instanceof Error ? e.message : 'Could not load more items');
+      window.setTimeout(() => setToast(null), 4000);
+    } finally {
+      setLoadingMoreResults(false);
+    }
+  }
 
   const loadBranchStock = useCallback(
     async (countedItemId: number, branchList: PracticeBranch[]) => {
@@ -1449,19 +1201,28 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 entityId: sel.itemId,
                 base,
               });
-              return { id: b.id, effective: eff.effective as MoneyFields, ok: true as const };
+              return {
+                id: b.id,
+                effective: eff.effective as MoneyFields,
+                override: eff.override ?? null,
+                ok: true as const,
+              };
             } catch {
-              return { id: b.id, effective: null, ok: false as const };
+              return { id: b.id, effective: null, override: null, ok: false as const };
             }
           })
         );
         const map: Record<number, MoneyFields> = {};
+        const overrides: Record<number, BranchPriceOverride | null> = {};
         let failCount = 0;
         for (const row of settled) {
-          if (row.ok && row.effective) map[row.id] = row.effective;
-          else failCount += 1;
+          if (row.ok && row.effective) {
+            map[row.id] = row.effective;
+            overrides[row.id] = row.override;
+          } else failCount += 1;
         }
         setBranchEffectiveById(map);
+        setBranchOverrideById(overrides);
         if (failCount > 0 && Object.keys(map).length === 0) {
           setBranchPricesError('Could not load branch prices.');
         } else if (failCount > 0) {
@@ -1502,21 +1263,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setBranchEffectiveById({});
       setStockByBranchId({});
       setCountsExpandedBranchId(null);
-      setMovementBranchId(null);
       return;
     }
     setCountsExpandedBranchId(null);
     void refreshDetailBundle(selected);
   }, [selected, refreshDetailBundle]);
-
-  useEffect(() => {
-    if (!selected) return;
-    setMovementBranchId((prev) => {
-      if (prev != null && branches.some((b) => b.id === prev)) return prev;
-      if (branchId != null && branches.some((b) => b.id === branchId)) return branchId;
-      return branches[0]?.id ?? null;
-    });
-  }, [selected, branches, branchId]);
 
   useEffect(() => {
     if (branchId != null && branchEffectiveById[branchId]) {
@@ -1550,7 +1301,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     } else if (detail) {
       setPriceForm(moneyBaseFromCatalogRow(detail.item as Record<string, unknown>));
     }
+    setPriceMarkup(seedMarkupFor(seedId != null ? branchOverrideById[seedId] : null));
     if (opts?.onlineStoreOnly) {
+      setPriceMarkup('');
       setPriceTargetBranchIds(
         onlineStoreImplemented && detail?.itemType === 'inventory' ? [ONLINE_STORE_TARGET_ID] : []
       );
@@ -1574,6 +1327,43 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     setPriceModalOpen(true);
   }
 
+  /** A branch's own markup, else the practice markup unless the branch set a fixed price. */
+  function seedMarkupFor(override: BranchPriceOverride | null | undefined): string {
+    if (override?.markup != null) return String(Number(override.markup));
+    if (override?.price != null) return '';
+    return practiceMarkup != null ? String(practiceMarkup) : '';
+  }
+
+  /**
+   * Only what differs from the practice is saved, so the branch keeps following Details for
+   * everything else. A markup is saved instead of a price, so the price follows cost.
+   */
+  function branchOverrideBody(): {
+    price: number | null;
+    cost: number | null;
+    serviceFee: number | null;
+    minimumPrice: number | null;
+    markup: number | null;
+  } {
+    const differs = (v: number, practice: number | undefined) =>
+      Math.abs((Number(v) || 0) - (Number(practice) || 0)) >= 0.005;
+    const cost = differs(priceForm.cost, practiceMoney?.cost) ? priceForm.cost : null;
+    const serviceFee = differs(priceForm.serviceFee, practiceMoney?.serviceFee)
+      ? priceForm.serviceFee
+      : null;
+    const minimumPrice = differs(priceForm.minimumPrice, practiceMoney?.minimumPrice)
+      ? priceForm.minimumPrice
+      : null;
+    const markup = optionalNumber(priceMarkup);
+    if (markup != null) {
+      const sameAsPractice =
+        practiceMarkup != null && Math.abs(markup - practiceMarkup) < 0.005 && cost == null;
+      return { price: null, cost, serviceFee, minimumPrice, markup: sameAsPractice ? null : markup };
+    }
+    const price = differs(priceForm.price, practiceMoney?.price) ? priceForm.price : null;
+    return { price, cost, serviceFee, minimumPrice, markup: null };
+  }
+
   function openPriceModalAllBranches() {
     const targets = branches.map((b) => b.id);
     if (onlineStoreImplemented && detail?.itemType === 'inventory') {
@@ -1583,6 +1373,24 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       seedBranchId: branchId,
       targetBranchIds: targets,
     });
+  }
+
+  async function setHiddenAtBranch(forBranchId: number, hidden: boolean) {
+    if (!selected) return;
+    setBranchHiddenSaving(forBranchId);
+    try {
+      const row = await upsertBranchPriceOverride(practiceId, forBranchId, {
+        entityType: itemTypeToEntityType(selected.itemType),
+        entityId: selected.itemId,
+        hidden,
+      });
+      setBranchOverrideById((prev) => ({ ...prev, [forBranchId]: row }));
+    } catch (e: unknown) {
+      setToast(e instanceof Error ? e.message : 'Could not update search visibility');
+      window.setTimeout(() => setToast(null), 3500);
+    } finally {
+      setBranchHiddenSaving(null);
+    }
   }
 
   async function saveBranchPrices() {
@@ -1603,10 +1411,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       const body = {
         entityType,
         entityId: selected.itemId,
-        price: priceForm.price,
-        cost: priceForm.cost,
-        serviceFee: priceForm.serviceFee,
-        minimumPrice: priceForm.minimumPrice,
+        ...branchOverrideBody(),
       };
       const branchResults = await Promise.allSettled(
         realBranchIds.map((id) => upsertBranchPriceOverride(practiceId, id, body))
@@ -1665,6 +1470,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         cost: null,
         serviceFee: null,
         minimumPrice: null,
+        markup: null,
       };
       const results = await Promise.allSettled(
         realBranchIds.map((id) => upsertBranchPriceOverride(practiceId, id, body))
@@ -1799,7 +1605,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       });
       if (stockItemId != null) {
         await loadBranchStock(stockItemId, branches);
-        void reloadMovements();
       }
       setToast('Counts, re-order point, max, and par saved');
       window.setTimeout(() => setToast(null), 3500);
@@ -1807,111 +1612,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setStockError(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setStockSaving(false);
-    }
-  }
-
-  async function submitMovement() {
-    if (
-      !selected ||
-      movementBranchId == null ||
-      selected.itemType !== 'inventory' ||
-      stockItemId == null
-    ) {
-      return;
-    }
-    setMovementSubmitting(true);
-    setMovementError(null);
-    try {
-      const qty = Number(movementQty);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        setMovementError('Quantity must be a positive number');
-        return;
-      }
-      const fromId = movementFromId ? Number(movementFromId) : NaN;
-      const toId = movementToId ? Number(movementToId) : NaN;
-      if (movementNeedsFrom(movementType) && !Number.isFinite(fromId)) {
-        setMovementError('Choose a source location');
-        return;
-      }
-      if (movementNeedsTo(movementType) && !Number.isFinite(toId)) {
-        setMovementError('Choose a destination location');
-        return;
-      }
-      if (movementType === 'transfer' && fromId === toId) {
-        setMovementError('Transfer requires two different locations');
-        return;
-      }
-      const body: PostInventoryMovementBody = {
-        movementType,
-        inventoryItemId: stockItemId,
-        quantity: qty,
-      };
-      if (movementNeedsFrom(movementType)) body.fromBranchLocationId = fromId;
-      if (movementNeedsTo(movementType)) body.toBranchLocationId = toId;
-      const n = movementNote.trim();
-      if (n) body.note = n;
-      await postInventoryMovement(practiceId, movementBranchId, body);
-      setToast('Movement recorded');
-      window.setTimeout(() => setToast(null), 3500);
-      setMovementNote('');
-      await refreshDetailBundle(selected);
-      await reloadMovements();
-    } catch (e: unknown) {
-      setMovementError(e instanceof Error ? e.message : 'Movement failed');
-    } finally {
-      setMovementSubmitting(false);
-    }
-  }
-
-  async function loadMoreMovements() {
-    if (
-      !selected ||
-      selected.itemType !== 'inventory' ||
-      movementBranchId == null ||
-      stockItemId == null
-    ) {
-      return;
-    }
-    if (movements.length >= movementTotal) return;
-    setMovementsLoading(true);
-    try {
-      const r = await listInventoryMovements(practiceId, movementBranchId, {
-        inventoryItemId: stockItemId,
-        limit: 10,
-        offset: movements.length,
-      });
-      setMovements((prev) => [...prev, ...r.rows]);
-      setMovementTotal(r.total);
-    } catch {
-      /* keep existing */
-    } finally {
-      setMovementsLoading(false);
-    }
-  }
-
-  async function saveUnitFields() {
-    if (!selected || selected.itemType !== 'inventory') return;
-    setUnitsSaving(true);
-    setUnitsError(null);
-    try {
-      await patchPracticeInventoryItem(practiceId, selected.itemId, {
-        sellUnitType: catalogDraft.sellUnitType || null,
-        sellUnitTypeDetail: catalogDraft.sellUnitTypeDetail.trim() || null,
-        unitsPerPackage:
-          catalogDraft.unitsPerPackage.trim() === '' ? null : Number(catalogDraft.unitsPerPackage),
-        alternateSellUnitType: catalogDraft.alternateSellUnitType || null,
-        alternateUnitsPerPackage:
-          catalogDraft.alternateUnitsPerPackage.trim() === ''
-            ? null
-            : Number(catalogDraft.alternateUnitsPerPackage),
-      });
-      setToast('Sell / dispense units saved');
-      window.setTimeout(() => setToast(null), 3500);
-      await refreshDetailBundle(selected);
-    } catch (e: unknown) {
-      setUnitsError(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setUnitsSaving(false);
     }
   }
 
@@ -1937,8 +1637,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       if (selected.itemType === 'inventory') {
         body.minimumPrice =
           coreDraft.minimumPrice.trim() === '' ? null : Number(coreDraft.minimumPrice);
-        body.markup =
-          coreDraft.markup.trim() === '' ? null : Number(coreDraft.markup);
+        body.markup = optionalNumber(coreDraft.markup);
         body.taxLevelValue = coreDraft.taxLevelValue;
         body.category =
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
@@ -1948,11 +1647,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           coreDraft.assignedAbc === 'C'
             ? coreDraft.assignedAbc
             : null;
+        body.sellUnitType = coreDraft.sellUnitType || null;
+        body.sellUnitTypeDetail =
+          coreDraft.sellUnitType === 'other' ? coreDraft.sellUnitTypeDetail.trim() || null : null;
       }
       if (selected.itemType === 'procedure') {
         body.hideOnInvoice = coreDraft.hideOnInvoice;
         body.excludeFromProduction = coreDraft.excludeFromProduction;
-        body.allowPriceChange = coreDraft.allowPriceChange;
         body.changePatientStatusTo = coreDraft.changePatientStatusTo.trim() || null;
         body.changePatientSex = coreDraft.changePatientSex;
         if (coreDraft.isAftercare && !coreDraft.aftercareType) {
@@ -1970,7 +1671,41 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         body.category =
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
       }
+      const newPrice = body.price as number | null;
+      const ownPriceBranches = branches.filter((b) => branchOverrideById[b.id]?.price != null);
+      const priceChanged =
+        newPrice != null && Math.abs(newPrice - (practiceMoney?.price ?? 0)) >= 0.005;
+      const updateOwnPrices =
+        priceChanged && ownPriceBranches.length > 0
+          ? await appConfirm({
+              title: 'Update branch prices too?',
+              message: `${ownPriceBranches
+                .map(
+                  (b) =>
+                    `${b.name} ($${Number(branchOverrideById[b.id]?.price ?? 0).toFixed(2)})`
+                )
+                .join(', ')} ${
+                ownPriceBranches.length === 1 ? 'has its' : 'have their'
+              } own price. Every other branch will use the new $${newPrice.toFixed(
+                2
+              )}. Should ${ownPriceBranches.length === 1 ? 'it' : 'they'} switch to it too?`,
+              confirmLabel: 'Use the new price',
+              cancelLabel: 'Keep their own price',
+            })
+          : false;
       await patchCatalogItem(selected.itemType, practiceId, selected.itemId, body);
+      if (updateOwnPrices) {
+        const entityType = itemTypeToEntityType(selected.itemType);
+        await Promise.all(
+          ownPriceBranches.map((b) =>
+            upsertBranchPriceOverride(practiceId, b.id, {
+              entityType,
+              entityId: selected.itemId,
+              price: null,
+            })
+          )
+        );
+      }
       const savedKey = `${selected.itemType}:${selected.itemId}`;
       const savedName = coreDraft.name.trim();
       setSearchResults((rows) =>
@@ -2050,7 +1785,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         hideOnMedicalRecordView: createForm.hideOnMedicalRecordView,
         hideOnMedicalRecordPrint: createForm.hideOnMedicalRecordPrint,
         excludeFromProduction: createForm.excludeFromProduction,
-        allowPriceChange: createForm.allowPriceChange,
         changePatientStatusTo: createForm.changePatientStatusTo.trim() || null,
         changePatientSex: createForm.changePatientSex,
       };
@@ -2064,13 +1798,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           vaccineType: createForm.vaccineType || null,
           dosageType: createForm.dosageType || null,
           createRabiesCertificate: createForm.createRabiesCertificate,
-          createVaccinationLog: createForm.createVaccinationLog,
           usdaLicensingMonths: optionalNumber(createForm.usdaLicensingMonths),
           animalControlLicensingMonths: optionalNumber(
             createForm.animalControlLicensingMonths
           ),
           tagIssuePeriodMonths: optionalNumber(createForm.tagIssuePeriodMonths),
-          defaultSerial: createForm.defaultSerial.trim() || null,
+          defaultSerial: null,
         };
       }
       const created = await createCatalogItem(
@@ -2130,10 +1863,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       await setCatalogItemActive(row.itemType, practiceId, itemId, !active);
       setToast(active ? 'Item archived' : 'Item restored');
       window.setTimeout(() => setToast(null), 3500);
-      const rows = await searchItems(searchQuery.trim(), practiceId, 50, {
-        includeInactive: showArchived,
-      });
+      const pageSize = Math.min(Math.max(searchResults.length, CATALOG_PAGE_SIZE), 200);
+      const rows = await fetchCatalogPage(0, pageSize);
       setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
+      setHasMoreResults(rows.length === pageSize);
       if (selected?.itemType === row.itemType && selected.itemId === itemId) {
         await refreshDetailBundle(selected);
       }
@@ -2151,8 +1884,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     setStockLinkSaving(true);
     setStockLinkError(null);
     try {
-      const qty = stockLinkQty.trim() === '' ? (isLab ? 1 : null) : Number(stockLinkQty);
-      if (stockLinkItemId != null && (qty == null || !Number.isFinite(qty) || qty <= 0)) {
+      const qty = stockLinkQty.trim() === '' ? 1 : Number(stockLinkQty);
+      if (stockLinkItemId != null && (!Number.isFinite(qty) || qty <= 0)) {
         setStockLinkError(
           isLab
             ? 'Enter how many kits one test uses (usually 1).'
@@ -2209,10 +1942,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       }
       if (selected.itemType === 'inventory') {
         await patchPracticeInventoryItem(practiceId, selected.itemId, {
-          description: catalogDraft.description.trim() || null,
+          ...(sharedStoreListing
+            ? {}
+            : { description: catalogDraft.description.trim() || null }),
           shippable: catalogDraft.shippable,
           showOnOnlineStore: catalogDraft.showOnOnlineStore,
-          requiresDoctorApproval: catalogDraft.requiresDoctorApproval,
           passThroughByDefault: catalogDraft.passThroughByDefault,
           storeAvailability: catalogDraft.storeAvailability,
           storeBackInStockDate: catalogDraft.storeBackInStockDate || null,
@@ -2235,12 +1969,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         }
         await patchOnlineStoreItem(practiceId, selected.itemId, {
           listed: catalogDraft.showOnOnlineStore,
-          storeCategory: catalogDraft.storeCategory.trim() || null,
-          approvalTag: catalogDraft.requiresDoctorApproval
-            ? 'needs_doctor_approval'
-            : 'approved',
+          ...(sharedStoreListing
+            ? {}
+            : { storeCategory: catalogDraft.storeCategory.trim() || null }),
         });
-        if (storeListing) {
+        if (storeListing && !sharedStoreListing) {
           await patchOnlineStoreListing(practiceId, storeListing.listingId, {
             listed: catalogDraft.showOnOnlineStore,
             storeCategory: catalogDraft.storeCategory.trim() || null,
@@ -2259,6 +1992,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         };
         if (!storeListing && !catalogDraft.showOnOnlineStore) {
           setToast('Nothing to save — this procedure is not listed on the store');
+          window.setTimeout(() => setToast(null), 3500);
+          return;
+        }
+        if (sharedStoreListing) {
+          setToast(`Edit “${sharedStoreListing.name}” on Store items`);
           window.setTimeout(() => setToast(null), 3500);
           return;
         }
@@ -2381,14 +2119,19 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         setBulkError('Enter at least one percent or flat adjustment.');
         return;
       }
-      await postBulkInventoryPriceAdjust(practiceId, {
+      const res = await postBulkInventoryPriceAdjust(practiceId, {
         inventoryItemIds: ids,
         percentChangePracticePrice: hasPctP ? pctP : undefined,
         percentChangeOnlineStorePrice: hasPctO ? pctO : undefined,
         flatAddPracticePrice: hasFP ? fP : undefined,
         flatAddOnlineStorePrice: hasFO ? fO : undefined,
       });
-      setToast('Bulk price adjustment applied');
+      const branchCount = res.branchPricesUpdated ?? 0;
+      setToast(
+        branchCount
+          ? `Bulk price adjustment applied, including ${branchCount} branch price${branchCount === 1 ? '' : 's'}`
+          : 'Bulk price adjustment applied'
+      );
       window.setTimeout(() => setToast(null), 3500);
       setBulkModalOpen(false);
       setBulkSelected({});
@@ -2406,26 +2149,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     }
   }
 
-  function resolveLocationName(id: number | null | undefined): string {
-    if (id == null) return '—';
-    const loc =
-      movementLocations.find((l) => l.id === id) ?? branchLocations.find((l) => l.id === id);
-    return loc ? locationLabel(loc) : `#${id}`;
-  }
-
-  function movementActorName(movement: InventoryStockMovement): string {
-    const employee = movement.movedByEmployee;
-    const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(' ');
-    if (name) return name;
-    if (movement.movedByEmployeeId != null) return `Employee #${movement.movedByEmployeeId}`;
-    if (movement.movedByUser?.email) return movement.movedByUser.email;
-    if (movement.movedByUserId != null) return `User #${movement.movedByUserId}`;
-    return 'System';
-  }
-
   const practiceMoney: ResolvedMoney | null = detail
     ? moneyBaseFromCatalogRow(detail.item as Record<string, unknown>)
     : null;
+  const practiceMarkupRaw = (detail?.item as { markup?: unknown } | undefined)?.markup;
+  const practiceMarkup =
+    practiceMarkupRaw != null && Number.isFinite(Number(practiceMarkupRaw))
+      ? Number(practiceMarkupRaw)
+      : null;
 
   const typeFilterOptions: { value: CatalogTypeFilter; label: string }[] = [
     { value: 'all', label: 'All' },
@@ -2581,13 +2312,22 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               {addItemLabel(typeFilter)}
             </button>
             <span className="inv-catalog-results__count">
-              Total count:{' '}
-              {searchQuery.trim()
+              {hasMoreResults ? 'Showing:' : 'Total count:'}{' '}
+              {searchQuery.trim() || showAllItems
                 ? searching
                   ? '…'
                   : searchResults.length + bundleHits.length
                 : 0}
             </span>
+            <button
+              type="button"
+              className={`inv-type-filters__btn${showAllItems ? ' inv-type-filters__btn--active' : ''}`}
+              aria-pressed={showAllItems}
+              onClick={() => setShowAllItems((v) => !v)}
+              title="List every item without searching"
+            >
+              Show all
+            </button>
           </div>
           <div className="inv-catalog-results__toolbar-right" aria-label="Export (coming soon)">
             <span className="inv-catalog-results__export-pill" title="Excel export">
@@ -2599,19 +2339,19 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           </div>
         </div>
 
-        {!searchQuery.trim() && (
+        {!searchQuery.trim() && !showAllItems && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
-            Type to search. Results appear here.
+            Type to search, or choose Show all to list every item.
           </p>
         )}
-        {searchQuery.trim() &&
+        {(searchQuery.trim() || showAllItems) &&
           !searching &&
           searchError && (
           <p className="settings-error-message" style={{ marginTop: 0 }}>
             {searchError}
           </p>
         )}
-        {searchQuery.trim() &&
+        {(searchQuery.trim() || showAllItems) &&
           !searching &&
           !searchError &&
           searchResults.length === 0 &&
@@ -2820,6 +2560,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             </table>
           </div>
         )}
+        {hasMoreResults && !searching && (
+          <button
+            type="button"
+            className="btn secondary"
+            style={{ marginTop: 12 }}
+            disabled={loadingMoreResults}
+            onClick={() => void loadMoreCatalogRows()}
+          >
+            {loadingMoreResults ? 'Loading…' : 'Load more'}
+          </button>
+        )}
       </div>
       </div>
       ) : null}
@@ -2958,7 +2709,24 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 >
                   Associations
                 </button>
+                {detail.itemType === 'inventory' && (
+                  <button
+                    type="button"
+                    className={`inv-detail-tab${detailTab === 'history' ? ' inv-detail-tab--active' : ''}`}
+                    onClick={() => setDetailTab('history')}
+                  >
+                    History
+                  </button>
+                )}
               </div>
+
+              {detailTab === 'history' && detail.itemType === 'inventory' && selected && (
+                <InventoryItemHistory
+                  practiceId={practiceId}
+                  inventoryItemId={selected.itemId}
+                  branches={branches.filter((b) => b.isActive !== false)}
+                />
+              )}
 
               {/* ── Details tab ─────────────────────────────────── */}
               {detailTab === 'details' && <div style={{ marginBottom: 20 }}>
@@ -2994,7 +2762,115 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       onChange={(e) => setCoreDraft((d) => ({ ...d, code: e.target.value }))}
                     />
                   </label>
-                  <label className="settings-label">
+                  {detail.itemType === 'inventory' && (
+                    <label className="settings-label">
+                      Unit
+                      <select
+                        className="settings-input"
+                        value={coreDraft.sellUnitType}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, sellUnitType: e.target.value }))
+                        }
+                      >
+                        {SELL_UNIT_OPTIONS.map((o) => (
+                          <option key={o.value || 'empty'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {detail.itemType === 'inventory' && coreDraft.sellUnitType === 'other' && (
+                    <label className="settings-label">
+                      Unit name
+                      <input
+                        className="settings-input"
+                        value={coreDraft.sellUnitTypeDetail}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, sellUnitTypeDetail: e.target.value }))
+                        }
+                        placeholder="e.g. vial"
+                      />
+                    </label>
+                  )}
+                </div>
+                {branches.length > 1 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="settings-label" style={{ marginBottom: 4 }}>
+                      Shows in search at
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
+                      {branches.map((b) => (
+                        <label
+                          key={b.id}
+                          style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!branchOverrideById[b.id]?.hidden}
+                            disabled={branchHiddenSaving === b.id}
+                            onChange={(e) => void setHiddenAtBranch(b.id, !e.target.checked)}
+                          />
+                          {b.name}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                      Unticked branches won’t see this item when searching on a visit, invoice or
+                      estimate there. It stays in the Catalog. Saves right away.
+                    </p>
+                  </div>
+                )}
+                <h4 style={{ fontSize: 15, fontWeight: 600, margin: '4px 0 8px' }}>Pricing</h4>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    marginBottom: 6,
+                  }}
+                >
+                  <label className="settings-label" style={{ width: 150 }}>
+                    Cost
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className="settings-input"
+                      value={coreDraft.cost}
+                      onChange={(e) => {
+                        const cost = e.target.value;
+                        setCoreDraft((d) => {
+                          if (optionalNumber(d.markup) !== null) {
+                            const price = priceFromCostMarkup(cost, d.markup);
+                            if (price !== '') return { ...d, cost, price };
+                          }
+                          return { ...d, cost };
+                        });
+                      }}
+                    />
+                  </label>
+                  <span style={{ fontSize: 18, padding: '0 2px 8px', color: '#6b7280' }}>×</span>
+                  <label className="settings-label" style={{ width: 150 }}>
+                    Markup % of cost (optional)
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="settings-input"
+                      value={coreDraft.markup}
+                      placeholder="none"
+                      onChange={(e) => {
+                        const markup = e.target.value;
+                        setCoreDraft((d) => {
+                          const price = priceFromCostMarkup(d.cost, markup);
+                          return { ...d, markup, price: price !== '' ? price : d.price };
+                        });
+                      }}
+                    />
+                  </label>
+                  <span style={{ fontSize: 18, padding: '0 2px 8px', color: '#6b7280' }}>=</span>
+                  <label className="settings-label" style={{ width: 150 }}>
                     Price
                     <input
                       type="number"
@@ -3007,47 +2883,62 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         setCoreDraft((d) => ({
                           ...d,
                           price,
-                          markup: markupPctFromCostPrice(d.cost, price) || d.markup,
+                          markup:
+                            d.markup.trim() === ''
+                              ? ''
+                              : markupPctFromCostPrice(d.cost, price) || d.markup,
                         }));
                       }}
                     />
                   </label>
-                  <label className="settings-label">
-                    Cost
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      className="settings-input"
-                      value={coreDraft.cost}
-                      onChange={(e) => {
-                        const cost = e.target.value;
-                        setCoreDraft((d) => ({
-                          ...d,
-                          cost,
-                          markup: markupPctFromCostPrice(cost, d.price) || d.markup,
-                        }));
-                      }}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Markup %
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="settings-input"
-                      value={coreDraft.markup}
-                      onChange={(e) => {
-                        const markup = e.target.value;
-                        setCoreDraft((d) => {
-                          const price = priceFromCostMarkup(d.cost, markup);
-                          return { ...d, markup, price: price !== '' ? price : d.price };
-                        });
-                      }}
-                    />
-                  </label>
-                  {(detail.itemType === 'procedure' || detail.itemType === 'inventory') && (
-                    <label className="settings-label">
+                </div>
+                <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
+                  {(() => {
+                    const cost = optionalNumber(coreDraft.cost);
+                    const price = optionalNumber(coreDraft.price);
+                    const markup = optionalNumber(coreDraft.markup);
+                    const money = (n: number) => `$${n.toFixed(2)}`;
+                    if (cost === null || cost <= 0) {
+                      return 'Add a cost to price by markup, or just enter the price.';
+                    }
+                    if (markup === null) {
+                      return price !== null
+                        ? `No markup set. Price is entered directly (${money(price - cost)} over cost). Enter a markup to calculate the price from cost instead.`
+                        : 'Enter a markup to calculate the price from cost, or just enter the price.';
+                    }
+                    const calc = (cost * markup) / 100;
+                    if (price !== null && Math.abs(calc - price) > 0.01) {
+                      return (
+                        <span style={{ color: '#b45309' }}>
+                          The saved markup doesn’t match the price: {money(cost)} cost × {markup}%
+                          would be {money(calc)}, but the price is {money(price)}. Re-enter
+                          the markup to recalculate the price, or re-enter the price to fix the
+                          markup.
+                        </span>
+                      );
+                    }
+                    return (
+                      <>
+                        {money(cost)} cost × {markup}% = <strong>{money(calc)}</strong> price (
+                        {money(calc - cost)} over cost). Changing the markup or cost updates the
+                        price; typing a price updates the markup.
+                        {price !== null && price < cost && (
+                          <span style={{ color: '#b91c1c' }}> Price is below cost.</span>
+                        )}
+                      </>
+                    );
+                  })()}
+                </p>
+                {(detail.itemType === 'procedure' || detail.itemType === 'inventory') && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                      marginBottom: 12,
+                    }}
+                  >
+                    <label className="settings-label" style={{ width: 150 }}>
                       Service fee
                       <input
                         type="number"
@@ -3060,23 +2951,23 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         }
                       />
                     </label>
-                  )}
-                  {detail.itemType === 'inventory' && (
-                    <label className="settings-label">
-                      Minimum price
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        className="settings-input"
-                        value={coreDraft.minimumPrice}
-                        onChange={(e) =>
-                          setCoreDraft((d) => ({ ...d, minimumPrice: e.target.value }))
-                        }
-                      />
-                    </label>
-                  )}
-                </div>
+                    {detail.itemType === 'inventory' && (
+                      <label className="settings-label" style={{ width: 150 }}>
+                        Minimum price
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="settings-input"
+                          value={coreDraft.minimumPrice}
+                          onChange={(e) =>
+                            setCoreDraft((d) => ({ ...d, minimumPrice: e.target.value }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
                 <div style={{ maxWidth: 280, marginBottom: 12 }}>
                   <CategorySelect
                     categories={categories}
@@ -3097,18 +2988,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       maxWidth: 560,
                     }}
                   >
-                    <label className="settings-label">
-                      Recommended class
-                      <input
-                        className="settings-input"
-                        readOnly
-                        value={
-                          (detail.item as InventoryItem).recommendedAbc
-                            ? String((detail.item as InventoryItem).recommendedAbc)
-                            : 'Not calculated yet'
-                        }
+                    {selected && (
+                      <RecommendedAbcInfo
+                        practiceId={practiceId}
+                        itemId={selected.itemId}
+                        recommendedAbc={(detail.item as InventoryItem).recommendedAbc ?? null}
                       />
-                    </label>
+                    )}
                     <label className="settings-label">
                       Assigned class
                       <select
@@ -3172,21 +3058,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         <small style={{ display: 'block', color: '#6b7280' }}>
                           Off means the revenue stays with the practice — use this for
                           shipping and handling.
-                        </small>
-                      </span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={coreDraft.allowPriceChange}
-                        onChange={(e) =>
-                          setCoreDraft((d) => ({ ...d, allowPriceChange: e.target.checked }))
-                        }
-                      />
-                      <span>
-                        Allow price change at checkout
-                        <small style={{ display: 'block', color: '#6b7280' }}>
-                          Off fixes the price; staff cannot edit it on an invoice.
                         </small>
                       </span>
                     </label>
@@ -3322,6 +3193,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 >
                   {coreSaving ? 'Saving…' : 'Save catalog fields'}
                 </button>
+                {detail.itemType === 'lab' && selected && (
+                  <LabIntegrationEditor
+                    practiceId={practiceId}
+                    lab={detail.item as Lab}
+                    onSaved={() => refreshDetailBundle(selected)}
+                  />
+                )}
               </div>}
 
               {/* ── Clinical tab (inventory only) ────────────────── */}
@@ -3368,7 +3246,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         })()}
                   onLotsChanged={() => {
                     if (stockItemId != null) void loadBranchStock(stockItemId, branches);
-                    void reloadMovements();
                   }}
                   onOpenStockItem={
                     stockItemId != null &&
@@ -3383,107 +3260,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       : undefined
                   }
                 />
-              )}
-
-              {detailTab === 'clinical' && detail.itemType === 'inventory' && (
-                <div style={{ marginBottom: 20 }}>
-                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                    Sell / dispense units
-                  </h4>
-                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                    How this item is counted when sold or dispensed (for example a bottle of 100 vs a
-                    single capsule).
-                  </p>
-                  {unitsError && (
-                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-                      {unitsError}
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                      gap: 10,
-                    }}
-                  >
-                    <label className="settings-label">
-                      Primary unit
-                      <select
-                        className="settings-input"
-                        value={catalogDraft.sellUnitType}
-                        onChange={(e) =>
-                          setCatalogDraft((d) => ({ ...d, sellUnitType: e.target.value }))
-                        }
-                      >
-                        {SELL_UNIT_OPTIONS.map((o) => (
-                          <option key={o.value || 'empty'} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="settings-label">
-                      Units per package (e.g. 100 caps in bottle)
-                      <input
-                        className="settings-input"
-                        value={catalogDraft.unitsPerPackage}
-                        onChange={(e) =>
-                          setCatalogDraft((d) => ({ ...d, unitsPerPackage: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-label" style={{ gridColumn: '1 / -1' }}>
-                      Detail when unit is “other”
-                      <input
-                        className="settings-input"
-                        value={catalogDraft.sellUnitTypeDetail}
-                        onChange={(e) =>
-                          setCatalogDraft((d) => ({ ...d, sellUnitTypeDetail: e.target.value }))
-                        }
-                        placeholder="e.g. vial"
-                      />
-                    </label>
-                    <label className="settings-label">
-                      Secondary unit (optional)
-                      <small style={{ display: 'block', color: '#6b7280', fontWeight: 400 }}>A second way to sell this — e.g. single capsule alongside a bottle of 100.</small>
-                      <select
-                        className="settings-input"
-                        value={catalogDraft.alternateSellUnitType}
-                        onChange={(e) =>
-                          setCatalogDraft((d) => ({ ...d, alternateSellUnitType: e.target.value }))
-                        }
-                      >
-                        {SELL_UNIT_OPTIONS.map((o) => (
-                          <option key={`alt-${o.value || 'empty'}`} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="settings-label">
-                      Units per secondary package (optional)
-                      <input
-                        className="settings-input"
-                        value={catalogDraft.alternateUnitsPerPackage}
-                        onChange={(e) =>
-                          setCatalogDraft((d) => ({
-                            ...d,
-                            alternateUnitsPerPackage: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn primary"
-                    style={{ marginTop: 14 }}
-                    disabled={unitsSaving}
-                    onClick={() => void saveUnitFields()}
-                  >
-                    {unitsSaving ? 'Saving…' : 'Save units'}
-                  </button>
-                </div>
               )}
 
               {detailTab === 'associations' &&
@@ -3586,10 +3362,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           className="settings-input"
                           value={stockLinkQty}
                           onChange={(e) => setStockLinkQty(e.target.value)}
-                          placeholder={
-                            detail.itemType === 'lab' ? '1' : 'e.g. 100 for a bottle of 100'
-                          }
+                          placeholder="1"
                         />
+                        <small className="settings-muted" style={{ display: 'block', fontWeight: 400, marginTop: 4 }}>
+                          Multiplied by the quantity charged. At 1, charging 2 uses 2 of{' '}
+                          {stockLinkItemLabel || 'the stock item'}; a bottle of 100 would be 100.
+                          Blank means 1.
+                        </small>
                       </label>
                     )}
                     <div>
@@ -3631,9 +3410,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     Prices by branch
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
-                    Effective sell prices at each branch (practice catalog with any branch overrides).
-                    Sell total uses the same formula as SOAP and checkout. Edit one branch, or apply
-                    the same values to all.
+                    Branches follow the prices in Details unless you give them their own. A branch
+                    markup keeps the price following cost. Sell total uses the same formula as SOAP
+                    and checkout.
                   </p>
                   {branchPricesError && (
                     <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
@@ -3647,6 +3426,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       <thead>
                         <tr>
                           <th>Branch</th>
+                          <th>Pricing</th>
                           <th>Price</th>
                           <th>Cost</th>
                           <th>Service fee</th>
@@ -3658,9 +3438,26 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       <tbody>
                         {branches.map((b) => {
                           const m = branchEffectiveById[b.id];
+                          const o = branchOverrideById[b.id];
+                          const ownMoney =
+                            o != null &&
+                            (o.price != null ||
+                              o.cost != null ||
+                              o.serviceFee != null ||
+                              o.minimumPrice != null ||
+                              o.markup != null);
+                          const pricing =
+                            o?.markup != null
+                              ? `Own markup ${Number(o.markup)}%`
+                              : o?.price != null
+                                ? 'Own price'
+                                : ownMoney
+                                  ? 'Details, with branch changes'
+                                  : 'Follows Details';
                           return (
                             <tr key={b.id}>
                               <td>{b.name}</td>
+                              <td className={ownMoney ? undefined : 'settings-muted'}>{pricing}</td>
                               <td>{m?.price != null ? `$${Number(m.price).toFixed(2)}` : '—'}</td>
                               <td>{m?.cost != null ? `$${Number(m.cost).toFixed(2)}` : '—'}</td>
                               <td>
@@ -3724,6 +3521,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                                     </span>
                                   )}
                                 </td>
+                                <td className="settings-muted">Web price</td>
                                 <td>{hasBase ? `$${storeMoney.price.toFixed(2)}` : '—'}</td>
                                 <td>${storeMoney.cost.toFixed(2)}</td>
                                 <td>${storeMoney.serviceFee.toFixed(2)}</td>
@@ -3777,7 +3575,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     </button>
                   </div>
                   <CatalogDiscountRulesFields
-                    namePrefix="catalog-edit-staff-mode"
                     value={coreDraft}
                     onChange={(patch) => setCoreDraft((d) => ({ ...d, ...patch }))}
                   />
@@ -4086,8 +3883,43 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                             setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
                           }
                         />
-                        Listed on online store
+                        Listed on online store{sharedStoreListing ? ' (this size)' : ''}
                       </label>
+                      {sharedStoreListing ? (
+                        <div
+                          className="settings-muted"
+                          style={{
+                            fontSize: 13,
+                            marginBottom: 14,
+                            padding: '10px 12px',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 8,
+                          }}
+                        >
+                          Part of the store product <strong>{sharedStoreListing.name}</strong> (
+                          {sharedStoreListing.variants.length} sizes)
+                          {sharedStoreListing.storeCategory
+                            ? ` in ${sharedStoreListing.storeCategory}`
+                            : ''}
+                          . Its description and category are shared by every size, so edit them
+                          on Store items.{' '}
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ padding: '2px 10px', fontSize: 13, marginLeft: 4 }}
+                            onClick={() =>
+                              navigate(
+                                `/schedule/inventory/online-store?tab=items&product=${encodeURIComponent(
+                                  sharedStoreListing.listingId
+                                )}`
+                              )
+                            }
+                          >
+                            Open in Store items
+                          </button>
+                        </div>
+                      ) : (
+                      <>
                       <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
                         Store listing description
                         <small style={{ display: 'block', color: '#6b7280', fontWeight: 400 }}>Shows below the product name on the online store. Leave blank to use no description.</small>
@@ -4143,6 +3975,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           <option value="__new__">Add new category…</option>
                         </select>
                       </label>
+                      </>
+                      )}
                       {detail.itemType === 'inventory' && (
                       <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
                         <legend className="settings-label" style={{ marginBottom: 6 }}>
@@ -4222,53 +4056,96 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           </div>
                         </div>
                       </div>
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          marginBottom: 12,
-                          cursor: 'pointer',
-                          fontSize: 14,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={catalogDraft.requiresDoctorApproval}
-                          onChange={(e) =>
-                            setCatalogDraft((d) => ({
-                              ...d,
-                              requiresDoctorApproval: e.target.checked,
-                            }))
-                          }
-                        />
-                        Doctor approval required
-                      </label>
+                      {detail.itemType === 'inventory' ? (
+                        <p style={{ margin: '0 0 12px', fontSize: 14 }}>
+                          Prescription required:{' '}
+                          <strong>{catalogDraft.requiresDoctorApproval ? 'Yes' : 'No'}</strong>{' '}
+                          <span className="settings-muted">(set on Clinical)</span>{' '}
+                          <button
+                            type="button"
+                            className="inv-catalog-results__text-btn"
+                            onClick={() => setDetailTab('clinical')}
+                          >
+                            Change
+                          </button>
+                        </p>
+                      ) : (
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            marginBottom: 12,
+                            cursor: 'pointer',
+                            fontSize: 14,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={catalogDraft.requiresDoctorApproval}
+                            onChange={(e) =>
+                              setCatalogDraft((d) => ({
+                                ...d,
+                                requiresDoctorApproval: e.target.checked,
+                              }))
+                            }
+                          />
+                          Prescription required (refills on file skip the doctor)
+                        </label>
+                      )}
                       {detail.itemType === 'inventory' && (
                         <>
-                          <label
+                          <div
                             style={{
                               display: 'flex',
                               alignItems: 'center',
                               gap: 8,
                               marginBottom: 12,
-                              cursor: 'pointer',
                               fontSize: 14,
+                              flexWrap: 'wrap',
                             }}
                           >
-                            <input
-                              type="checkbox"
-                              checked={catalogDraft.autoshipOffered}
-                              onChange={(e) =>
-                                setCatalogDraft((d) => ({
-                                  ...d,
-                                  autoshipOffered: e.target.checked,
-                                  autoshipFrequency: d.autoshipFrequency || 'monthly',
-                                }))
-                              }
-                            />
-                            Autoship
-                          </label>
+                            <label
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={catalogDraft.autoshipOffered}
+                                onChange={(e) =>
+                                  setCatalogDraft((d) => ({
+                                    ...d,
+                                    autoshipOffered: e.target.checked,
+                                    autoshipFrequency: d.autoshipFrequency || 'monthly',
+                                  }))
+                                }
+                              />
+                              Autoship
+                            </label>
+                            {catalogDraft.autoshipOffered ? (
+                              <select
+                                className="settings-input"
+                                style={{ width: 'auto' }}
+                                aria-label="Recommended autoship frequency"
+                                value={catalogDraft.autoshipFrequency}
+                                onChange={(e) =>
+                                  setCatalogDraft((d) => ({
+                                    ...d,
+                                    autoshipFrequency: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="monthly">Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                                <option value="every_6_months">Every 6 months</option>
+                                <option value="yearly">Yearly</option>
+                              </select>
+                            ) : null}
+                          </div>
                                 <label
                                   style={{
                                     display: 'flex',
@@ -4405,26 +4282,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                                     </label>
                                   </>
                                 ) : null}
-                          {catalogDraft.autoshipOffered ? (
-                            <label className="settings-label" style={{ marginBottom: 12 }}>
-                              Autoship frequency
-                              <select
-                                className="settings-input"
-                                value={catalogDraft.autoshipFrequency}
-                                onChange={(e) =>
-                                  setCatalogDraft((d) => ({
-                                    ...d,
-                                    autoshipFrequency: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="monthly">Monthly</option>
-                                <option value="quarterly">Quarterly</option>
-                                <option value="every_6_months">Every 6 months</option>
-                                <option value="yearly">Yearly</option>
-                              </select>
-                            </label>
-                          ) : null}
                         </>
                       )}
                       {detail.itemType === 'inventory' && catalogDraft.showOnOnlineStore ? (
@@ -4471,234 +4328,58 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     Stock movements
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                    Transfers move stock between locations <strong>within</strong> a branch. Choose
-                    the branch for recording and history below. Branch-to-branch moves use receive /
-                    adjust.
+                    Stock is received, moved and wasted from the Inventory pages.
                   </p>
-                  <label className="settings-label" style={{ maxWidth: 320, marginBottom: 16 }}>
-                    Branch
-                    <select
-                      className="settings-input"
-                      value={movementBranchId ?? ''}
-                      disabled={!branches.length}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        if (Number.isFinite(v)) setMovementBranchId(v);
-                      }}
-                    >
-                      {!branches.length && <option value="">No branches</option>}
-                      {branches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                          {b.isDefault ? ' (default)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div style={{ marginBottom: 24 }}>
-                    <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>
-                      Record movement
-                    </h4>
-                    <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                      Attribution uses your session by default; set employee ID only to override
-                      (e.g. <code>doctorId</code> from profile is {doctorId ?? 'not set'}).
-                    </p>
-                    {movementError && (
-                      <div
-                        className="settings-message settings-error-message"
-                        style={{ marginBottom: 8 }}
-                      >
-                        {movementError}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
-                      <label className="settings-label">
-                        Movement type
-                        <select
-                          className="settings-input"
-                          value={movementType}
-                          onChange={(e) => {
-                            setMovementType(e.target.value as InventoryMovementType);
-                            setMovementError(null);
-                          }}
-                        >
-                          {MOVEMENT_TYPES.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="settings-label">
-                        Quantity
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
-                          className="settings-input"
-                          value={movementQty}
-                          onChange={(e) => setMovementQty(e.target.value)}
-                        />
-                      </label>
-                      {movementNeedsFrom(movementType) && (
-                        <label className="settings-label">
-                          From location
-                          <select
-                            className="settings-input"
-                            value={movementFromId}
-                            onChange={(e) => setMovementFromId(e.target.value)}
-                          >
-                            {movementLocations.map((loc) => (
-                              <option
-                                key={loc.id}
-                                value={loc.id}
-                                disabled={loc.isActive === false}
-                              >
-                                {locationLabel(loc)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                      {movementNeedsTo(movementType) && (
-                        <label className="settings-label">
-                          To location
-                          <select
-                            className="settings-input"
-                            value={movementToId}
-                            onChange={(e) => setMovementToId(e.target.value)}
-                          >
-                            {movementLocations.map((loc) => (
-                              <option
-                                key={loc.id}
-                                value={loc.id}
-                                disabled={loc.isActive === false}
-                              >
-                                {locationLabel(loc)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                      <label className="settings-label">
-                        Note (optional)
-                        <input
-                          className="settings-input"
-                          value={movementNote}
-                          onChange={(e) => setMovementNote(e.target.value)}
-                          placeholder="Invoice #, reason, etc."
-                        />
-                      </label>
-                      <p className="settings-muted" style={{ margin: 0 }}>
-                        Your signed-in account and the current time are logged automatically.
-                      </p>
-                      <button
-                        type="button"
-                        className="btn primary"
-                        disabled={
-                          movementSubmitting || !movementLocations.length || movementBranchId == null
-                        }
-                        onClick={() => void submitMovement()}
-                      >
-                        {movementSubmitting ? 'Recording…' : 'Record movement'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                     <button
                       type="button"
                       className="btn"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        marginBottom: movementHistoryOpen ? 8 : 0,
-                      }}
-                      onClick={() => setMovementHistoryOpen((open) => !open)}
+                      onClick={() => navigate('/schedule/inventory/receive')}
                     >
-                      {movementHistoryOpen ? (
-                        <ChevronDown size={16} aria-hidden />
-                      ) : (
-                        <ChevronRight size={16} aria-hidden />
-                      )}
-                      Movement history
-                      {movementTotal > 0 ? (
-                        <span className="settings-muted" style={{ fontWeight: 400 }}>
-                          ({movementTotal})
-                        </span>
-                      ) : null}
+                      Receive
                     </button>
-                    {movementHistoryOpen ? (
-                      movementsLoading && movements.length === 0 ? (
-                        <p className="settings-muted">Loading history…</p>
-                      ) : movements.length === 0 ? (
-                        <p className="settings-muted">
-                          No movements yet for this item at this branch.
-                        </p>
-                      ) : (
-                        <>
-                          <div className="settings-table-container">
-                            <table className="settings-table">
-                              <thead>
-                                <tr>
-                                  <th>When</th>
-                                  <th>Type</th>
-                                  <th>Qty</th>
-                                  <th>From</th>
-                                  <th>To</th>
-                                  <th>Who</th>
-                                  <th>Note</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {movements.map((m, idx) => (
-                                  <tr key={String(m.id ?? idx)}>
-                                    <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                                      {m.created
-                                        ? new Date(String(m.created)).toLocaleString()
-                                        : '—'}
-                                    </td>
-                                    <td style={{ fontSize: 12 }}>
-                                      {String(m.movementType ?? '—')}
-                                    </td>
-                                    <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
-                                    <td style={{ fontSize: 12 }}>
-                                      {resolveLocationName(m.fromBranchLocationId as number)}
-                                    </td>
-                                    <td style={{ fontSize: 12 }}>
-                                      {resolveLocationName(m.toBranchLocationId as number)}
-                                    </td>
-                                    <td style={{ fontSize: 12 }}>{movementActorName(m)}</td>
-                                    <td
-                                      style={{ fontSize: 12, maxWidth: 160 }}
-                                      title={String(m.note ?? '')}
-                                    >
-                                      {m.note ? String(m.note) : '—'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          {movements.length < movementTotal && (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ marginTop: 10 }}
-                              disabled={movementsLoading}
-                              onClick={() => void loadMoreMovements()}
-                            >
-                              {movementsLoading
-                                ? 'Loading…'
-                                : `Load more (${movements.length} of ${movementTotal})`}
-                            </button>
-                          )}
-                        </>
-                      )
-                    ) : null}
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() =>
+                        navigate(
+                          `/schedule/inventory/move?${new URLSearchParams({
+                            item: String(selected.itemId),
+                            name: detail.item.name ?? '',
+                          })}`
+                        )
+                      }
+                    >
+                      Move this item
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => navigate('/schedule/inventory/waste')}
+                    >
+                      Waste / adjust
+                    </button>
                   </div>
+
+                  <p className="settings-muted" style={{ margin: 0 }}>
+                    Past movements for every branch are on the{' '}
+                    <button
+                      type="button"
+                      onClick={() => setDetailTab('history')}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        color: 'inherit',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                      }}
+                    >
+                      History
+                    </button>{' '}
+                    tab.
+                  </p>
                 </div>
               )}
 
@@ -4844,7 +4525,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   />
                 </label>
                 <label className="settings-label">
-                  Markup %
+                  Markup % of cost
                   <input
                     type="number"
                     step="0.01"
@@ -4900,7 +4581,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 />
               </div>
               <CatalogDiscountRulesFields
-                namePrefix="catalog-create-staff-mode"
                 value={createForm}
                 onChange={(patch) => setCreateForm((f) => ({ ...f, ...patch }))}
               />
@@ -5008,7 +4688,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     ['hideOnMedicalRecordView', 'Hide on medical record view'],
                     ['hideOnMedicalRecordPrint', 'Hide on medical record print'],
                     ['excludeFromProduction', 'Exclude from production'],
-                    ['allowPriceChange', 'Allow price change'],
                     ['changePatientSex', 'Change patient sex'],
                   ] as const
                 ).map(([key, label]) => (
@@ -5195,16 +4874,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         }
                       />
                     </label>
-                    <label className="settings-label">
-                      Default serial (optional)
-                      <input
-                        className="settings-input"
-                        value={createForm.defaultSerial}
-                        onChange={(e) =>
-                          setCreateForm((f) => ({ ...f, defaultSerial: e.target.value }))
-                        }
-                      />
-                    </label>
+                    <p className="settings-muted" style={{ gridColumn: '1 / -1', margin: 0, fontSize: 13 }}>
+                      Serial number comes from the lot chosen when the vaccine is given.
+                    </p>
                   </div>
                   <label className="settings-checkbox-item" style={{ marginBottom: 6 }}>
                     <input
@@ -5218,19 +4890,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       }
                     />
                     <span>Create rabies certificate</span>
-                  </label>
-                  <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={createForm.createVaccinationLog}
-                      onChange={(e) =>
-                        setCreateForm((f) => ({
-                          ...f,
-                          createVaccinationLog: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Create vaccination log</span>
                   </label>
                 </>
               )}
@@ -5283,8 +4942,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           >
             <h3 className="settings-card-title">Branch price override</h3>
             <p className="settings-muted" style={{ marginBottom: 16 }}>
-              Set the values below, then choose which branches receive them as overrides. Clear
-              overrides falls back to the practice catalog on the checked branches only.
+              Set the values below, then choose which branches get them. Clear overrides puts the
+              checked branches back on the practice prices from Details.
             </p>
             {priceError && (
               <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
@@ -5304,6 +4963,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     const m = branchEffectiveById[id];
                     if (!m) return;
                     setPriceForm(effectiveToResolved(m));
+                    setPriceMarkup(seedMarkupFor(branchOverrideById[id]));
                   }}
                 >
                   <option value="" disabled>
@@ -5316,31 +4976,93 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   ))}
                 </select>
                 <span className="settings-muted" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
-                  Fills Price, Cost, Service fee, and Minimum from that branch’s effective prices.
-                  Nothing is saved until you click Save. For Online store, only Price is written as
-                  the web base.
+                  Fills Price, Cost, Markup, Service fee, and Minimum from that branch. Nothing is
+                  saved until you click Save. For Online store, only Price is written as the web
+                  base.
                 </span>
               </label>
             )}
-            {(['price', 'cost', 'serviceFee', 'minimumPrice'] as const).map((key) => (
-              <label key={key} className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
-                {key === 'serviceFee'
-                  ? 'Service fee'
-                  : key === 'minimumPrice'
-                    ? 'Minimum price'
-                    : key.charAt(0).toUpperCase() + key.slice(1)}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              <label className="settings-label" style={{ flex: '1 1 100px', marginBottom: 4 }}>
+                Cost
                 <input
                   type="number"
                   className="settings-input"
                   step="0.01"
-                  value={priceForm[key] ?? ''}
+                  value={priceForm.cost ?? ''}
                   onChange={(e) => {
                     const v = e.target.value === '' ? 0 : Number(e.target.value);
-                    setPriceForm((f) => ({ ...f, [key]: Number.isFinite(v) ? v : 0 }));
+                    const cost = Number.isFinite(v) ? v : 0;
+                    const fromMarkup = priceFromCostMarkup(String(cost), priceMarkup);
+                    setPriceForm((f) => ({
+                      ...f,
+                      cost,
+                      ...(fromMarkup !== '' && cost > 0 ? { price: Number(fromMarkup) } : {}),
+                    }));
                   }}
                 />
               </label>
-            ))}
+              <span style={{ paddingBottom: 14 }}>×</span>
+              <label className="settings-label" style={{ flex: '1 1 120px', marginBottom: 4 }}>
+                Markup % of cost
+                <input
+                  type="number"
+                  className="settings-input"
+                  step="1"
+                  placeholder="Fixed price"
+                  value={priceMarkup}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPriceMarkup(next);
+                    const fromMarkup = priceFromCostMarkup(String(priceForm.cost), next);
+                    if (fromMarkup !== '' && priceForm.cost > 0) {
+                      setPriceForm((f) => ({ ...f, price: Number(fromMarkup) }));
+                    }
+                  }}
+                />
+              </label>
+              <span style={{ paddingBottom: 14 }}>=</span>
+              <label className="settings-label" style={{ flex: '1 1 100px', marginBottom: 4 }}>
+                Price
+                <input
+                  type="number"
+                  className="settings-input"
+                  step="0.01"
+                  value={priceForm.price ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value === '' ? 0 : Number(e.target.value);
+                    setPriceForm((f) => ({ ...f, price: Number.isFinite(v) ? v : 0 }));
+                    setPriceMarkup('');
+                  }}
+                />
+              </label>
+            </div>
+            <p className="settings-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
+              {optionalNumber(priceMarkup) != null && priceForm.cost > 0
+                ? `Price follows cost: $${priceForm.cost.toFixed(2)} × ${Number(priceMarkup)}% = $${priceForm.price.toFixed(2)}. When cost changes, this branch's price changes with it.`
+                : 'Fixed price for this branch. Typing a price clears the markup; enter a markup to have the price follow cost.'}
+              {practiceMarkup != null && ` Practice markup is ${practiceMarkup}%.`}
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {(['serviceFee', 'minimumPrice'] as const).map((key) => (
+                <label key={key} className="settings-label" style={{ flex: '1 1 140px', marginBottom: 12 }}>
+                  {key === 'serviceFee' ? 'Service fee' : 'Minimum price'}
+                  <input
+                    type="number"
+                    className="settings-input"
+                    step="0.01"
+                    value={priceForm[key] ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? 0 : Number(e.target.value);
+                      setPriceForm((f) => ({ ...f, [key]: Number.isFinite(v) ? v : 0 }));
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="settings-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
+              Anything left the same as Details keeps following Details.
+            </p>
 
             <div style={{ marginTop: 8, marginBottom: 12 }}>
               <div
@@ -5521,9 +5243,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           >
             <h3 className="settings-card-title">Bulk price adjustment</h3>
             <p className="settings-muted" style={{ marginBottom: 12 }}>
-              Applies to {Object.keys(bulkSelected).length} inventory catalog item(s). Use positive
-              percents to raise prices (e.g. <code>5</code> = +5%). Leave a field blank to skip that
-              adjustment.
+              Applies to {Object.keys(bulkSelected).length} inventory catalog item(s). Positive
+              numbers raise prices and negative numbers lower them (<code>-10</code> = 10% off).
+              Flat amounts are added to the current price, not used in place of it. Practice price
+              changes also apply to any branch-specific prices. Items with no online store price are
+              skipped for online changes. Leave a field blank to skip it.
             </p>
             {bulkError && (
               <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>

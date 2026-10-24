@@ -343,6 +343,7 @@ export function RefillProductionCredit({
   const [formError, setFormError] = useState<string | null>(null);
 
   const overridden = line.productionOverrideAt != null && line.providerEmployeeId != null;
+  const reasonOptional = line.refillProductionReasonOptional === true;
   const providerLabel = (id: number | null | undefined) =>
     id == null ? '—' : (providers.find((p) => p.id === id)?.label ?? `Provider #${id}`);
 
@@ -359,7 +360,7 @@ export function RefillProductionCredit({
       setFormError('Pick the provider who gets the production.');
       return;
     }
-    if (reason.trim().length < REFILL_OVERRIDE_REASON_MIN) {
+    if (!reasonOptional && reason.trim().length < REFILL_OVERRIDE_REASON_MIN) {
       setFormError(`Write why (at least ${REFILL_OVERRIDE_REASON_MIN} characters).`);
       return;
     }
@@ -432,9 +433,9 @@ export function RefillProductionCredit({
               <div className="inv-refill">
                 <h3>Production on this refill</h3>
                 <p className="inv-refill__hint">
-                  {line.description}. Refills normally give no one production. Giving it is recorded
-                  with your name and reason on the invoice&apos;s staff audit and in the Production
-                  overrides report.
+                  {reasonOptional
+                    ? `${line.description} is set to give production on refills, so no reason is needed. Giving it is recorded with your name on the invoice's staff audit and in the Production overrides report.`
+                    : `${line.description}. Refills normally give no one production. Giving it is recorded with your name and reason on the invoice's staff audit and in the Production overrides report.`}
                 </p>
                 {overridden && !editing ? (
                   <div className="inv-refill__summary">
@@ -471,7 +472,9 @@ export function RefillProductionCredit({
                       </select>
                     </label>
                     <label>
-                      Why does this refill get production?
+                      {reasonOptional
+                        ? 'Note (optional)'
+                        : 'Why does this refill get production?'}
                       <textarea
                         rows={3}
                         value={reason}

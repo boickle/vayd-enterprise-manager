@@ -84,6 +84,8 @@ export type StoreVariant = {
   name: string;
   code: string | null;
   onlineStorePrice: number | null;
+  serviceFee?: number | null;
+  minimumPrice?: number | null;
   priceBreaks?: StorePriceBreak[];
   strength: string | null;
   pack: string;

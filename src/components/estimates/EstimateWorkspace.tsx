@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mail, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
-import { searchItems, type SearchableItem } from '../../api/roomLoader';
+import { checkItemPricing, searchItems, type SearchableItem } from '../../api/roomLoader';
 import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
 import {
   addEstimateLine,
@@ -18,7 +18,12 @@ import {
   type BundleSaleResolution,
 } from '../../api/memberships';
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
-import { getCatalogLinePrice } from '../../utils/catalogItemPricing';
+import {
+  buildCheckItemPayload,
+  getBundleLinePrice,
+  getCatalogLinePrice,
+  newBundleSaleId,
+} from '../../utils/catalogItemPricing';
 import {
   estimateEmailModel,
   invoicePdfAttachment,
@@ -37,6 +42,7 @@ import {
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
+import { useCan } from '../../permissions/PermissionContext';
 import './EstimateWorkspace.css';
 
 export type EstimatePet = {
@@ -77,17 +83,6 @@ function catalogIdOf(item: SearchableItem): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
-function newBundleSaleId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
-    const r = (Math.random() * 16) | 0;
-    const v = ch === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 function groupLinesByBundle(lines: VisitEstimateLine[]): LineBlock[] {
   const blocks: LineBlock[] = [];
   const saleIndex = new Map<string, number>();
@@ -117,16 +112,6 @@ function groupLinesByBundle(lines: VisitEstimateLine[]): LineBlock[] {
     });
   }
   return blocks;
-}
-
-function lineAllowsPriceEdit(
-  line: Pick<VisitEstimateLine, 'catalogItemId' | 'catalogItemType' | 'catalogAllowPriceChange'>
-): boolean {
-  if (line.catalogItemId == null) return true;
-  if (line.catalogItemType !== 'inventory' && line.catalogItemType !== 'procedure') {
-    return true;
-  }
-  return line.catalogAllowPriceChange === true;
 }
 
 function petLabel(pets: EstimatePet[], id: number | null | undefined, fallback?: string | null) {
@@ -168,6 +153,7 @@ export default function EstimateWorkspace({
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const locked = disabled || estimate.status === 'converted';
+  const canChangePrice = useCan('invoice.price.change');
   const showPetPicker = !lockPatient && pets.length > 0;
   const lines = estimate.lines ?? [];
   const blocks = groupLinesByBundle(lines);
@@ -198,6 +184,7 @@ export default function EstimateWorkspace({
           limit: 20,
           patientId: linePatientId ?? undefined,
           clientId: clientId ?? estimate.clientId ?? undefined,
+          estimateId: estimate.id,
         }),
         listBundles({ kind: 'bundle', q: term }).catch(() => [] as Bundle[]),
       ])
@@ -279,15 +266,43 @@ export default function EstimateWorkspace({
       try {
         const bundleSaleId = newBundleSaleId();
         let next = estimate;
+        if (resolution.fixedPrice) {
+          next = await addEstimateLine(estimate.id, {
+            description: resolution.bundleName,
+            qty: 1,
+            unitPrice: Number(resolution.bundlePrice) || 0,
+            patientId: linePatientId,
+            bundleSaleId,
+            sourceBundleId: resolution.bundleId,
+            sourceBundleName: resolution.bundleName,
+          });
+        }
         for (const line of resolution.lines as BundleSaleLine[]) {
+          let priced = getBundleLinePrice(line, null, resolution.discountPercent);
+          if (linePatientId != null && !resolution.fixedPrice) {
+            try {
+              const checked = await checkItemPricing({
+                patientId: linePatientId,
+                practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+                clientId: clientId ?? estimate.clientId ?? undefined,
+                itemType: line.itemType,
+                item: buildCheckItemPayload(line.itemType, line.catalogItemId),
+                estimateId: estimate.id,
+              });
+              priced = getBundleLinePrice(line, checked, resolution.discountPercent);
+            } catch {
+              /* use bundle catalog price */
+            }
+          }
           next = await addEstimateLine(estimate.id, {
             description: line.name,
             qty: line.quantity,
-            unitPrice: line.unitPrice,
+            unitPrice: priced.unitFinal,
+            isCovered: priced.isCovered,
             catalogItemId: line.catalogItemId,
             catalogItemType: line.itemType,
             listUnitPrice:
-              line.listUnitPrice > line.unitPrice + 0.009 ? line.listUnitPrice : null,
+              line.listUnitPrice > priced.unitFinal + 0.009 ? line.listUnitPrice : null,
             patientId: linePatientId,
             bundleSaleId,
             sourceBundleId: resolution.bundleId,
@@ -306,7 +321,7 @@ export default function EstimateWorkspace({
         setBusy(false);
       }
     },
-    [estimate, linePatientId, onChange, showPetPicker]
+    [clientId, estimate, linePatientId, onChange, showPetPicker]
   );
 
   const pickBundle = useCallback(
@@ -417,7 +432,7 @@ export default function EstimateWorkspace({
   const renderPrice = (line: VisitEstimateLine) => {
     const charged = Number(line.unitPrice) || 0;
     if (line.isCovered) return <span>Covered</span>;
-    if (locked || !lineAllowsPriceEdit(line)) return <span>{money(charged)}</span>;
+    if (locked || !canChangePrice) return <span>{money(charged)}</span>;
     if (priceEditId === line.id) {
       return (
         <input

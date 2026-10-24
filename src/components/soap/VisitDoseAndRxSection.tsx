@@ -27,6 +27,7 @@ import {
 import {
   fetchCatalogPricingForOrder,
   getCatalogLinePrice,
+  isFixedPackItem,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import VaccineLotPicker from './VaccineLotPicker';
@@ -199,6 +200,12 @@ export default function VisitDoseAndRxSection({
     async (order: EncounterOrder, qty: number) => {
       const q = Math.max(1, Math.round(qty));
       if (q === Number(order.qty)) return;
+
+      if (isFixedPackItem(order)) {
+        onOrderUpdated(await updateOrder(encounterId, order.id, { qty: q }));
+        onInvoiceShouldRefresh();
+        return;
+      }
 
       let snapshot: CatalogPricingItem | null = pricingByOrderId[order.id] ?? null;
       if (!snapshot && patientId != null && order.catalogItemId != null) {

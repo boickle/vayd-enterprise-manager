@@ -1,7 +1,7 @@
 /** Catalog = what the practice charges for. Pharmacy = stock, store, and mail fulfillment. */
 
 export const CATALOG_HOME = '/schedule/inventory/items';
-export const INVENTORY_HOME = '/schedule/inventory/par-levels';
+export const INVENTORY_HOME = '/schedule/inventory/counts';
 
 const PHARMACY_SEGMENTS = new Set([
   'par-levels',
@@ -23,6 +23,7 @@ const PHARMACY_SEGMENTS = new Set([
   'transfer-list',
   'online-store',
   'store-categories',
+  'store-import',
   'abandoned-carts',
   'auto-ships',
   'subscriptions',

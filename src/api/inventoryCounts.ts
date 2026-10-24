@@ -108,6 +108,31 @@ export async function refreshInventoryAbc(practiceId: number): Promise<{ updated
   return data ?? { updated: 0 };
 }
 
+export type InventoryAbcExplanation = {
+  lookbackDays: number;
+  drawsFrom: { id: number; name: string } | null;
+  stockItemCount?: number;
+  calculatedAt?: string | null;
+  /** Dollars used: units × unit cost. */
+  usage?: number;
+  unitsUsed?: number;
+  unitCost?: number | null;
+  rank?: number | null;
+  itemsWithUsage?: number;
+  aMinUsage?: number | null;
+  bMinUsage?: number | null;
+};
+
+export async function getInventoryAbcExplanation(
+  practiceId: number,
+  itemId: number
+): Promise<InventoryAbcExplanation> {
+  const { data } = await http.get<InventoryAbcExplanation>(
+    `/practice/${practiceId}/inventory-items/${itemId}/abc-explanation`
+  );
+  return data;
+}
+
 export async function startCountSession(
   practiceId: number,
   branchId: number,

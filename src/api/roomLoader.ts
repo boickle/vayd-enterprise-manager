@@ -592,6 +592,8 @@ export type SearchableItem = {
   name: string;
   code?: string;
   originalPrice?: number;
+  /** Fixed price per unit (copay, staff / cost-plus): line = min(line total, qty × this). */
+  perUnitPrice?: number | null;
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;
@@ -652,7 +654,7 @@ export type ItemSearchParams = {
   patientId?: number;
   /** Apply client status / personal discounts for this client. */
   clientId?: number;
-};
+} & PricingVisitContext;
 
 export async function searchItems(params: ItemSearchParams): Promise<SearchableItem[]> {
   const queryParams = new URLSearchParams();
@@ -670,13 +672,22 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   if (params.clientId != null) {
     queryParams.append('clientId', String(params.clientId));
   }
+  for (const key of ['branchId', 'invoiceId', 'encounterId', 'estimateId', 'appointmentId'] as const) {
+    const v = params[key];
+    if (v != null && v !== '') queryParams.append(key, String(v));
+  }
 
   const { data } = await http.get<SearchableItem[]>(`/room-loader/items/search?${queryParams.toString()}`);
   return data;
 }
 
-/** Public item search (no auth required). Used by the public room loader form. */
-export async function searchItemsPublic(params: ItemSearchParams): Promise<SearchableItem[]> {
+/**
+ * Public item search (no auth required). Used by the public room loader form; its token
+ * lets the search use the visit's branch (prices and branch-hidden items).
+ */
+export async function searchItemsPublic(
+  params: ItemSearchParams & { token?: string | null }
+): Promise<SearchableItem[]> {
   const queryParams = new URLSearchParams();
   queryParams.append('q', params.q);
   queryParams.append('practiceId', String(params.practiceId));
@@ -684,6 +695,7 @@ export async function searchItemsPublic(params: ItemSearchParams): Promise<Searc
   if (params.code != null && params.code !== '') {
     queryParams.append('code', params.code);
   }
+  if (params.token) queryParams.append('token', params.token);
 
   const { data } = await http.get<SearchableItem[]>(`/public/room-loader/items/search?${queryParams.toString()}`);
   return data;
@@ -778,6 +790,15 @@ export type CheckItemPricingRequest = {
   };
   /** When several membership benefits match, force this wellness_plan_items id. */
   preferredWellnessPlanItemId?: number;
+} & PricingVisitContext;
+
+/** The visit a line is priced for; the server picks that visit's branch prices. */
+export type PricingVisitContext = {
+  branchId?: number;
+  invoiceId?: string;
+  encounterId?: string;
+  estimateId?: string;
+  appointmentId?: number;
 };
 
 export type MembershipCoverageAlternative = {
@@ -803,6 +824,8 @@ export type CheckItemPricingResponse = {
   };
   adjustedPrice: number;
   originalPrice: number;
+  /** Fixed price per unit (copay, staff / cost-plus): line = min(line total, qty × this). */
+  perUnitPrice?: number;
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;

@@ -45,6 +45,10 @@ export type CatalogCoreFields = {
   description?: string | null;
   linkedInventoryItemId?: number | null;
   linkedInventoryItemDefaultQuantity?: number | null;
+  /** Labs only: electronic ordering through IDEXX, Antech, … */
+  isIntegratedLabItem?: boolean;
+  integrationCompany?: string | null;
+  integrationOrderCode?: string | null;
 };
 
 function pathFor(itemType: ItemType, practiceId: number, id?: number): string {

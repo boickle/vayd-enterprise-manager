@@ -607,6 +607,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               practiceId: selectedRoomLoader.practice.id,
               limit: 50,
               code: query,
+              appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)
+                ?.id,
             });
             // Check again before setting results
             if (searchQuery[petId] === query) {
@@ -1491,23 +1493,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
    */
   function getTotalPreDiscountForQuantity(item: SearchableItem | any, quantity: number): number {
     const q = Math.max(0, Number(quantity) || 0);
-    const preDiscount1 = getPreDiscountForOneUnit(item);
-    if (item?.tieredPricing?.hasTieredPricing) {
-      const tieredUnit = getTieredPrice(item.tieredPricing, q, preDiscount1);
-      return tieredUnit * q;
-    }
+    const unit = (base: number) =>
+      item?.tieredPricing?.hasTieredPricing ? getTieredPrice(item.tieredPricing, q, base) : base;
     const t = ((item?.itemType ?? '') as string).toLowerCase();
     if (t === 'lab') {
-      const p = Number(item?.lab?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.lab?.price ?? item?.price ?? 0));
       return p * q;
     }
     if (t === 'procedure') {
-      const p = Number(item?.procedure?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.procedure?.price ?? item?.price ?? 0));
       const sf = Number(item?.procedure?.serviceFee ?? 0);
       return p * q + sf;
     }
     if (t === 'inventory') {
-      const p = Number(item?.inventoryItem?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.inventoryItem?.price ?? item?.price ?? 0));
       const sf = Number(item?.inventoryItem?.serviceFee ?? item?.serviceFee ?? 0);
       const minP = item?.inventoryItem?.minimumPrice != null ? Number(item.inventoryItem.minimumPrice) : (item?.minimumPrice != null ? Number(item.minimumPrice) : 0);
       // Total = price*qty + serviceFee (once). Only increase above minimum when that sum exceeds minimumPrice.
@@ -1563,7 +1562,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     const originalFromApi = Number(item?.originalPrice ?? item?.wellnessPlanPricing?.originalPrice ?? preDiscount1);
     const discountRatio = originalFromApi > 0 ? adjustedFromApi / originalFromApi : 1;
 
-    const totalFinal = totalPreDiscount * discountRatio;
+    const perUnit = item?.perUnitPrice;
+    const totalFinal =
+      perUnit != null && Number.isFinite(Number(perUnit))
+        ? Math.min(totalPreDiscount, Math.max(0, Number(perUnit)) * q)
+        : totalPreDiscount * discountRatio;
     const totalOriginal = totalPreDiscount;
     const unitFinal = q > 0 ? totalFinal / q : adjustedFromApi;
 
@@ -1621,6 +1624,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         practiceId: selectedRoomLoader.practice.id,
         limit: 50,
         code: query,
+        appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)?.id,
       });
       setSearchResults((prev) => ({ ...prev, [petId]: results }));
     } catch (err: any) {
@@ -1686,6 +1690,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         species: speciesLabel,
         itemType: item.itemType,
         item: itemPayload,
+        appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)?.id,
       });
 
       // Update the item with the adjusted price and wellness plan info
@@ -1702,6 +1707,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             ...updatedItems[itemIndex],
             price: pricingResponse.adjustedPrice,
             originalPrice: pricingResponse.originalPrice,
+            perUnitPrice: pricingResponse.perUnitPrice ?? null,
             wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
             discountPricing: pricingResponse.discountPricing,
             tieredPricing: pricingResponse.tieredPricing,

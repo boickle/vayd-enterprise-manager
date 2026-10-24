@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
-import { useCan } from '../permissions/PermissionContext';
+import { usePermissions } from '../permissions/PermissionContext';
 import { isInventoryOpsNavPath } from '../utils/catalogInventoryNav';
+import ReleasedStockLinksNotice from '../components/inventory/ReleasedStockLinksNotice';
 import './Settings.css';
 
 type Props = { basePath?: string };
@@ -100,17 +101,21 @@ export default function InventoryLayout({
   basePath = '/schedule/inventory',
 }: Props) {
   const isAdmin = useIsInventoryAdmin();
-  const canBaselineCount = useCan('inventory.count.baseline', 'all');
-  const canManagePars = useCan('inventory.par.manage', 'all');
+  const { hasRole } = usePermissions();
+  const canSetup =
+    isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
+  const canManage = isAdmin || hasRole('practice_admin');
   const location = useLocation();
 
-  const onAdminPath =
-    location.pathname.includes('/inventory/suppliers') ||
-    location.pathname.includes('/inventory/count-report') ||
-    location.pathname.includes('/inventory/expiring') ||
-    location.pathname.includes('/inventory/cost-reviews');
-  if (!isAdmin && onAdminPath) {
+  const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
+  if (!isAdmin && onPath('suppliers')) {
     return <Navigate to={`${basePath}/items`} replace />;
+  }
+  if (!canManage && ['par-review', 'count-report', 'expiring', 'cost-reviews'].some(onPath)) {
+    return <Navigate to={`${basePath}/counts`} replace />;
+  }
+  if (!canSetup && ['par-seed', 'store-import'].some(onPath)) {
+    return <Navigate to={`${basePath}/counts`} replace />;
   }
   if (location.pathname.startsWith('/schedule/inventory/mail-orders')) {
     return (
@@ -139,32 +144,23 @@ export default function InventoryLayout({
     [`${basePath}/receive`, `${basePath}/move`, `${basePath}/transfer-list`].some(
       (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
     );
-  const countItems: NavItem[] = [
+  const setupItems: NavItem[] = [
     { to: `${basePath}/par-levels`, label: 'Par Levels' },
-    ...(canManagePars
-      ? [
-          { to: `${basePath}/par-review`, label: 'Par review' },
-          { to: `${basePath}/par-seed`, label: 'Set par levels (bulk)' },
-        ]
-      : []),
-    { to: `${basePath}/counts`, label: 'Weekly count list' },
-    ...(canBaselineCount
-      ? [{ to: `${basePath}/first-counts`, label: 'First / annual counts' }]
-      : []),
-    ...(isAdmin
-      ? [
-          { to: `${basePath}/count-report`, label: 'Count report' },
-          { to: `${basePath}/expiring`, label: 'Expiring' },
-          { to: `${basePath}/cost-reviews`, label: 'Cost Reviews' },
-        ]
-      : []),
+    { to: `${basePath}/first-counts`, label: 'First / Annual Counts' },
+    { to: `${basePath}/store-import`, label: 'Online Store Import' },
   ];
-  const flowItems: NavItem[] = [
-    { to: `${basePath}/initial-entry`, label: 'Initial entry' },
+  const manageItems: NavItem[] = [
+    { to: `${basePath}/par-review`, label: 'Par Review' },
+    { to: `${basePath}/count-report`, label: 'Count Report' },
+    { to: `${basePath}/expiring`, label: 'Expiring' },
+    { to: `${basePath}/cost-reviews`, label: 'Cost Reviews' },
+    { to: `${basePath}/activity`, label: 'Activity' },
+  ];
+  const moveOrderItems: NavItem[] = [
+    { to: `${basePath}/counts`, label: 'Weekly Counts' },
     { to: `${basePath}/receive`, label: 'Receive' },
     { to: `${basePath}/move`, label: 'Move Items' },
     { to: `${basePath}/waste`, label: 'Waste / Adjust' },
-    { to: `${basePath}/activity`, label: 'Activity' },
     { to: `${basePath}/transfer-list`, label: 'Transfer List' },
     { to: `${basePath}/order-list`, label: 'Order List' },
   ];
@@ -178,11 +174,10 @@ export default function InventoryLayout({
         {pharmacySection ? (
           <>
             <InventoryNavGroup
-              label="Counts"
-              items={countItems}
+              label="Move / Order"
+              items={moveOrderItems}
               alsoActiveFor={[`${basePath}/full-count`]}
             />
-            <InventoryNavGroup label="Flow" items={flowItems} />
             <InventoryNavGroup label="Store" items={storeItems} />
             <NavLink
               to={mailOrdersTo}
@@ -196,6 +191,14 @@ export default function InventoryLayout({
             >
               Auto-ships
             </NavLink>
+            {canManage ? <InventoryNavGroup label="Manage" items={manageItems} /> : null}
+            {canSetup ? (
+              <InventoryNavGroup
+                label="Setup"
+                items={setupItems}
+                alsoActiveFor={[`${basePath}/par-seed`]}
+              />
+            ) : null}
           </>
         ) : (
           catalogItems.map((item) => (
@@ -209,6 +212,7 @@ export default function InventoryLayout({
           ))
         )}
       </div>
+      {pharmacySection && canSetup ? <ReleasedStockLinksNotice /> : null}
       <Outlet />
     </div>
   );

@@ -24,6 +24,7 @@ import {
   shortBy,
   surplusBy,
 } from '../utils/inventoryLocationTargets';
+import ParLevelsModeTabs from '../components/inventory/ParLevelsModeTabs';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
@@ -616,6 +617,7 @@ export default function InventoryParLevelsPage() {
 
   return (
     <div className="settings-section">
+      <ParLevelsModeTabs />
       <p className="settings-section-description">
         Other locations have a <strong>par</strong> (ideal on-hand). The default location has
         a <strong>re-order point</strong> (when to buy) and a <strong>max</strong> (order up to). Shorts

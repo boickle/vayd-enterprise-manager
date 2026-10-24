@@ -17,6 +17,7 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import ParLevelsModeTabs from '../components/inventory/ParLevelsModeTabs';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
@@ -564,6 +565,7 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
 
   return (
     <div className="settings-card" style={{ padding: 16 }}>
+      <ParLevelsModeTabs />
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: '0 0 4px' }}>Set par levels</h2>
@@ -575,13 +577,6 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
             Start from usage, copy another location, or fill in a sheet.
           </p>
         </div>
-        <Link
-          className="btn secondary"
-          to="/schedule/inventory/par-levels"
-          style={{ alignSelf: 'flex-start' }}
-        >
-          Par Levels
-        </Link>
       </div>
 
       <div

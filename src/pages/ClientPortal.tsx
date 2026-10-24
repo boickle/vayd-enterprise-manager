@@ -33,6 +33,7 @@ import { trackEvent } from '../utils/analytics';
 import { appAlert } from '../utils/appDialog';
 import { publicStoreProducts } from '../api/onlineStore';
 import { addToStoreCart, rememberStorePortalReturn } from './store/storeCartState';
+import { storeLineUnitPrice } from './store/storePricing';
 import type { PatientPrescription } from '../api/visitWorkflow';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
@@ -524,7 +525,20 @@ export default function ClientPortal() {
       inventoryItemId: rx.inventoryItemId,
       name: variant?.name || rx.name,
       quantity: 1,
-      unitPrice: Number(variant?.onlineStorePrice ?? listing?.priceFrom ?? 0),
+      unitPrice: variant
+        ? storeLineUnitPrice({
+            base: variant.onlineStorePrice,
+            breaks: variant.priceBreaks,
+            sale: listing,
+            serviceFee: variant.serviceFee,
+            minimumPrice: variant.minimumPrice,
+            qty: 1,
+          })
+        : Number(listing?.priceFrom ?? 0),
+      basePrice: variant?.onlineStorePrice ?? undefined,
+      priceBreaks: variant?.priceBreaks,
+      serviceFee: variant?.serviceFee ?? null,
+      minimumPrice: variant?.minimumPrice ?? null,
       autoshipFrequency: listing?.recommendedFrequency || 'monthly',
       recommendedFrequency: listing?.recommendedFrequency || null,
       listingId: listing?.listingId,

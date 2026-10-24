@@ -31,7 +31,7 @@ export type InventoryItemCatalogPatch = {
   cost?: number | null;
   serviceFee?: number | null;
   minimumPrice?: number | null;
-  /** Percentage over cost: price = cost * (1 + markup / 100). */
+  /** Price as a percent of cost (eVet Markup): price = cost * markup / 100. */
   markup?: number | null;
   isMedication?: boolean;
   strength?: string | null;
@@ -153,8 +153,8 @@ export type BulkInventoryPriceAdjustBody = {
 export async function postBulkInventoryPriceAdjust(
   practiceId: number,
   body: BulkInventoryPriceAdjustBody
-): Promise<{ updated?: number; rows?: unknown[] }> {
-  const { data } = await http.post<{ updated?: number; rows?: unknown[] }>(
+): Promise<{ updated?: number; branchPricesUpdated?: number }> {
+  const { data } = await http.post<{ updated?: number; branchPricesUpdated?: number }>(
     `/practice/${practiceId}/inventory-items/bulk-price-adjust`,
     body
   );

@@ -27,8 +27,8 @@ import {
 import {
   applyStoreSale,
   roundStoreMoney,
+  storeLineUnitPrice,
   storeTaxRateForLevel,
-  storeUnitPrice,
 } from './storePricing';
 import StoreCartCardEntry, { type StoreCartCardEntryHandle } from './StoreCartCardEntry';
 import { useAbandonedCartSync } from './useAbandonedCartSync';
@@ -236,10 +236,17 @@ export default function StoreCartPage() {
         const next = { ...line, ...patch };
         const qty = Math.max(1, Math.floor(Number(next.quantity) || 1));
         next.quantity = qty;
-        next.unitPrice = applyStoreSale(
-          storeUnitPrice(next.basePrice ?? next.unitPrice, next.priceBreaks, qty),
-          next.sale
-        );
+        next.unitPrice =
+          next.basePrice == null && (next.serviceFee || next.minimumPrice)
+            ? next.unitPrice
+            : storeLineUnitPrice({
+                base: next.basePrice ?? next.unitPrice,
+                breaks: next.priceBreaks,
+                sale: next.sale,
+                serviceFee: next.serviceFee,
+                minimumPrice: next.minimumPrice,
+                qty,
+              });
         const cadence = next.reminderCadence ?? cadenceByItem[line.inventoryItemId] ?? null;
         const prevRecommended = storeRecommendedFrequency(
           cadence,

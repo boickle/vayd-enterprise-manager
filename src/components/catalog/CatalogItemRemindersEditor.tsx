@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pencil, X } from 'lucide-react';
 import {
   getCatalogItemReminders,
   listCatalogReminderDefinitions,
@@ -69,10 +70,49 @@ function selfAssociated(
   };
 }
 
-const PERIOD_UNITS = ['Hours', 'Days', 'Weeks', 'Months', 'Years'];
+const QUICK_UNITS = ['Months', 'Days'] as const;
+const CUSTOM_UNITS = ['Weeks', 'Hours', 'Years'];
+
+function isQuickUnit(unit: string): boolean {
+  return unit === 'Months' || unit === 'Days';
+}
+
+/** "11 months", "1 month". */
+function countWithUnit(amount: string | number, unit: string): string {
+  return `${amount} ${unitWord(amount, unit)}`;
+}
+
+function unitWord(amount: string | number, unit: string): string {
+  const raw = (unit || 'Months').trim() || 'Months';
+  const n = Number(amount);
+  const word =
+    Number.isFinite(n) && n === 1 && raw.toLowerCase().endsWith('s')
+      ? raw.slice(0, -1)
+      : raw;
+  return word.toLowerCase();
+}
 
 /** eVet links whole product families, so some items carry hundreds of clear rules. */
 const CLEAR_PREVIEW_COUNT = 12;
+
+/** Clearing matches patient reminders by description, so same-worded definitions are interchangeable. */
+function normalizeDescription(s: string | null | undefined): string {
+  return (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function uniqueClears(
+  clears: CatalogItemReminderBundle['clearDefinitions'],
+): CatalogItemReminderBundle['clearDefinitions'] {
+  const seen = new Set<string>();
+  return clears.filter((c) => {
+    const key = normalizeDescription(c.description);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+const CLEAR_SEARCH_LIMIT = 10;
 
 function n(s: string, fallback = 0): number {
   const v = Number(s);
@@ -100,13 +140,42 @@ export default function CatalogItemRemindersEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [editingDefId, setEditingDefId] = useState<number | null>(null);
   const selfItem = selfAssociated(itemType, itemId, itemName);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(() =>
     emptyCreate(selfItem),
   );
   const [clearTagInput, setClearTagInput] = useState('');
-  const [associateDefId, setAssociateDefId] = useState('');
+  const [clearQuery, setClearQuery] = useState('');
   const [showAllClears, setShowAllClears] = useState(false);
+
+  const uniqueDefinitions = useMemo(() => {
+    const byKey = new Map<string, CatalogReminderDefinition>();
+    for (const d of definitions) {
+      const key = normalizeDescription(d.description);
+      if (key && !byKey.has(key)) byKey.set(key, d);
+    }
+    return [...byKey.values()].sort((a, b) => a.description.localeCompare(b.description));
+  }, [definitions]);
+
+  const shownClears = useMemo(
+    () => uniqueClears(bundle?.clearDefinitions ?? []),
+    [bundle?.clearDefinitions],
+  );
+
+  const clearMatches = useMemo(() => {
+    const q = normalizeDescription(clearQuery);
+    if (!q) return [];
+    const already = new Set(
+      (bundle?.clearDefinitions ?? []).map((c) => normalizeDescription(c.description)),
+    );
+    return uniqueDefinitions
+      .filter((d) => {
+        const key = normalizeDescription(d.description);
+        return key.includes(q) && !already.has(key);
+      })
+      .slice(0, CLEAR_SEARCH_LIMIT);
+  }, [bundle?.clearDefinitions, clearQuery, uniqueDefinitions]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -139,7 +208,7 @@ export default function CatalogItemRemindersEditor({
     try {
       const saved = await putCatalogItemReminders(practiceId, itemType, itemId, {
         creates: next.creates.map((c) => ({
-          definitionId: c.definitionId,
+          definitionId: c.definitionId || undefined,
           reminderType: c.reminderType,
           description: c.description,
           periodUnit: c.periodUnit,
@@ -150,7 +219,7 @@ export default function CatalogItemRemindersEditor({
           associatedCatalogItemType: c.associatedCatalogItemType ?? itemType,
           associatedCatalogItemId: c.associatedCatalogItemId ?? itemId,
         })),
-        clearDefinitionIds: next.clearDefinitions.map((c) => c.definitionId),
+        clearDefinitionIds: uniqueClears(next.clearDefinitions).map((c) => c.definitionId),
         clearTags: next.clearTags,
       });
       setBundle(saved);
@@ -163,55 +232,68 @@ export default function CatalogItemRemindersEditor({
     }
   }
 
-  async function addCreateReminder() {
+  function openEdit(c: CatalogItemReminderBundle['creates'][number]) {
+    setCreateDraft({
+      reminderType: c.reminderType,
+      description: c.description,
+      periodUnit: c.periodUnit,
+      remindAt: String(c.remindAt ?? 0),
+      dueAt: String(c.dueAt ?? 0),
+      expireAt: String(c.expireAt ?? 0),
+      adjustByQuantity: Boolean(c.adjustByQuantity),
+      associated: associatedOf(c),
+    });
+    setEditingDefId(c.definitionId);
+    setAddOpen(true);
+  }
+
+  function associatedOf(c: CatalogItemReminderBundle['creates'][number]): AssociatedCatalogItem {
+    return {
+      type: c.associatedCatalogItemType ?? itemType,
+      id: c.associatedCatalogItemId ?? itemId,
+      name:
+        c.associatedCatalogItemName ||
+        (c.associatedCatalogItemId === itemId || c.associatedCatalogItemId == null
+          ? selfItem.name
+          : `Item #${c.associatedCatalogItemId}`),
+    };
+  }
+
+  async function saveCreateReminder() {
     if (!bundle || !createDraft.description.trim()) {
       setError('Description is required');
       return;
     }
+    const row = {
+      reminderType: createDraft.reminderType.trim() || 'Reminder',
+      description: createDraft.description.trim(),
+      periodUnit: createDraft.periodUnit,
+      remindAt: n(createDraft.remindAt),
+      dueAt: n(createDraft.dueAt, 12),
+      expireAt: n(createDraft.expireAt),
+      adjustByQuantity: createDraft.adjustByQuantity,
+      associatedCatalogItemType: createDraft.associated.type,
+      associatedCatalogItemId: createDraft.associated.id,
+      associatedCatalogItemName: createDraft.associated.name,
+    };
     await persist({
-      creates: [
-        ...bundle.creates,
-        {
-          id: 0,
-          definitionId: 0,
-          reminderType: createDraft.reminderType.trim() || 'Reminder',
-          description: createDraft.description.trim(),
-          periodUnit: createDraft.periodUnit,
-          remindAt: n(createDraft.remindAt),
-          dueAt: n(createDraft.dueAt, 12),
-          expireAt: n(createDraft.expireAt),
-          adjustByQuantity: createDraft.adjustByQuantity,
-          associatedCatalogItemType: createDraft.associated.type,
-          associatedCatalogItemId: createDraft.associated.id,
-          associatedCatalogItemName: createDraft.associated.name,
-        },
-      ],
+      creates:
+        editingDefId != null
+          ? bundle.creates.map((c) =>
+              c.definitionId === editingDefId ? { ...c, ...row } : c,
+            )
+          : [...bundle.creates, { id: 0, definitionId: 0, ...row }],
       clearDefinitions: bundle.clearDefinitions,
       clearTags: bundle.clearTags,
     });
     setCreateDraft(emptyCreate(selfItem));
+    setEditingDefId(null);
     setAddOpen(false);
   }
 
-  async function setCreateAssociation(
-    definitionId: number,
-    associated: AssociatedCatalogItem,
-  ) {
-    if (!bundle) return;
-    await persist({
-      creates: bundle.creates.map((c) =>
-        c.definitionId === definitionId
-          ? {
-              ...c,
-              associatedCatalogItemType: associated.type,
-              associatedCatalogItemId: associated.id,
-              associatedCatalogItemName: associated.name,
-            }
-          : c,
-      ),
-      clearDefinitions: bundle.clearDefinitions,
-      clearTags: bundle.clearTags,
-    });
+  function closeDialog() {
+    setAddOpen(false);
+    setEditingDefId(null);
   }
 
   async function removeCreate(definitionId: number) {
@@ -223,13 +305,13 @@ export default function CatalogItemRemindersEditor({
     });
   }
 
-  async function addClearDefinition() {
-    if (!bundle || !associateDefId) return;
-    const defId = Number(associateDefId);
-    if (!Number.isFinite(defId)) return;
-    if (bundle.clearDefinitions.some((c) => c.definitionId === defId)) return;
-    const def = definitions.find((d) => d.id === defId);
-    if (!def) return;
+  async function addClearDefinition(def: CatalogReminderDefinition) {
+    if (!bundle) return;
+    const key = normalizeDescription(def.description);
+    if (bundle.clearDefinitions.some((c) => normalizeDescription(c.description) === key)) {
+      setClearQuery('');
+      return;
+    }
     await persist({
       creates: bundle.creates,
       clearDefinitions: [
@@ -243,15 +325,16 @@ export default function CatalogItemRemindersEditor({
       ],
       clearTags: bundle.clearTags,
     });
-    setAssociateDefId('');
+    setClearQuery('');
   }
 
-  async function removeClearDefinition(definitionId: number) {
+  async function removeClearDefinition(description: string) {
     if (!bundle) return;
+    const key = normalizeDescription(description);
     await persist({
       creates: bundle.creates,
       clearDefinitions: bundle.clearDefinitions.filter(
-        (c) => c.definitionId !== definitionId
+        (c) => normalizeDescription(c.description) !== key
       ),
       clearTags: bundle.clearTags,
     });
@@ -259,7 +342,7 @@ export default function CatalogItemRemindersEditor({
 
   async function addClearTag() {
     if (!bundle) return;
-    const tag = clearTagInput.trim();
+    const tag = clearTagInput.trim().toLowerCase();
     if (!tag) return;
     if (bundle.clearTags.some((t) => t.toLowerCase() === tag.toLowerCase())) {
       setClearTagInput('');
@@ -310,23 +393,17 @@ export default function CatalogItemRemindersEditor({
         </p>
       ) : (
         <>
-          <div style={{ marginBottom: 14 }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 8,
-                marginBottom: 8,
-              }}
-            >
-              <strong style={{ fontSize: 13 }}>Create on administration</strong>
+          <div className="catalog-reminders__block">
+            <div className="catalog-reminders__block-head">
+              <strong className="catalog-reminders__block-title">Create on administration</strong>
               <button
                 type="button"
-                className="btn"
+                className="btn secondary"
+                style={{ padding: '6px 12px', fontSize: 13 }}
                 disabled={saving}
                 onClick={() => {
                   setCreateDraft(emptyCreate(selfItem));
+                  setEditingDefId(null);
                   setAddOpen(true);
                 }}
               >
@@ -334,64 +411,74 @@ export default function CatalogItemRemindersEditor({
               </button>
             </div>
             {bundle.creates.length === 0 ? (
-              <p className="settings-muted" style={{ fontSize: 13 }}>
+              <p className="settings-muted catalog-reminders__empty">
                 No reminders configured.
               </p>
             ) : (
-              <table className="inv-catalog-table" style={{ width: '100%', fontSize: 13 }}>
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Description</th>
-                    <th>Associated catalog item</th>
-                    <th>Period</th>
-                    <th>Remind / Due / Expire</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {bundle.creates.map((c) => (
-                    <tr key={c.definitionId}>
-                      <td>{c.reminderType}</td>
-                      <td>{c.description}</td>
-                      <td>
-                        <CatalogAssociatedItemPicker
-                          practiceId={practiceId}
-                          selfItem={selfItem}
-                          value={{
-                            type: c.associatedCatalogItemType ?? itemType,
-                            id: c.associatedCatalogItemId ?? itemId,
-                            name:
-                              c.associatedCatalogItemName ||
-                              (c.associatedCatalogItemId === itemId ||
-                              c.associatedCatalogItemId == null
-                                ? selfItem.name
-                                : `Item #${c.associatedCatalogItemId}`),
-                          }}
-                          disabled={saving}
-                          onChange={(associated) =>
-                            void setCreateAssociation(c.definitionId, associated)
-                          }
-                        />
-                      </td>
-                      <td>{c.periodUnit}</td>
-                      <td>
-                        {c.remindAt} / {c.dueAt} / {c.expireAt}
-                      </td>
-                      <td>
+              <ul className="catalog-reminders__list">
+                {bundle.creates.map((c) => {
+                  const associated = associatedOf(c);
+                  const isSelf =
+                    associated.type === selfItem.type && associated.id === selfItem.id;
+                  return (
+                    <li key={c.definitionId} className="catalog-reminders__card">
+                      <div className="catalog-reminders__card-body">
+                        <div className="catalog-reminders__card-title">
+                          <span className="catalog-reminders__type">{c.reminderType}</span>
+                          <span className="catalog-reminders__desc">{c.description}</span>
+                        </div>
+                        <dl className="catalog-reminders__meta">
+                          <div>
+                            <dt>Associated</dt>
+                            <dd>
+                              {associated.name}
+                              <span className="settings-muted">
+                                {isSelf ? ' (this item)' : ` · ${associated.type}`}
+                              </span>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>After it&apos;s given</dt>
+                            <dd>
+                              <span className="catalog-reminders__timing">
+                                Remind <strong>{countWithUnit(c.remindAt, c.periodUnit)}</strong>
+                              </span>
+                              <span className="catalog-reminders__timing">
+                                Due <strong>{countWithUnit(c.dueAt, c.periodUnit)}</strong>
+                              </span>
+                              <span className="catalog-reminders__timing">
+                                Expire <strong>{countWithUnit(c.expireAt, c.periodUnit)}</strong>
+                              </span>
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+                      <div className="catalog-reminders__actions">
                         <button
                           type="button"
-                          className="btn"
+                          className="catalog-reminders__icon-btn"
                           disabled={saving}
+                          title="Edit reminder"
+                          aria-label={`Edit ${c.description}`}
+                          onClick={() => openEdit(c)}
+                        >
+                          <Pencil size={18} strokeWidth={2} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className="catalog-reminders__icon-btn catalog-reminders__icon-btn--remove"
+                          disabled={saving}
+                          title="Remove reminder"
+                          aria-label={`Remove ${c.description}`}
                           onClick={() => void removeCreate(c.definitionId)}
                         >
-                          Remove
+                          <X size={20} strokeWidth={2} aria-hidden />
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
 
@@ -399,34 +486,41 @@ export default function CatalogItemRemindersEditor({
             <strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
               Also clear these reminders
             </strong>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-              <select
+            <div style={{ marginBottom: 8, maxWidth: 420 }}>
+              <input
                 className="settings-input"
-                style={{ maxWidth: 280 }}
-                value={associateDefId}
-                onChange={(e) => setAssociateDefId(e.target.value)}
-              >
-                <option value="">Select definition…</option>
-                {definitions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.description} ({d.reminderType})
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="btn"
-                disabled={saving || !associateDefId}
-                onClick={() => void addClearDefinition()}
-              >
-                Add association
-              </button>
+                value={clearQuery}
+                placeholder={`Search ${uniqueDefinitions.length} reminders, e.g. lepto`}
+                disabled={saving}
+                onChange={(e) => setClearQuery(e.target.value)}
+              />
+              {clearMatches.length > 0 ? (
+                <div className="inv-stock-link__results">
+                  {clearMatches.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="inv-stock-link__result"
+                      disabled={saving}
+                      onClick={() => void addClearDefinition(d)}
+                    >
+                      {d.description}
+                      <span className="settings-muted"> · {d.reminderType}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : clearQuery.trim() ? (
+                <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                  No other reminders match. Use “Also clear reminders containing” below for a
+                  word match.
+                </p>
+              ) : null}
             </div>
-            {bundle.clearDefinitions.length > 0 && (
+            {shownClears.length > 0 && (
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
                 {(showAllClears
-                  ? bundle.clearDefinitions
-                  : bundle.clearDefinitions.slice(0, CLEAR_PREVIEW_COUNT)
+                  ? shownClears
+                  : shownClears.slice(0, CLEAR_PREVIEW_COUNT)
                 ).map((c) => (
                   <li key={c.definitionId} style={{ marginBottom: 4 }}>
                     {c.description}{' '}
@@ -435,7 +529,7 @@ export default function CatalogItemRemindersEditor({
                       className="btn"
                       style={{ padding: '2px 8px', fontSize: 12 }}
                       disabled={saving}
-                      onClick={() => void removeClearDefinition(c.definitionId)}
+                      onClick={() => void removeClearDefinition(c.description)}
                     >
                       Remove
                     </button>
@@ -443,7 +537,7 @@ export default function CatalogItemRemindersEditor({
                 ))}
               </ul>
             )}
-            {bundle.clearDefinitions.length > CLEAR_PREVIEW_COUNT && (
+            {shownClears.length > CLEAR_PREVIEW_COUNT && (
               <button
                 type="button"
                 className="btn"
@@ -452,7 +546,7 @@ export default function CatalogItemRemindersEditor({
               >
                 {showAllClears
                   ? 'Show fewer'
-                  : `Show all ${bundle.clearDefinitions.length}`}
+                  : `Show all ${shownClears.length}`}
               </button>
             )}
           </div>
@@ -484,6 +578,9 @@ export default function CatalogItemRemindersEditor({
                 Add tag
               </button>
             </div>
+            <p className="settings-muted" style={{ margin: '0 0 8px', fontSize: 12 }}>
+              Ignores capitals, so rabies also clears reminders that say Rabies.
+            </p>
             {bundle.clearTags.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {bundle.clearTags.map((tag) => (
@@ -528,7 +625,7 @@ export default function CatalogItemRemindersEditor({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Add reminder"
+          aria-label={editingDefId != null ? 'Edit reminder' : 'Add reminder'}
           style={{
             position: 'fixed',
             inset: 0,
@@ -539,7 +636,7 @@ export default function CatalogItemRemindersEditor({
             justifyContent: 'center',
             padding: 16,
           }}
-          onClick={() => setAddOpen(false)}
+          onClick={closeDialog}
         >
           <div
             style={{
@@ -551,15 +648,10 @@ export default function CatalogItemRemindersEditor({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 17 }}>Add reminder</h3>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 10,
-                marginBottom: 12,
-              }}
-            >
+            <h3 style={{ margin: '0 0 12px', fontSize: 17 }}>
+              {editingDefId != null ? 'Edit reminder' : 'Add reminder'}
+            </h3>
+            <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
               <label className="settings-label">
                 Type
                 <input
@@ -571,22 +663,6 @@ export default function CatalogItemRemindersEditor({
                 />
               </label>
               <label className="settings-label">
-                Period unit
-                <select
-                  className="settings-input"
-                  value={createDraft.periodUnit}
-                  onChange={(e) =>
-                    setCreateDraft((d) => ({ ...d, periodUnit: e.target.value }))
-                  }
-                >
-                  {PERIOD_UNITS.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="settings-label" style={{ gridColumn: '1 / -1' }}>
                 Description
                 <input
                   className="settings-input"
@@ -596,40 +672,96 @@ export default function CatalogItemRemindersEditor({
                   }
                 />
               </label>
-              <label className="settings-label">
-                Remind at
-                <input
-                  className="settings-input"
-                  type="number"
-                  value={createDraft.remindAt}
-                  onChange={(e) =>
-                    setCreateDraft((d) => ({ ...d, remindAt: e.target.value }))
-                  }
-                />
-              </label>
-              <label className="settings-label">
-                Due at
-                <input
-                  className="settings-input"
-                  type="number"
-                  value={createDraft.dueAt}
-                  onChange={(e) =>
-                    setCreateDraft((d) => ({ ...d, dueAt: e.target.value }))
-                  }
-                />
-              </label>
-              <label className="settings-label">
-                Expire at
-                <input
-                  className="settings-input"
-                  type="number"
-                  value={createDraft.expireAt}
-                  onChange={(e) =>
-                    setCreateDraft((d) => ({ ...d, expireAt: e.target.value }))
-                  }
-                />
-              </label>
             </div>
+            <fieldset className="catalog-reminders__timing-box">
+              <legend>Timing</legend>
+              <p className="settings-muted catalog-reminders__timing-lead">
+                Counted from when this item is given.
+              </p>
+              <div className="catalog-reminders__unit-picks" role="group" aria-label="Timing unit">
+                {QUICK_UNITS.map((unit) => (
+                  <button
+                    key={unit}
+                    type="button"
+                    className={`catalog-reminders__unit-pick${
+                      createDraft.periodUnit === unit ? ' is-on' : ''
+                    }`}
+                    onClick={() => setCreateDraft((d) => ({ ...d, periodUnit: unit }))}
+                  >
+                    {unit}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`catalog-reminders__unit-pick${
+                    isQuickUnit(createDraft.periodUnit) ? '' : ' is-on'
+                  }`}
+                  onClick={() =>
+                    setCreateDraft((d) =>
+                      isQuickUnit(d.periodUnit) ? { ...d, periodUnit: 'Weeks' } : d,
+                    )
+                  }
+                >
+                  Custom
+                </button>
+              </div>
+              {!isQuickUnit(createDraft.periodUnit) ? (
+                <label className="settings-label" style={{ marginBottom: 10 }}>
+                  Custom unit
+                  <select
+                    className="settings-input"
+                    value={createDraft.periodUnit}
+                    onChange={(e) =>
+                      setCreateDraft((d) => ({ ...d, periodUnit: e.target.value }))
+                    }
+                  >
+                    {[
+                      ...new Set([
+                        ...CUSTOM_UNITS,
+                        ...(isQuickUnit(createDraft.periodUnit) ? [] : [createDraft.periodUnit]),
+                      ]),
+                    ].map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <div className="catalog-reminders__offsets">
+                {(
+                  [
+                    ['remindAt', 'Remind'],
+                    ['dueAt', 'Due'],
+                    ['expireAt', 'Expire'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="settings-label catalog-reminders__offset">
+                    {label}
+                    <span className="catalog-reminders__offset-row">
+                      <input
+                        className="settings-input"
+                        type="number"
+                        aria-label={`${label} after, in ${createDraft.periodUnit.toLowerCase()}`}
+                        value={createDraft[key]}
+                        onChange={(e) =>
+                          setCreateDraft((d) => ({ ...d, [key]: e.target.value }))
+                        }
+                      />
+                      <span className="catalog-reminders__offset-unit">
+                        {unitWord(createDraft[key], createDraft.periodUnit)}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="catalog-reminders__timing-summary">
+                Remind {countWithUnit(createDraft.remindAt, createDraft.periodUnit)} after
+                it&apos;s given, due at{' '}
+                {countWithUnit(createDraft.dueAt, createDraft.periodUnit)}, expires at{' '}
+                {countWithUnit(createDraft.expireAt, createDraft.periodUnit)}.
+              </p>
+            </fieldset>
             <label className="settings-checkbox-item" style={{ marginBottom: 14 }}>
               <input
                 type="checkbox"
@@ -660,14 +792,14 @@ export default function CatalogItemRemindersEditor({
               />
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" className="btn" onClick={() => setAddOpen(false)}>
+              <button type="button" className="btn" onClick={closeDialog}>
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn primary"
                 disabled={saving}
-                onClick={() => void addCreateReminder()}
+                onClick={() => void saveCreateReminder()}
               >
                 {saving ? 'Saving…' : 'Save reminder'}
               </button>

@@ -1,4 +1,4 @@
-import { applyStoreSale, storeUnitPrice, type StorePriceBreak, type StoreSale } from './storePricing';
+import { storeLineUnitPrice, type StorePriceBreak, type StoreSale } from './storePricing';
 
 export const AUTOSHIP_FREQS = [
   { value: 'monthly', label: 'Monthly' },
@@ -83,6 +83,8 @@ export type StoreCartLine = {
   unitPrice: number;
   basePrice?: number;
   priceBreaks?: StorePriceBreak[];
+  serviceFee?: number | null;
+  minimumPrice?: number | null;
   sale?: StoreSale | null;
   autoshipFrequency: string | null;
   recommendedFrequency: string | null;
@@ -190,13 +192,17 @@ export function addToStoreCart(line: StoreCartLine) {
     const breaks = line.priceBreaks ?? current.priceBreaks;
     const base = line.basePrice ?? current.basePrice ?? line.unitPrice;
     const sale = line.sale ?? current.sale;
+    const serviceFee = line.serviceFee ?? current.serviceFee;
+    const minimumPrice = line.minimumPrice ?? current.minimumPrice;
     lines[idx] = {
       ...current,
       quantity: nextQty,
       priceBreaks: breaks,
       basePrice: base,
+      serviceFee,
+      minimumPrice,
       sale,
-      unitPrice: applyStoreSale(storeUnitPrice(base, breaks, nextQty), sale),
+      unitPrice: storeLineUnitPrice({ base, breaks, sale, serviceFee, minimumPrice, qty: nextQty }),
       listingId: line.listingId ?? current.listingId,
       storeProductId: line.storeProductId ?? current.storeProductId,
       hasImage: line.hasImage ?? current.hasImage,

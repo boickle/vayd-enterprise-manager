@@ -25,7 +25,7 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
-import { writeVisitWriteup } from '../api/soapScribe';
+import { listScribeSessions, writeVisitWriteup } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
@@ -219,8 +219,33 @@ export default function MedicalNoteEncounterPage() {
     [activePet, updatePet]
   );
 
-  const recorder = useBriefRecorder(encounter?.id ?? null);
+  const recorder = useBriefRecorder(encounter?.id ?? null, {
+    draftKey: encounter?.id ? `scout.medNote.liveTranscript:${encounter.id}` : null,
+  });
   const recording = recorder.recording;
+  const restoreTranscript = recorder.restoreTranscript;
+
+  // The scribe saves takes as it goes. When this device has no copy (new tab, other device),
+  // pick the saved takes back up so a crash or reload does not lose the visit.
+  useEffect(() => {
+    const encounterId = encounter?.id;
+    if (!encounterId) return;
+    let canceled = false;
+    listScribeSessions(encounterId)
+      .then((sessions) => {
+        if (canceled) return;
+        const saved = [...sessions]
+          .sort((a, b) => (a.created || '').localeCompare(b.created || ''))
+          .map((s) => s.transcript?.trim() ?? '')
+          .filter(Boolean)
+          .join('\n\n');
+        restoreTranscript(saved);
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, [encounter?.id, restoreTranscript]);
   const transcriptValue = recording
     ? `${recorder.transcript}${recorder.interim ? ` ${recorder.interim}` : ''}`
     : recorder.transcript;
@@ -251,6 +276,7 @@ export default function MedicalNoteEncounterPage() {
           appointmentId,
           patientId,
           clientId: clientIdParam ? Number(clientIdParam) : undefined,
+          mode: 'medical_note',
         });
         if (canceled) return;
         setEncounter(enc);

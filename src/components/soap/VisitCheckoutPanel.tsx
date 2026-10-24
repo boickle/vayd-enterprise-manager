@@ -106,7 +106,11 @@ import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
-import { fetchCatalogPricingForOrder, getCatalogLinePrice } from '../../utils/catalogItemPricing';
+import {
+  fetchCatalogPricingForOrder,
+  getCatalogLinePrice,
+  isFixedPackItem,
+} from '../../utils/catalogItemPricing';
 import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { useCan } from '../../permissions/PermissionContext';
@@ -1346,7 +1350,12 @@ export default function VisitCheckoutPanel({
           : undefined
       );
 
-      if (state === 'accepted' && order.catalogItemId != null && order.patientId != null) {
+      if (
+        state === 'accepted' &&
+        order.catalogItemId != null &&
+        order.patientId != null &&
+        !isFixedPackItem(order)
+      ) {
         const snapshot = await fetchCatalogPricingForOrder({
           order: updated,
           patientId: order.patientId,
@@ -2338,10 +2347,7 @@ export default function VisitCheckoutPanel({
                     ? orders.find((o) => o.id === l.orderId) ?? null
                     : null;
                 const showClientNote = order?.catalogFlags?.hasClientNotes === true;
-                // Two keys: the item has to permit repricing *and* the person has
-                // to be allowed to reprice. Either one alone is not enough.
-                const allowPrice =
-                  order?.catalogFlags?.allowPriceChange === true && canChangePrice;
+                const allowPrice = canChangePrice;
                 const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
                 const isRefillLine = l.refillOfPrescriptionId != null;
                 const showRxLabel =

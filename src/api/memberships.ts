@@ -111,6 +111,8 @@ export type Bundle = {
   ageLimitSuccessorPackageId: number | null;
   ageLimitSuccessorPackageName: string | null;
   price: number | null;
+  /** Bundles with no one-time price: percent off every item. */
+  discountPercent?: number | null;
   priceMonthly: number | null;
   priceAnnual: number | null;
   /** Which price a membership plan bills on. Null on bundles. */
@@ -172,6 +174,7 @@ export type BundleFields = {
   renewalSuccessorPackageId?: number | null;
   ageLimitSuccessorPackageId?: number | null;
   price?: number | null;
+  discountPercent?: number | null;
   priceMonthly?: number | null;
   priceAnnual?: number | null;
   billingCadence?: MembershipBillingInterval | null;
@@ -394,6 +397,10 @@ export type BundleSaleLine = {
 };
 
 export type BundleSaleResolution = {
+  /** The pack sells at `bundlePrice` as one line; its items go on at $0 underneath. */
+  fixedPrice?: boolean;
+  /** Percent off every item (bundles with no one-time price). */
+  discountPercent?: number | null;
   bundleId: number;
   bundleName: string;
   bundlePrice: number | null;

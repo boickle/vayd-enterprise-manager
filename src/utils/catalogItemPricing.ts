@@ -1,6 +1,7 @@
 import {
   checkItemPricing,
   type CheckItemPricingResponse,
+  type PricingVisitContext,
   type SearchableItem,
 } from '../api/roomLoader';
 import {
@@ -27,6 +28,8 @@ export type CatalogPricingItem = {
   inventoryItem?: Record<string, unknown> | null;
   serviceFee?: number;
   minimumPrice?: number;
+  /** Fixed price per unit (copay, staff / cost-plus): line = min(line total, qty × this). */
+  perUnitPrice?: number | null;
 };
 
 export type CatalogLinePrice = {
@@ -101,28 +104,27 @@ export function getTieredUnitPrice(
   return baseUnitPrice;
 }
 
-/** Total pre-discount for quantity (tiers + service-fee rules). */
+/**
+ * Total pre-discount for quantity, the way eVet prices a line: qty × price (or the
+ * quantity price break) + the service fee once, and never below the minimum price.
+ */
 export function getTotalPreDiscountForQuantity(item: CatalogPricingItem, quantity: number): number {
   const q = Math.max(0, Number(quantity) || 0);
-  const preDiscount1 = getPreDiscountForOneUnit(item);
-
-  if (item.tieredPricing?.hasTieredPricing) {
-    const tieredUnit = getTieredUnitPrice(item.tieredPricing, q, preDiscount1);
-    return tieredUnit * q;
-  }
+  const unit = (base: number) =>
+    item.tieredPricing?.hasTieredPricing ? getTieredUnitPrice(item.tieredPricing, q, base) : base;
 
   const t = String(item.itemType ?? '').toLowerCase();
   if (t === 'lab') {
-    const p = Number(item.lab?.price ?? item.price ?? 0);
+    const p = unit(Number(item.lab?.price ?? item.price ?? 0));
     return p * q;
   }
   if (t === 'procedure') {
-    const p = Number(item.procedure?.price ?? item.price ?? 0);
+    const p = unit(Number(item.procedure?.price ?? item.price ?? 0));
     const sf = Number(item.procedure?.serviceFee ?? item.serviceFee ?? 0);
     return p * q + sf;
   }
   if (t === 'inventory') {
-    const p = Number(item.inventoryItem?.price ?? item.price ?? 0);
+    const p = unit(Number(item.inventoryItem?.price ?? item.price ?? 0));
     const sf = Number(item.inventoryItem?.serviceFee ?? item.serviceFee ?? 0);
     const minP =
       item.inventoryItem?.minimumPrice != null
@@ -134,7 +136,24 @@ export function getTotalPreDiscountForQuantity(item: CatalogPricingItem, quantit
     if (minP > 0) return Math.max(minP, calculated);
     return calculated;
   }
-  return Number(item.price ?? 0) * q;
+  return unit(Number(item.price ?? 0)) * q;
+}
+
+/**
+ * Percent discounts (client, membership % off) take the same share off the whole line,
+ * service fee included. A fixed per-unit price (copay, staff / cost-plus) is charged per
+ * unit instead, never above the normal line total.
+ */
+function discountedLineTotal(
+  lineTotal: number,
+  qty: number,
+  ratio: number,
+  perUnitPrice?: number | null
+): number {
+  if (perUnitPrice != null && Number.isFinite(Number(perUnitPrice))) {
+    return Math.min(lineTotal, Math.max(0, Number(perUnitPrice)) * qty);
+  }
+  return lineTotal * ratio;
 }
 
 /** Final unit/total after membership + client discount ratio (Room Loader parity). */
@@ -149,7 +168,7 @@ export function getCatalogLinePrice(item: CatalogPricingItem, quantity: number):
   );
   const discountRatio = originalFromApi > 0 ? adjustedFromApi / originalFromApi : 1;
 
-  const totalFinal = totalPreDiscount * discountRatio;
+  const totalFinal = discountedLineTotal(totalPreDiscount, q, discountRatio, item.perUnitPrice);
   const unitFinal = q > 0 ? totalFinal / q : adjustedFromApi;
 
   const isCovered = Boolean(
@@ -159,6 +178,61 @@ export function getCatalogLinePrice(item: CatalogPricingItem, quantity: number):
   );
 
   return { unitFinal, totalFinal, isCovered };
+}
+
+/**
+ * A bundle line priced at its normal catalog price: `listUnitPrice` already holds the
+ * line formula for its qty (fee once, minimum), and membership / client discounts come
+ * from check-item as the adjusted ÷ original ratio.
+ */
+export function getBundleLinePrice(
+  line: { listUnitPrice: number; quantity: number },
+  checked?: Pick<
+    CheckItemPricingResponse,
+    'adjustedPrice' | 'originalPrice' | 'wellnessPlanPricing' | 'perUnitPrice'
+  > | null,
+  /** The bundle's percent off every item; the client gets whichever price is lower. */
+  bundleDiscountPercent?: number | null
+): CatalogLinePrice {
+  const q = Math.max(1, Number(line.quantity) || 1);
+  const original = Number(checked?.originalPrice ?? 0);
+  const adjusted = Number(checked?.adjustedPrice ?? original);
+  const ratio = original > 0 ? adjusted / original : 1;
+  const listTotal = Number(line.listUnitPrice || 0) * q;
+  let totalFinal = discountedLineTotal(listTotal, q, ratio, checked?.perUnitPrice);
+  const pct = Number(bundleDiscountPercent);
+  if (Number.isFinite(pct) && pct > 0) {
+    const bundleTotal = Math.round(listTotal * (1 - Math.min(pct, 100) / 100) * 100) / 100;
+    totalFinal = Math.min(totalFinal, bundleTotal);
+  }
+  const unitFinal = totalFinal / q;
+  const isCovered = Boolean(
+    checked?.wellnessPlanPricing?.hasCoverage &&
+    checked.wellnessPlanPricing.isWithinLimit &&
+    unitFinal === 0
+  );
+  return { unitFinal, totalFinal, isCovered };
+}
+
+/** Shared id for every line expanded from one bundle add. */
+export function newBundleSaleId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** An item inside a fixed-price pack: the pack line carries the price, so it stays at $0. */
+export function isFixedPackItem(order: {
+  bundleSaleId?: string | null;
+  unitPrice: number | string;
+  isCovered?: boolean;
+}): boolean {
+  return Boolean(order.bundleSaleId) && Number(order.unitPrice) === 0 && !order.isCovered;
 }
 
 export function buildCheckItemPayload(
@@ -216,6 +290,7 @@ export function pricingItemFromSearchAndCheck(
     itemType: searchItem.itemType,
     price: pricing.adjustedPrice ?? searchItem.price,
     originalPrice: pricing.originalPrice ?? searchItem.originalPrice ?? searchItem.price,
+    perUnitPrice: pricing.perUnitPrice ?? null,
     wellnessPlanPricing: pricing.wellnessPlanPricing ?? searchItem.wellnessPlanPricing,
     discountPricing: pricing.discountPricing ?? searchItem.discountPricing,
     tieredPricing: pricing.tieredPricing ?? searchItem.tieredPricing,
@@ -232,6 +307,7 @@ export function pricingItemFromCheckResponse(
     itemType: pricing.item.itemType,
     price: pricing.adjustedPrice,
     originalPrice: pricing.originalPrice,
+    perUnitPrice: pricing.perUnitPrice ?? null,
     wellnessPlanPricing: pricing.wellnessPlanPricing,
     discountPricing: pricing.discountPricing,
     tieredPricing: pricing.tieredPricing,
@@ -247,6 +323,7 @@ export async function fetchCatalogPricingItem(args: {
   clientId?: number;
   itemType: string;
   item: Record<string, unknown>;
+  visit?: PricingVisitContext;
 }): Promise<CatalogPricingItem> {
   const response = await checkItemPricing({
     patientId: args.patientId,
@@ -254,6 +331,7 @@ export async function fetchCatalogPricingItem(args: {
     clientId: args.clientId,
     itemType: args.itemType,
     item: args.item,
+    ...args.visit,
   });
   return pricingItemFromCheckResponse(response);
 }
@@ -278,6 +356,7 @@ export async function fetchCatalogPricingForOrder(args: {
     clientId,
     itemType: order.catalogItemType,
     item: buildCheckItemPayload(order.catalogItemType, order.catalogItemId),
+    visit: order.encounterId ? { encounterId: order.encounterId } : undefined,
   });
 }
 
@@ -294,6 +373,7 @@ export async function createOrderFromSearchItem(args: {
   clientId?: number;
   state?: 'accepted' | 'proposed';
   askCoverageChoice?: (prompt: CoverageChoicePrompt) => Promise<number | null>;
+  bundle?: { bundleSaleId: string; sourceBundleId: number; sourceBundleName: string };
 }): Promise<{ order: EncounterOrder; pricingItem: CatalogPricingItem }> {
   const {
     encounterId,
@@ -303,6 +383,7 @@ export async function createOrderFromSearchItem(args: {
     clientId,
     state = 'accepted',
     askCoverageChoice,
+    bundle,
   } = args;
   const catalogItemType = item.itemType as EncounterOrderCatalogType;
   let pricingItem: CatalogPricingItem = item as CatalogPricingItem;
@@ -316,6 +397,7 @@ export async function createOrderFromSearchItem(args: {
       clientId,
       itemType: item.itemType,
       item: buildCheckItemPayloadFromSearch(item),
+      encounterId,
     };
     const pricingResponse = askCoverageChoice
       ? await checkItemPricingWithCoverageChoice({
@@ -339,6 +421,7 @@ export async function createOrderFromSearchItem(args: {
     isCovered,
     qty: 1,
     state,
+    ...bundle,
   });
   return { order, pricingItem };
 }

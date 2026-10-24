@@ -573,7 +573,15 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
       handlers.onError?.(`Could not connect to the scribe service (${msg}).`);
     });
     socket.on('disconnect', () => {
-      if (!disposed) setStatus('idle');
+      if (disposed) return;
+      if (sessionId) {
+        setStatus('error');
+        handlers.onError?.(
+          'Lost the connection to the scribe. What was transcribed so far is kept; press Record to keep going.'
+        );
+        return;
+      }
+      setStatus('idle');
     });
     return socket;
   };

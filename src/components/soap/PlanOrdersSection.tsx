@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
+  createOrder,
   deleteOrder,
   listOrders,
   setOrderState,
   updateOrder,
   type EncounterOrder,
+  type EncounterOrderCatalogType,
 } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import {
@@ -26,10 +28,14 @@ import {
   createOrderFromSearchItem,
   fetchCatalogPricingForOrder,
   getCatalogLinePrice,
+  isFixedPackItem,
+  kindForCatalogSearchItem,
+  newBundleSaleId,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import type { CoverageChoicePrompt } from '../../utils/membershipCoverageChoice';
 import { isSharpsOrderName, isVaccineSearchItem } from '../../utils/visitSharpsFee';
+import { useCan } from '../../permissions/PermissionContext';
 
 type Props = {
   encounterId: string;
@@ -155,6 +161,7 @@ export default function PlanOrdersSection({
           code: q,
           patientId,
           clientId,
+          encounterId,
         }),
         listBundles({ kind: 'bundle', q }).catch(() => [] as Bundle[]),
       ])
@@ -221,7 +228,7 @@ export default function PlanOrdersSection({
 
   const repriceAndPatch = async (order: EncounterOrder, qty: number) => {
     const q = Math.max(1, Math.round(qty));
-    if (q === Number(order.qty) && order.catalogItemId == null) {
+    if ((q === Number(order.qty) && order.catalogItemId == null) || isFixedPackItem(order)) {
       await patch(order, { qty: q });
       return;
     }
@@ -288,6 +295,24 @@ export default function PlanOrdersSection({
     setAdding(true);
     try {
       const created: EncounterOrder[] = [];
+      const bundle = {
+        bundleSaleId: newBundleSaleId(),
+        sourceBundleId: resolution.bundleId,
+        sourceBundleName: resolution.bundleName,
+      };
+      if (resolution.fixedPrice) {
+        created.push(
+          await createOrder(encounterId, {
+            name: resolution.bundleName,
+            kind: 'treatment',
+            catalogItemType: 'custom',
+            unitPrice: Number(resolution.bundlePrice) || 0,
+            qty: 1,
+            state: 'accepted',
+            ...bundle,
+          }),
+        );
+      }
       for (const line of resolution.lines) {
         const searchItem = {
           name: line.name,
@@ -313,16 +338,43 @@ export default function PlanOrdersSection({
                 }),
         } as SearchableItem;
 
+        if (resolution.fixedPrice) {
+          created.push(
+            await createOrder(encounterId, {
+              name: line.name,
+              kind: kindForCatalogSearchItem(searchItem),
+              catalogItemId: line.catalogItemId,
+              catalogItemType: line.itemType as EncounterOrderCatalogType,
+              unitPrice: 0,
+              qty: line.quantity,
+              state: 'accepted',
+              ...bundle,
+            }),
+          );
+          continue;
+        }
+
         const { order, pricingItem } = await createOrderFromSearchItem({
           encounterId,
           item: searchItem,
           patientId: canPrice ? patientId : undefined,
           practiceId,
           clientId,
+          bundle,
         });
         storePricing(order.id, pricingItem);
-        if (line.quantity !== 1) {
-          const { unitFinal, isCovered } = getCatalogLinePrice(pricingItem, line.quantity);
+        const pct = Number(resolution.discountPercent);
+        const bundleOff = Number.isFinite(pct) && pct > 0;
+        if (line.quantity !== 1 || bundleOff) {
+          const catalogPrice = getCatalogLinePrice(pricingItem, line.quantity);
+          const isCovered = catalogPrice.isCovered;
+          const unitFinal =
+            bundleOff && !isCovered
+              ? Math.min(
+                  catalogPrice.unitFinal,
+                  Math.round(line.listUnitPrice * (1 - Math.min(pct, 100) / 100) * 100) / 100,
+                )
+              : catalogPrice.unitFinal;
           created.push(
             await updateOrder(encounterId, order.id, {
               qty: line.quantity,
@@ -391,7 +443,7 @@ export default function PlanOrdersSection({
   const changeState = async (order: EncounterOrder, state: 'accepted' | 'declined') => {
     let updated = await setOrderState(encounterId, order.id, state);
 
-    if (state === 'accepted' && order.catalogItemId != null && canPrice) {
+    if (state === 'accepted' && order.catalogItemId != null && canPrice && !isFixedPackItem(order)) {
       const snapshot = await ensurePricingSnapshot(updated);
       if (snapshot) {
         const qty = Number(updated.qty) || 1;
@@ -636,7 +688,7 @@ function CatalogRow({
   const qty = Number(o.qty) || 1;
   const editable = !disabled && o.state !== 'declined';
   const flags = o.catalogFlags;
-  const allowPrice = flags?.allowPriceChange === true;
+  const allowPrice = useCan('invoice.price.change');
   const [repricing, setRepricing] = useState(false);
   const [priceDraft, setPriceDraft] = useState(String(Number(o.unitPrice) || 0));
   const [clientNoteDraft, setClientNoteDraft] = useState(o.clientNote ?? '');

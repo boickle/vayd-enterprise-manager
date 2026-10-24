@@ -10,7 +10,13 @@ import {
 } from '../../api/onlineStore';
 import { enhanceStoreDescriptionHtml, storeListingIdFromHref } from '../../utils/storeDescriptionLinks';
 import { addToStoreCart, AUTOSHIP_FREQS, formatAutoshipFrequency } from './storeCartState';
-import { applyStoreSale, formatSaleEnds, isStoreSaleActive, storeUnitPrice } from './storePricing';
+import {
+  applyStoreSale,
+  formatSaleEnds,
+  isStoreSaleActive,
+  storeLineUnitPrice,
+  storeUnitPrice,
+} from './storePricing';
 import { expandStoreTagalongs } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
@@ -47,7 +53,13 @@ export default function StoreProduct() {
       const match = Number.isFinite(preferred)
         ? variants.find((v) => v.inventoryItemId === preferred)
         : null;
-      const first = match || variants[0];
+      const months = (v: (typeof variants)[number]) =>
+        /month/i.test(v.strength ?? '') ? parseFloat(v.strength ?? '') || 0 : 0;
+      const longest = variants.reduce<(typeof variants)[number] | undefined>(
+        (best, v) => (best == null || months(v) > months(best) ? v : best),
+        undefined
+      );
+      const first = match || (longest && months(longest) > 0 ? longest : variants[0]);
       setStrength(first?.strength ?? null);
       setPack(first?.pack ?? null);
     });
@@ -142,15 +154,29 @@ export default function StoreProduct() {
       ? Number(listedPrice)
       : 0;
   const saleOn = isStoreSaleActive(item);
-  const unitPrice = applyStoreSale(tierPrice, item);
+  const lineFees = selected
+    ? { serviceFee: selected.serviceFee, minimumPrice: selected.minimumPrice }
+    : {};
+  const unitPrice = selected
+    ? storeLineUnitPrice({
+        base: selected.onlineStorePrice,
+        breaks: selected.priceBreaks,
+        sale: item,
+        ...lineFees,
+        qty: safeQty,
+      })
+    : applyStoreSale(tierPrice, item);
   const lineTotal = unitPrice * safeQty;
+  const preSaleUnit = selected
+    ? storeLineUnitPrice({ base: selected.onlineStorePrice, ...lineFees, qty: safeQty })
+    : tierPrice;
   const qualifyingTagalongs = selected
     ? expandStoreTagalongs({ quantity: safeQty }, selected.tagalongs)
     : [];
   const compareAt =
-    saleOn && unitPrice < tierPrice
-      ? tierPrice
-      : listedPrice != null && unitPrice < Number(listedPrice)
+    unitPrice < preSaleUnit - 0.005
+      ? preSaleUnit
+      : !selected && listedPrice != null && unitPrice < Number(listedPrice)
         ? Number(listedPrice)
         : null;
   const autoshipFrequency =
@@ -428,6 +454,8 @@ export default function StoreProduct() {
                 unitPrice,
                 basePrice: selected.onlineStorePrice ?? unitPrice,
                 priceBreaks: selected.priceBreaks,
+                serviceFee: selected.serviceFee ?? null,
+                minimumPrice: selected.minimumPrice ?? null,
                 sale: saleOn
                   ? {
                       saleType: item.saleType,

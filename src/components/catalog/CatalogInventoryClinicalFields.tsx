@@ -41,13 +41,10 @@ type ClinicalDraft = {
   hideOnMedicalRecordPrint: boolean;
   excludeFromProduction: boolean;
   excludeProductionWhenRefilling: 'inherit' | 'yes' | 'no';
-  allowPriceChange: boolean;
   changePatientStatusTo: string;
   changePatientSex: boolean;
   requiresDoctorApproval: boolean;
   prohibitedCarriers: string[];
-  autoshipOffered: boolean;
-  autoshipFrequency: string;
 };
 
 type VaccineDraft = {
@@ -56,11 +53,9 @@ type VaccineDraft = {
   vaccineType: string;
   dosageType: string;
   createRabiesCertificate: boolean;
-  createVaccinationLog: boolean;
   usdaLicensingMonths: string;
   animalControlLicensingMonths: string;
   tagIssuePeriodMonths: string;
-  defaultSerial: string;
 };
 
 const VACCINE_TYPES = [
@@ -76,7 +71,7 @@ const FLAG_HELP: Record<string, string> = {
   isMedication:
     'Something you prescribe or hand to the client. The SOAP opens Dose & Rx (directions, refills, start date), it goes on the prescription history, and the directions below prefill the label.',
   isVaccine:
-    'Marks this as a vaccine so SOAP captures dose details and lot when administered.',
+    'Marks this as a vaccine. Recording the dose writes it to the vaccination log and captures the lot. The serial number comes from that lot.',
   isControlled: 'Controlled substance — track carefully for DEA / state reporting.',
   isMicrochip:
     'When charged on a visit, staff must enter the microchip number. It is saved on the patient and shown next to their name.',
@@ -93,16 +88,13 @@ const FLAG_HELP: Record<string, string> = {
     'Revenue still counts for the practice, but it is not attributed to a provider’s VSD — it lands in Not Specified.',
   excludeProductionWhenRefilling:
     'Overrides the practice default for excluding provider VSD when this item is refilled. Inherit uses Settings → Inventory.',
-  allowPriceChange:
-    'This item’s unit price may be changed on the SOAP / at checkout. Who may change it is still decided by role — the item flag only says the item allows it.',
   changePatientSex: 'Charging this item updates the patient’s sex (e.g. after spay/neuter).',
   requiresDoctorApproval:
-    'Fills and mail orders stay in the queue until a doctor approves. Applies everywhere, not only the online store.',
+    'Fills and mail orders go out right away when the pet has refills left on an Rx that has not expired. Otherwise they wait for a doctor to approve. Turns on automatically for medications; turn it off for over-the-counter items. Applies everywhere, not only the online store.',
   prohibitUps:
     'Do not offer UPS on any mail shipment that includes this item — alone or with others. Use this for CBD / Ellevet and anything else UPS will not carry.',
   prohibitFedex:
     'Do not offer FedEx on any mail shipment that includes this item — alone or with others.',
-  autoshipOffered: 'Clients can set a renewal frequency when they order this item.',
 };
 
 const GRAMS_PER_OZ = 28.349523125;
@@ -165,15 +157,12 @@ function fromItem(item: InventoryItem): ClinicalDraft {
         : item.excludeProductionWhenRefilling === false
           ? 'no'
           : 'inherit',
-    allowPriceChange: item.allowPriceChange === true,
     changePatientStatusTo: strField(item.changePatientStatusTo),
     changePatientSex: item.changePatientSex === true,
     requiresDoctorApproval: item.requiresDoctorApproval === true,
     prohibitedCarriers: Array.isArray(item.prohibitedCarriers)
       ? item.prohibitedCarriers.map((c) => String(c).toUpperCase())
       : [],
-    autoshipOffered: Boolean(item.autoshipRecommendedFrequency),
-    autoshipFrequency: item.autoshipRecommendedFrequency || 'monthly',
   };
 }
 
@@ -185,11 +174,9 @@ function vaccineFromItem(item: InventoryItem): VaccineDraft {
     vaccineType: strField(d.vaccineType),
     dosageType: strField(d.dosageType),
     createRabiesCertificate: d.createRabiesCertificate === true,
-    createVaccinationLog: d.createVaccinationLog !== false,
     usdaLicensingMonths: strField(d.usdaLicensingMonths),
     animalControlLicensingMonths: strField(d.animalControlLicensingMonths),
     tagIssuePeriodMonths: strField(d.tagIssuePeriodMonths),
-    defaultSerial: strField(d.defaultSerial),
   };
 }
 
@@ -327,13 +314,11 @@ function summaryChips(draft: ClinicalDraft): string[] {
   if (draft.isControlled) chips.push('Controlled');
   if (draft.isMicrochip) chips.push('Microchip');
   if (draft.hasClientNotes) chips.push('Client notes');
-  if (draft.allowPriceChange) chips.push('Price editable');
   if (draft.excludeFromProduction) chips.push('Excluded from provider VSD');
   if (draft.hideOnInvoice) chips.push('Hidden on invoice');
   if (draft.requiresDoctorApproval) chips.push('Doctor approval');
   if (draft.prohibitedCarriers.includes('UPS')) chips.push('No UPS');
   if (draft.prohibitedCarriers.includes('FEDEX')) chips.push('No FedEx');
-  if (draft.autoshipOffered) chips.push('Autoship');
   return chips;
 }
 
@@ -420,14 +405,10 @@ export default function CatalogInventoryClinicalFields({
             : draft.excludeProductionWhenRefilling === 'no'
               ? false
               : null,
-        allowPriceChange: draft.allowPriceChange,
         changePatientStatusTo: draft.changePatientStatusTo.trim() || null,
         changePatientSex: draft.changePatientSex,
         requiresDoctorApproval: draft.requiresDoctorApproval,
         prohibitedCarriers: draft.prohibitedCarriers,
-        autoshipRecommendedFrequency: draft.autoshipOffered
-          ? draft.autoshipFrequency || 'monthly'
-          : null,
         ...(draft.isVaccine
           ? {
               vaccineDetails: {
@@ -436,13 +417,12 @@ export default function CatalogInventoryClinicalFields({
                 vaccineType: vaccineDraft.vaccineType || null,
                 dosageType: vaccineDraft.dosageType || null,
                 createRabiesCertificate: vaccineDraft.createRabiesCertificate,
-                createVaccinationLog: vaccineDraft.createVaccinationLog,
                 usdaLicensingMonths: numOrNull(vaccineDraft.usdaLicensingMonths),
                 animalControlLicensingMonths: numOrNull(
                   vaccineDraft.animalControlLicensingMonths
                 ),
                 tagIssuePeriodMonths: numOrNull(vaccineDraft.tagIssuePeriodMonths),
-                defaultSerial: vaccineDraft.defaultSerial.trim() || null,
+                defaultSerial: null,
               } satisfies InventoryVaccineDetails,
             }
           : {}),
@@ -517,7 +497,11 @@ export default function CatalogInventoryClinicalFields({
               label="Medication"
               help={FLAG_HELP.isMedication}
               onChange={(checked) =>
-                setDraft((d) => ({ ...d, isMedication: checked }))
+                setDraft((d) => ({
+                  ...d,
+                  isMedication: checked,
+                  requiresDoctorApproval: checked ? true : d.requiresDoctorApproval,
+                }))
               }
             />
             <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
@@ -640,16 +624,12 @@ export default function CatalogInventoryClinicalFields({
                     <option value="booster">Booster</option>
                   </select>
                 </label>
-                <label className="settings-label">
-                  Default serial (optional)
-                  <input
-                    className="settings-input"
-                    value={vaccineDraft.defaultSerial}
-                    onChange={(e) =>
-                      setVaccineDraft((d) => ({ ...d, defaultSerial: e.target.value }))
-                    }
-                  />
-                </label>
+                <p
+                  className="settings-muted"
+                  style={{ gridColumn: '1 / -1', margin: 0, fontSize: 13 }}
+                >
+                  Serial number comes from the lot chosen when the vaccine is given.
+                </p>
                 <label className="settings-label">
                   USDA licensing (months)
                   <input
@@ -711,22 +691,6 @@ export default function CatalogInventoryClinicalFields({
                   />
                   <span>Create rabies certificate</span>
                 </label>
-                <label
-                  className="settings-checkbox-item"
-                  style={{ gridColumn: '1 / -1' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={vaccineDraft.createVaccinationLog}
-                    onChange={(e) =>
-                      setVaccineDraft((d) => ({
-                        ...d,
-                        createVaccinationLog: e.target.checked,
-                      }))
-                    }
-                  />
-                  <span>Create vaccination log</span>
-                </label>
               </div>
             )}
           </div>
@@ -742,7 +706,7 @@ export default function CatalogInventoryClinicalFields({
           >
             <FlagCheckbox
               checked={draft.requiresDoctorApproval}
-              label="Doctor approval required"
+              label="Prescription required"
               help={FLAG_HELP.requiresDoctorApproval}
               onChange={(checked) =>
                 setDraft((d) => ({ ...d, requiresDoctorApproval: checked }))
@@ -771,18 +735,6 @@ export default function CatalogInventoryClinicalFields({
                   prohibitedCarriers: checked
                     ? [...d.prohibitedCarriers.filter((c) => c !== 'FEDEX'), 'FEDEX']
                     : d.prohibitedCarriers.filter((c) => c !== 'FEDEX'),
-                }))
-              }
-            />
-            <FlagCheckbox
-              checked={draft.autoshipOffered}
-              label="Autoship"
-              help={FLAG_HELP.autoshipOffered}
-              onChange={(checked) =>
-                setDraft((d) => ({
-                  ...d,
-                  autoshipOffered: checked,
-                  autoshipFrequency: d.autoshipFrequency || 'monthly',
                 }))
               }
             />
@@ -828,14 +780,6 @@ export default function CatalogInventoryClinicalFields({
               help={FLAG_HELP.hasClientNotes}
               onChange={(checked) =>
                 setDraft((d) => ({ ...d, hasClientNotes: checked }))
-              }
-            />
-            <FlagCheckbox
-              checked={draft.allowPriceChange}
-              label="Allow price change"
-              help={FLAG_HELP.allowPriceChange}
-              onChange={(checked) =>
-                setDraft((d) => ({ ...d, allowPriceChange: checked }))
               }
             />
             <FlagCheckbox
@@ -896,23 +840,6 @@ export default function CatalogInventoryClinicalFields({
               }
             />
           </div>
-          {draft.autoshipOffered ? (
-            <label className="settings-label" style={{ marginBottom: 12, maxWidth: 280 }}>
-              Autoship frequency
-              <select
-                className="settings-input"
-                value={draft.autoshipFrequency}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, autoshipFrequency: e.target.value }))
-                }
-              >
-                <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
-                <option value="every_6_months">Every 6 months</option>
-                <option value="yearly">Yearly</option>
-              </select>
-            </label>
-      ) : null}
 
       {draft.isControlled ? (
         <div

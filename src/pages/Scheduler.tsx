@@ -4154,6 +4154,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [encounterAppointmentIds, setEncounterAppointmentIds] = useState<ReadonlySet<number>>(
     () => new Set()
   );
+  const [medicalNoteAppointmentIds, setMedicalNoteAppointmentIds] = useState<
+    ReadonlySet<number>
+  >(() => new Set());
 
   const refreshForwardBookingSourceIds = useCallback(async () => {
     try {
@@ -4190,6 +4193,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     try {
       const index = await fetchSoapCalendarEncounterIndex(PRACTICE_ID);
       setEncounterAppointmentIds(new Set(index.appointmentIds));
+      setMedicalNoteAppointmentIds(new Set(index.medicalNoteAppointmentIds));
     } catch {
       /* keep prior set */
     }
@@ -11006,7 +11010,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             // An encounter already exists — open it instead of asking which kind to start.
             if (encounterAppointmentIds.has(Number(appt.id))) {
               const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
-              navigate(`/schedule/soap/${appt.id}/${firstPatient.id}${clientQs}`);
+              const page = medicalNoteAppointmentIds.has(Number(appt.id)) ? 'note' : 'soap';
+              navigate(`/schedule/${page}/${appt.id}/${firstPatient.id}${clientQs}`);
               return;
             }
             setStartEncounterAppt(appt);
@@ -11526,6 +11531,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       applyRescheduleCalendarFocusFromIntent,
       refreshForwardBookingSourceIds,
       refreshSoapLockedAppointmentIds,
+      encounterAppointmentIds,
+      medicalNoteAppointmentIds,
       editAppt?.id,
       providers,
       resolvedPrimaryProviderId,

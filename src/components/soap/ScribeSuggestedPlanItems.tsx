@@ -423,7 +423,7 @@ function PlanItemSearchRow({
     let canceled = false;
     setSearching(true);
     const handle = setTimeout(() => {
-      searchItems({ q, practiceId, limit: 15, code: q, patientId, clientId })
+      searchItems({ q, practiceId, limit: 15, code: q, patientId, clientId, encounterId })
         .then((rows) => {
           if (canceled) return;
           setResults(rows);

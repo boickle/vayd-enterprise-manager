@@ -43,6 +43,7 @@ type Draft = {
   name: string;
   code: string;
   price: string;
+  discountPercent: string;
   marketingSummary: string;
   description: string;
   isActive: boolean;
@@ -52,6 +53,7 @@ const EMPTY_DRAFT: Draft = {
   name: '',
   code: '',
   price: '',
+  discountPercent: '',
   marketingSummary: '',
   description: '',
   isActive: true,
@@ -62,6 +64,7 @@ function draftFrom(bundle: Bundle): Draft {
     name: bundle.name ?? '',
     code: bundle.code ?? '',
     price: bundle.price != null ? String(bundle.price) : '',
+    discountPercent: bundle.discountPercent != null ? String(bundle.discountPercent) : '',
     marketingSummary: bundle.marketingSummary ?? '',
     description: bundle.description ?? '',
     isActive: bundle.isActive,
@@ -227,6 +230,7 @@ export default function CatalogBundles({
       name: draft.name.trim(),
       code: draft.code.trim() || null,
       price: numOrNull(draft.price),
+      discountPercent: numOrNull(draft.discountPercent),
       marketingSummary: draft.marketingSummary.trim() || null,
       description: draft.description.trim() || null,
       isActive: draft.isActive,
@@ -367,7 +371,24 @@ export default function CatalogBundles({
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
               />
               <span className="cbn-field__hint">
-                What the client pays once for the whole bundle.
+                What the client pays once for the whole bundle. Leave at 0 to charge each item
+                at its own price.
+              </span>
+            </label>
+            <label className="cbn-field">
+              <span className="cbn-field__label">% off every item</span>
+              <input
+                className="cbn-input"
+                inputMode="decimal"
+                value={draft.discountPercent}
+                placeholder="e.g. 10"
+                disabled={(numOrNull(draft.price) ?? 0) > 0}
+                onChange={(e) => setDraft({ ...draft, discountPercent: e.target.value })}
+              />
+              <span className="cbn-field__hint">
+                {(numOrNull(draft.price) ?? 0) > 0
+                  ? 'Only for bundles without a one-time price.'
+                  : 'Each item goes on at its own price less this percent. If the client already gets a bigger member or client discount, they get that instead.'}
               </span>
             </label>
             <label className="cbn-field cbn-field--check">
@@ -574,7 +595,11 @@ export default function CatalogBundles({
                       </span>
                     ) : null}
                   </td>
-                  <td className="cbn__td-num">{money(bundle.price)}</td>
+                  <td className="cbn__td-num">
+                    {!(Number(bundle.price) > 0) && Number(bundle.discountPercent) > 0
+                      ? `${Number(bundle.discountPercent)}% off items`
+                      : money(bundle.price)}
+                  </td>
                   <td>
                     <span
                       className={`cbn__status${

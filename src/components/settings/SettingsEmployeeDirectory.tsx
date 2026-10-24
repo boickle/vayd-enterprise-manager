@@ -40,6 +40,7 @@ import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
+const ALL_OFFICES = 'all';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -199,6 +200,7 @@ export default function SettingsEmployeeDirectory({
   const [locationOptions, setLocationOptions] = useState<InventoryBranchLocation[]>([]);
   const [defaultBranchId, setDefaultBranchId] = useState<number | null>(null);
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
+  const [practiceWide, setPracticeWide] = useState(false);
   const [loginUser, setLoginUser] = useState<AdminManagedUser | null>(null);
   const [loadedEmployee, setLoadedEmployee] = useState<Employee | null>(null);
   const [sigEditing, setSigEditing] = useState(false);
@@ -281,6 +283,7 @@ export default function SettingsEmployeeDirectory({
     setRoleIdsSelected([]);
     setDefaultBranchId(null);
     setDefaultLocationId(null);
+    setPracticeWide(false);
     setLocationOptions([]);
     void listPracticeBranches(DEFAULT_PRACTICE_ID)
       .then((list) => setBranchOptions(list.filter((b) => b.isActive !== false)))
@@ -368,6 +371,7 @@ export default function SettingsEmployeeDirectory({
       applyRecordToForm(full);
       setBioText(full.bio ?? '');
       setBranchOptions(branchList.filter((b) => b.isActive !== false));
+      setPracticeWide(empBranches.length > 0 && !empBranches.some((b) => b.isPrimary));
       const primary = empBranches.find((b) => b.isPrimary) ?? empBranches[0] ?? null;
       const seedBranch =
         primary?.branchId ??
@@ -524,10 +528,16 @@ export default function SettingsEmployeeDirectory({
       throw new Error(`Bio must be ${EMPLOYEE_BIO_MAX_LENGTH} characters or fewer.`);
     }
     await updateEmployeeBio(id, trimmedBio === '' ? null : trimmedBio);
-    if (defaultBranchId != null) {
+    if (practiceWide) {
+      await setEmployeeBranches(DEFAULT_PRACTICE_ID, id, {
+        branchIds: branchOptions.map((b) => b.id),
+        practiceWide: true,
+      });
+    } else if (defaultBranchId != null) {
       const existing = await getEmployeeBranches(DEFAULT_PRACTICE_ID, id).catch(() => []);
+      const wasPracticeWide = existing.length > 0 && !existing.some((b) => b.isPrimary);
       const branchIds =
-        existing.length > 0
+        existing.length > 0 && !wasPracticeWide
           ? [...new Set([...existing.map((b) => b.branchId), defaultBranchId])]
           : [defaultBranchId];
       await setEmployeeBranches(DEFAULT_PRACTICE_ID, id, {
@@ -886,22 +896,30 @@ export default function SettingsEmployeeDirectory({
                   <fieldset className="settings-employee-modal__fieldset">
                     <legend className="settings-employee-modal__legend">Default office</legend>
                     <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-                      Checkout takes inventory from this office unless someone changes it on the
-                      invoice.
+                      {practiceWide
+                        ? 'Works across every office: sees every office’s unassigned tasks. Used for managers, admins and CSRs.'
+                        : 'Checkout takes inventory from this office unless someone changes it on the invoice.'}
                     </p>
                     <div className="settings-employee-modal__grid">
                       <label>
                         <span className="label">Default branch</span>
                         <select
                           className="input"
-                          value={defaultBranchId ?? ''}
+                          value={practiceWide ? ALL_OFFICES : (defaultBranchId ?? '')}
                           onChange={(e) => {
+                            if (e.target.value === ALL_OFFICES) {
+                              setPracticeWide(true);
+                              setDefaultLocationId(null);
+                              return;
+                            }
+                            setPracticeWide(false);
                             const v = e.target.value === '' ? null : Number(e.target.value);
                             setDefaultBranchId(v != null && Number.isFinite(v) ? v : null);
                             setDefaultLocationId(null);
                           }}
                         >
                           <option value="">Select branch…</option>
+                          <option value={ALL_OFFICES}>All offices (practice-wide)</option>
                           {branchOptions.map((b) => (
                             <option key={b.id} value={b.id}>
                               {b.name}
@@ -913,8 +931,8 @@ export default function SettingsEmployeeDirectory({
                         <span className="label">Default location</span>
                         <select
                           className="input"
-                          value={defaultLocationId ?? ''}
-                          disabled={defaultBranchId == null}
+                          value={practiceWide ? '' : (defaultLocationId ?? '')}
+                          disabled={practiceWide || defaultBranchId == null}
                           onChange={(e) => {
                             const v = e.target.value === '' ? null : Number(e.target.value);
                             setDefaultLocationId(v != null && Number.isFinite(v) ? v : null);
@@ -1395,14 +1413,21 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">Default branch</span>
                     <select
                       className="input"
-                      value={defaultBranchId ?? ''}
+                      value={practiceWide ? ALL_OFFICES : (defaultBranchId ?? '')}
                       onChange={(e) => {
+                        if (e.target.value === ALL_OFFICES) {
+                          setPracticeWide(true);
+                          setDefaultLocationId(null);
+                          return;
+                        }
+                        setPracticeWide(false);
                         const v = e.target.value === '' ? null : Number(e.target.value);
                         setDefaultBranchId(v != null && Number.isFinite(v) ? v : null);
                         setDefaultLocationId(null);
                       }}
                     >
                       <option value="">Select branch…</option>
+                      <option value={ALL_OFFICES}>All offices (practice-wide)</option>
                       {branchOptions.map((b) => (
                         <option key={b.id} value={b.id}>
                           {b.name}
@@ -1414,8 +1439,8 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">Default location</span>
                     <select
                       className="input"
-                      value={defaultLocationId ?? ''}
-                      disabled={defaultBranchId == null}
+                      value={practiceWide ? '' : (defaultLocationId ?? '')}
+                      disabled={practiceWide || defaultBranchId == null}
                       onChange={(e) => {
                         const v = e.target.value === '' ? null : Number(e.target.value);
                         setDefaultLocationId(v != null && Number.isFinite(v) ? v : null);

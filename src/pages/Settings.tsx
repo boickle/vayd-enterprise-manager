@@ -496,7 +496,7 @@ export default function Settings() {
   const [onlineStoreSettingLoading, setOnlineStoreSettingLoading] = useState(false);
   const [onlineStoreSettingSaving, setOnlineStoreSettingSaving] = useState(false);
   const [onlineStoreSettingError, setOnlineStoreSettingError] = useState<string | null>(null);
-  const [excludeProductionWhenRefilling, setExcludeProductionWhenRefilling] = useState(false);
+  const [excludeProductionWhenRefilling, setExcludeProductionWhenRefilling] = useState(true);
   const [refillProductionSaving, setRefillProductionSaving] = useState(false);
 
   // Inventory tab — practice sales-tax levels (catalog item picker)
@@ -582,7 +582,7 @@ export default function Settings() {
         if (cancelled) return;
         setOnlineStoreImplemented(isOnlineStoreImplemented(settings));
         setExcludeProductionWhenRefilling(
-          settings?.[EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY] === 'true',
+          settings?.[EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY] !== 'false',
         );
         const activeBranches = branchList.filter((b) => b.isActive !== false);
         setOnlineStoreBranches(activeBranches);

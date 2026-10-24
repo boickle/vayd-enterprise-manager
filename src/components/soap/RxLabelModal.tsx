@@ -160,7 +160,9 @@ export default function RxLabelModal({
     setLoadingPrinters(true);
     setError(null);
     try {
-      const next = await listDymoPrinters();
+      const next = (await listDymoPrinters()).sort(
+        (a, b) => Number(b.isConnected) - Number(a.isConnected)
+      );
       setPrinters(next);
       const connected = next.filter((printer) => printer.isConnected);
       const remembered = window.localStorage.getItem(LAST_PRINTER_KEY);

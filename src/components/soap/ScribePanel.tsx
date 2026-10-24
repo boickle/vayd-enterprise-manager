@@ -425,6 +425,8 @@ export default function ScribePanel({
   );
 
   const socketRef = useRef<ScribeSocketHandle | null>(null);
+  /** Latest stopRecording, for the socket's status handler created at start. */
+  const stopRecordingRef = useRef<() => Promise<void>>(async () => undefined);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
   const keepAwakeRef = useRef<KeepAwakeHandle | null>(null);
   const onRecordingChangeRef = useRef(onRecordingChange);
@@ -499,14 +501,18 @@ export default function ScribePanel({
   }, [soapEncounterId]);
 
   useEffect(() => {
-    const text = (pasteText.trim() || finalTranscript.trim());
+    // While recording, finalTranscript is only the current take; earlier takes sit in pasteText.
+    const text =
+      status === 'recording'
+        ? [pasteText.trim(), finalTranscript.trim()].filter(Boolean).join('\n\n')
+        : pasteText.trim() || finalTranscript.trim();
     if (!text) return;
     try {
       localStorage.setItem(`scout.scribe.liveTranscript:${soapEncounterId}`, text);
     } catch {
       /* quota */
     }
-  }, [pasteText, finalTranscript, soapEncounterId]);
+  }, [pasteText, finalTranscript, soapEncounterId, status]);
   useEffect(() => {
     return () => {
       socketRef.current?.dispose();
@@ -797,8 +803,16 @@ export default function ScribePanel({
     setAutoAppliedLog([]);
     prevSuggestionRef.current = null;
 
+    let live = false;
     const socket = createScribeSocket({
-      onStatusChange: setStatus,
+      onStatusChange: (next) => {
+        setStatus(next);
+        // The connection dropped mid-take: end the take so its words join the transcript.
+        if (next === 'error' && live) {
+          live = false;
+          void stopRecordingRef.current();
+        }
+      },
       onTranscript: (evt) => {
         if (evt.isFinal) {
           setFinalTranscript((prev) => `${prev} ${evt.text}`.trim());
@@ -813,6 +827,7 @@ export default function ScribePanel({
 
     try {
       await socket.start(soapEncounterId);
+      live = true;
       const audio = await startScribeAudioCapture({
         onChunk: (b64) => socket.sendAudio(b64),
         onError: (err) => setErrorMessage(err instanceof Error ? err.message : 'Microphone error'),
@@ -822,6 +837,7 @@ export default function ScribePanel({
       setElapsed(0);
       timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (err) {
+      live = false;
       setErrorMessage(err instanceof Error ? err.message : 'Could not start the scribe.');
       teardown();
       socket.dispose();
@@ -879,6 +895,7 @@ export default function ScribePanel({
       if (pasteText.trim()) setPasteOpen(true);
     }
   }, [teardown, finalTranscript, pasteText, activeTake, takes.length, elapsed]);
+  stopRecordingRef.current = stopRecording;
 
   const onRecordClick = async () => {
     if (recording) {

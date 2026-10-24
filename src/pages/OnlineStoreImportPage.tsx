@@ -40,7 +40,13 @@ import './Settings.css';
 import './Catalog.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-type StoreAdminTab = 'items' | 'coupons' | 'import';
+type StoreAdminTab = 'items' | 'coupons' | 'autoship' | 'import';
+
+const STORE_TAB_LABELS: Record<'items' | 'coupons' | 'autoship', string> = {
+  items: 'Store items',
+  coupons: 'Coupons',
+  autoship: 'Bulk autoship',
+};
 
 function matchType(match: Pick<EcwidMapMatch, 'catalogItemType'>): 'inventory' | 'procedure' {
   return match.catalogItemType === 'procedure' ? 'procedure' : 'inventory';
@@ -434,6 +440,17 @@ function groupVariantsByStrength(variants: StoreAdminVariant[]) {
 
 const STORE_ITEMS_PAGE_SIZE = 50;
 
+type AutoshipFilter = '' | 'on' | 'off';
+
+/** `on`: every inventory option has autoship. `off`: at least one inventory option doesn't. */
+function listingMatchesAutoship(listing: StoreAdminListing, filter: AutoshipFilter): boolean {
+  if (!filter) return true;
+  const inventory = listing.variants.filter((v) => v.inventoryItemId);
+  if (!inventory.length) return false;
+  const allOn = inventory.every((v) => Boolean(v.recommendedFrequency));
+  return filter === 'on' ? allOn : !allOn;
+}
+
 function listingMatchesSearch(listing: StoreAdminListing, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -619,7 +636,8 @@ function practiceIdFromAuth(token: string | null): number {
   return currentPracticeId();
 }
 
-export default function OnlineStoreImportPage() {
+/** `import` is the Ecwid / CSV import on its own, under Pharmacy → Setup. */
+export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'store' | 'import' }) {
   const { token } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -633,13 +651,17 @@ export default function OnlineStoreImportPage() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [selected, setSelected] = useState<Record<number, boolean>>({});
-  const [tab, setTab] = useState<StoreAdminTab>('items');
+  const [tab, setTab] = useState<StoreAdminTab>(view === 'import' ? 'import' : 'items');
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
   const [matchingId, setMatchingId] = useState<number | null>(null);
   const [addStoreOpen, setAddStoreOpen] = useState(false);
   const [workspaceListing, setWorkspaceListing] = useState<StoreAdminListing | null>(null);
   const [itemQuery, setItemQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [approvalFilter, setApprovalFilter] = useState<'' | 'approved' | 'needs_doctor_approval'>('');
+  const [homeFilter, setHomeFilter] = useState<'' | 'on' | 'off'>('');
+  const [autoshipFilter, setAutoshipFilter] = useState<AutoshipFilter>('');
+  const [showAllItems, setShowAllItems] = useState(false);
   const [bulkAutoshipFrequency, setBulkAutoshipFrequency] = useState('monthly');
   const [itemPage, setItemPage] = useState(1);
   const [imageTick, setImageTick] = useState(0);
@@ -670,7 +692,10 @@ export default function OnlineStoreImportPage() {
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'items' || tabParam === 'import' || tabParam === 'coupons') {
+    if (
+      view === 'store' &&
+      (tabParam === 'items' || tabParam === 'coupons' || tabParam === 'autoship')
+    ) {
       setTab(tabParam);
     }
     if (!listings.length) return;
@@ -685,7 +710,7 @@ export default function OnlineStoreImportPage() {
     if (searchParams.get('add') === '1') {
       setAddStoreOpen(true);
     }
-  }, [listings, searchParams]);
+  }, [listings, searchParams, view]);
 
   const writeItemsParams = (next: { product?: string | null; add?: boolean }) => {
     const params = new URLSearchParams(searchParams);
@@ -1004,16 +1029,22 @@ export default function OnlineStoreImportPage() {
       listings.filter(
         (listing) =>
           listingMatchesCategory(listing, categoryFilter) &&
-          listingMatchesSearch(listing, itemQuery)
+          listingMatchesSearch(listing, itemQuery) &&
+          (!approvalFilter || listing.approvalTag === approvalFilter) &&
+          (!homeFilter || (homeFilter === 'on') === Boolean(listing.featuredOnHome)) &&
+          listingMatchesAutoship(listing, autoshipFilter)
       ),
-    [categoryFilter, itemQuery, listings]
+    [approvalFilter, autoshipFilter, categoryFilter, homeFilter, itemQuery, listings]
   );
-  const itemPageCount = Math.max(1, Math.ceil(filteredListings.length / STORE_ITEMS_PAGE_SIZE));
+  const itemPageSize = showAllItems
+    ? Math.max(1, filteredListings.length)
+    : STORE_ITEMS_PAGE_SIZE;
+  const itemPageCount = Math.max(1, Math.ceil(filteredListings.length / itemPageSize));
   const safeItemPage = Math.min(itemPage, itemPageCount);
   const pagedListings = useMemo(() => {
-    const start = (safeItemPage - 1) * STORE_ITEMS_PAGE_SIZE;
-    return filteredListings.slice(start, start + STORE_ITEMS_PAGE_SIZE);
-  }, [filteredListings, safeItemPage]);
+    const start = (safeItemPage - 1) * itemPageSize;
+    return filteredListings.slice(start, start + itemPageSize);
+  }, [filteredListings, itemPageSize, safeItemPage]);
 
   useEffect(() => {
     if (itemPage !== safeItemPage) setItemPage(safeItemPage);
@@ -1182,20 +1213,63 @@ export default function OnlineStoreImportPage() {
     }
   };
 
+  const categorySelect = (
+    <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      Category
+      <select
+        className="settings-input"
+        style={{ minWidth: 220 }}
+        value={categoryFilter}
+        onChange={(e) => {
+          setCategoryFilter(e.target.value);
+          setItemPage(1);
+        }}
+        aria-label="Filter store items by category"
+      >
+        <option value="">All categories ({listings.length})</option>
+        {uncategorizedCount ? (
+          <option value={UNCATEGORIZED_FILTER}>Uncategorized ({uncategorizedCount})</option>
+        ) : null}
+        {categoryFilterGroups.map((group) =>
+          group.children.length ? (
+            <optgroup key={group.parent} label={group.parent}>
+              <option value={group.parent}>
+                All {group.parent} ({group.parentCount})
+              </option>
+              {group.children.map((child) => (
+                <option key={child.value} value={child.value}>
+                  {child.label} ({child.count})
+                </option>
+              ))}
+            </optgroup>
+          ) : (
+            <option key={group.parent} value={group.parent}>
+              {group.parent} ({group.parentCount})
+            </option>
+          )
+        )}
+      </select>
+    </label>
+  );
+
   if (searchParams.get('tab') === 'shipping') {
     return <Navigate to="/schedule/mail-orders" replace />;
+  }
+  if (view === 'store' && searchParams.get('tab') === 'import') {
+    return <Navigate to="/schedule/inventory/store-import" replace />;
   }
 
   return (
     <div className="settings-card" style={{ padding: 16 }}>
+      {view === 'import' ? (
+        <h2 style={{ margin: '0 0 8px' }}>Online Store Import</h2>
+      ) : (
       <div className="settings-tabs" role="tablist">
-        {(['items', 'coupons', 'import'] as const).map((key) => (
+        {(['items', 'coupons', 'autoship'] as const).map((key) => (
           <button
             key={key}
             type="button"
-            className={`settings-tab${tab === key ? ' active' : ''}${
-              key === 'import' ? ' store-tab--end' : ''
-            }`}
+            className={`settings-tab${tab === key ? ' active' : ''}`}
             onClick={() => {
               setTab(key);
               const next = new URLSearchParams(searchParams);
@@ -1209,10 +1283,11 @@ export default function OnlineStoreImportPage() {
               setSearchParams(next, { replace: true });
             }}
           >
-            {key === 'import' ? 'Ecwid import' : key === 'items' ? 'Store items' : 'Coupons'}
+            {STORE_TAB_LABELS[key]}
           </button>
         ))}
       </div>
+      )}
       {addStoreOpen && tab === 'items' ? null : error ? (
         <div className="settings-message settings-error-message">
           <span>{error}</span>
@@ -1506,9 +1581,9 @@ export default function OnlineStoreImportPage() {
           <p className="settings-muted">
             Each row is a Scout store product. Add a master product first, then attach
             inventory or procedure options — or create a new inventory item and add it.
-            Highlight and approval live on the product; autoship is per option. Choose a
-            category to turn autoship on or off for that group. The whole-catalog control
-            leaves Memorial Items off. The table shows 50 at a time.
+            Highlight and approval live on the product; autoship is per option (check the
+            Autoship box on an option and pick its suggested cadence). To change autoship for a
+            whole category at once, use Bulk autoship. The table shows 50 at a time.
           </p>
           <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
             <button
@@ -1594,44 +1669,7 @@ export default function OnlineStoreImportPage() {
                 setItemPage(1);
               }}
             />
-            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              Category
-              <select
-                className="settings-input"
-                style={{ minWidth: 220 }}
-                value={categoryFilter}
-                onChange={(e) => {
-                  setCategoryFilter(e.target.value);
-                  setItemPage(1);
-                }}
-                aria-label="Filter store items by category"
-              >
-                <option value="">All categories ({listings.length})</option>
-                {uncategorizedCount ? (
-                  <option value={UNCATEGORIZED_FILTER}>
-                    Uncategorized ({uncategorizedCount})
-                  </option>
-                ) : null}
-                {categoryFilterGroups.map((group) =>
-                  group.children.length ? (
-                    <optgroup key={group.parent} label={group.parent}>
-                      <option value={group.parent}>
-                        All {group.parent} ({group.parentCount})
-                      </option>
-                      {group.children.map((child) => (
-                        <option key={child.value} value={child.value}>
-                          {child.label} ({child.count})
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : (
-                    <option key={group.parent} value={group.parent}>
-                      {group.parent} ({group.parentCount})
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+            {categorySelect}
           </div>
           <div
             style={{
@@ -1642,74 +1680,77 @@ export default function OnlineStoreImportPage() {
               alignItems: 'center',
             }}
           >
-            <button
-              type="button"
-              className={`store-autoship-all${
-                allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
-              }`}
-              disabled={busy || autoshipIsInventoryEmpty}
-              onClick={() => void toggleAllAutoship()}
-            >
-              <span className="store-autoship-all__mark" aria-hidden>
-                {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
-              </span>
-              <span className="store-autoship-all__copy">
-                <strong>
-                  {categoryFilter
-                    ? `Autoship ${categoryFilterLabel}`
-                    : 'Autoship inventory'}
-                </strong>
-                <span>
-                  {autoshipIsInventoryEmpty
-                    ? categoryHasProducts
-                      ? `${categoryListings.length} product${
-                          categoryListings.length === 1 ? '' : 's'
-                        } here, but none have an inventory option — autoship only applies to inventory.`
-                      : `No inventory options${
-                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
-                        }.`
-                    : allAutoshipOn
-                      ? `On for all ${autoshipScopeItems.length} inventory options${
-                          categoryFilter
-                            ? ` in ${categoryFilterLabel}`
-                            : ' outside Memorial Items'
-                        }. Click to turn off.`
-                      : someAutoshipOn
-                        ? `On for ${autoshipOnCount} of ${autoshipScopeItems.length} inventory options${
-                            categoryFilter
-                              ? ` in ${categoryFilterLabel}`
-                              : ' outside Memorial Items'
-                          }. Click to turn the rest on.`
-                        : `Off for all ${autoshipScopeItems.length} inventory options${
-                            categoryFilter
-                              ? ` in ${categoryFilterLabel}`
-                              : ' outside Memorial Items'
-                          }. Click to turn on.`}
-                </span>
-              </span>
-            </button>
             <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              Cadence when turning on
+              Approval default
               <select
                 className="settings-input"
-                value={bulkAutoshipFrequency}
-                disabled={busy}
-                onChange={(e) => setBulkAutoshipFrequency(e.target.value)}
-                aria-label="Autoship cadence used when turning a group on"
+                value={approvalFilter}
+                onChange={(e) => {
+                  setApprovalFilter(e.target.value as typeof approvalFilter);
+                  setItemPage(1);
+                }}
               >
-                {AUTOSHIP_FREQS.map((freq) => (
-                  <option key={freq.value} value={freq.value}>
-                    {freq.label}
-                  </option>
-                ))}
+                <option value="">Any</option>
+                <option value="needs_doctor_approval">Needs doctor approval</option>
+                <option value="approved">Approved</option>
               </select>
             </label>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Highlight on home
+              <select
+                className="settings-input"
+                value={homeFilter}
+                onChange={(e) => {
+                  setHomeFilter(e.target.value as typeof homeFilter);
+                  setItemPage(1);
+                }}
+              >
+                <option value="">Any</option>
+                <option value="on">On the home page</option>
+                <option value="off">Not on the home page</option>
+              </select>
+            </label>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Autoship
+              <select
+                className="settings-input"
+                value={autoshipFilter}
+                onChange={(e) => {
+                  setAutoshipFilter(e.target.value as AutoshipFilter);
+                  setItemPage(1);
+                }}
+              >
+                <option value="">Any</option>
+                <option value="on">On for every size</option>
+                <option value="off">Off for at least one size</option>
+              </select>
+            </label>
+            {approvalFilter || homeFilter || autoshipFilter ? (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  setApprovalFilter('');
+                  setHomeFilter('');
+                  setAutoshipFilter('');
+                  setItemPage(1);
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
           </div>
           <StoreItemsPager
             page={safeItemPage}
             pageCount={itemPageCount}
+            pageSize={itemPageSize}
             total={filteredListings.length}
             onPage={setItemPage}
+            showAll={showAllItems}
+            onShowAll={(next) => {
+              setShowAllItems(next);
+              setItemPage(1);
+            }}
           />
         <div className="store-items-table-wrap">
         <table className="inv-catalog-results__table">
@@ -1882,6 +1923,7 @@ export default function OnlineStoreImportPage() {
                                           );
                                         }}
                                       />
+                                      <span className="settings-muted">Autoship</span>
                                       {variant.recommendedFrequency ? (
                                         <select
                                           className="settings-input"
@@ -1901,9 +1943,7 @@ export default function OnlineStoreImportPage() {
                                             </option>
                                           ))}
                                         </select>
-                                      ) : (
-                                        <span className="settings-muted">Autoship</span>
-                                      )}
+                                      ) : null}
                                     </label>
                                   ) : null}
                                   <button
@@ -1997,12 +2037,89 @@ export default function OnlineStoreImportPage() {
           <StoreItemsPager
             page={safeItemPage}
             pageCount={itemPageCount}
+            pageSize={itemPageSize}
             total={filteredListings.length}
             onPage={setItemPage}
           />
         )}
           </>
           )}
+        </>
+      )}
+
+      {tab === 'autoship' && (
+        <>
+          <p className="settings-muted">
+            Turn autoship on or off for many store options at once. Pick a category to change
+            just that group, or leave All categories to change everything except Memorial Items.
+            Options that already have a cadence keep it when you turn a group on. To change one
+            option, use its Autoship box under Store items.
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              margin: '12px 0',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            {categorySelect}
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Cadence when turning on
+              <select
+                className="settings-input"
+                value={bulkAutoshipFrequency}
+                disabled={busy}
+                onChange={(e) => setBulkAutoshipFrequency(e.target.value)}
+                aria-label="Autoship cadence used when turning a group on"
+              >
+                {AUTOSHIP_FREQS.map((freq) => (
+                  <option key={freq.value} value={freq.value}>
+                    {freq.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            className={`store-autoship-all${
+              allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
+            }`}
+            disabled={busy || autoshipIsInventoryEmpty}
+            onClick={() => void toggleAllAutoship()}
+          >
+            <span className="store-autoship-all__mark" aria-hidden>
+              {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
+            </span>
+            <span className="store-autoship-all__copy">
+              <strong>
+                {categoryFilter ? `Autoship ${categoryFilterLabel}` : 'Autoship inventory'}
+              </strong>
+              <span>
+                {autoshipIsInventoryEmpty
+                  ? categoryHasProducts
+                    ? `${categoryListings.length} product${
+                        categoryListings.length === 1 ? '' : 's'
+                      } here, but none have an inventory option — autoship only applies to inventory.`
+                    : `No inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                      }.`
+                  : allAutoshipOn
+                    ? `On for all ${autoshipScopeItems.length} inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                      }. Click to turn off.`
+                    : someAutoshipOn
+                      ? `On for ${autoshipOnCount} of ${autoshipScopeItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                        }. Click to turn the rest on.`
+                      : `Off for all ${autoshipScopeItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                        }. Click to turn on.`}
+              </span>
+            </span>
+          </button>
         </>
       )}
 
@@ -2862,16 +2979,22 @@ function StoreVariantPicker({
 function StoreItemsPager({
   page,
   pageCount,
+  pageSize,
   total,
   onPage,
+  showAll,
+  onShowAll,
 }: {
   page: number;
   pageCount: number;
+  pageSize: number;
   total: number;
   onPage: (page: number) => void;
+  showAll?: boolean;
+  onShowAll?: (next: boolean) => void;
 }) {
-  const start = total === 0 ? 0 : (page - 1) * STORE_ITEMS_PAGE_SIZE + 1;
-  const end = Math.min(page * STORE_ITEMS_PAGE_SIZE, total);
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
   return (
     <div
       style={{
@@ -2887,6 +3010,16 @@ function StoreItemsPager({
         {total
           ? `Showing ${start}–${end} of ${total} store items`
           : 'No store items'}
+        {onShowAll && (showAll || total > STORE_ITEMS_PAGE_SIZE) ? (
+          <button
+            type="button"
+            className="inv-catalog-results__text-btn"
+            style={{ marginLeft: 8 }}
+            onClick={() => onShowAll(!showAll)}
+          >
+            {showAll ? `Show ${STORE_ITEMS_PAGE_SIZE} at a time` : 'Show all'}
+          </button>
+        ) : null}
       </span>
       {pageCount > 1 ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
