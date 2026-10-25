@@ -4079,6 +4079,7 @@ export default function PublicRoomLoaderForm() {
             // Do not pre-fill "Do you want to share any additional details about the reason for this visit?"
             initialFormData[`${petKey}_appointmentReason`] = '';
             initialFormData[`${petKey}_generalWellbeing`] = '';
+            initialFormData[`${petKey}_currentMedications`] = '';
             initialFormData[`${petKey}_eatingDrinkingNormal`] = '';
             initialFormData[`${petKey}_eatingDrinkingNormalDetails`] = '';
             initialFormData[`${petKey}_outdoorAccess`] = '';
@@ -6150,6 +6151,7 @@ export default function PublicRoomLoaderForm() {
         addOptional('Please describe.', `${petKey}_eatingDrinkingNormalDetails`);
       }
       addOptional(`How is ${petName} doing otherwise? Are there any other concerns you'd like us to address during this visit?`, `${petKey}_generalWellbeing`);
+      addOptional(`What medications is ${petName} on currently`, `${petKey}_currentMedications`);
       if ((patient as any).questions?.mobility === true) {
         addOptional(`It sounds like you may have some concerns about ${petName}'s mobility. Can you tell us more about what you're noticing?`, `${petKey}_mobilityDetails`);
       }
@@ -6499,7 +6501,7 @@ export default function PublicRoomLoaderForm() {
           roomLoaderRootReminders: data?.reminders,
         });
 
-        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
+        if (suffix === 'appointmentReason' || suffix === 'generalWellbeing' || suffix === 'currentMedications' || suffix === 'eatingDrinkingNormal' || suffix === 'eatingDrinkingNormalDetails') allowedFormData[key] = value;
         else if (suffix === 'mobilityDetails' && (patientsData[petIdx] as any)?.questions?.mobility === true) allowedFormData[key] = value;
         else if ((suffix === 'preMedsNeedRefill' || suffix === 'preMedsWhatRefills' || suffix === 'preMedsMailOrPickup') && (patientsData[petIdx] as any)?.questions?.preMedsAsk === true) allowedFormData[key] = value;
         else if (suffix === 'outdoorAccess' && isCatPatient) allowedFormData[key] = value;
@@ -8633,6 +8635,17 @@ export default function PublicRoomLoaderForm() {
                     disabled={readOnly}
                     style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
                     placeholder="How is your pet doing? Any other concerns?"
+                  />
+                  <label style={{ ...questionLabelStyle, marginTop: '10px' }}>
+                    What medications is {petName} on currently
+                  </label>
+                  <textarea
+                    value={formData[`${petKey}_currentMedications`] || ''}
+                    onChange={(e) => handleInputChange(`${petKey}_currentMedications`, e.target.value)}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                    style={{ ...textareaStyle, ...(readOnly ? { opacity: 0.85, cursor: 'default' } : {}) }}
+                    placeholder="List any medications your pet is currently on..."
                   />
                 </div>
 
