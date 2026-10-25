@@ -55,7 +55,7 @@ export type HoldListItem = {
     prettyName: string | null;
   } | null;
   client: HoldClientRef | null;
-  patient: { id: number; name: string | null } | null;
+  patient: { id: number; name: string | null; pimsId: string | null } | null;
   primaryProvider: HoldEmployeeRef | null;
   createdByEmployee: HoldEmployeeRef | null;
   holdOwner: HoldEmployeeRef | null;
