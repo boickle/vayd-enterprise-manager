@@ -10,6 +10,12 @@ import type { AppointmentType } from '../api/appointmentSettings';
 import { appointmentFormFlags } from './appointmentTypeSettings';
 import type { Appointment } from '../api/roomLoader';
 import { patientHasOverlappingActiveVisit } from './patientOverlappingVisit';
+import {
+  claimHoldOwnerBestEffort,
+  resolveStaffEmployeeIdForHoldClaim,
+} from './holdOwnership';
+import { isHoldAppointmentTypeForBook } from './forwardBookingBookToast';
+import { buildBookingAppointmentTypeCatalog } from './bookingHouseholdVisitWarning';
 
 /** Process-wide lock — survives React remounts / double Book clicks on the same draft. */
 const inFlightManualBookKeys = new Set<string>();
@@ -33,6 +39,7 @@ export async function commitManualBookPreviewDraft(
     token?: string | null;
     userEmail?: string | null;
     doctorId?: string | null;
+    employeeId?: string | number | null;
     appointmentTypes?: readonly AppointmentType[];
     /** When provided, refuse to create a second active overlapping visit for the same pet. */
     existingAppointments?: readonly Appointment[];
@@ -109,6 +116,25 @@ export async function commitManualBookPreviewDraft(
 
     if (trimmedAlt) {
       await putAppointmentAlternateAddress(apptId, { addressText: trimmedAlt });
+    }
+
+    const holdOwnerId = resolveStaffEmployeeIdForHoldClaim({
+      token: ctx.token,
+      employeeId: ctx.employeeId,
+    });
+    if (holdOwnerId != null && ctx.appointmentTypes?.length) {
+      const catalog = buildBookingAppointmentTypeCatalog([...ctx.appointmentTypes]);
+      const typeName =
+        ctx.appointmentTypes.find((t) => Number(t.id) === Number(draft.appointmentTypeId))
+          ?.name ?? null;
+      if (
+        isHoldAppointmentTypeForBook(catalog, {
+          typeId: draft.appointmentTypeId,
+          typeName,
+        })
+      ) {
+        await claimHoldOwnerBestEffort(apptId, holdOwnerId);
+      }
     }
 
     return apptId;
