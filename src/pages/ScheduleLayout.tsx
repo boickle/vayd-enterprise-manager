@@ -49,6 +49,7 @@ import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalen
 import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
 import { appAlert } from '../utils/appDialog';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
@@ -103,6 +104,7 @@ export default function ScheduleLayout() {
     () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
     [roles],
   );
+  const inventoryAttention = useInventoryAttention(canAccessScheduleAnalytics);
 
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
   const [forwardBookingModalOpen, setForwardBookingModalOpen] = useState(false);
@@ -385,12 +387,39 @@ export default function ScheduleLayout() {
                   className={({ isActive }) =>
                     `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
                   }
-                  title={railCollapsedEffective ? 'Analytics' : undefined}
+                  title={
+                    railCollapsedEffective
+                      ? `Analytics${inventoryAttention.total ? ' — inventory needs attention' : ''}`
+                      : undefined
+                  }
                 >
-                  <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <span
+                    className="schedule-app__quick-link-icon"
+                    aria-hidden
+                    style={{ position: 'relative' }}
+                  >
                     <LineChart size={18} strokeWidth={1.75} />
+                    {railCollapsedEffective && inventoryAttention.total ? (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -2,
+                          right: -3,
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          background: '#d92d20',
+                        }}
+                      />
+                    ) : null}
                   </span>
-                  <span className="schedule-app__quick-link-label">Analytics</span>
+                  <span className="schedule-app__quick-link-label">
+                    Analytics
+                    <AttentionBadge
+                      count={inventoryAttention.total}
+                      title="Inventory reports need attention"
+                    />
+                  </span>
                 </NavLink>
               </>
             ) : null}

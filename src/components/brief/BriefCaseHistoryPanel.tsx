@@ -70,36 +70,16 @@ function staffDisplayName(emp: {
   return name;
 }
 
-const CLINICAL_ROLE_LABEL: Record<string, string> = {
-  Veterinarian: 'Veterinarian',
-  LimitedAssignedProvider: 'Veterinarian',
-  Technician: 'Veterinary technician',
-  TechnicianAssistant: 'Veterinary technician assistant',
-  Receptionist: 'Client care coordinator',
-  Groomer: 'Groomer',
-  KennelWorker: 'Kennel assistant',
-};
-
-const CLINICAL_ROLE_PRIORITY = [
-  'Veterinarian',
-  'LimitedAssignedProvider',
-  'Technician',
-  'TechnicianAssistant',
-  'Receptionist',
-  'Groomer',
-  'KennelWorker',
+/** Scout role slugs that map to a client-facing job title, highest first. */
+const CLINICAL_ROLE_LABEL: Array<[slug: string, label: string]> = [
+  ['medical_director', 'Veterinarian'],
+  ['veterinarian', 'Veterinarian'],
+  ['relief_veterinarian', 'Veterinarian'],
+  ['lead_technician', 'Veterinary technician'],
+  ['technician', 'Veterinary technician'],
+  ['lead_client_liaison', 'Client care coordinator'],
+  ['client_liaison', 'Client care coordinator'],
 ];
-
-/** eVet UserRole flag values that map to a client-facing job title. */
-const CLINICAL_ROLE_VALUE: Record<number, string> = {
-  8: 'Veterinarian',
-  16: 'Technician',
-  32: 'Receptionist',
-  256: 'TechnicianAssistant',
-  512: 'KennelWorker',
-  65536: 'Groomer',
-  262144: 'LimitedAssignedProvider',
-};
 
 function jobRoleFromDesignation(designation?: string | null): string | null {
   if (!designation?.trim()) return null;
@@ -133,15 +113,8 @@ function staffRoleLabel(
   const assigned = (emp.roleIds ?? [])
     .map((id) => catalog.find((r) => r.id === id))
     .filter((r): r is EmployeeRole => Boolean(r));
-  const names = assigned.map((r) => r.name).filter(Boolean);
-  const values = assigned.map((r) => Number(r.roleValue)).filter((n) => Number.isFinite(n));
-  for (const key of CLINICAL_ROLE_PRIORITY) {
-    const fromValue = values.some((v) => CLINICAL_ROLE_VALUE[v] === key);
-    if (fromValue || names.some((n) => n === key || n.replace(/\s+/g, '') === key)) {
-      return CLINICAL_ROLE_LABEL[key] ?? key;
-    }
-  }
-  return null;
+  const slugs = new Set(assigned.map((r) => r.slug).filter(Boolean));
+  return CLINICAL_ROLE_LABEL.find(([slug]) => slugs.has(slug))?.[1] ?? null;
 }
 
 function practiceAddressLine(info: {

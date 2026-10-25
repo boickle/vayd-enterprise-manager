@@ -140,7 +140,7 @@ export default function Admin({ basePath = '/admin' }: AdminProps) {
   const visibleTabs = getAdminTabPages().filter(
     (tab) => matchesRole(tab.role, normalizedRoles) && (!tab.platformAdminOnly || isPlatformAdmin)
   );
-  const navItems = groupAdminTabs(visibleTabs);
+  const navItems = groupAdminTabs(visibleTabs.filter((tab) => !tab.hidden));
 
   return (
     <div className="container">

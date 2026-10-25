@@ -7,8 +7,12 @@ import {
   patchInventoryBranchLocation,
   patchPracticeBranch,
   type InventoryBranchLocation,
+  downloadBranchesCsv,
+  importBranchesCsv,
+  type BranchCsvResult,
   type PracticeBranch,
   type PracticeBranchAddressBody,
+  type PracticeBranchShipTo,
 } from '../../api/branchInventory';
 import { formatAddressFields } from '../../api/geo';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
@@ -51,6 +55,68 @@ function addressPayload(a: AddressFields): PracticeBranchAddressBody {
   };
 }
 
+type ShipToForm = {
+  name: string;
+  line1: string;
+  line2: string;
+  city: string;
+  state: string;
+  zip: string;
+};
+
+const EMPTY_SHIP_TO: ShipToForm = { name: '', line1: '', line2: '', city: '', state: '', zip: '' };
+
+function hasOwnShipTo(b: PracticeBranch): boolean {
+  return Boolean(b.shipToAddress1?.trim() || b.shipToZipcode?.trim());
+}
+
+function branchToShipTo(b: PracticeBranch): ShipToForm {
+  return {
+    name: b.shipToName ?? '',
+    line1: b.shipToAddress1 ?? '',
+    line2: b.shipToAddress2 ?? '',
+    city: b.shipToCity ?? '',
+    state: b.shipToState ?? '',
+    zip: b.shipToZipcode ?? '',
+  };
+}
+
+function formatShipTo(b: PracticeBranch): string {
+  return [
+    b.shipToName,
+    formatAddressFields({
+      line1: b.shipToAddress1 ?? '',
+      line2: b.shipToAddress2 ?? undefined,
+      city: b.shipToCity ?? '',
+      state: b.shipToState ?? '',
+      zip: b.shipToZipcode ?? '',
+    }).trim(),
+  ]
+    .filter((p) => p && p.trim())
+    .join(', ');
+}
+
+function shipToPayload(same: boolean, s: ShipToForm): PracticeBranchShipTo {
+  if (same) {
+    return {
+      shipToName: null,
+      shipToAddress1: null,
+      shipToAddress2: null,
+      shipToCity: null,
+      shipToState: null,
+      shipToZipcode: null,
+    };
+  }
+  return {
+    shipToName: s.name.trim() || null,
+    shipToAddress1: s.line1.trim() || null,
+    shipToAddress2: s.line2.trim() || null,
+    shipToCity: s.city.trim() || null,
+    shipToState: s.state.trim() || null,
+    shipToZipcode: s.zip.trim() || null,
+  };
+}
+
 function isAddressComplete(a: AddressFields): boolean {
   return Boolean(a.line1.trim() && a.city.trim() && a.state.trim() && a.zip.trim());
 }
@@ -87,6 +153,13 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
   });
   const [branchSaving, setBranchSaving] = useState(false);
   const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
+  const [shipToSame, setShipToSame] = useState(true);
+  const [shipTo, setShipTo] = useState<ShipToForm>({ ...EMPTY_SHIP_TO });
+
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [csvText, setCsvText] = useState<string | null>(null);
+  const [csvFileName, setCsvFileName] = useState('');
+  const [csvPreview, setCsvPreview] = useState<BranchCsvResult | null>(null);
 
   const [newLocCode, setNewLocCode] = useState('');
   const [newLocName, setNewLocName] = useState('');
@@ -164,6 +237,8 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
     setBranchFormName('');
     setBranchFormPimsId('');
     setBranchFormAddress({ ...EMPTY_ADDRESS_FIELDS });
+    setShipToSame(true);
+    setShipTo({ ...EMPTY_SHIP_TO });
   }
 
   async function saveBranch() {
@@ -176,15 +251,21 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
       notify('Street, city, state, and ZIP are required', 'error');
       return;
     }
+    if (!shipToSame && !(shipTo.line1.trim() && shipTo.city.trim() && shipTo.state.trim() && shipTo.zip.trim())) {
+      notify('Ship-to needs a street, city, state, and ZIP (or check “Same as address”)', 'error');
+      return;
+    }
     setBranchSaving(true);
     try {
       const pims = branchFormPimsId.trim();
       const address = addressPayload(branchFormAddress);
+      const shipToBody = shipToPayload(shipToSame, shipTo);
       if (editingBranchId != null) {
         await patchPracticeBranch(practiceId, editingBranchId, {
           name,
           pimsLocationId: pims || null,
           ...address,
+          ...shipToBody,
         });
         notify('Branch updated', 'success');
       } else {
@@ -193,6 +274,7 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
           ...(pims ? { pimsLocationId: pims } : {}),
           ...address,
         });
+        if (!shipToSame) await patchPracticeBranch(practiceId, created.id, shipToBody);
         setSelectedBranchId(created.id);
         notify(`Branch “${created.name}” created`, 'success');
       }
@@ -210,6 +292,59 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
     setBranchFormName(b.name);
     setBranchFormPimsId(b.pimsLocationId ?? '');
     setBranchFormAddress(branchToAddress(b));
+    setShipToSame(!hasOwnShipTo(b));
+    setShipTo(branchToShipTo(b));
+  }
+
+  async function downloadCsv() {
+    setCsvBusy(true);
+    try {
+      await downloadBranchesCsv(practiceId);
+    } catch (e) {
+      notify(extractErr(e), 'error');
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  async function previewCsv(file: File) {
+    setCsvBusy(true);
+    setCsvPreview(null);
+    try {
+      const text = await file.text();
+      setCsvText(text);
+      setCsvFileName(file.name);
+      setCsvPreview(await importBranchesCsv(practiceId, text, false));
+    } catch (e) {
+      setCsvText(null);
+      notify(extractErr(e), 'error');
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  async function applyCsv() {
+    if (!csvText) return;
+    setCsvBusy(true);
+    try {
+      const result = await importBranchesCsv(practiceId, csvText, true);
+      if (result.applied) {
+        notify(
+          result.changes.length ? `Imported ${result.changes.length} change(s)` : 'Nothing to change',
+          'success'
+        );
+        setCsvPreview(null);
+        setCsvText(null);
+        await loadBranches();
+        if (selectedBranchId != null) await loadLocations(selectedBranchId);
+      } else {
+        setCsvPreview(result);
+      }
+    } catch (e) {
+      notify(extractErr(e), 'error');
+    } finally {
+      setCsvBusy(false);
+    }
   }
 
   async function archiveBranch(b: PracticeBranch) {
@@ -328,11 +463,101 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
   return (
     <div className="settings-branches-locations">
       <div className="settings-card" style={{ marginBottom: 24 }}>
+        <h3 className="settings-card-title">Download / upload (CSV)</h3>
+        <p className="settings-muted" style={{ marginBottom: 12 }}>
+          One file with every office and its location buckets (one row per location). Upload it in
+          another environment to copy them over: offices match by name and locations by code. Upload
+          creates and updates only. It never deletes, and it does not change which office or
+          location is the default.
+        </p>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={csvBusy}
+            onClick={() => void downloadCsv()}
+          >
+            Download CSV
+          </button>
+          <label className="btn secondary" style={{ cursor: csvBusy ? 'not-allowed' : 'pointer' }}>
+            Upload CSV…
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              disabled={csvBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void previewCsv(file);
+              }}
+            />
+          </label>
+          {csvBusy ? <span className="settings-muted">Working…</span> : null}
+        </div>
+        {csvPreview ? (
+          <div style={{ marginTop: 14 }}>
+            <strong style={{ fontSize: 14 }}>Preview of {csvFileName}</strong>
+            {csvPreview.errors.length ? (
+              <div className="settings-message settings-error-message" style={{ marginTop: 8 }}>
+                Fix these and upload again:
+                <ul style={{ margin: '4px 0 0 18px' }}>
+                  {csvPreview.errors.map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {csvPreview.warnings.length ? (
+              <ul className="settings-muted" style={{ margin: '8px 0 0 18px', color: '#92400e' }}>
+                {csvPreview.warnings.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            ) : null}
+            {csvPreview.changes.length ? (
+              <ul style={{ margin: '8px 0 0 18px', fontSize: 13 }}>
+                {csvPreview.changes.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="settings-muted" style={{ marginTop: 8 }}>
+                Everything already matches. Nothing to change.
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={csvBusy || csvPreview.errors.length > 0 || !csvPreview.changes.length}
+                onClick={() => void applyCsv()}
+              >
+                Apply {csvPreview.changes.length} change{csvPreview.changes.length === 1 ? '' : 's'}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={csvBusy}
+                onClick={() => {
+                  setCsvPreview(null);
+                  setCsvText(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="settings-card" style={{ marginBottom: 24 }}>
         <h3 className="settings-card-title">Branches (offices)</h3>
         <p className="settings-muted" style={{ marginBottom: 12 }}>
           A branch is a practice site or office. Inventory, tasks, and stock movements are scoped to
-          a branch. Each branch needs a street address. Creating a branch also creates a default{' '}
-          <code>main</code> location bucket.
+          a branch. Each branch needs a street address, which routing uses. The ship-to address is
+          where vendors deliver; receiving checks it against the invoice. Creating a branch also
+          creates a default <code>main</code> location bucket.
         </p>
 
         {branchesLoading ? (
@@ -345,6 +570,7 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                   <tr>
                     <th>Name</th>
                     <th>Address</th>
+                    <th>Ship-to</th>
                     <th>Default</th>
                     <th>Status</th>
                     <th>PIMS location id</th>
@@ -354,7 +580,7 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                 <tbody>
                   {branches.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="settings-muted">
+                      <td colSpan={7} className="settings-muted">
                         No branches yet.
                       </td>
                     </tr>
@@ -379,6 +605,13 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                               addressText
                             ) : (
                               <span className="settings-muted">Add address</span>
+                            )}
+                          </td>
+                          <td>
+                            {hasOwnShipTo(b) ? (
+                              formatShipTo(b)
+                            ) : (
+                              <span className="settings-muted">Same as address</span>
                             )}
                           </td>
                           <td>{b.isDefault ? 'Yes' : '—'}</td>
@@ -511,6 +744,45 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                     placeholder="04011"
                   />
                 </label>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <label
+                  className="settings-label"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={shipToSame}
+                    onChange={(e) => setShipToSame(e.target.checked)}
+                  />
+                  Ship-to (where vendors deliver) is the same as the address
+                </label>
+                {!shipToSame ? (
+                  <div className="settings-branch-address-grid">
+                    {(
+                      [
+                        ['name', 'Ship-to name (optional)', 'As it prints on invoices'],
+                        ['line1', 'Street', 'Street or PO box'],
+                        ['line2', 'Suite / unit (optional)', ''],
+                        ['city', 'City', 'City'],
+                        ['state', 'State', 'ME'],
+                        ['zip', 'ZIP', '04011'],
+                      ] as Array<[keyof ShipToForm, string, string]>
+                    ).map(([field, label, placeholder]) => (
+                      <label key={field} className="settings-label" style={{ marginBottom: 0 }}>
+                        {label}
+                        <input
+                          className="settings-input"
+                          value={shipTo[field]}
+                          onChange={(e) =>
+                            setShipTo((prev) => ({ ...prev, [field]: e.target.value }))
+                          }
+                          placeholder={placeholder}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div className="settings-branch-form-actions">
                 <button

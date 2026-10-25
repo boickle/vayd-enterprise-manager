@@ -1271,3 +1271,15 @@ label > .label {
     --scout-schedule-navbar-height: calc(96px + env(safe-area-inset-top, 0px));
   }
 }
+
+/* Number fields stay numeric (keypad, no letters) but look like text boxes.
+   The browser's up/down arrows also change the value on scroll. */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

@@ -16,7 +16,7 @@ import { getAccessiblePages } from './app-pages';
 import { CATALOG_HOME, INVENTORY_HOME } from './utils/catalogInventoryNav';
 import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
-import { getAnalyticsTabPages } from './analytics-tabs';
+import { ANALYTICS_LEGACY_REDIRECTS, getAnalyticsTabPages } from './analytics-tabs';
 import { getToolsTabPages, EXIT_SURVEY_PATH } from './tools-tabs';
 import { getSchedulingToolsTabPages } from './scheduling-tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
@@ -57,15 +57,12 @@ import InventoryLayout from './pages/InventoryLayout';
 import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
 import MoveItemsPage from './pages/MoveItemsPage';
 import WasteAdjustPage from './pages/WasteAdjustPage';
-import InventoryActivityPage from './pages/InventoryActivityPage';
 import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
 import InventoryCountsPage from './pages/InventoryCountsPage';
 import FirstCountsPage from './pages/FirstCountsPage';
 import ParSeedPage from './pages/ParSeedPage';
 import ParReviewPage from './pages/ParReviewPage';
-import InventoryCountReportPage from './pages/InventoryCountReportPage';
 import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
-import InventoryExpiringReportPage from './pages/InventoryExpiringReportPage';
 import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
 import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
@@ -719,7 +716,7 @@ export default function App() {
               {pages.map((p: any) =>
                 p.path === '/admin' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<Navigate to="/admin/survey/results" replace />} />
+                    <Route index element={<Navigate to="/admin/users" replace />} />
                     {getAdminTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
@@ -727,10 +724,13 @@ export default function App() {
                 ) : p.path === '/analytics' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route index element={<Navigate to="/analytics/payments" replace />} />
-                    <Route
-                      path="routing"
-                      element={<Navigate to="/analytics/appointments" replace />}
-                    />
+                    {Object.entries(ANALYTICS_LEGACY_REDIRECTS).map(([from, to]) => (
+                      <Route
+                        key={`legacy-${from}`}
+                        path={from}
+                        element={<Navigate to={`/analytics/${to}`} replace />}
+                      />
+                    ))}
                     {getAnalyticsTabPages().map((tab) => (
                       <Route key={tab.path} path={tab.path} element={tab.element} />
                     ))}
@@ -825,10 +825,13 @@ export default function App() {
                       />
                       <Route path="move" element={<MoveItemsPage />} />
                       <Route path="waste" element={<WasteAdjustPage />} />
-                      <Route path="activity" element={<InventoryActivityPage />} />
+                      <Route
+                        path="activity"
+                        element={<Navigate to="/schedule/analytics/inventory/activity" replace />}
+                      />
                       <Route
                         path="totals"
-                        element={<Navigate to="/schedule/analytics/inventory-totals" replace />}
+                        element={<Navigate to="/schedule/analytics/inventory/totals" replace />}
                       />
                       <Route path="par-levels" element={<InventoryParLevelsPage />} />
                       <Route path="par-seed" element={<ParSeedPage />} />
@@ -836,8 +839,14 @@ export default function App() {
                       <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
                       <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
                       <Route path="first-counts" element={<FirstCountsPage />} />
-                      <Route path="count-report" element={<InventoryCountReportPage />} />
-                      <Route path="expiring" element={<InventoryExpiringReportPage />} />
+                      <Route
+                        path="count-report"
+                        element={<Navigate to="/schedule/analytics/inventory/counts" replace />}
+                      />
+                      <Route
+                        path="expiring"
+                        element={<Navigate to="/schedule/analytics/inventory/expiring" replace />}
+                      />
                       <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
                       <Route
                         path="fill-list"
@@ -885,10 +894,13 @@ export default function App() {
                     />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
-                      <Route
-                        path="routing"
-                        element={<Navigate to="/schedule/analytics/appointments" replace />}
-                      />
+                      {Object.entries(ANALYTICS_LEGACY_REDIRECTS).map(([from, to]) => (
+                        <Route
+                          key={`schedule-legacy-${from}`}
+                          path={from}
+                          element={<Navigate to={`/schedule/analytics/${to}`} replace />}
+                        />
+                      ))}
                       {getAnalyticsTabPages().map((tab) => (
                         <Route
                           key={`schedule-analytics-${tab.path}`}
@@ -898,7 +910,7 @@ export default function App() {
                       ))}
                     </Route>
                     <Route path="admin" element={<Admin basePath="/schedule/admin" />}>
-                      <Route index element={<Navigate to="survey/results" replace />} />
+                      <Route index element={<Navigate to="users" replace />} />
                       {getAdminTabPages().map((tab) => (
                         <Route key={`schedule-admin-${tab.path}`} path={tab.path} element={tab.element} />
                       ))}

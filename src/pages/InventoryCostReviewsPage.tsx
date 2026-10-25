@@ -8,6 +8,7 @@ import {
 } from '../api/inventoryOps';
 import InventoryItemDetailModal from '../components/inventory/InventoryItemDetailModal';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { refreshInventoryAttention } from '../utils/useInventoryAttention';
 import './Settings.css';
 
 function money(n: number | null | undefined, digits = 4): string {
@@ -36,6 +37,14 @@ export default function InventoryCostReviewsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [detailItemId, setDetailItemId] = useState<number | null>(null);
   const [detailItemName, setDetailItemName] = useState<string | null>(null);
+  const [detailGuided, setDetailGuided] = useState(false);
+  const [detailReview, setDetailReview] = useState<{
+    row: InventoryCostReview;
+    previousCost: number | null;
+    newCost: number;
+    previousPrice: number | null;
+    suggestedPrice: number | null;
+  } | null>(null);
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [editedAppliedCost, setEditedAppliedCost] = useState('');
   const [editedSuggestedPrice, setEditedSuggestedPrice] = useState('');
@@ -88,9 +97,38 @@ export default function InventoryCostReviewsPage() {
     );
   }
 
-  function openItemDetail(row: InventoryCostReview) {
+  function reviewDraft(row: InventoryCostReview) {
+    const editedCost = editingRowId === row.id ? Number(editedAppliedCost) : NaN;
+    const editedPrice = editingRowId === row.id ? Number(editedSuggestedPrice) : NaN;
+    const num = (v: unknown) =>
+      v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+    return {
+      row,
+      previousCost: num(row.previousCost),
+      newCost:
+        editingRowId === row.id && editedAppliedCost.trim() !== '' && Number.isFinite(editedCost)
+          ? editedCost
+          : Number(row.receivedCostPerUnit),
+      previousPrice: num(row.previousPrice),
+      suggestedPrice:
+        editingRowId === row.id && editedSuggestedPrice.trim() !== '' && Number.isFinite(editedPrice)
+          ? editedPrice
+          : num(row.suggestedPrice),
+    };
+  }
+
+  function openItemDetail(row: InventoryCostReview, guided = false) {
     setDetailItemId(row.inventoryItemId);
     setDetailItemName(row.itemName);
+    setDetailGuided(guided);
+    setDetailReview(guided && row.reason === 'new_item' ? reviewDraft(row) : null);
+  }
+
+  function openCatalogReview(row: InventoryCostReview) {
+    setDetailItemId(row.inventoryItemId);
+    setDetailItemName(row.itemName);
+    setDetailGuided(row.reason === 'new_item');
+    setDetailReview(reviewDraft(row));
   }
 
   async function onResolve(
@@ -111,6 +149,7 @@ export default function InventoryCostReviewsPage() {
           ? { suggestedPrice: overrides.suggestedPrice }
           : {}),
       });
+      refreshInventoryAttention();
       setMessage(
         action === 'apply_catalog'
           ? `Updated practice catalog cost for ${row.itemName ?? 'item'}.`
@@ -121,24 +160,12 @@ export default function InventoryCostReviewsPage() {
       cancelEdit();
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not resolve review');
+      const message = err instanceof Error ? err.message : 'Could not resolve review';
+      setError(message);
+      throw new Error(message);
     } finally {
       setActingId(null);
     }
-  }
-
-  async function onApplyEditedCatalog(row: InventoryCostReview) {
-    const cost = Number(editedAppliedCost);
-    const price = Number(editedSuggestedPrice);
-    if (editedAppliedCost.trim() === '' || !Number.isFinite(cost) || cost < 0) {
-      setError('Enter a valid unit cost');
-      return;
-    }
-    if (editedSuggestedPrice.trim() === '' || !Number.isFinite(price) || price < 0) {
-      setError('Enter a valid suggested sell price');
-      return;
-    }
-    await onResolve(row, 'apply_catalog', { appliedCost: cost, suggestedPrice: price });
   }
 
   return (
@@ -155,8 +182,9 @@ export default function InventoryCostReviewsPage() {
         <div>
           <h2 style={{ margin: 0 }}>Cost reviews</h2>
           <p className="settings-muted" style={{ margin: '4px 0 0' }}>
-            When a received invoice cost differs from catalog cost, decide whether to update
-            practice pricing, office-only overrides, or leave prices unchanged.
+            When a received invoice cost is lower than catalog cost, or an item was added while
+            receiving, decide whether to update practice pricing, office-only overrides, or leave
+            prices unchanged.
           </p>
         </div>
         <button className="btn secondary" type="button" disabled={busy} onClick={() => void load()}>
@@ -257,6 +285,21 @@ export default function InventoryCostReviewsPage() {
                     {row.itemName ?? `Item #${row.inventoryItemId}`}
                     {row.itemCode ? ` · ${row.itemCode}` : ''}
                   </button>
+                  {row.reason === 'new_item' ? (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        background: '#e0f2fe',
+                        color: '#075985',
+                      }}
+                      title="Added while receiving a shipment. Check its cost and set a price."
+                    >
+                      New item
+                    </span>
+                  ) : null}
                   <time className="settings-muted">
                     {row.created ? new Date(row.created).toLocaleString() : ''}
                   </time>
@@ -266,6 +309,33 @@ export default function InventoryCostReviewsPage() {
                   {row.invoiceNumber ? ` · Invoice ${row.invoiceNumber}` : ''}
                   {` · Qty ${row.quantity}`}
                 </div>
+                {row.reason === 'new_item' && pending ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                      marginTop: 8,
+                      padding: '8px 10px',
+                      borderRadius: 8,
+                      background: '#f0f9ff',
+                      fontSize: 13,
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 200 }}>
+                      Added while receiving with only a name and cost. Next walks through the same
+                      steps as adding a product.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={() => openItemDetail(row, true)}
+                    >
+                      Finish item setup
+                    </button>
+                  </div>
+                ) : null}
                 <div
                   style={{
                     display: 'grid',
@@ -368,7 +438,7 @@ export default function InventoryCostReviewsPage() {
                         className="btn primary"
                         type="button"
                         disabled={acting}
-                        onClick={() => void onApplyEditedCatalog(row)}
+                        onClick={() => openCatalogReview(row)}
                       >
                         Update catalog
                       </button>
@@ -394,8 +464,12 @@ export default function InventoryCostReviewsPage() {
                         className="btn primary"
                         type="button"
                         disabled={acting}
-                        onClick={() => void onResolve(row, 'apply_catalog')}
-                        title="Update practice-wide catalog cost and suggested sell price"
+                        onClick={() => openCatalogReview(row)}
+                        title={
+                          row.reason === 'new_item'
+                            ? 'Walk through the item the same way as adding a product, then save the cost'
+                            : 'Open the item with the new cost and price filled in, then save'
+                        }
                       >
                         Update catalog
                       </button>
@@ -403,7 +477,9 @@ export default function InventoryCostReviewsPage() {
                         className="btn secondary"
                         type="button"
                         disabled={acting}
-                        onClick={() => void onResolve(row, 'apply_branch')}
+                        onClick={() => {
+                          void onResolve(row, 'apply_branch').catch(() => undefined);
+                        }}
                         title="Override cost/price for this office only"
                       >
                         Office only
@@ -412,7 +488,9 @@ export default function InventoryCostReviewsPage() {
                         className="btn secondary"
                         type="button"
                         disabled={acting}
-                        onClick={() => void onResolve(row, 'dismiss')}
+                        onClick={() => {
+                          void onResolve(row, 'dismiss').catch(() => undefined);
+                        }}
                         title="Keep current catalog and office pricing"
                       >
                         Keep current
@@ -436,9 +514,28 @@ export default function InventoryCostReviewsPage() {
           practiceId={practiceId}
           inventoryItemId={detailItemId}
           title={detailItemName}
+          guidedSetup={detailGuided}
+          costReview={
+            detailReview
+              ? {
+                  previousCost: detailReview.previousCost,
+                  newCost: detailReview.newCost,
+                  previousPrice: detailReview.previousPrice,
+                  suggestedPrice: detailReview.suggestedPrice,
+                  onConfirm: ({ cost, price }) =>
+                    onResolve(detailReview.row, 'apply_catalog', {
+                      appliedCost: cost,
+                      suggestedPrice: price,
+                    }),
+                }
+              : undefined
+          }
           onClose={() => {
             setDetailItemId(null);
             setDetailItemName(null);
+            setDetailGuided(false);
+            setDetailReview(null);
+            void load();
           }}
         />
       ) : null}

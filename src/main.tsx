@@ -68,6 +68,20 @@ if (typeof window !== 'undefined') {
     lastTouchEnd = now;
   }, false);
 
+  // A focused number field changes its value when the page is scrolled. Drop focus
+  // on the first wheel tick so the rest of the gesture scrolls instead.
+  document.addEventListener(
+    'wheel',
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'number') return;
+      if (document.activeElement !== target) return;
+      event.preventDefault();
+      target.blur();
+    },
+    { capture: true, passive: false }
+  );
+
   loadHostPractice().catch(() => {});
 
   // Capture ad click IDs before SPA navigation can drop the query string.

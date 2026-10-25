@@ -12,6 +12,8 @@ import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { INVENTORY_MOVEMENT_LABELS as ACTION_LABELS } from '../utils/inventoryMovementLabels';
 import './Settings.css';
 
+const PAGE_SIZE = 50;
+
 function actorLabel(row: InventoryStockMovement): string {
   const employee = row.movedByEmployee;
   const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(' ');
@@ -42,8 +44,20 @@ export default function InventoryActivityPage() {
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState('');
   const [exceptionsOnly, setExceptionsOnly] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [branchId, locationId, action, exceptionsOnly, search]);
 
   useEffect(() => {
     void listPracticeBranches(practiceId)
@@ -76,8 +90,12 @@ export default function InventoryActivityPage() {
     setError(null);
     try {
       const result = await listInventoryMovements(practiceId, Number(branchId), {
-        limit: 200,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
         ...(locationId !== '' ? { branchLocationId: Number(locationId) } : {}),
+        ...(search ? { search } : {}),
+        ...(action ? { movementType: action } : {}),
+        ...(exceptionsOnly ? { exceptionsOnly: true } : {}),
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -86,23 +104,14 @@ export default function InventoryActivityPage() {
     } finally {
       setBusy(false);
     }
-  }, [branchId, locationId, practiceId]);
+  }, [branchId, locationId, practiceId, page, search, action, exceptionsOnly]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const visibleRows = rows.filter((row) => {
-    if (action && row.movementType !== action) return false;
-    if (!exceptionsOnly) return true;
-    const note = (row.note ?? '').toLowerCase();
-    const isOverride = note.includes('zero-qoh override');
-    const wentNegative =
-      row.movementType === 'sold' &&
-      row.fromQuantityAfter != null &&
-      Number(row.fromQuantityAfter) < 0;
-    return isOverride || wentNegative;
-  });
+  const visibleRows = rows;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const locationLabel =
     locationId === ''
@@ -139,6 +148,16 @@ export default function InventoryActivityPage() {
           margin: '18px 0',
         }}
       >
+        <label className="settings-label">
+          Item
+          <input
+            className="settings-input"
+            type="search"
+            placeholder="Search by item name"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </label>
         <label className="settings-label">
           Office
           <select
@@ -267,10 +286,43 @@ export default function InventoryActivityPage() {
           ))}
         </div>
       )}
-      {total > rows.length && (
-        <p className="settings-muted" style={{ marginTop: 12 }}>
-          Showing the newest {rows.length} of {total} records.
-        </p>
+      {total > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            marginTop: 12,
+          }}
+        >
+          <span className="settings-muted">
+            {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + rows.length} of {total}
+          </span>
+          {pageCount > 1 ? (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={busy || page === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                Newer
+              </button>
+              <span className="settings-muted">
+                Page {page + 1} of {pageCount}
+              </span>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={busy || page + 1 >= pageCount}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Older
+              </button>
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );

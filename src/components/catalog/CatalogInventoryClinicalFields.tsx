@@ -12,6 +12,9 @@ type Props = {
   onSaved: () => void;
   /** When true, show the full edit form inline (no modal, no summary chips). Used inside the Clinical tab. */
   alwaysExpanded?: boolean;
+  /** Lets a parent (guided setup) save this form; resolves false when the save fails. */
+  saveRef?: { current: (() => Promise<boolean>) | null };
+  readOnly?: boolean;
 };
 
 type ClinicalDraft = {
@@ -327,6 +330,8 @@ export default function CatalogInventoryClinicalFields({
   item,
   onSaved,
   alwaysExpanded = false,
+  saveRef,
+  readOnly = false,
 }: Props) {
   const [draft, setDraft] = useState<ClinicalDraft>(() => fromItem(item));
   const [vaccineDraft, setVaccineDraft] = useState<VaccineDraft>(() =>
@@ -358,7 +363,9 @@ export default function CatalogInventoryClinicalFields({
     };
   }, [detailsOpen, alwaysExpanded]);
 
-  async function save() {
+  if (saveRef) saveRef.current = save;
+
+  async function save(): Promise<boolean> {
     setSaving(true);
     setError(null);
     try {
@@ -429,8 +436,10 @@ export default function CatalogInventoryClinicalFields({
       });
       setDetailsOpen(false);
       onSaved();
+      return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save item details');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -964,14 +973,16 @@ export default function CatalogInventoryClinicalFields({
                 Cancel
               </button>
             )}
-            <button
-              type="button"
-              className="btn primary"
-              disabled={saving}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : 'Save details'}
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={saving}
+                onClick={() => void save()}
+              >
+                {saving ? 'Saving…' : 'Save details'}
+              </button>
+            )}
           </div>
       </>
     );

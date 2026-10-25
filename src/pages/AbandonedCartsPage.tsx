@@ -84,7 +84,9 @@ export default function AbandonedCartsPage() {
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return carts.filter((cart) => {
-      if (filter !== 'all' && cart.status !== filter) return false;
+      // "Open" is every cart that has not checked out, including ones already reminded.
+      if (filter === 'open' && cart.status === 'recovered') return false;
+      if (filter !== 'open' && filter !== 'all' && cart.status !== filter) return false;
       if (!needle) return true;
       const hay = [
         cart.email,

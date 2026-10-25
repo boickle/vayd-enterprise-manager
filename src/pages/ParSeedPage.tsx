@@ -480,12 +480,20 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
       }
     }
     setDrafts(next);
-    setToast(
-      filled
-        ? `Filled ${filled} item${filled === 1 ? '' : 's'} — review, then save.`
-        : 'Nothing to fill.'
-    );
-    window.setTimeout(() => setToast(null), 4000);
+    if (filled) {
+      setFilter('changed');
+      setToast(
+        `Filled in ${filled} item${filled === 1 ? '' : 's'} (yellow boxes below). Nothing is saved yet — ` +
+          'check the numbers, then click Review changes to save, or Undo edits to put everything back.'
+      );
+    } else {
+      setToast(
+        onlyBlank
+          ? 'Nothing to fill — every listed item already has numbers, or has no usage to suggest from.'
+          : 'Nothing to fill — none of the listed items have usage to suggest from.'
+      );
+      window.setTimeout(() => setToast(null), 6000);
+    }
   }
 
   async function copyFromLocation(onlyBlank: boolean) {
@@ -538,6 +546,7 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
         dryRun: false,
       });
       setPreview(null);
+      setFilter('all');
       setToast(`Saved ${result.summary.changed} item${result.summary.changed === 1 ? '' : 's'}.`);
       window.setTimeout(() => setToast(null), 5000);
       await reload();
@@ -662,23 +671,26 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
             <button
               type="button"
               className="btn secondary"
+              title="Put a suggestion only in boxes that are empty now; numbers already there stay"
               onClick={() => fillDrafts((i) => suggest(i, sheet, coverDays), true)}
             >
-              Fill blanks
+              Fill empty boxes
             </button>
             <button
               type="button"
               className="btn secondary"
+              title="Put a suggestion in every item listed below, replacing numbers already there"
               onClick={() => fillDrafts((i) => suggest(i, sheet, coverDays), false)}
             >
-              Replace all shown
+              Overwrite all listed
             </button>
             <span className="settings-muted" style={{ fontSize: 12, flex: '1 1 240px' }}>
               {sheet.isDefault
                 ? 'Min should cover the vendor’s lead time plus a buffer; max adds one order cycle.'
                 : 'Par should cover the time between restocks (e.g. 7 days for a weekly truck refill).'}{' '}
               Uses sales and visit use recorded in Scout, so it gets better the longer you’re live.
-              Items with no usage are skipped.
+              Items with no usage are skipped. <strong>Nothing is saved</strong> until you click
+              Review changes below.
             </span>
           </ToolBox>
 
@@ -702,20 +714,23 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
               type="button"
               className="btn secondary"
               disabled={!copyFrom || busy}
+              title="Copy that location’s numbers only into boxes that are empty here"
               onClick={() => void copyFromLocation(true)}
             >
-              Fill blanks
+              Fill empty boxes
             </button>
             <button
               type="button"
               className="btn secondary"
               disabled={!copyFrom || busy}
+              title="Copy that location’s numbers into every item listed below, replacing what’s here"
               onClick={() => void copyFromLocation(false)}
             >
-              Replace all shown
+              Overwrite all listed
             </button>
             <span className="settings-muted" style={{ fontSize: 12, flex: '1 1 240px' }}>
-              Good for identical trucks: set Truck 1, then copy it to the others.
+              Good for identical trucks: set Truck 1, then copy it to the others. Nothing is saved
+              until you click Review changes below.
             </span>
           </ToolBox>
 
@@ -824,9 +839,11 @@ function ParSeedWorkspace({ token }: { token: string | null }) {
           type="button"
           className="btn secondary"
           disabled={busy || typedRows.length === 0}
-          onClick={() =>
-            setDrafts(Object.fromEntries(items.map((i) => [i.inventoryItemId, draftFor(i)])))
-          }
+          onClick={() => {
+            setDrafts(Object.fromEntries(items.map((i) => [i.inventoryItemId, draftFor(i)])));
+            setFilter('all');
+            setToast(null);
+          }}
         >
           Undo edits
         </button>

@@ -32,7 +32,13 @@ export type InventoryShipment = {
   deletedAt?: string | null;
   note: string | null;
   invoicePdfKey?: string | null;
+  invoiceShipTo?: string | null;
+  shipToMismatch?: boolean;
+  /** Audit note written when received at an office whose ship-to differs from the invoice. */
+  shipToMismatchNote?: string | null;
 };
+
+export type ShipToStatus = 'match' | 'mismatch' | 'unknown';
 
 export type InventoryShipmentLine = {
   id: number;
@@ -49,6 +55,7 @@ export type InventoryShipmentLine = {
   barcodeScanned: string | null;
   sortOrder: number;
   stockMovementId: number | null;
+  isNewItem?: boolean;
   itemName?: string | null;
   catalogCost?: number | null;
   willUpdatePrice?: boolean;
@@ -138,6 +145,8 @@ export type ParsedInvoiceLine = {
   trackLots?: boolean;
   requireExpirationOnLots?: boolean;
   requireLotNumber?: boolean;
+  /** Matched to an item created during this receive. */
+  isNewItem?: boolean;
 };
 
 export type ParsedInvoice = {
@@ -146,6 +155,11 @@ export type ParsedInvoice = {
   supplierName: string | null;
   shipToName: string | null;
   shipToAddress: string | null;
+  /** Ship-to name + address as one line, saved on the shipment. */
+  invoiceShipTo?: string | null;
+  shipToBranchId?: number | null;
+  /** 'unknown' when the invoice ship-to can't be compared (missing or no ZIP). */
+  shipToStatusByBranch?: Record<string, ShipToStatus>;
   suggestedSupplierId: number | null;
   suggestedBranchId: number | null;
   lines: ParsedInvoiceLine[];
@@ -211,7 +225,15 @@ export async function lookupInventoryByCode(
 
 export async function createItemFromReceive(
   practiceId: number,
-  body: { name: string; barcode?: string | null; category?: number | null }
+  body: {
+    name: string;
+    barcode?: string | null;
+    category?: number | null;
+    cost?: number | null;
+    price?: number | null;
+    sellUnitType?: string | null;
+    trackLots?: boolean;
+  }
 ) {
   const { data } = await http.post<{ id: number; name: string }>(
     `/practice/${practiceId}/inventory-ops/create-item`,
@@ -228,6 +250,7 @@ export async function createShipment(
     invoiceNumber?: string | null;
     defaultToBranchLocationId?: number | null;
     note?: string | null;
+    invoiceShipTo?: string | null;
   }
 ) {
   const { data } = await http.post<InventoryShipment>(
@@ -241,6 +264,7 @@ export async function getShipment(practiceId: number, shipmentId: number) {
   const { data } = await http.get<{
     shipment: InventoryShipment;
     lines: InventoryShipmentLine[];
+    shipTo: { invoiceShipTo: string | null; branchShipTo: string; status: ShipToStatus } | null;
   }>(`/practice/${practiceId}/inventory-shipments/${shipmentId}`);
   return data;
 }
@@ -462,6 +486,8 @@ export type InventoryCostReview = {
   costDelta: number | null;
   costDeltaPct: number | null;
   status: 'pending' | 'applied_catalog' | 'applied_branch' | 'dismissed';
+  /** `new_item`: added while receiving, so cost and price need a first look. */
+  reason?: 'lower_cost' | 'new_item';
   resolutionNote: string | null;
   resolvedAt: string | null;
   resolvedByUserId: number | null;

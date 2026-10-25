@@ -587,7 +587,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
               <>
                 A full recount. Each counted item is set to what was counted, and any difference
                 from what Scout expected is booked as an adjustment and listed in the{' '}
-                <Link to="/schedule/inventory/count-report">Count report</Link>. Blank counts are
+                <Link to="/schedule/analytics/inventory/counts">Count report</Link>. Blank counts are
                 left alone. Shelves that never had a first count still get an opening balance.
               </>
             ) : (
@@ -602,7 +602,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
         </div>
         <Link
           className="btn secondary"
-          to="/schedule/inventory/activity"
+          to="/schedule/analytics/inventory/activity"
           style={{ alignSelf: 'flex-start' }}
         >
           Activity

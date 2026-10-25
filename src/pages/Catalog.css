@@ -401,6 +401,18 @@
   border: 1px solid #e2e8f0;
 }
 
+.inv-item-detail-modal__setup {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid #a7f3d0;
+  background: #ecfdf5;
+}
+
 /* ── Catalog detail tabs ─────────────────────────────────────────────────── */
 .inv-detail-tabs {
   display: flex;
@@ -1199,4 +1211,40 @@
 .catalog-reminders__icon-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Cost review: draw the eye to the staged cost/price before saving. */
+@keyframes inv-cost-review-flash {
+  0%,
+  100% {
+    background-color: #fff;
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+  50% {
+    background-color: #fde68a;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35);
+  }
+}
+
+.inv-cost-review-field {
+  border-color: #f59e0b !important;
+  background-color: #fffbeb;
+  font-weight: 700;
+  animation: inv-cost-review-flash 0.9s ease-in-out 3;
+}
+
+.inv-cost-review-banner {
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.inv-cost-review-banner__change {
+  display: inline-block;
+  font-weight: 700;
+  animation: inv-cost-review-flash 0.9s ease-in-out 3;
+  border-radius: 4px;
+  padding: 0 4px;
 }

@@ -1265,7 +1265,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
         <h2 style={{ margin: '0 0 8px' }}>Online Store Import</h2>
       ) : (
       <div className="settings-tabs" role="tablist">
-        {(['items', 'coupons', 'autoship'] as const).map((key) => (
+        {(['items', 'coupons'] as const).map((key) => (
           <button
             key={key}
             type="button"
@@ -1582,8 +1582,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
             Each row is a Scout store product. Add a master product first, then attach
             inventory or procedure options — or create a new inventory item and add it.
             Highlight and approval live on the product; autoship is per option (check the
-            Autoship box on an option and pick its suggested cadence). To change autoship for a
-            whole category at once, use Bulk autoship. The table shows 50 at a time.
+            Autoship box on an option and pick its suggested cadence). The table shows 50 at a time.
           </p>
           <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
             <button

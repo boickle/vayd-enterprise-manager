@@ -5,11 +5,12 @@ import { useAuth } from '../auth/useAuth';
 import { usePermissions } from '../permissions/PermissionContext';
 import { isInventoryOpsNavPath } from '../utils/catalogInventoryNav';
 import ReleasedStockLinksNotice from '../components/inventory/ReleasedStockLinksNotice';
+import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
 import './Settings.css';
 
 type Props = { basePath?: string };
 
-type NavItem = { to: string; label: string };
+type NavItem = { to: string; label: string; badge?: number };
 
 function useIsInventoryAdmin(): boolean {
   const { role } = useAuth() as { role?: string | string[] };
@@ -74,6 +75,7 @@ function InventoryNavGroup({
         onClick={() => setOpen((prev) => !prev)}
       >
         {label}
+        <AttentionBadge count={items.reduce((sum, item) => sum + (item.badge ?? 0), 0)} />
         <ChevronDown size={14} aria-hidden />
       </button>
       {open ? (
@@ -89,6 +91,7 @@ function InventoryNavGroup({
               onClick={() => setOpen(false)}
             >
               {item.label}
+              <AttentionBadge count={item.badge ?? 0} />
             </NavLink>
           ))}
         </div>
@@ -104,14 +107,16 @@ export default function InventoryLayout({
   const { hasRole } = usePermissions();
   const canSetup =
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
-  const canManage = isAdmin || hasRole('practice_admin');
+  const canManage =
+    isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
   const location = useLocation();
+  const attention = useInventoryAttention(canManage);
 
   const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
   if (!isAdmin && onPath('suppliers')) {
     return <Navigate to={`${basePath}/items`} replace />;
   }
-  if (!canManage && ['par-review', 'count-report', 'expiring', 'cost-reviews'].some(onPath)) {
+  if (!canManage && ['par-review', 'cost-reviews'].some(onPath)) {
     return <Navigate to={`${basePath}/counts`} replace />;
   }
   if (!canSetup && ['par-seed', 'store-import'].some(onPath)) {
@@ -151,10 +156,8 @@ export default function InventoryLayout({
   ];
   const manageItems: NavItem[] = [
     { to: `${basePath}/par-review`, label: 'Par Review' },
-    { to: `${basePath}/count-report`, label: 'Count Report' },
-    { to: `${basePath}/expiring`, label: 'Expiring' },
-    { to: `${basePath}/cost-reviews`, label: 'Cost Reviews' },
-    { to: `${basePath}/activity`, label: 'Activity' },
+    { to: `${basePath}/cost-reviews`, label: 'Cost Reviews', badge: attention.costReviews },
+    { to: '/schedule/analytics/inventory', label: 'Reports (shrink, counts, expiring) →' },
   ];
   const moveOrderItems: NavItem[] = [
     { to: `${basePath}/counts`, label: 'Weekly Counts' },

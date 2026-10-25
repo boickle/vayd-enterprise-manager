@@ -89,6 +89,8 @@ import FormsAdmin from './FormsAdmin';
 import SettingsLabForms from '../components/settings/SettingsLabForms';
 import WasteAdminPage from './WasteAdminPage';
 import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
+import SettingsCountAlerts from '../components/settings/SettingsCountAlerts';
+import RoutingScoreThresholdsPage from './RoutingScoreThresholds';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
 import SettingsProductionIncentive from '../components/settings/SettingsProductionIncentive';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
@@ -101,6 +103,7 @@ const SETTINGS_TAB_IDS = [
   'outside-hospitals',
   'appointment-types',
   'practice-booking-goals',
+  'client-offers',
   'employee-types',
   'employee-zones',
   'employee-schedule',
@@ -109,6 +112,7 @@ const SETTINGS_TAB_IDS = [
   'inventory-mail-shipping',
   'inventory-sales-tax',
   'inventory-waste',
+  'inventory-count-alerts',
   'employee-images',
   'employee-goals',
   'production-incentive',
@@ -146,6 +150,7 @@ const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'appointment-types', label: 'Appointment Types' },
   { id: 'practice-booking-goals', label: 'Practice Booking Goals' },
+  { id: 'client-offers', label: 'Client Offers & Auto-Book' },
 ];
 
 const EMPLOYEE_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -195,6 +200,7 @@ const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'inventory-mail-shipping', label: 'Mail shipping' },
   { id: 'inventory-sales-tax', label: 'Sales tax' },
   { id: 'inventory-waste', label: 'Waste / disposal' },
+  { id: 'inventory-count-alerts', label: 'Count alerts' },
 ];
 
 function tabInGroup(tab: SettingsTabId, items: SettingsMenuItem[]): boolean {
@@ -1529,6 +1535,8 @@ export default function Settings() {
 
 
         {activeTab === 'outside-hospitals' && <SettingsOutsideHospitals />}
+
+        {activeTab === 'client-offers' && <RoutingScoreThresholdsPage />}
 
         {activeTab === 'practice-booking-goals' && (
           <div className="settings-section">
@@ -2939,6 +2947,16 @@ export default function Settings() {
             <div style={{ marginBottom: 24 }}>
               <WasteAdminPage />
             </div>
+          </div>
+        )}
+
+        {activeTab === 'inventory-count-alerts' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Count alerts</h2>
+            <p className="settings-section-description">
+              When a weekly or full count is off enough for the inventory manager to look into.
+            </p>
+            <SettingsCountAlerts />
           </div>
         )}
 

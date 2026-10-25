@@ -29,12 +29,8 @@ import {
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import {
-  fetchEmployeeRoles,
-  fetchEmployeesByRole,
-  type Employee,
-  type EmployeeRole,
-} from '../api/appointmentSettings';
+import { type Employee } from '../api/appointmentSettings';
+import { fetchClientLiaisonEmployees } from '../api/holds';
 import {
   getEmployeeCsrCoachingBatch,
   postEmployeeCsrCoachingBatch,
@@ -43,7 +39,7 @@ import {
   type EmployeeCsrCoachingConversionMetrics,
 } from '../api/openphoneCsrCoaching';
 
-/** Receptionist rows for the coaching dropdown (from GET /employees/by-role for the Receptionist role). */
+/** Client Liaison rows for the coaching dropdown. */
 type ReceptionistOption = {
   id: number;
   firstName: string;
@@ -102,22 +98,6 @@ function sortReceptionists(a: ReceptionistOption, b: ReceptionistOption): number
   const ln = a.lastName.localeCompare(b.lastName);
   if (ln !== 0) return ln;
   return a.firstName.localeCompare(b.firstName);
-}
-
-function normRoleToken(s: string): string {
-  return s.trim().toLowerCase();
-}
-
-/**
- * Match the EVet “Receptionist” role: exact name (case-insensitive), then roleValue, then name contains “receptionist”.
- */
-function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
-  const byName = roles.find((r) => normRoleToken(r.name) === 'receptionist');
-  if (byName) return byName.id;
-  const byValue = roles.find((r) => normRoleToken(String(r.roleValue ?? '')) === 'receptionist');
-  if (byValue) return byValue.id;
-  const fuzzy = roles.find((r) => normRoleToken(r.name).includes('receptionist'));
-  return fuzzy?.id ?? null;
 }
 
 function receptionistOptionsFromEmployees(emps: Employee[]): ReceptionistOption[] {
@@ -646,17 +626,7 @@ export default function OpenPhoneCoaching() {
     setStaffLoading(true);
     (async () => {
       try {
-        const roles = await fetchEmployeeRoles();
-        if (!alive) return;
-        const roleId = findReceptionistRoleId(roles);
-        if (roleId == null) {
-          setReceptionists([]);
-          setReceptionistsError(
-            'No employee role named “Receptionist” was found. Add or activate that role in your practice configuration.'
-          );
-          return;
-        }
-        const emps = await fetchEmployeesByRole(roleId);
+        const emps = await fetchClientLiaisonEmployees();
         if (!alive) return;
         setReceptionists(receptionistOptionsFromEmployees(emps).sort(sortReceptionists));
       } catch (e) {
@@ -738,8 +708,8 @@ export default function OpenPhoneCoaching() {
       <h2 className="settings-section-title">Open Phone Coaching</h2>
       <p className="settings-section-description">
         Batch CSR coaching from transcribed OpenPhone voice calls for one receptionist over a date
-        range. The dropdown lists everyone assigned the Receptionist employee role (from{' '}
-        <code>GET /employees/roles</code> and <code>GET /employees/by-role</code>). Generating a new
+        range. The dropdown lists everyone with the Client Liaison or Lead Client Liaison role
+        (Settings → Staff → Roles). Generating a new
         report calls OpenAI and may take up to a minute. Loading cached results does not re-run the
         model.
       </p>
@@ -754,8 +724,8 @@ export default function OpenPhoneCoaching() {
 
       {!receptionistsError && !staffLoading && receptionists.length === 0 ? (
         <Alert severity="info" sx={{ mb: 2 }}>
-          No employees are assigned the Receptionist role, or the role has no members in your
-          practice.
+          No one has the Client Liaison or Lead Client Liaison role yet. Assign it on Settings →
+          Staff → Roles.
         </Alert>
       ) : null}
 

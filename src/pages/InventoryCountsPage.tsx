@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { listPracticeBranches, type PracticeBranch } from '../api/branchInventory';
@@ -12,6 +12,7 @@ import {
   type StaffCountSession,
 } from '../api/inventoryCounts';
 import { ExpirationDateField } from '../components/inventory/ExpirationDateField';
+import { apiErrorMessage } from '../api/http';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
@@ -85,10 +86,53 @@ function lineSearchText(line: StaffCountLine): string {
     .toLowerCase();
 }
 
+function cellCounted(loc: StaffCountLine['locations'][number]): boolean {
+  return loc.actualQty != null && Number.isFinite(Number(loc.actualQty));
+}
+
 function lineHasCountedCells(line: StaffCountLine): boolean {
-  return (line.locations ?? []).some(
-    (loc) => loc.actualQty != null && Number.isFinite(Number(loc.actualQty))
-  );
+  return (line.locations ?? []).some(cellCounted);
+}
+
+function lineAllCounted(line: StaffCountLine): boolean {
+  const cells = line.locations ?? [];
+  return cells.length > 0 && cells.every(cellCounted);
+}
+
+/**
+ * What a counted bottle still needs before it can post: posting a count above 0
+ * records the bottle, so it needs an expiration (and a lot # when the item requires one).
+ */
+function cellMissingInfo(
+  line: StaffCountLine,
+  cell: { lotNumber?: string | null; expirationDate?: string | null; actualQty: number | string | null; inventoryLotBalanceId?: number | null }
+): string | null {
+  const qty = typeof cell.actualQty === 'string' ? parseQty(cell.actualQty) : cell.actualQty;
+  if (qty == null || Number.isNaN(qty) || Number(qty) <= 0) return null;
+  if (cell.inventoryLotBalanceId != null) return null;
+  const lot = cell.lotNumber?.trim() ?? '';
+  if (lot === UNASSIGNED_LOT) return null;
+  if (line.requireLotNumber === true && !lot) return 'lot #';
+  if (!dateInputValue(cell.expirationDate)) return 'expiration date';
+  return null;
+}
+
+function lineMissingInfo(
+  line: StaffCountLine,
+  cells: Array<Parameters<typeof cellMissingInfo>[1] & { branchLocationId: number }>,
+  locName: (id: number) => string
+): string | null {
+  for (const cell of cells) {
+    const missing = cellMissingInfo(line, cell);
+    if (missing) return `Enter the ${missing} for the bottles counted at ${locName(cell.branchLocationId)}`;
+  }
+  return null;
+}
+
+/** Full counts post whatever was counted; weekly counts wait for every location. */
+function lineReadyToSubmit(line: StaffCountLine, isFull: boolean): boolean {
+  if (line.locations.some((loc) => cellMissingInfo(line, loc))) return false;
+  return isFull ? lineHasCountedCells(line) : lineAllCounted(line);
 }
 
 /** Draft is savable when every filled cell is a valid qty and at least one is filled. */
@@ -134,7 +178,12 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const [drafts, setDrafts] = useState<Record<number, DraftCell[]>>({});
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
+  const [showPosted, setShowPosted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [error]);
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -192,7 +241,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         if (!cancelled) {
           setError(
             e instanceof Error
-              ? e.message
+              ? apiErrorMessage(e)
               : isFull
                 ? 'Could not load full inventory count'
                 : 'Could not load this week’s count'
@@ -320,14 +369,14 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       setToast(`Saved counts for ${line.name ?? 'item'} (not posted to inventory yet)`);
       window.setTimeout(() => setToast(null), 2800);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not save count');
+      setError(apiErrorMessage(e));
     } finally {
       setSavingId(null);
     }
   }
 
   async function submitLine(line: StaffCountLine) {
-    if (!session || !lineHasCountedCells(line)) return;
+    if (!session || !lineReadyToSubmit(line, isFull)) return;
     setSavingId(line.id);
     setError(null);
     try {
@@ -340,7 +389,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       setToast(`Posted count for ${line.name ?? 'item'} — on-hand updated`);
       window.setTimeout(() => setToast(null), 2800);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not submit count');
+      setError(apiErrorMessage(e));
     } finally {
       setSavingId(null);
     }
@@ -357,11 +406,13 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       setToast(
         next.submittedCount
           ? `Posted ${next.submittedCount} item${next.submittedCount === 1 ? '' : 's'} to inventory`
-          : 'No items ready. Save a count for at least one location on an item first.'
+          : isFull
+            ? 'No items ready. Save a count for at least one location on an item first.'
+            : 'No items ready. Each item needs a count at every location first.'
       );
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not submit counts');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -369,31 +420,44 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
 
   const filterLower = filter.trim().toLowerCase();
   const visibleLines = useMemo(() => {
-    const lines = session?.lines ?? [];
+    const lines = (session?.lines ?? []).filter((line) => showPosted || !line.submitted);
     if (!filterLower) return lines;
     return lines.filter((line) => lineSearchText(line).includes(filterLower));
-  }, [session?.lines, filterLower]);
+  }, [session?.lines, filterLower, showPosted]);
 
   const readyToPost = (session?.lines ?? []).filter(
-    (line) => !line.submitted && lineHasCountedCells(line)
+    (line) => !line.submitted && lineReadyToSubmit(line, isFull)
   ).length;
+  const waitingOnLocations = isFull
+    ? 0
+    : (session?.lines ?? []).filter(
+        (line) => !line.submitted && lineHasCountedCells(line) && !lineAllCounted(line)
+      ).length;
   const doneCount = session?.lines.filter((l) => l.submitted).length ?? 0;
   const totalCount = session?.lines.length ?? 0;
 
   return (
     <div className="settings-section">
-      <p className="settings-section-description">
-        {isFull
-          ? 'Full inventory: count each lot at each location you check (how many of this dated bottle are on this shelf). Leave other locations blank to leave their on-hand unchanged. Lot # and expiration come from inventory; Count is what you enter (not the catalog QOH — that stays hidden so this is a blind count). Submit posts counted locations only.'
-          : 'Weekly list to count: due A/B/C items (capped at 20). Lot # and expiration come from inventory; Count is blank until you enter what you see on the shelf (catalog QOH is hidden on purpose). Leave unchecked locations blank. Submit posts counted locations only.'}
-      </p>
+      <details style={{ marginBottom: 8, fontSize: 13 }}>
+        <summary className="settings-muted" style={{ cursor: 'pointer' }}>
+          {isFull
+            ? 'Count each lot at the locations you check. Blind count: on-hand is hidden.'
+            : 'Due A/B/C items (up to 20). Each location enters its own count. Blind count: on-hand is hidden.'}{' '}
+          <span style={{ textDecoration: 'underline' }}>How it works</span>
+        </summary>
+        <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+          {isFull
+            ? 'Count each lot at each location you check (how many of this dated bottle are on this shelf). Leave other locations blank to leave their on-hand unchanged. Lot # and expiration come from inventory; Count is what you enter (not the catalog QOH — that stays hidden so this is a blind count). Save any time; Submit posts counted locations only.'
+            : 'Lot # and expiration come from inventory; Count is blank until you enter what you see on the shelf (catalog QOH is hidden on purpose). Each location enters its own count (0 if there are none) and can save without the others. An item turns green and can be submitted once every location is in. Sales and waste after a count is saved still come off when it posts.'}
+        </p>
+      </details>
       <div
         style={{
           display: 'flex',
           gap: 12,
           flexWrap: 'wrap',
           alignItems: 'center',
-          marginBottom: 12,
+          marginBottom: 8,
         }}
       >
         <span className="settings-muted" style={{ fontSize: 13 }}>
@@ -421,16 +485,20 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         )}
       </div>
       {toast && (
-        <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
+        <div className="settings-message settings-success-message" style={{ marginBottom: 8 }}>
           {toast}
         </div>
       )}
       {error && (
-        <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
+        <div
+          ref={errorRef}
+          className="settings-message settings-error-message"
+          style={{ marginBottom: 8 }}
+        >
           {error}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16, alignItems: 'end' }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10, alignItems: 'end' }}>
         <label className="settings-label">
           Office
           <select
@@ -473,20 +541,42 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
           <span className="settings-muted" style={{ alignSelf: 'center' }}>
             {doneCount} of {totalCount} posted
             {readyToPost > 0 ? ` · ${readyToPost} ready to submit` : ''}
+            {waitingOnLocations > 0
+              ? ` · ${waitingOnLocations} waiting on other locations`
+              : ''}
           </span>
+        )}
+        {session && doneCount > 0 && (
+          <label className="settings-checkbox-item" style={{ alignSelf: 'center', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={showPosted}
+              onChange={(e) => setShowPosted(e.target.checked)}
+            />
+            <span>Show posted ({doneCount})</span>
+          </label>
         )}
         {session && session.status === 'open' && (
           <button
             type="button"
             className="btn primary"
             disabled={busy || readyToPost === 0 || editingLineId != null}
+            style={
+              busy || readyToPost === 0 || editingLineId != null
+                ? { opacity: 0.45, cursor: 'not-allowed' }
+                : undefined
+            }
             onClick={() => void submitReadySheet()}
             title={
               editingLineId != null
                 ? 'Save or cancel the row you are editing first'
                 : readyToPost === 0
-                  ? 'Save a count for at least one location on an item before submitting'
-                  : 'Post all items that already have at least one location counted'
+                  ? isFull
+                    ? 'Save a count for at least one location on an item before submitting'
+                    : 'Submit unlocks once an item has a count at every location'
+                  : isFull
+                    ? 'Post all items that already have at least one location counted'
+                    : 'Post every item that has all locations counted'
             }
           >
             Submit ready items ({readyToPost})
@@ -506,10 +596,17 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         </p>
       )}
       {session && session.lines.length > 0 && visibleLines.length === 0 && (
-        <p className="settings-muted">No items match “{filter.trim()}”.</p>
+        <p className="settings-muted">
+          {filterLower
+            ? `No items match “${filter.trim()}”.`
+            : 'Everything on this list is posted. Nice work — check “Show posted” to see them.'}
+        </p>
       )}
       {session && visibleLines.length > 0 && (
-        <div className="settings-table-container">
+        <div
+          className="settings-table-container settings-table-container--sticky-head"
+          style={{ maxHeight: 'calc(100vh - 230px)', minHeight: 320 }}
+        >
           <table className="settings-table par-levels-table">
             <thead>
               <tr>
@@ -540,19 +637,28 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                       )
                     : null;
                 const draftTotal = editing && cells ? cellTotal(cells) : null;
-                const canSubmit = !line.submitted && !editing && lineHasCountedCells(line);
+                const canSubmit = !line.submitted && !editing && lineReadyToSubmit(line, isFull);
+                const locIds = [...new Set(line.locations.map((c) => c.branchLocationId))];
+                const locsDone = locIds.filter((id) =>
+                  line.locations.filter((c) => c.branchLocationId === id).every(cellCounted)
+                ).length;
+                const locName = (id: number) =>
+                  session.locations.find((l) => l.id === id)?.name ?? `Location #${id}`;
+                const missingNote =
+                  !line.submitted && !editing ? lineMissingInfo(line, line.locations, locName) : null;
+                const allIn = !isFull && !line.submitted && !editing && lineAllCounted(line);
+                const rowStyle =
+                  allIn && !missingNote ? { background: '#f0fdf4' } : undefined;
                 const itemHref = `/schedule/inventory/items?itemId=${line.inventoryItemId}${
                   line.name ? `&name=${encodeURIComponent(line.name)}` : ''
                 }`;
-                const locName = (id: number) =>
-                  session.locations.find((l) => l.id === id)?.name ?? `Location #${id}`;
 
                 return displayCells.map((cell, idx) => {
                   const draft = editing ? (cell as DraftCell) : null;
                   const saved = !editing ? (cell as StaffCountLocation) : null;
                   const locId = draft?.branchLocationId ?? saved?.branchLocationId ?? 0;
                   return (
-                    <tr key={`${line.id}:${draft?.key ?? saved?.id ?? idx}`}>
+                    <tr key={`${line.id}:${draft?.key ?? saved?.id ?? idx}`} style={rowStyle}>
                       {idx === 0 && (
                         <td rowSpan={rowCount} style={{ verticalAlign: 'top' }}>
                           <Link
@@ -576,6 +682,21 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                             <div className="settings-muted" style={{ fontSize: 12 }}>
                               Posted to inventory
                             </div>
+                          ) : null}
+                          {missingNote ? (
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#b45309', marginTop: 4 }}>
+                              ⚠ {missingNote} — click Edit
+                            </div>
+                          ) : !isFull && !line.submitted && !editing ? (
+                            allIn ? (
+                              <div style={{ fontSize: 12, fontWeight: 600, color: '#15803d', marginTop: 4 }}>
+                                ✓ All locations counted
+                              </div>
+                            ) : (
+                              <div className="settings-muted" style={{ fontSize: 12, marginTop: 4 }}>
+                                {locsDone} of {locIds.length} locations counted
+                              </div>
+                            )
                           ) : null}
                           {editing ? (
                             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -680,12 +801,30 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                           </>
                         ) : saved?.actualQty != null ? (
                           <>
-                            {displayQty(saved.actualQty)}
+                            <span style={{ color: '#15803d', fontWeight: 600 }}>
+                              ✓ {displayQty(saved.actualQty)}
+                            </span>
                             {saved.actualWeight != null ? (
                               <div className="settings-muted" style={{ fontSize: 12 }}>
                                 weighed {saved.actualWeight} {line.weightUnit ?? 'g'}
                                 {saved.bottleCount && saved.bottleCount > 1
                                   ? ` · ${saved.bottleCount} bottles`
+                                  : ''}
+                              </div>
+                            ) : null}
+                            {saved.countedByName || saved.countedAt ? (
+                              <div
+                                className="settings-muted"
+                                style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                                title={
+                                  saved.countedAt
+                                    ? new Date(saved.countedAt).toLocaleString()
+                                    : undefined
+                                }
+                              >
+                                {saved.countedByName ?? 'Counted'}
+                                {saved.countedAt
+                                  ? ` · ${new Date(saved.countedAt).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}`
                                   : ''}
                               </div>
                             ) : null}
@@ -761,10 +900,19 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                                       type="button"
                                       className="btn primary"
                                       disabled={savingId === line.id || busy || !canSubmit}
+                                      style={
+                                        savingId === line.id || busy || !canSubmit
+                                          ? { opacity: 0.45, cursor: 'not-allowed' }
+                                          : undefined
+                                      }
                                       title={
                                         canSubmit
-                                          ? 'Post this item’s counted locations to on-hand (blank locations stay unchanged)'
-                                          : 'Save a count for at least one location before submitting'
+                                          ? isFull
+                                            ? 'Post this item’s counted locations to on-hand (blank locations stay unchanged)'
+                                            : 'Post every location’s count to on-hand'
+                                          : isFull
+                                            ? 'Save a count for at least one location before submitting'
+                                            : 'Submit unlocks once every location has a count (0 if none)'
                                       }
                                       onClick={() => void submitLine(line)}
                                     >

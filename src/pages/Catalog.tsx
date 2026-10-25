@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
+import { usePermissions } from '../permissions/PermissionContext';
 import {
   searchItems,
   getItemWithPriceBreaks,
@@ -402,10 +403,46 @@ export type CatalogEmbedProps = {
   itemType?: ItemType;
   label?: string;
   onClose: () => void;
+  /** Walk through every tab with Save & next (new items). */
+  guidedSetup?: boolean;
+  /**
+   * Opened from a cost review: Details starts with the invoice cost and suggested price filled
+   * in (highlighted). Nothing changes until the user saves; `onConfirm` then resolves the review.
+   */
+  costReview?: {
+    previousCost: number | null;
+    newCost: number;
+    previousPrice: number | null;
+    suggestedPrice: number | null;
+    onConfirm: (values: { cost: number | null; price: number | null }) => Promise<void>;
+  };
+};
+
+const SETUP_TAB_LABELS: Record<string, string> = {
+  details: 'Details',
+  clinical: 'Clinical',
+  lots: 'Lots',
+  stock: 'Stock',
+  pricing: 'Pricing',
+  'online-store': 'Online store',
+  associations: 'Associations',
+};
+
+const SETUP_TAB_HINTS: Record<string, string> = {
+  details: 'Name, code, unit, cost, markup, price, category, and which offices see it.',
+  clinical: 'Medication, vaccine, controlled, lot rules, label directions, and invoice/record flags.',
+  lots: 'Add any lots already on the shelf (lot #, expiration, quantity). Skip if none yet.',
+  stock: 'Reorder points and par levels per office. These save as you set them.',
+  pricing: 'Office-specific prices and quantity price breaks. These save as you set them.',
+  'online-store': 'Listing, web price, description, category, picture, and home page.',
+  associations: 'Draws from (stock link), tagalongs, and reminders. These save as you set them.',
 };
 
 export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const { token } = useAuth() as { token: string | null };
+  const { can } = usePermissions();
+  const canCreateItem = can('catalog.item.create');
+  const canEditItem = can('catalog.item.edit');
   const practiceId = useMemo(() => resolvePracticeId(token), [token]);
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
@@ -446,6 +483,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       cancelled = true;
     };
   }, [createOpen]);
+
+  /** Latest cost/price typed during a cost review, so detail refreshes don't wipe them. */
+  const reviewValuesRef = useRef<{ cost: string; price: string; markup?: string } | null>(null);
+  const [reviewFlashKey, setReviewFlashKey] = useState(0);
+  const [reviewConfirming, setReviewConfirming] = useState(false);
+  const hasCostReview = Boolean(embed?.costReview);
 
   const [coreDraft, setCoreDraft] = useState({
     name: '',
@@ -530,6 +573,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   useEffect(() => {
     const create = searchParams.get('create');
     if (create !== 'inventory' && create !== 'product' && create !== '1') return;
+    if (!canCreateItem) return;
     setCreateError(null);
     setCreateForm(EMPTY_INVENTORY_CREATE);
     setCreateType('inventory');
@@ -537,7 +581,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     const next = new URLSearchParams(searchParams);
     next.delete('create');
     setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, canCreateItem]);
 
   useEffect(() => {
     if (!embed) return;
@@ -574,6 +618,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }
 
   function closeItemDetailModal() {
+    setSetupForId(null);
+    setSetupListOnStore(false);
     if (embed) {
       embed.onClose();
       return;
@@ -619,9 +665,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     };
   }, [procedureDetailOpen, createPatientStatuses.length]);
 
+  /** Tab to land on when the next item opens (a just-created item continues past Details). */
+  const pendingStartTabRef = useRef<typeof detailTab | null>(null);
+
   // Reset to Details tab whenever a new item is opened
   useEffect(() => {
-    setDetailTab('details');
+    setDetailTab(pendingStartTabRef.current ?? 'details');
+    pendingStartTabRef.current = null;
   }, [selected?.itemType, selected?.itemId]);
 
   const [stockByBranchId, setStockByBranchId] = useState<Record<number, InventoryBranchStock>>({});
@@ -697,7 +747,15 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     autoshipFrequency: 'monthly',
     onlineStorePrice: '',
     storeCategory: '',
+    featuredOnHome: false,
   });
+  /** Item being walked through every tab after it was created (or from a new-item cost review). */
+  const [setupForId, setSetupForId] = useState<number | null>(
+    embed?.guidedSetup ? embed.itemId : null
+  );
+  /** Pre-check “Listed” and the web price when guided setup reaches the Online store tab. */
+  const [setupListOnStore, setSetupListOnStore] = useState(false);
+  const clinicalSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   /**
    * Master stock item this code draws down (null = draws on itself). Counts, reorder points and
    * movements all belong to the stock item, not to each sellable code.
@@ -781,13 +839,36 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   useEffect(() => {
     if (!detail) return;
     const item = detail.item as InventoryItem | Lab | Procedure;
+    const review = embed?.costReview;
+    const reviewValues = review
+      ? (reviewValuesRef.current ?? {
+          cost: String(review.newCost),
+          price:
+            review.suggestedPrice != null
+              ? String(review.suggestedPrice)
+              : item.price != null && item.price !== ''
+                ? String(item.price)
+                : '',
+        })
+      : null;
+    if (review && !reviewValuesRef.current) setReviewFlashKey(Date.now());
     setCoreDraft({
       name: String(item.name ?? ''),
       code: item.code != null ? String(item.code) : '',
-      price: item.price != null && item.price !== '' ? String(item.price) : '',
-      cost: item.cost != null && item.cost !== '' ? String(item.cost) : '',
+      price: reviewValues
+        ? reviewValues.price
+        : item.price != null && item.price !== ''
+          ? String(item.price)
+          : '',
+      cost: reviewValues
+        ? reviewValues.cost
+        : item.cost != null && item.cost !== ''
+          ? String(item.cost)
+          : '',
       markup:
-        detail.itemType === 'inventory'
+        reviewValues?.markup != null
+          ? reviewValues.markup
+          : detail.itemType === 'inventory'
           ? (item as InventoryItem).markup != null
             ? String(Number((item as InventoryItem).markup))
             : ''
@@ -836,7 +917,36 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       sellUnitTypeDetail:
         detail.itemType === 'inventory' ? (item as InventoryItem).sellUnitTypeDetail || '' : '',
     });
+    if (reviewValues && !reviewValuesRef.current) reviewValuesRef.current = reviewValues;
   }, [detail]);
+
+  useEffect(() => {
+    if (!hasCostReview || !reviewValuesRef.current) return;
+    reviewValuesRef.current = {
+      cost: coreDraft.cost,
+      price: coreDraft.price,
+      markup: coreDraft.markup,
+    };
+  }, [coreDraft.cost, coreDraft.price, coreDraft.markup, hasCostReview]);
+
+  async function confirmCostReview() {
+    const review = embed?.costReview;
+    if (!review) return;
+    setReviewConfirming(true);
+    try {
+      const saved = await saveCoreFields();
+      if (!saved) return;
+      await review.onConfirm({
+        cost: optionalNumber(coreDraft.cost),
+        price: optionalNumber(coreDraft.price),
+      });
+      embed?.onClose();
+    } catch (e: unknown) {
+      setCoreError(e instanceof Error ? e.message : 'Could not finish the cost review');
+    } finally {
+      setReviewConfirming(false);
+    }
+  }
 
   useEffect(() => {
     if (!detail || detail.itemType !== 'procedure') return;
@@ -856,6 +966,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       onlineStorePrice:
         item.price != null && String(item.price).trim() !== '' ? String(item.price) : '',
       storeCategory: '',
+      featuredOnHome: false,
     });
     setItemHasImage(false);
   }, [detail]);
@@ -881,6 +992,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         setCatalogDraft((d) => ({
           ...d,
           storeCategory: listing?.storeCategory || d.storeCategory || '',
+          featuredOnHome: Boolean(listing?.featuredOnHome),
           showOnOnlineStore:
             detail.itemType === 'procedure'
               ? Boolean(listing?.listed)
@@ -923,7 +1035,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     const item = detail.item as InventoryItem;
     const raw = item.showOnOnlineStore as unknown;
     const shipRaw = item.shippable as unknown;
-    setCatalogDraft({
+    setCatalogDraft((prev) => ({
+      featuredOnHome: prev.featuredOnHome,
       description: item.description != null ? String(item.description) : '',
       shippable: shipRaw === true || shipRaw === 'true' || shipRaw === 1 || shipRaw === '1',
       showOnOnlineStore: raw === true || raw === 'true' || raw === 1 || raw === '1',
@@ -940,7 +1053,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           ? String(item.onlineStorePrice)
           : '',
       storeCategory: '',
-    });
+    }));
     setItemHasImage(Boolean(item.imageUrl && String(item.imageUrl).trim()));
 
     const linkedId =
@@ -958,6 +1071,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     setStockLinkResults([]);
     setStockLinkError(null);
   }, [detail]);
+
+  useEffect(() => {
+    if (!setupListOnStore || detailTab !== 'online-store') return;
+    if (!detail || detail.itemType !== 'inventory' || setupForId !== selected?.itemId) return;
+    const item = detail.item as InventoryItem;
+    const catalogPrice =
+      item.price != null && String(item.price).trim() !== '' ? String(item.price) : '';
+    setSetupListOnStore(false);
+    setCatalogDraft((d) => ({
+      ...d,
+      showOnOnlineStore: true,
+      onlineStorePrice: d.onlineStorePrice.trim() === '' ? catalogPrice : d.onlineStorePrice,
+    }));
+  }, [setupListOnStore, detailTab, detail, setupForId, selected?.itemId]);
 
   useEffect(() => {
     if (!detail || detail.itemType !== 'lab') return;
@@ -1615,11 +1742,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     }
   }
 
-  async function saveCoreFields() {
-    if (!selected) return;
+  async function saveCoreFields(): Promise<boolean> {
+    if (!selected) return false;
     if (!coreDraft.name.trim()) {
       setCoreError('Name is required');
-      return;
+      return false;
     }
     setCoreSaving(true);
     setCoreError(null);
@@ -1722,7 +1849,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         window.clearTimeout(justSavedClearRef.current);
       }
       justSavedClearRef.current = window.setTimeout(() => setJustSavedKey(null), 4000);
-      if (embed) {
+      if (embed || setupForId === selected.itemId) {
         setSelected((s) => (s ? { ...s, label: savedName } : s));
         await refreshDetailBundle(selected);
       } else {
@@ -1733,16 +1860,89 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
         });
       }
+      return true;
     } catch (e: unknown) {
       setCoreError(e instanceof Error ? e.message : 'Save failed');
+      return false;
     } finally {
       setCoreSaving(false);
     }
   }
 
-  async function submitCreateItem() {
+  function setupSteps(): (typeof detailTab)[] {
+    if (!detail) return [];
+    return setupStepsFor(detail.itemType);
+  }
+
+  function setupStepsFor(itemType: ItemType): (typeof detailTab)[] {
+    if (itemType !== 'inventory') return ['details', 'pricing', 'associations'];
+    return [
+      'details',
+      'clinical',
+      'lots',
+      'stock',
+      'pricing',
+      'associations',
+      ...(onlineStoreImplemented ? (['online-store'] as const) : []),
+    ];
+  }
+
+  /** Save the tab's own form before moving on; tabs that save as you go need nothing. */
+  async function saveSetupStep(tab: typeof detailTab): Promise<boolean> {
+    if (tab === 'details') return saveCoreFields();
+    if (tab === 'clinical') return clinicalSaveRef.current ? clinicalSaveRef.current() : true;
+    if (tab === 'online-store') return saveOnlineStoreFields();
+    return true;
+  }
+
+  const [setupBusy, setSetupBusy] = useState(false);
+
+  async function setupMove(direction: 1 | -1, opts?: { finish?: boolean }) {
+    const steps = setupSteps();
+    const index = Math.max(0, steps.indexOf(detailTab));
+    setSetupBusy(true);
+    try {
+      if (direction === 1 && !(await saveSetupStep(steps[index]))) return;
+      const next = index + direction;
+      if (direction === 1 && steps[next] === 'online-store') setSetupListOnStore(true);
+      if (next >= steps.length || opts?.finish) {
+        if (embed?.costReview) {
+          setDetailError(null);
+          try {
+            await embed.costReview.onConfirm({
+              cost: optionalNumber(coreDraft.cost),
+              price: optionalNumber(coreDraft.price),
+            });
+          } catch (e: unknown) {
+            setDetailError(
+              e instanceof Error
+                ? e.message
+                : 'Could not finish the cost review. The item was saved; the review is still open.'
+            );
+            return;
+          }
+          embed.onClose();
+          return;
+        }
+        setSetupForId(null);
+        setToast('Setup complete');
+        window.setTimeout(() => setToast(null), 3500);
+        return;
+      }
+      setDetailTab(steps[Math.max(0, next)]);
+      document.querySelector('.inv-item-detail-modal__body')?.scrollTo({ top: 0 });
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  async function submitCreateItem(opts?: { startTab?: typeof detailTab }) {
     if (!createForm.name.trim()) {
-      setCreateError('Name is required');
+      setCreateError(
+        opts?.startTab
+          ? `Enter a name first, then open ${SETUP_TAB_LABELS[opts.startTab]}`
+          : 'Name is required'
+      );
       return;
     }
     setCreateSaving(true);
@@ -1827,9 +2027,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       const createdName = createForm.name.trim();
       setCreateOpen(false);
       setCreateForm(EMPTY_INVENTORY_CREATE);
-      setToast(`${catalogTypeLabel(createType)} created`);
-      window.setTimeout(() => setToast(null), 3500);
+      setToast(`${catalogTypeLabel(createType)} saved — continue through each tab`);
+      window.setTimeout(() => setToast(null), 4000);
       if (Number.isFinite(newId) && newId > 0) {
+        const steps = setupStepsFor(createType);
+        const startTab = opts?.startTab ?? steps[1] ?? 'details';
+        pendingStartTabRef.current = startTab;
+        setSetupForId(newId);
+        setSetupListOnStore(startTab === 'online-store');
         setSelected({
           itemType: createType,
           itemId: newId,
@@ -1930,9 +2135,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     }
   }
 
-  async function saveOnlineStoreFields() {
+  async function saveOnlineStoreFields(): Promise<boolean> {
     if (!selected || (selected.itemType !== 'inventory' && selected.itemType !== 'procedure')) {
-      return;
+      return true;
+    }
+    if (
+      selected.itemType === 'inventory' &&
+      catalogDraft.showOnOnlineStore &&
+      catalogDraft.onlineStorePrice.trim() === ''
+    ) {
+      setCatalogError('Enter the online store price to list this item');
+      return false;
     }
     setCatalogSaving(true);
     setCatalogError(null);
@@ -1971,11 +2184,15 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           listed: catalogDraft.showOnOnlineStore,
           ...(sharedStoreListing
             ? {}
-            : { storeCategory: catalogDraft.storeCategory.trim() || null }),
+            : {
+                storeCategory: catalogDraft.storeCategory.trim() || null,
+                featuredOnHome: catalogDraft.featuredOnHome,
+              }),
         });
         if (storeListing && !sharedStoreListing) {
           await patchOnlineStoreListing(practiceId, storeListing.listingId, {
             listed: catalogDraft.showOnOnlineStore,
+            featuredOnHome: catalogDraft.featuredOnHome,
             storeCategory: catalogDraft.storeCategory.trim() || null,
             description: catalogDraft.description.trim() || null,
           });
@@ -1993,12 +2210,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         if (!storeListing && !catalogDraft.showOnOnlineStore) {
           setToast('Nothing to save — this procedure is not listed on the store');
           window.setTimeout(() => setToast(null), 3500);
-          return;
+          return true;
         }
         if (sharedStoreListing) {
           setToast(`Edit “${sharedStoreListing.name}” on Store items`);
           window.setTimeout(() => setToast(null), 3500);
-          return;
+          return true;
         }
         const listing = storeListing
           ? await patchOnlineStoreListing(practiceId, storeListing.listingId, {
@@ -2013,8 +2230,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setToast('Online store details saved');
       window.setTimeout(() => setToast(null), 3500);
       await refreshDetailBundle(selected);
+      return true;
     } catch (e: unknown) {
       setCatalogError(e instanceof Error ? e.message : 'Save failed');
+      return false;
     } finally {
       setCatalogSaving(false);
     }
@@ -2232,6 +2451,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             />
             Show archived
           </label>
+          {canEditItem && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
             <input
               type="checkbox"
@@ -2243,7 +2463,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             />
             Select inventory rows for bulk price change
           </label>
-          {Object.keys(bulkSelected).length > 0 && (
+          )}
+          {canEditItem && Object.keys(bulkSelected).length > 0 && (
             <>
               <span className="settings-muted">{Object.keys(bulkSelected).length} selected</span>
               <button
@@ -2299,18 +2520,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       <div className="inv-catalog-results">
         <div className="inv-catalog-results__toolbar">
           <div className="inv-catalog-results__toolbar-left">
-            <button
-              type="button"
-              className="inv-catalog-results__text-btn"
-              onClick={() => {
-                setCreateError(null);
-                setCreateForm(EMPTY_INVENTORY_CREATE);
-                setCreateType(typeFilter === 'all' ? 'inventory' : typeFilter);
-                setCreateOpen(true);
-              }}
-            >
-              {addItemLabel(typeFilter)}
-            </button>
+            {canCreateItem && (
+              <button
+                type="button"
+                className="inv-catalog-results__text-btn"
+                onClick={() => {
+                  setCreateError(null);
+                  setCreateForm(EMPTY_INVENTORY_CREATE);
+                  setCreateType(typeFilter === 'all' ? 'inventory' : typeFilter);
+                  setCreateOpen(true);
+                }}
+              >
+                {addItemLabel(typeFilter)}
+              </button>
+            )}
             <span className="inv-catalog-results__count">
               {hasMoreResults ? 'Showing:' : 'Total count:'}{' '}
               {searchQuery.trim() || showAllItems
@@ -2541,16 +2764,18 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           >
                             <Copy size={15} />
                           </button>
-                          <button
-                            type="button"
-                            className="inv-catalog-results__icon-btn"
-                            disabled={itemId == null || archiveBusyId === busyKey}
-                            title={active ? 'Archive' : 'Restore'}
-                            aria-label={active ? `Archive ${row.name}` : `Restore ${row.name}`}
-                            onClick={() => void archiveOrRestoreRow(row)}
-                          >
-                            {active ? <Archive size={15} /> : <ArchiveRestore size={15} />}
-                          </button>
+                          {canEditItem && (
+                            <button
+                              type="button"
+                              className="inv-catalog-results__icon-btn"
+                              disabled={itemId == null || archiveBusyId === busyKey}
+                              title={active ? 'Archive' : 'Restore'}
+                              aria-label={active ? `Archive ${row.name}` : `Restore ${row.name}`}
+                              onClick={() => void archiveOrRestoreRow(row)}
+                            >
+                              {active ? <Archive size={15} /> : <ArchiveRestore size={15} />}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2720,6 +2945,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 )}
               </div>
 
+              {!canEditItem && (
+                <div className="settings-muted" style={{ margin: '8px 0 12px', fontSize: 13 }}>
+                  View only. An admin or inventory manager can change this item.
+                </div>
+              )}
+
               {detailTab === 'history' && detail.itemType === 'inventory' && selected && (
                 <InventoryItemHistory
                   practiceId={practiceId}
@@ -2730,6 +2961,60 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
 
               {/* ── Details tab ─────────────────────────────────── */}
               {detailTab === 'details' && <div style={{ marginBottom: 20 }}>
+                {embed?.costReview && (
+                  <div className="inv-cost-review-banner" key={reviewFlashKey}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>Cost review — not saved yet</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 14 }}>
+                      <span>
+                        Cost{' '}
+                        {embed.costReview.previousCost != null
+                          ? `$${embed.costReview.previousCost.toFixed(4)}`
+                          : '—'}{' '}
+                        →{' '}
+                        <span className="inv-cost-review-banner__change">
+                          {coreDraft.cost.trim() !== '' ? `$${Number(coreDraft.cost).toFixed(4)}` : '—'}
+                        </span>
+                      </span>
+                      <span>
+                        Price{' '}
+                        {embed.costReview.previousPrice != null
+                          ? `$${embed.costReview.previousPrice.toFixed(2)}`
+                          : '—'}{' '}
+                        →{' '}
+                        <span className="inv-cost-review-banner__change">
+                          {coreDraft.price.trim() !== ''
+                            ? `$${Number(coreDraft.price).toFixed(2)}`
+                            : '—'}
+                        </span>
+                      </span>
+                    </div>
+                    <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                      {setupForId != null && setupForId === selected?.itemId
+                        ? 'The new cost and suggested price are filled in. Next saves this step and continues through the rest of the item, the same as adding a product. Closing before the last step leaves the review open.'
+                        : 'The new cost and suggested price are filled in below. Change them or anything else on this item, then save. Closing without saving leaves the review pending.'}
+                    </p>
+                    {!(setupForId != null && setupForId === selected?.itemId) && (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        disabled={reviewConfirming || coreSaving || !canEditItem}
+                        onClick={() => void confirmCostReview()}
+                      >
+                        {reviewConfirming ? 'Saving…' : 'Save & update catalog'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={reviewConfirming}
+                        onClick={() => embed.onClose()}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    )}
+                  </div>
+                )}
                 <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                   Catalog fields
                 </h4>
@@ -2837,7 +3122,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       type="number"
                       min={0}
                       step="0.01"
-                      className="settings-input"
+                      key={`cost-${reviewFlashKey}`}
+                      className={`settings-input${hasCostReview ? ' inv-cost-review-field' : ''}`}
                       value={coreDraft.cost}
                       onChange={(e) => {
                         const cost = e.target.value;
@@ -2876,7 +3162,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       type="number"
                       min={0}
                       step="0.01"
-                      className="settings-input"
+                      key={`price-${reviewFlashKey}`}
+                      className={`settings-input${hasCostReview ? ' inv-cost-review-field' : ''}`}
                       value={coreDraft.price}
                       onChange={(e) => {
                         const price = e.target.value;
@@ -3185,14 +3472,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     )}
                   </div>
                 )}
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={coreSaving}
-                  onClick={() => void saveCoreFields()}
-                >
-                  {coreSaving ? 'Saving…' : 'Save catalog fields'}
-                </button>
+                {canEditItem && !(setupForId != null && setupForId === selected?.itemId) && (
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={coreSaving}
+                    onClick={() => void saveCoreFields()}
+                  >
+                    {coreSaving ? 'Saving…' : 'Save catalog fields'}
+                  </button>
+                )}
                 {detail.itemType === 'lab' && selected && (
                   <LabIntegrationEditor
                     practiceId={practiceId}
@@ -3208,6 +3497,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   practiceId={practiceId}
                   item={detail.item as InventoryItem}
                   alwaysExpanded
+                  saveRef={clinicalSaveRef}
+                  readOnly={!canEditItem}
                   onSaved={() => {
                     setToast('Supply & clinical flags saved');
                     window.setTimeout(() => setToast(null), 3500);
@@ -3578,15 +3869,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     value={coreDraft}
                     onChange={(patch) => setCoreDraft((d) => ({ ...d, ...patch }))}
                   />
-                  <button
-                    type="button"
-                    className="btn primary"
-                    style={{ marginTop: 8 }}
-                    disabled={coreSaving}
-                    onClick={() => void saveCoreFields()}
-                  >
-                    {coreSaving ? 'Saving…' : 'Save discount rules'}
-                  </button>
+                  {canEditItem && (
+                    <button
+                      type="button"
+                      className="btn primary"
+                      style={{ marginTop: 8 }}
+                      disabled={coreSaving}
+                      onClick={() => void saveCoreFields()}
+                    >
+                      {coreSaving ? 'Saving…' : 'Save discount rules'}
+                    </button>
+                  )}
                 </div>}
 
               {/* ── Stock tab ────────────────────────────────────── */}
@@ -3885,6 +4178,28 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         />
                         Listed on online store{sharedStoreListing ? ' (this size)' : ''}
                       </label>
+                      {!sharedStoreListing ? (
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            marginTop: -8,
+                            marginBottom: 16,
+                            cursor: 'pointer',
+                            fontSize: 14,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={catalogDraft.featuredOnHome}
+                            onChange={(e) =>
+                              setCatalogDraft((d) => ({ ...d, featuredOnHome: e.target.checked }))
+                            }
+                          />
+                          Feature on the store home page
+                        </label>
+                      ) : null}
                       {sharedStoreListing ? (
                         <div
                           className="settings-muted"
@@ -4407,6 +4722,59 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           )}
               </div>
             </div>
+            {canEditItem && setupForId != null && setupForId === selected.itemId && detail && (() => {
+              const steps = setupSteps();
+              const index = Math.max(0, steps.indexOf(detailTab));
+              const last = index === steps.length - 1;
+              const storeIsNext = steps[index + 1] === 'online-store';
+              return (
+                <div className="inv-item-detail-modal__setup">
+                  <div style={{ minWidth: 200, flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>
+                      New {detail.itemType === 'inventory' ? 'product' : detail.itemType} setup ·
+                      Step {index + 1} of {steps.length}: {SETUP_TAB_LABELS[steps[index]]}
+                    </div>
+                    <div className="settings-muted" style={{ fontSize: 13 }}>
+                      {SETUP_TAB_HINTS[steps[index]]}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={setupBusy || index === 0}
+                      onClick={() => void setupMove(-1)}
+                    >
+                      Back
+                    </button>
+                    {storeIsNext && (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={setupBusy}
+                        onClick={() => void setupMove(1, { finish: true })}
+                      >
+                        Save & finish without store
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={setupBusy}
+                      onClick={() => void setupMove(1)}
+                    >
+                      {setupBusy
+                        ? 'Saving…'
+                        : last
+                          ? 'Save & finish'
+                          : storeIsNext
+                            ? 'Save & set up online store'
+                            : 'Next'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -4441,12 +4809,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   {createError}
                 </div>
               )}
-              <p className="settings-muted" style={{ marginTop: 0, marginBottom: 14, fontSize: 13 }}>
-                {createType === 'inventory'
-                  ? 'Pricing, supply, clinical flags, and vaccine setup. Reminders and lots can be configured after the item is created.'
-                  : 'Name, pricing, category, and tax. Quantity price tiers can be added after create.'}
-              </p>
-
               <div className="inv-type-filters" role="radiogroup" aria-label="New item type" style={{ marginBottom: 14 }}>
                 {(['inventory', 'procedure', 'lab'] as const).map((t) => (
                   <button
@@ -4461,6 +4823,26 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   </button>
                 ))}
               </div>
+
+              <div className="inv-detail-tabs" style={{ marginBottom: 8 }}>
+                {setupStepsFor(createType).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={`inv-detail-tab${tab === 'details' ? ' inv-detail-tab--active' : ''}`}
+                    disabled={createSaving}
+                    onClick={() => {
+                      if (tab !== 'details') void submitCreateItem({ startTab: tab });
+                    }}
+                  >
+                    {SETUP_TAB_LABELS[tab]}
+                  </button>
+                ))}
+              </div>
+              <p className="settings-muted" style={{ marginTop: 0, marginBottom: 14, fontSize: 13 }}>
+                Step 1 of {setupStepsFor(createType).length}: Details. Next saves the item and
+                continues to {SETUP_TAB_LABELS[setupStepsFor(createType)[1]]}; you can also jump to any tab.
+              </p>
 
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Basics</h4>
               <div
@@ -4896,7 +5278,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               </>
               )}
             </div>
-            <div className="settings-modal-actions">
+            <div
+              className="settings-modal-actions"
+              style={{ marginTop: 0, padding: '14px 20px 18px', justifyContent: 'flex-end' }}
+            >
               <button
                 type="button"
                 className="btn secondary"
@@ -4911,7 +5296,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 disabled={createSaving}
                 onClick={() => void submitCreateItem()}
               >
-                {createSaving ? 'Creating…' : 'Create'}
+                {createSaving ? 'Saving…' : 'Next'}
               </button>
             </div>
           </div>

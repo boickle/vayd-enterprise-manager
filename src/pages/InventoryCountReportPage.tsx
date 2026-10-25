@@ -1,22 +1,59 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
-import { listPracticeBranches, type PracticeBranch } from '../api/branchInventory';
 import {
   listCountReport,
   listItemMovementsOrg,
+  markCountReviewed,
   type CountReportRow,
   type ItemMovementRow,
 } from '../api/inventoryCounts';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { formatUsd, useCountReviewBranches } from '../utils/useCountReviewBranches';
+import {
+  AttentionBadge,
+  refreshInventoryAttention,
+  useInventoryAttention,
+} from '../utils/useInventoryAttention';
 import './Settings.css';
 
 export default function InventoryCountReportPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
-  const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const { branches, allowAll, loaded } = useCountReviewBranches(practiceId);
   const [branchId, setBranchId] = useState<number | ''>('');
   const [abc, setAbc] = useState('');
   const [offOnly, setOffOnly] = useState(true);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const attention = useInventoryAttention();
+  const [needsReview, setNeedsReview] = useState(false);
+  const [needsReviewTouched, setNeedsReviewTouched] = useState(false);
+  const [reviewingId, setReviewingId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!needsReviewTouched && attention.flaggedCounts > 0) setNeedsReview(true);
+  }, [attention.flaggedCounts, needsReviewTouched]);
+
+  async function markReviewed(row: CountReportRow) {
+    setReviewingId(row.id);
+    try {
+      const res = await markCountReviewed(practiceId, row.id);
+      setRows((prev) =>
+        needsReview
+          ? prev.filter((r) => r.id !== row.id)
+          : prev.map((r) =>
+              r.id === row.id
+                ? { ...r, reviewedAt: res.reviewedAt, reviewedByName: res.reviewedByName }
+                : r
+            )
+      );
+      if (needsReview) setTotal((t) => Math.max(0, t - 1));
+      refreshInventoryAttention();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not mark reviewed');
+    } finally {
+      setReviewingId(null);
+    }
+  }
   const [rows, setRows] = useState<CountReportRow[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -26,12 +63,15 @@ export default function InventoryCountReportPage() {
   const [trailBusy, setTrailBusy] = useState(false);
 
   useEffect(() => {
-    void listPracticeBranches(practiceId)
-      .then((list) => setBranches(list.filter((b) => b.isActive !== false)))
-      .catch(() => setBranches([]));
-  }, [practiceId]);
+    if (loaded && !allowAll && branchId === '' && branches[0]) setBranchId(branches[0].id);
+  }, [loaded, allowAll, branchId, branches]);
 
   useEffect(() => {
+    if (!loaded) return;
+    if (!allowAll && branchId === '') {
+      if (!branches.length) setError('You can’t review counts for any office.');
+      return;
+    }
     let cancelled = false;
     setBusy(true);
     setError(null);
@@ -39,6 +79,8 @@ export default function InventoryCountReportPage() {
       branchId: branchId === '' ? undefined : branchId,
       abc: abc || undefined,
       offOnly,
+      flaggedOnly,
+      needsReview,
       limit: 100,
     })
       .then((data) => {
@@ -55,7 +97,9 @@ export default function InventoryCountReportPage() {
     return () => {
       cancelled = true;
     };
-  }, [practiceId, branchId, abc, offOnly]);
+  }, [practiceId, branchId, abc, offOnly, flaggedOnly, needsReview, loaded, allowAll, branches.length]);
+
+  const pageNetUsd = rows.reduce((sum, r) => sum + (r.varianceCost ?? 0), 0);
 
   useEffect(() => {
     if (openId == null) {
@@ -85,7 +129,9 @@ export default function InventoryCountReportPage() {
     <div className="settings-section">
       <p className="settings-section-description">
         Submitted cycle counts. Off counts are where counted quantity did not match the
-        system. Open a row for location detail and the item’s movement trail across offices.
+        system; $ is the difference at item cost (negative is a loss). ⚑ means it was over your
+        alert threshold and a task went to the inventory manager. Open a row for location detail
+        and the item’s movement trail across offices.
       </p>
       {error && (
         <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
@@ -101,7 +147,7 @@ export default function InventoryCountReportPage() {
             value={branchId}
             onChange={(e) => setBranchId(e.target.value === '' ? '' : Number(e.target.value))}
           >
-            <option value="">All offices</option>
+            {allowAll ? <option value="">All offices</option> : null}
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -130,6 +176,28 @@ export default function InventoryCountReportPage() {
           />
           <span>Only off counts</span>
         </label>
+        <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={flaggedOnly}
+            onChange={(e) => setFlaggedOnly(e.target.checked)}
+          />
+          <span>Only flagged (over threshold)</span>
+        </label>
+        <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={needsReview}
+            onChange={(e) => {
+              setNeedsReviewTouched(true);
+              setNeedsReview(e.target.checked);
+            }}
+          />
+          <span>
+            Needs review
+            <AttentionBadge count={attention.flaggedCounts} />
+          </span>
+        </label>
       </div>
       {busy && rows.length === 0 && <p className="settings-muted">Loading…</p>}
       {!busy && rows.length === 0 && (
@@ -147,6 +215,7 @@ export default function InventoryCountReportPage() {
                 <th>Expected</th>
                 <th>Counted</th>
                 <th>Variance</th>
+                <th>$</th>
                 <th />
               </tr>
             </thead>
@@ -167,6 +236,11 @@ export default function InventoryCountReportPage() {
                           {row.code}
                         </div>
                       ) : null}
+                      {row.countedBy?.length ? (
+                        <div className="settings-muted" style={{ fontSize: 12 }}>
+                          Counted by {row.countedBy.join(', ')}
+                        </div>
+                      ) : null}
                     </td>
                     <td>{row.effectiveAbc}</td>
                     <td>{row.expectedTotal ?? '—'}</td>
@@ -183,7 +257,39 @@ export default function InventoryCountReportPage() {
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {row.varianceCost == null || row.variance === 0 ? (
+                        <span className="settings-muted">—</span>
+                      ) : (
+                        <span className={row.varianceCost < 0 ? 'par-short' : undefined}>
+                          {formatUsd(row.varianceCost, true)}
+                        </span>
+                      )}
+                      {row.flagged ? (
+                        <span title="Over alert threshold — task sent" style={{ marginLeft: 6 }}>
+                          ⚑
+                        </span>
+                      ) : null}
+                      {row.flagged && (row.reviewedAt || row.taskDone) ? (
+                        <div className="settings-muted" style={{ fontSize: 11 }}>
+                          ✓ Reviewed
+                          {row.reviewedByName ? ` by ${row.reviewedByName}` : row.taskDone && !row.reviewedAt ? ' (task done)' : ''}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {row.flagged && !row.reviewedAt && !row.taskDone ? (
+                        <button
+                          type="button"
+                          className="btn primary"
+                          style={{ marginRight: 6 }}
+                          disabled={reviewingId === row.id}
+                          title="You looked into this difference; clears the alert and finishes its task"
+                          onClick={() => void markReviewed(row)}
+                        >
+                          {reviewingId === row.id ? 'Saving…' : 'Mark reviewed'}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn secondary"
@@ -197,7 +303,7 @@ export default function InventoryCountReportPage() {
                   </tr>
                   {openId === row.id && (
                     <tr>
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
                           Location / lot
                         </div>
@@ -209,6 +315,7 @@ export default function InventoryCountReportPage() {
                               <th>Exp</th>
                               <th>Expected</th>
                               <th>Counted</th>
+                              <th>Counted by</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -225,6 +332,15 @@ export default function InventoryCountReportPage() {
                                 <td>{loc.expirationDate?.slice(0, 10) || '—'}</td>
                                 <td>{loc.expectedQty ?? '—'}</td>
                                 <td>{loc.actualQty ?? '—'}</td>
+                                <td>
+                                  {loc.countedByName ?? '—'}
+                                  {loc.countedAt ? (
+                                    <span className="settings-muted">
+                                      {' · '}
+                                      {new Date(loc.countedAt).toLocaleString()}
+                                    </span>
+                                  ) : null}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -274,7 +390,7 @@ export default function InventoryCountReportPage() {
             </tbody>
           </table>
           <p className="settings-muted" style={{ marginTop: 8 }}>
-            Showing {rows.length} of {total}
+            Showing {rows.length} of {total} · Net on this page: {formatUsd(pageNetUsd, true)}
           </p>
         </div>
       )}

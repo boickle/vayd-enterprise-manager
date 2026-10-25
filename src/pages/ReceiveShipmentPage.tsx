@@ -20,6 +20,7 @@ import {
   type InventoryShipmentLine,
   type InventorySupplier,
   type ParsedInvoiceLine,
+  type ShipToStatus,
 } from '../api/inventoryOps';
 import {
   listInventoryBranchLocations,
@@ -42,6 +43,11 @@ import {
 } from '../utils/receiveShipmentDraft';
 import { sellUnitLabel, suggestedReceiveQuantity } from '../utils/vendorPackSize';
 import StockLotPicker, { ExpirationDateField } from '../components/inventory/StockLotPicker';
+import NewItemFromReceiveModal, {
+  type NewItemDefaults,
+} from '../components/inventory/NewItemFromReceiveModal';
+
+const EMPTY_NEW_ITEM: NewItemDefaults = { name: '' };
 import { imagesToInvoicePdf } from '../utils/invoicePagesPdf';
 import './Settings.css';
 
@@ -50,6 +56,32 @@ type InvoicePageDraft = {
   file: File;
   previewUrl: string | null;
 };
+
+function branchShipToLine(b: PracticeBranch): string {
+  const own = Boolean(b.shipToAddress1?.trim() || b.shipToZipcode?.trim());
+  const parts = own
+    ? [b.shipToName, b.shipToAddress1, b.shipToAddress2, b.shipToCity, b.shipToState, b.shipToZipcode]
+    : [b.address1, b.address2, b.city, b.state, b.zipcode];
+  return parts.filter((p) => p && String(p).trim()).join(', ') || 'no address on file';
+}
+
+/** Re-express an entered cost when toggling between line total and per unit. */
+function convertCost(
+  value: string,
+  from: 'total' | 'perUnit',
+  to: 'total' | 'perUnit',
+  qtyText: string
+): string {
+  const cost = Number(value);
+  const qty = Number(qtyText);
+  if (from === to || value.trim() === '' || !Number.isFinite(cost) || !(qty > 0)) return value;
+  const next = to === 'total' ? cost * qty : cost / qty;
+  return String(Math.round(next * 10000) / 10000);
+}
+
+function firstWord(text: string | null | undefined): string {
+  return (text ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+}
 
 function isPdfFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -193,6 +225,8 @@ export default function ReceiveShipmentPage() {
     supplierName: string | null;
     shipToName: string | null;
     shipToAddress: string | null;
+    invoiceShipTo?: string | null;
+    shipToStatusByBranch?: Record<string, ShipToStatus>;
   } | null>(null);
   const shipmentSectionRef = useRef<HTMLDivElement>(null);
   const receivedSectionRef = useRef<HTMLDivElement>(null);
@@ -229,6 +263,15 @@ export default function ReceiveShipmentPage() {
     weightUnit?: 'g' | 'oz' | null;
   } | null>(null);
   const [editBottleWeight, setEditBottleWeight] = useState('');
+  const [editItem, setEditItem] = useState<{ id: number; name: string } | null>(null);
+  const [editItemIsNew, setEditItemIsNew] = useState(false);
+  const [newItemFor, setNewItemFor] = useState<{
+    target: { kind: 'parsed'; index: number } | { kind: 'edit' };
+    defaults: NewItemDefaults;
+  } | null>(null);
+  const [editItemSearchOpen, setEditItemSearchOpen] = useState(false);
+  const [editItemQ, setEditItemQ] = useState('');
+  const [editItemResults, setEditItemResults] = useState<SearchResultItem[]>([]);
 
   const headerReady =
     branchId !== '' &&
@@ -419,7 +462,7 @@ export default function ReceiveShipmentPage() {
       return;
     }
     const t = window.setTimeout(() => {
-      void searchItems(q, practiceId, 40)
+      void searchItems(q, practiceId, 150)
         .then((rows) => setMatchSearchResults(rows.filter((r) => r.itemType === 'inventory')))
         .catch(() => setMatchSearchResults([]));
     }, 250);
@@ -433,15 +476,30 @@ export default function ReceiveShipmentPage() {
       return;
     }
     const t = window.setTimeout(() => {
-      void searchItems(q, practiceId, 40)
+      void searchItems(q, practiceId, 150)
         .then((rows) => setSearchResults(rows.filter((r) => r.itemType === 'inventory')))
         .catch(() => setSearchResults([]));
     }, 250);
     return () => window.clearTimeout(t);
   }, [practiceId, searchQ]);
 
+  useEffect(() => {
+    const q = editItemQ.trim();
+    if (!editItemSearchOpen || q.length < 2) {
+      setEditItemResults([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void searchItems(q, practiceId, 150)
+        .then((rows) => setEditItemResults(rows.filter((r) => r.itemType === 'inventory')))
+        .catch(() => setEditItemResults([]));
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [practiceId, editItemSearchOpen, editItemQ]);
+
   const searchGroups = useStockItemGroups(searchResults, practiceId);
   const matchSearchGroups = useStockItemGroups(matchSearchResults, practiceId);
+  const editItemGroups = useStockItemGroups(editItemResults, practiceId);
 
   async function chooseStockItem(group: StockItemGroup) {
     if (!requireHeader()) return;
@@ -479,6 +537,7 @@ export default function ReceiveShipmentPage() {
       supplierId: Number(supplierId),
       invoiceNumber: invoiceNumber.trim(),
       defaultToBranchLocationId: Number(defaultLocId),
+      invoiceShipTo: parseMeta?.invoiceShipTo ?? null,
     });
     setShipment(created);
     return persistInvoiceOnShipment(created);
@@ -795,7 +854,14 @@ export default function ReceiveShipmentPage() {
         supplierName: parsed.supplierName,
         shipToName: parsed.shipToName,
         shipToAddress: parsed.shipToAddress,
+        invoiceShipTo: parsed.invoiceShipTo ?? null,
+        shipToStatusByBranch: parsed.shipToStatusByBranch,
       });
+      if (shipment && parsed.invoiceShipTo) {
+        setShipment(
+          await patchShipment(practiceId, shipment.id, { invoiceShipTo: parsed.invoiceShipTo })
+        );
+      }
       const incoming = parsed.lines ?? [];
       const hydrated = await Promise.all(
         incoming.map(async (line) => {
@@ -888,13 +954,14 @@ export default function ReceiveShipmentPage() {
     });
   }
 
-  async function matchParsedLineToGroup(index: number, group: StockItemGroup) {
+  async function matchParsedLineToGroup(index: number, group: StockItemGroup, isNewItem = false) {
     const item = group.item ?? (await loadInventoryItem(practiceId, group.stockItemId));
     const line = parsedLines[index];
     if (!line) return;
     const next = {
       ...applyItemToParsedLine({ ...line, receiveQuantity: null }, item),
       matchVia: 'staff' as const,
+      isNewItem,
     };
     setError(null);
     try {
@@ -997,6 +1064,7 @@ export default function ReceiveShipmentPage() {
           toBranchLocationId: Number(defaultLocId),
           vendorSku: line.vendorSku,
           barcodeScanned: line.barcode,
+          isNewItem: line.isNewItem === true,
         });
         await rememberLine(line, false, line.inventoryItemId, receiveQty / packQty);
       }
@@ -1076,6 +1144,10 @@ export default function ReceiveShipmentPage() {
     setEditExp('');
     setEditCost('');
     setEditItemMeta(null);
+    setEditItem(null);
+    setEditItemIsNew(false);
+    setEditItemSearchOpen(false);
+    setEditItemQ('');
   }
 
   async function beginEditLine(line: DraftLine) {
@@ -1087,9 +1159,81 @@ export default function ReceiveShipmentPage() {
     setEditBottleWeight('');
     setEditCostMode('perUnit');
     setEditCost(line.costPerUnit != null ? String(line.costPerUnit) : '');
+    setEditItem({ id: line.inventoryItemId, name: line.itemName ?? `Item #${line.inventoryItemId}` });
+    setEditItemIsNew(line.isNewItem === true);
+    setEditItemSearchOpen(false);
+    setEditItemQ('');
+    await loadEditItemMeta(line.inventoryItemId, line);
+  }
+
+  function openEditItemSearch() {
+    setEditItemSearchOpen(true);
+    setEditItemQ(firstWord(editItem?.name));
+  }
+
+  async function swapEditItem(item: { id: number; name: string }, isNew = false) {
+    setEditItem(item);
+    setEditItemIsNew(isNew);
+    setEditItemSearchOpen(false);
+    setEditItemQ('');
+    // Existing lots belong to the old item; keep the typed lot # and expiration as a new lot.
+    setEditLotId(null);
+    setEditBottleWeight('');
+    await loadEditItemMeta(item.id, null);
+  }
+
+  function openNewItemForEdit() {
+    const qtyNum = Number(editQty);
+    const entered = Number(editCost);
+    const perUnit =
+      editCost.trim() === '' || !Number.isFinite(entered)
+        ? null
+        : editCostMode === 'total' && qtyNum > 0
+          ? Math.round((entered / qtyNum) * 10000) / 10000
+          : entered;
+    setNewItemFor({
+      target: { kind: 'edit' },
+      defaults: {
+        name: editItemQ.trim(),
+        costPerUnit: perUnit,
+        sellUnitType: editItemMeta?.sellUnitType ?? null,
+        trackLots: editItemMeta?.trackLots ?? true,
+      },
+    });
+  }
+
+  function openNewItemForParsed(index: number) {
+    const line = parsedLines[index];
+    if (!line) return;
+    setNewItemFor({
+      target: { kind: 'parsed', index },
+      defaults: {
+        name: line.description,
+        costPerUnit: line.costPerUnit,
+        trackLots: true,
+      },
+    });
+  }
+
+  async function onNewItemCreated(item: { id: number; name: string }) {
+    if (!newItemFor) return;
+    if (newItemFor.target.kind === 'parsed') {
+      await matchParsedLineToGroup(
+        newItemFor.target.index,
+        { stockItemId: item.id, label: item.name, viaNames: [], noStockLink: true },
+        true
+      );
+    } else {
+      await swapEditItem(item, true);
+    }
+    setToast(`Added “${item.name}”. It goes on Cost Reviews when you finalize.`);
+    window.setTimeout(() => setToast(null), 4000);
+  }
+
+  async function loadEditItemMeta(itemId: number, line: DraftLine | null) {
     setEditItemMeta(null);
     try {
-      const item = await loadInventoryItem(practiceId, line.inventoryItemId);
+      const item = await loadInventoryItem(practiceId, itemId);
       const weighs =
         item.isControlled === true &&
         (item.controlledMeasure === 'weight' || item.controlledMeasure === 'both');
@@ -1101,7 +1245,7 @@ export default function ReceiveShipmentPage() {
         sellUnitTypeDetail: item.sellUnitTypeDetail ?? null,
         weightUnit: weighs ? weightUnit : null,
       });
-      if (weighs && line.fullBottleWeightGrams != null) {
+      if (weighs && line?.fullBottleWeightGrams != null) {
         const grams = Number(line.fullBottleWeightGrams);
         setEditBottleWeight(
           String(Math.round((weightUnit === 'oz' ? grams / GRAMS_PER_OZ : grams) * 1000) / 1000)
@@ -1158,7 +1302,8 @@ export default function ReceiveShipmentPage() {
     setError(null);
     try {
       await updateShipmentLine(practiceId, shipment.id, line.id, {
-        inventoryItemId: line.inventoryItemId,
+        inventoryItemId: editItem?.id ?? line.inventoryItemId,
+        isNewItem: editItemIsNew,
         quantity,
         costPerUnit: Number(costPerUnit.toFixed(4)),
         lotNumber: editLot.trim() || null,
@@ -1197,8 +1342,41 @@ export default function ReceiveShipmentPage() {
   const allMatchedParsedReady =
     matchedParsedLines.length > 0 && matchedParsedLines.every((l) => parsedLineReady(l));
 
+  const shipToStatuses = parseMeta?.shipToStatusByBranch;
+  const selectedBranch = branches.find((b) => b.id === Number(branchId));
+  const shipToWarning =
+    parseMeta?.invoiceShipTo && selectedBranch && shipToStatuses?.[String(selectedBranch.id)] === 'mismatch' ? (
+      <div
+        role="alert"
+        style={{
+          margin: '0 0 12px',
+          padding: '10px 12px',
+          borderRadius: 8,
+          background: '#fffbeb',
+          border: '1px solid #f59e0b',
+          color: '#78350f',
+          fontSize: 13,
+        }}
+      >
+        <strong>Check the office.</strong> This invoice ships to “{parseMeta.invoiceShipTo}”, which
+        doesn’t match {selectedBranch.name}’s ship-to ({branchShipToLine(selectedBranch)}).
+        {(() => {
+          const other = branches.find((b) => shipToStatuses?.[String(b.id)] === 'match');
+          return other ? ` It matches ${other.name}.` : '';
+        })()}{' '}
+        You can still receive it here; the shipment’s audit will note the mismatch.
+      </div>
+    ) : null;
+
   return (
     <div className="settings-card" style={{ maxWidth: 720, margin: '0 auto', padding: 16 }}>
+      <NewItemFromReceiveModal
+        open={newItemFor != null}
+        practiceId={practiceId}
+        defaults={newItemFor?.defaults ?? EMPTY_NEW_ITEM}
+        onClose={() => setNewItemFor(null)}
+        onCreated={onNewItemCreated}
+      />
       <h1 className="settings-title">Receive Shipment</h1>
       {resumedDraft ? (
         <div
@@ -1473,6 +1651,7 @@ export default function ReceiveShipmentPage() {
               Office is locked because this shipment already started — stock receives here.
             </p>
           ) : null}
+          {shipToWarning}
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {parsedLines.map((line, index) => {
               const isMatched = line.status === 'matched';
@@ -1574,7 +1753,7 @@ export default function ReceiveShipmentPage() {
                             return;
                           }
                           setMatchSearchKey(index);
-                          setMatchSearchQ(line.description);
+                          setMatchSearchQ(firstWord(line.description));
                         }}
                       >
                         {rematching ? 'Cancel' : isMatched ? 'Re-match' : 'Match'}
@@ -1593,7 +1772,7 @@ export default function ReceiveShipmentPage() {
                             )
                           );
                           setMatchSearchKey(index);
-                          setMatchSearchQ(line.description);
+                          setMatchSearchQ(firstWord(line.description));
                         }}
                       >
                         Undo
@@ -1737,9 +1916,14 @@ export default function ReceiveShipmentPage() {
                       onChange={(e) => setMatchSearchQ(e.target.value)}
                       placeholder="Search inventory to match"
                     />
+                    {matchSearchGroups.length > 8 && (
+                      <p className="settings-muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                        {matchSearchGroups.length} matches — scroll for more
+                      </p>
+                    )}
                     {matchSearchGroups.length > 0 && (
-                      <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0' }}>
-                        {matchSearchGroups.slice(0, 8).map((g) => (
+                      <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', maxHeight: 'min(640px, 60vh)', overflowY: 'auto', paddingRight: 4 }}>
+                        {matchSearchGroups.map((g) => (
                           <li key={`match-stock-${g.stockItemId}`}>
                             <button
                               type="button"
@@ -1773,6 +1957,14 @@ export default function ReceiveShipmentPage() {
                         unlinked ones still appear.
                       </p>
                     )}
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ marginTop: 6 }}
+                      onClick={() => openNewItemForParsed(index)}
+                    >
+                      + Add a new item
+                    </button>
                   </div>
                 )}
               </li>
@@ -1813,50 +2005,56 @@ export default function ReceiveShipmentPage() {
         </div>
       )}
 
-      <label className="settings-label">
-        Destination office *
-        <select
-          className="settings-input"
-          value={branchId}
-          onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : '')}
-          disabled={!!shipment}
-          required
-        >
-          <option value="">Select…</option>
-          {branches.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {shipment ? (
-        <p className="settings-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 13 }}>
-          Locked because this shipment is already started for this office — not because the invoice
-          named it. Stock will receive here. Start a new receive to use a different office.
-        </p>
-      ) : null}
+      {parsedLines.length === 0 ? (
+        <>
+          <label className="settings-label">
+            Destination office *
+            <select
+              className="settings-input"
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : '')}
+              disabled={!!shipment}
+              required
+            >
+              <option value="">Select…</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {shipment ? (
+            <p className="settings-muted" style={{ marginTop: -8, marginBottom: 12, fontSize: 13 }}>
+              Locked because this shipment is already started for this office — not because the
+              invoice named it. Stock will receive here. Start a new receive to use a different
+              office.
+            </p>
+          ) : null}
+          {shipToWarning}
 
-      <label className="settings-label">
-        Default location *
-        <select
-          className="settings-input"
-          value={defaultLocId}
-          onChange={(e) => {
-            const v = e.target.value ? Number(e.target.value) : '';
-            setDefaultLocId(v);
-            setLineLocId(v);
-          }}
-          required
-        >
-          <option value="">Select…</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          <label className="settings-label">
+            Default location *
+            <select
+              className="settings-input"
+              value={defaultLocId}
+              onChange={(e) => {
+                const v = e.target.value ? Number(e.target.value) : '';
+                setDefaultLocId(v);
+                setLineLocId(v);
+              }}
+              required
+            >
+              <option value="">Select…</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      ) : null}
 
       <label className="settings-label">
         Supplier *
@@ -1946,8 +2144,8 @@ export default function ReceiveShipmentPage() {
           required
         />
         {searchGroups.length > 0 && (
-          <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0' }}>
-            {searchGroups.slice(0, 8).map((g) => (
+          <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0', maxHeight: 'min(640px, 60vh)', overflowY: 'auto', paddingRight: 4 }}>
+            {searchGroups.map((g) => (
               <li key={`stock-${g.stockItemId}`}>
                 <button
                   type="button"
@@ -2064,14 +2262,20 @@ export default function ReceiveShipmentPage() {
               <button
                 type="button"
                 className={`btn ${costMode === 'total' ? 'primary' : 'secondary'}`}
-                onClick={() => setCostMode('total')}
+                onClick={() => {
+                  setCost(convertCost(cost, costMode, 'total', qty));
+                  setCostMode('total');
+                }}
               >
                 Total cost
               </button>
               <button
                 type="button"
                 className={`btn ${costMode === 'perUnit' ? 'primary' : 'secondary'}`}
-                onClick={() => setCostMode('perUnit')}
+                onClick={() => {
+                  setCost(convertCost(cost, costMode, 'perUnit', qty));
+                  setCostMode('perUnit');
+                }}
               >
                 Cost / unit
               </button>
@@ -2162,7 +2366,11 @@ export default function ReceiveShipmentPage() {
                             ? ` · $${Number(l.costPerUnit).toFixed(4)}/unit`
                             : ''}
                         </div>
-                        {l.willUpdatePrice ? (
+                        {l.isNewItem ? (
+                          <div style={{ marginTop: 2, fontSize: 13, color: '#075985' }}>
+                            New item — inventory manager will review on Cost Reviews
+                          </div>
+                        ) : l.willUpdatePrice ? (
                           <div style={{ marginTop: 2, fontSize: 13, fontWeight: 600, color: '#2e7d32' }}>
                             Will update price
                             {l.catalogCost != null
@@ -2212,6 +2420,74 @@ export default function ReceiveShipmentPage() {
                           background: 'var(--surface-muted, #f9fafb)',
                         }}
                       >
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div className="settings-label" style={{ marginBottom: 4 }}>
+                            Item *
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 600 }}>{editItem?.name}</span>
+                            {editItem && editItem.id !== l.inventoryItemId ? (
+                              <span style={{ fontSize: 13, color: '#92400e' }}>
+                                (was {l.itemName ?? `Item #${l.inventoryItemId}`})
+                              </span>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              disabled={busy}
+                              onClick={() =>
+                                editItemSearchOpen ? setEditItemSearchOpen(false) : openEditItemSearch()
+                              }
+                            >
+                              {editItemSearchOpen ? 'Keep this item' : 'Change item'}
+                            </button>
+                          </div>
+                          {editItemSearchOpen ? (
+                            <div style={{ marginTop: 8 }}>
+                              <input
+                                className="settings-input"
+                                value={editItemQ}
+                                onChange={(e) => setEditItemQ(e.target.value)}
+                                placeholder="Search inventory"
+                                autoFocus
+                              />
+                              {editItemGroups.length > 0 ? (
+                                <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', maxHeight: 'min(640px, 60vh)', overflowY: 'auto', paddingRight: 4 }}>
+                                  {editItemGroups.map((g) => (
+                                    <li key={`edit-stock-${g.stockItemId}`}>
+                                      <button
+                                        type="button"
+                                        className="btn secondary"
+                                        style={{ width: '100%', textAlign: 'left', marginBottom: 4 }}
+                                        disabled={busy}
+                                        onClick={() =>
+                                          void swapEditItem({ id: g.stockItemId, name: g.label })
+                                        }
+                                      >
+                                        {g.label}
+                                        {g.stockItemId === l.inventoryItemId ? ' (current)' : ''}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : editItemQ.trim().length >= 2 ? (
+                                <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                                  No matching stock items.
+                                </p>
+                              ) : null}
+                              <div style={{ marginTop: 8 }}>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  disabled={busy}
+                                  onClick={openNewItemForEdit}
+                                >
+                                  + Add a new item
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                         <label className="settings-label">
                           Qty received (
                           {sellUnitLabel(editItemMeta?.sellUnitType, editItemMeta?.sellUnitTypeDetail)}) *
@@ -2237,7 +2513,8 @@ export default function ReceiveShipmentPage() {
                             ) : null}
                             <StockLotPicker
                               practiceId={practiceId}
-                              inventoryItemId={l.inventoryItemId}
+                              key={editItem?.id ?? l.inventoryItemId}
+                              inventoryItemId={editItem?.id ?? l.inventoryItemId}
                               branchId={branchId === '' ? null : Number(branchId)}
                               locationId={
                                 l.toBranchLocationId ??
@@ -2281,14 +2558,20 @@ export default function ReceiveShipmentPage() {
                             <button
                               type="button"
                               className={`btn ${editCostMode === 'total' ? 'primary' : 'secondary'}`}
-                              onClick={() => setEditCostMode('total')}
+                              onClick={() => {
+                                setEditCost(convertCost(editCost, editCostMode, 'total', editQty));
+                                setEditCostMode('total');
+                              }}
                             >
                               Total cost
                             </button>
                             <button
                               type="button"
                               className={`btn ${editCostMode === 'perUnit' ? 'primary' : 'secondary'}`}
-                              onClick={() => setEditCostMode('perUnit')}
+                              onClick={() => {
+                                setEditCost(convertCost(editCost, editCostMode, 'perUnit', editQty));
+                                setEditCostMode('perUnit');
+                              }}
                             >
                               Cost / unit
                             </button>
@@ -2419,6 +2702,19 @@ export default function ReceiveShipmentPage() {
                           ]
                             .filter(Boolean)
                             .join(' · ')}
+                        </span>
+                      ) : null}
+                      {row.shipToMismatch ? (
+                        <span
+                          style={{
+                            display: 'block',
+                            fontSize: 13,
+                            color: '#92400e',
+                            marginTop: 4,
+                            whiteSpace: 'normal',
+                          }}
+                        >
+                          ⚠ {row.shipToMismatchNote || 'Ship-to did not match this office.'}
                         </span>
                       ) : null}
                     </button>

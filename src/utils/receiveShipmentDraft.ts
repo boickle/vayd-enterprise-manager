@@ -1,4 +1,4 @@
-import type { ParsedInvoiceLine } from '../api/inventoryOps';
+import type { ParsedInvoiceLine, ShipToStatus } from '../api/inventoryOps';
 import {
   decodeJwtPayload,
   resolveEmployeeIdFromToken,
@@ -15,6 +15,8 @@ export type ReceiveShipmentDraft = {
     supplierName: string | null;
     shipToName: string | null;
     shipToAddress: string | null;
+    invoiceShipTo?: string | null;
+    shipToStatusByBranch?: Record<string, ShipToStatus>;
   } | null;
   invoiceFileName: string | null;
   savedAt: string;
@@ -85,6 +87,15 @@ export function loadReceiveShipmentDraft(
                 typeof parsed.parseMeta.shipToAddress === 'string'
                   ? parsed.parseMeta.shipToAddress
                   : null,
+              invoiceShipTo:
+                typeof parsed.parseMeta.invoiceShipTo === 'string'
+                  ? parsed.parseMeta.invoiceShipTo
+                  : null,
+              shipToStatusByBranch:
+                parsed.parseMeta.shipToStatusByBranch &&
+                typeof parsed.parseMeta.shipToStatusByBranch === 'object'
+                  ? parsed.parseMeta.shipToStatusByBranch
+                  : undefined,
             }
           : null,
       invoiceFileName:

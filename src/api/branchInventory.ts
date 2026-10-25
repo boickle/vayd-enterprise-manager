@@ -16,6 +16,16 @@ export type PracticeBranch = {
   country?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+} & PracticeBranchShipTo;
+
+/** Where vendors deliver. Blank uses the physical address. */
+export type PracticeBranchShipTo = {
+  shipToName?: string | null;
+  shipToAddress1?: string | null;
+  shipToAddress2?: string | null;
+  shipToCity?: string | null;
+  shipToState?: string | null;
+  shipToZipcode?: string | null;
 };
 
 export type PracticeBranchAddressBody = {
@@ -199,12 +209,46 @@ export async function patchPracticeBranch(
     name?: string;
     pimsLocationId?: string | null;
     isActive?: boolean;
-  } & Partial<PracticeBranchAddressBody>
+  } & Partial<PracticeBranchAddressBody> &
+    PracticeBranchShipTo
 ): Promise<PracticeBranch> {
   const { data } = await http.patch<PracticeBranch>(
     `/practice/${practiceId}/branches/${branchId}`,
     body
   );
+  return data;
+}
+
+export type BranchCsvResult = {
+  applied: boolean;
+  changes: string[];
+  warnings: string[];
+  errors: string[];
+};
+
+/** Download offices + inventory locations as one CSV. */
+export async function downloadBranchesCsv(practiceId: number): Promise<void> {
+  const res = await http.get(`/practice/${practiceId}/branches/export`, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data as Blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'scout-offices-locations.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Preview (`apply: false`) or apply an offices + locations CSV. */
+export async function importBranchesCsv(
+  practiceId: number,
+  csv: string,
+  apply: boolean
+): Promise<BranchCsvResult> {
+  const { data } = await http.post<BranchCsvResult>(`/practice/${practiceId}/branches/import`, {
+    csv,
+    apply,
+  });
   return data;
 }
 
@@ -303,6 +347,10 @@ export async function listInventoryMovements(
     fromDate?: string;
     toDate?: string;
     movedByUserId?: number;
+    /** Item name words, all must match. */
+    search?: string;
+    movementType?: string;
+    exceptionsOnly?: boolean;
     limit?: number;
     offset?: number;
   }
