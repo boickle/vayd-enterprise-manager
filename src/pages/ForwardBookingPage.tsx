@@ -69,6 +69,7 @@ import {
   type ForwardBookingSourceChip,
 } from '../utils/forwardBookingEntrySource';
 import {
+  buildForwardBookingHouseholdSmsMessage,
   buildForwardBookingSmsMessage,
   clientHasSmsPhone,
   formatForwardBookingSmsBookedSlotFromEntry,
@@ -1656,6 +1657,51 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     setContactOpen(true);
   };
 
+  const openHouseholdContact = async (entries: ForwardBookingEntry[]) => {
+    const rows = entries.filter((entry) => entry.status !== 'removed');
+    const anchor = rows[0];
+    if (!anchor) return;
+    const enriched = await enrichForwardBookingEntryClientPhone(anchor);
+    const canText = clientHasSmsPhone(enriched);
+    if (!canText && !canAccessGmailInbox) return;
+    const chips = rows.map((entry) => forwardBookingEntrySourceChip(entry));
+    const allOutreach = chips.every(
+      (chip) => chip === 'care_outreach' || chip === 'schedule_loader',
+    );
+    const petNames = rows
+      .map((entry) => entry.patient?.name?.trim())
+      .filter((name): name is string => Boolean(name));
+    const resolved = await resolveBookedSlotForSms(enriched);
+    const isHold =
+      forwardBookingListTab(enriched, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
+      'onHold';
+    const holdRelease = isHold
+      ? holdReleaseOptsForAppointment(enriched.bookedAppointmentStart, practiceTz)
+      : undefined;
+    const sms = allOutreach
+      ? buildCareOutreachSmsMessage({
+          clientFirstName: enriched.client?.firstName,
+          clientDisplayName:
+            [enriched.client?.firstName, enriched.client?.lastName].filter(Boolean).join(' ').trim() ||
+            undefined,
+          petNames,
+          providerLastName: enriched.primaryProvider?.lastName,
+          anyPastDue: chips.some((chip) => chip === 'schedule_loader'),
+          ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
+          holdRelease,
+        })
+      : buildForwardBookingHouseholdSmsMessage(rows, {
+          ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
+          holdRelease,
+        });
+    setContactCanText(canText);
+    setContactProviderLastName(enriched.primaryProvider?.lastName ?? null);
+    setContactEmailFormat(allOutreach ? 'care_outreach' : 'forward_booking');
+    setContactSmsMessage(sms);
+    setContactEntry(enriched);
+    setContactOpen(true);
+  };
+
   const closeContactModal = () => {
     setContactOpen(false);
     setContactEntry(null);
@@ -2072,6 +2118,15 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                   </div>
                   {group.entries[0]?.clientId ? (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginLeft: 'auto' }}>
+                      {group.entries.length > 1 && group.entries.some((entry) => entryCanContact(entry)) ? (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => void openHouseholdContact(group.entries)}
+                        >
+                          Contact about all pets
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn secondary"
