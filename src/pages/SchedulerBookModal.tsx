@@ -42,6 +42,11 @@ import {
 } from '../api/appointmentSettings';
 import { useAuth } from '../auth/useAuth';
 import {
+  claimHoldOwnerBestEffort,
+  resolveStaffEmployeeIdForHoldClaim,
+} from '../utils/holdOwnership';
+import { isHoldAppointmentTypeForBook } from '../utils/forwardBookingBookToast';
+import {
   addressFieldsDisplayText,
   addressFieldsFromFreeText,
   EMPTY_ADDRESS_FIELDS,
@@ -336,6 +341,8 @@ export type SchedulerBookPrefill = {
     forwardBookingTrackingToken: string;
     patientId: string;
     patientName?: string;
+    /** Per-pet Description prefill (care outreach / schedule loader notes). */
+    description?: string;
   }>;
   forwardBookingCreatedVia?: ForwardBookingCreatedVia;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
@@ -623,12 +630,21 @@ export function SchedulerBookModal({
   /** Once staff edit the duration or end time, stop re-defaulting it under them. */
   const [durationManuallySet, setDurationManuallySet] = useState(false);
 
-  const { role, token, userEmail, doctorId } = useAuth() as {
+  const { role, token, userEmail, doctorId, employeeId: authEmployeeId } = useAuth() as {
     role?: string | string[];
     token?: string | null;
     userEmail?: string | null;
     doctorId?: string | null;
+    employeeId?: string | null;
   };
+  const holdClaimEmployeeId = useMemo(
+    () =>
+      resolveStaffEmployeeIdForHoldClaim({
+        token: token ?? null,
+        employeeId: authEmployeeId ?? null,
+      }),
+    [token, authEmployeeId]
+  );
   const rolesLower = useMemo(() => {
     const arr = Array.isArray(role) ? role : role != null ? [role] : [];
     return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
@@ -1337,12 +1353,17 @@ export function SchedulerBookModal({
           : undefined;
       const calcTimeLabel =
         calcTimeRow?.name?.trim() || calcTimeRow?.prettyName?.trim() || null;
+      // When the source visit is not on the loaded calendar day (common for Holds →
+      // reschedule), patches may omit description; fall back to defaultDescription
+      // (intent / original visit) so Book matches schedule reschedule autofill.
+      const fallbackDescription = prefill?.defaultDescription?.trim() ?? '';
       setRescheduleVisitEdits(
         patches.map((p) => {
           const tid =
             p.appointmentTypeId != null && Number.isFinite(Number(p.appointmentTypeId))
               ? Number(p.appointmentTypeId)
               : undefined;
+          const fromPatch = p.description?.trim() ?? '';
           return {
             appointmentId: Number(p.appointmentId),
             patientId: String(p.patientId).trim(),
@@ -1353,7 +1374,7 @@ export function SchedulerBookModal({
               : p.appointmentTypeLabel?.trim() || '—',
             scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
             originalAppointmentStartIso: p.originalAppointmentStartIso?.trim() || undefined,
-            description: p.description?.trim() ?? '',
+            description: fromPatch || (singleVisitReschedule ? fallbackDescription : ''),
             instructions: p.instructions?.trim() ?? '',
           };
         })
@@ -1582,15 +1603,21 @@ export function SchedulerBookModal({
       const name = row.name?.trim();
       if (id && name) routingPreviewNameById.set(id, name);
     }
+    const fbDescriptionByPatientId = new Map<string, string>();
     for (const row of prefill?.forwardBookingVisitCompletes ?? []) {
       const id = String(row.patientId).trim();
       const name = row.patientName?.trim();
       if (id && name) routingPreviewNameById.set(id, name);
+      const fbDesc = row.description?.trim();
+      if (id && fbDesc) fbDescriptionByPatientId.set(id, fbDesc);
     }
     for (const p of clientPets) {
       if (p.isDeleted === true || p.isActive === false) continue;
       routingPreviewNameById.set(String(p.id), p.name);
     }
+
+    const descriptionForPatient = (patientId: string): string =>
+      fbDescriptionByPatientId.get(patientId) ?? defaultDesc;
 
     const patientRows: RoutingBookVisitEdit[] = petChoices.map((p) => {
       const patientId = String(p.id);
@@ -1599,7 +1626,7 @@ export function SchedulerBookModal({
         patientName: p.name,
         selected: autoSelectPatient(patientId),
         appointmentTypeId: defaultType,
-        description: defaultDesc,
+        description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
         needsPremeds: defaultPremedsFor(patientId),
       };
@@ -1611,7 +1638,7 @@ export function SchedulerBookModal({
         patientName: routingPreviewNameById.get(patientId) ?? `Patient ${patientId}`,
         selected: true,
         appointmentTypeId: defaultType,
-        description: defaultDesc,
+        description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
         needsPremeds: defaultPremedsFor(patientId),
       });
@@ -2435,6 +2462,30 @@ export function SchedulerBookModal({
         await putAppointmentAlternateAddress(apptId, { addressText: trimmedAlt });
       }
 
+      /** Transfer/claim hold CL ownership when staff reschedule, explore, or book a HOLD. */
+      async function claimIfHoldAppointment(
+        apptId: number,
+        appointmentTypeId: number | string | null | undefined
+      ) {
+        if (holdClaimEmployeeId == null) return;
+        const holdTypeId =
+          appointmentTypeId != null && Number.isFinite(Number(appointmentTypeId))
+            ? Number(appointmentTypeId)
+            : null;
+        if (holdTypeId == null) return;
+        const typeName =
+          appointmentTypes.find((t) => Number(t.id) === holdTypeId)?.name ?? null;
+        if (
+          !isHoldAppointmentTypeForBook(appointmentTypeCatalog, {
+            typeId: holdTypeId,
+            typeName,
+          })
+        ) {
+          return;
+        }
+        await claimHoldOwnerBestEffort(apptId, holdClaimEmployeeId);
+      }
+
       const descriptionForNewBook = (raw: string) => raw.trim();
 
       const bookActor = resolveAppointmentChangeActorFromAuth({
@@ -2559,6 +2610,7 @@ export function SchedulerBookModal({
                 exploreCreatedAppointmentTypeId = Number(resolvedAppointmentTypeId);
               }
               await saveAlternateForAppointment(apptId);
+              await claimIfHoldAppointment(apptId, resolvedAppointmentTypeId);
             }
             await patchAppointment(rescheduleId, {
               instructions: appendExploreAlternativeSourceStaffNote(
@@ -2578,6 +2630,7 @@ export function SchedulerBookModal({
             ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });
+          await claimIfHoldAppointment(rescheduleId, resolvedAppointmentTypeId);
         }
         if (!exploreAlternatives) {
           savedAppointmentId = rescheduleIds[0];
@@ -2619,6 +2672,7 @@ export function SchedulerBookModal({
               createdByPatientId.set(visit.patientId.trim(), apptId);
             }
             await saveAlternateForAppointment(apptId);
+            await claimIfHoldAppointment(apptId, visit.appointmentTypeId);
           }
         }
         if (
@@ -2658,6 +2712,7 @@ export function SchedulerBookModal({
         if (idRaw != null && Number.isFinite(Number(idRaw))) {
           savedAppointmentId = Number(idRaw);
           await saveAlternateForAppointment(savedAppointmentId);
+          await claimIfHoldAppointment(savedAppointmentId, Number(typeId));
         }
       }
 

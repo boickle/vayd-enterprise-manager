@@ -1,3 +1,9 @@
+/**
+ * Golden vs Foundations (membership) and senior screen vs early detection (public room loader labs)
+ * both use this age for dogs and cats. Change here only so they stay aligned.
+ */
+export const MEMBERSHIP_GOLDEN_MIN_AGE_YEARS = 8;
+
 export type PlanAgeSource = {
   name?: string | null;
   species?: string | null;

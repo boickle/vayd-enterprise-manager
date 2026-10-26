@@ -111,8 +111,8 @@ const FRIDA_NOTE =
     'Scheduler must call resolveForwardBookingBookDefaultDescription'
   );
   assert(
-    scheduler.includes('fbi && !isReschedule'),
-    'Scheduler must prefill Description for forward-booking (non-reschedule) books'
+    scheduler.includes('fbi && !isReschedule && !fbiGroupBook'),
+    'Scheduler must prefill Description for single-pet forward-booking (non-reschedule) books'
   );
   const util = fs.readFileSync(
     path.join(root, 'src/utils/forwardBookingBookPrefillDescription.ts'),

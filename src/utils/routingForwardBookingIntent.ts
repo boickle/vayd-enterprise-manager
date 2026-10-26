@@ -25,6 +25,9 @@ export type ForwardBookingHouseholdEntry = {
   appointmentTypeName?: string;
   targetDueDate?: string | null;
   needsPremeds?: boolean;
+  /** Per-pet visit context — used to prefill Book appointment Description. */
+  bookingNotes?: string | null;
+  description?: string | null;
 };
 
 export type RoutingForwardBookingIntentV1 = {
@@ -299,11 +302,19 @@ export function forwardBookingScopeTargets(intent: RoutingForwardBookingIntentV1
     all.find((e) => e.patientId === intent.patientId) ??
     all[0];
   if (intent.householdScope !== 'household_same_target' || all.length <= 1) {
-    const one = anchor ?? {
-      forwardBookingId: intent.forwardBookingId,
-      trackingToken: intent.trackingToken,
-      patientId: intent.patientId,
-    };
+    const one = anchor
+      ? {
+          ...anchor,
+          bookingNotes: anchor.bookingNotes ?? intent.bookingNotes ?? null,
+          description: anchor.description ?? intent.description ?? null,
+        }
+      : {
+          forwardBookingId: intent.forwardBookingId,
+          trackingToken: intent.trackingToken,
+          patientId: intent.patientId,
+          bookingNotes: intent.bookingNotes ?? null,
+          description: intent.description ?? null,
+        };
     return { entries: [one], patientId: one.patientId };
   }
   return {
@@ -321,6 +332,8 @@ function householdEntryFromForwardBookingRow(entry: ForwardBookingEntry): Forwar
     patientName: pickStr(entry.patient?.name) ?? undefined,
     targetDueDate: entry.targetDueDate ?? null,
     ...(entry.needsPremeds === true ? { needsPremeds: true } : {}),
+    bookingNotes: entry.bookingNotes ?? null,
+    description: entry.description ?? null,
   };
 }
 

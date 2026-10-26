@@ -30,6 +30,7 @@ import {
   createForwardBookingsFromWaitlist,
   waitlistRoutingSearchDateRange,
 } from '../utils/waitlistForwardBooking';
+import { startExploreAlternativesFromWaitlist } from '../utils/waitlistExploreAlternatives';
 import {
   waitlistAddressLine,
   waitlistClientDisplayName,
@@ -320,7 +321,29 @@ export default function WaitlistPage() {
   async function handleRecommendSlot(entry: WaitlistEntry) {
     setRoutingId(entry.id);
     setError(null);
+    const returnHref =
+      `/schedule/scheduling-tools/waitlist?highlight=${entry.id}` +
+      (targetDate.trim() ? `&targetDate=${encodeURIComponent(targetDate.trim())}` : '');
     try {
+      // Already has a confirmed visit ("wants sooner"): explore alternatives — keep the
+      // original booked and HOLD both while waiting to hear from the client (not a move).
+      const linkedApptId = entry.bookedAppointmentId;
+      if (linkedApptId != null && Number.isFinite(Number(linkedApptId)) && Number(linkedApptId) > 0) {
+        const result = await startExploreAlternativesFromWaitlist({
+          entry,
+          navigate,
+          practiceTz: PRACTICE_TZ,
+          practiceId: PRACTICE_ID,
+          primaryProviderInternalId: selectedDoctorInternalId,
+          primaryDoctorPimsId: selectedDoctor ? fillDoctorIdForProvider(selectedDoctor) : null,
+          primaryDoctorDisplayName: selectedDoctor?.name ?? null,
+          targetDateYmd: targetDate.trim() || null,
+          returnHref,
+        });
+        if (result.error) setError(result.error);
+        return;
+      }
+
       const forwardBookingEntries = await createForwardBookingsFromWaitlist(entry, PRACTICE_ID, {
         primaryProviderId: selectedDoctorInternalId,
         targetDateYmd: targetDate.trim() || null,
@@ -332,9 +355,6 @@ export default function WaitlistPage() {
           ? buildRoutingForwardBookingIntentFromEntries(anchor, forwardBookingEntries)
           : buildRoutingForwardBookingIntentFromEntry(anchor);
       if (!intent) throw new Error('This client is missing data needed for routing.');
-      const returnHref =
-        `/schedule/scheduling-tools/waitlist?highlight=${entry.id}` +
-        (targetDate.trim() ? `&targetDate=${encodeURIComponent(targetDate.trim())}` : '');
       writeRoutingForwardBookingIntent({
         ...intent,
         staffNote: entry.notes,
@@ -504,7 +524,9 @@ export default function WaitlistPage() {
         <strong>Fill a cancellation</strong>
         <p className="settings-muted" style={{ margin: '4px 0 12px' }}>
           Optional — same idea as schedule loader. Matching households sort to the top. Recommend slot
-          searches that doctor’s day; leave the date blank to search the next 14 days.
+          searches that doctor’s day; leave the date blank to search the next 14 days. Rows that already
+          have a visit (“wants sooner”) open Explore alternatives so the confirmed appointment stays
+          booked while you hold a block and wait to hear from the client.
         </p>
         <div className="waitlist-fill__grid">
           <label className="waitlist-field" style={{ marginBottom: 0 }}>

@@ -423,6 +423,10 @@ import {
   forwardBookingBookedPatientNames,
   isHoldAppointmentTypeForBook,
 } from '../utils/forwardBookingBookToast';
+import {
+  claimHoldOwnerBestEffort,
+  resolveStaffEmployeeIdForHoldClaim,
+} from '../utils/holdOwnership';
 import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingReturnPathAfterBook } from '../utils/forwardBookingReturnSession';
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
@@ -7874,7 +7878,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       routingStatsTypeKey.trim() && (rescheduleTargets?.visits.length ?? 0) <= 1
         ? chosenRoutingTypeId
         : undefined;
-    const rescheduleVisitPatches =
+    const rescheduleVisitPatchesRaw =
       rescheduleTargets && rescheduleTargets.visits.length > 0
         ? buildRescheduleVisitPatches(
             rescheduleTargets.visits,
@@ -7884,6 +7888,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             typeList
           )
         : undefined;
+    // Holds → reschedule often books on another day, so the source row is missing from
+    // rawAppointments; fill blank patch descriptions from the routing intent.
+    const intentRescheduleDescription = ri?.description?.trim() || '';
+    const intentRescheduleAppointmentId =
+      ri?.appointmentId != null && Number.isFinite(Number(ri.appointmentId))
+        ? Number(ri.appointmentId)
+        : null;
+    const rescheduleVisitPatches = rescheduleVisitPatchesRaw?.map((p) => {
+      if (p.description?.trim()) return p;
+      if (
+        intentRescheduleDescription &&
+        intentRescheduleAppointmentId != null &&
+        Number(p.appointmentId) === intentRescheduleAppointmentId
+      ) {
+        return { ...p, description: intentRescheduleDescription };
+      }
+      if (intentRescheduleDescription && rescheduleVisitPatchesRaw.length === 1) {
+        return { ...p, description: intentRescheduleDescription };
+      }
+      return p;
+    });
     const rescheduleId = rescheduleIds[0];
     const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
     const exploreBook = Boolean(opts?.exploreAlternatives ?? ri?.exploreAlternatives);
@@ -8069,10 +8094,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ? { appointmentTypeId: chosenRoutingTypeId }
           : {}),
       preserveDurationFromSlot: true,
+      // Multi-pet forward booking: per-pet Description via forwardBookingVisitCompletes
+      // (do not copy the anchor pet's care-outreach notes onto siblings).
       defaultDescription:
         isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
           ? rescheduleVisitPatches?.[0]?.description?.trim() || ri?.description?.trim()
-          : fbi && !isReschedule
+          : fbi && !isReschedule && !fbiGroupBook
             ? resolveForwardBookingBookDefaultDescription(fbi)
             : undefined,
       rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
@@ -8108,6 +8135,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     forwardBookingTrackingToken: row.trackingToken,
                     patientId: row.patientId,
                     patientName: row.patientName,
+                    description: resolveForwardBookingBookDefaultDescription(row),
                   })),
                 }
               : {}),
@@ -8474,6 +8502,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         token: authToken,
         userEmail: authUserEmail,
         doctorId: authDoctorId,
+        employeeId: authEmployeeId,
         appointmentTypes: typeList,
         existingAppointments: rawAppointments,
       });
@@ -9184,6 +9213,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ...prompt.nonHoldAppointmentIds,
           ...prompt.sourceAppointmentIds,
         ]);
+        const holdClaimEmployeeId = resolveStaffEmployeeIdForHoldClaim({
+          token: authToken,
+          employeeId: authEmployeeId,
+        });
         for (const id of prompt.nonHoldAppointmentIds) {
           const current =
             rawAppointments.find((a) => Number(a.id) === Number(id)) ??
@@ -9204,6 +9237,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             },
             { practiceId: PRACTICE_ID },
           );
+          await claimHoldOwnerBestEffort(id, holdClaimEmployeeId);
         }
         if (optimizeNotes) {
           for (const id of prompt.sourceAppointmentIds) {
@@ -9254,7 +9288,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setConvertingExploreHold(false);
       }
     },
-    [exploreHoldPrompt, convertingExploreHold, loadRange, showToast, holdAppointmentTypes, rawAppointments, scheduleOptimizeSavingsActor]
+    [
+      exploreHoldPrompt,
+      convertingExploreHold,
+      loadRange,
+      showToast,
+      holdAppointmentTypes,
+      rawAppointments,
+      scheduleOptimizeSavingsActor,
+      authToken,
+      authEmployeeId,
+    ]
   );
 
   const mergeStaffConfirmAppointmentUpdates = useCallback(
