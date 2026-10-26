@@ -7,6 +7,8 @@ import {
   memorialItemParts,
 } from '../api/consent';
 import {
+  listingCategoryNames,
+  listingInStoreCategory,
   storeListingImageUrl,
   type StoreListing,
   type StoreVariant,
@@ -22,13 +24,6 @@ function resolvedDefaultSubcategory(value?: string): string {
   const next = String(value || '').trim();
   if (!next || /^all$/i.test(next)) return '';
   return next;
-}
-
-function listingInCategory(listing: StoreListing, selected: string): boolean {
-  const cat = (listing.storeCategory || '').trim();
-  if (!selected) return true;
-  if (cat === selected) return true;
-  return cat.startsWith(`${selected} / `) || cat.startsWith(`${selected}/`);
 }
 
 function childCategory(raw: string | null | undefined, parent: string): string {
@@ -476,7 +471,7 @@ export default function ConsentMemorialPicker({
       .then((res) => {
         if (cancelled) return;
         const rows = Array.isArray(res.data) ? res.data : [];
-        setItems(rows.filter((row) => listingInCategory(row, category)));
+        setItems(rows.filter((row) => listingInStoreCategory(row, category)));
       })
       .catch(() => {
         if (!cancelled) {
@@ -494,8 +489,10 @@ export default function ConsentMemorialPicker({
   const chips = useMemo(() => {
     const names = new Set<string>();
     for (const item of items) {
-      const child = childCategory(item.storeCategory, category);
-      if (child) names.add(child.split(' / ')[0] || child);
+      for (const cat of listingCategoryNames(item)) {
+        const child = childCategory(cat, category);
+        if (child) names.add(child.split(' / ')[0] || child);
+      }
     }
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [items, category]);
@@ -509,7 +506,7 @@ export default function ConsentMemorialPicker({
 
   const visible = useMemo(() => {
     if (!subcategory) return items;
-    return items.filter((item) => listingInCategory(item, `${category} / ${subcategory}`));
+    return items.filter((item) => listingInStoreCategory(item, `${category} / ${subcategory}`));
   }, [items, subcategory, category]);
 
   const openDetail = (listing: StoreListing) => {

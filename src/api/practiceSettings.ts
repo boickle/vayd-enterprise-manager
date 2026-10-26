@@ -138,6 +138,11 @@ export type ReminderSettings = {
    * Shape: { singlePatientMinutes, multiPetPerPetMinutes, newClientLeadTimeHours, existingClientLeadTimeHours, leadTimeHoursByAppointmentTypeId, newClientLeadTimeHoursByAppointmentTypeId }.
    */
   'onlineBooking.autoBookSettings'?: string;
+  /**
+   * ± minutes of the arrival window for pre-meds visits. Only narrows a visit's
+   * type window (never widens it). Unset = 30.
+   */
+  'scheduling.premedsWindowMinutes'?: string;
 };
 
 /** True only when the practice explicitly enabled an online store (default No). */

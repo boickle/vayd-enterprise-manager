@@ -162,6 +162,7 @@ import MailInvoiceLineCheckbox, {
   cancelMailOrdersForInvoiceLines,
   isMailOrderShipped,
   mailOrderWaitsForQueueApproval,
+  mailStageTone,
   matchingMailOrderForLine,
   shippedMailMessage,
   shippingLineFromNotes,
@@ -220,11 +221,18 @@ type LedgerRow = {
   status: string;
   actorNote?: string | null;
   paymentNote?: string | null;
+  /** Online store, visit, or a direct invoice. */
+  where?: string | null;
+  /** Card, cash, and the other tenders that settled it. */
+  paidHow?: string | null;
   total: number;
   paid: number;
   due: number;
   scout?: VisitInvoice;
   evet?: NormalizedInvoice;
+  creditActivity?: EvetCreditActivity;
+  /** Running eVet account credit balance row. */
+  isAccountCredit?: boolean;
 };
 
 const FIN_SPLIT_KEY = 'scout.clientFin.ledgerSplitPct';
@@ -446,6 +454,72 @@ function PriceShown({
 
 function listPriceAbove(list: number | null | undefined, charged: number): boolean {
   return list != null && Number(list) > charged + 0.009;
+}
+
+function lineMembershipBenefit(
+  line: Pick<VisitInvoiceLine, 'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'unitPrice'>,
+): boolean {
+  if (line.isCovered) return true;
+  const qty = Number(line.qty) || 1;
+  const charged = Number(line.amount) || (Number(line.unitPrice) || 0) * qty;
+  const list =
+    line.listUnitPrice != null ? Number(line.listUnitPrice) * qty : null;
+  return listPriceAbove(list, charged);
+}
+
+function evetLineMembershipBenefit(line: {
+  isCovered?: boolean;
+  total: number;
+  qty: number | string;
+  originalPrice?: number | null;
+  unitPrice?: number;
+}): boolean {
+  if (line.isCovered) return true;
+  const qty = Number(line.qty) || 1;
+  const list =
+    line.originalPrice != null
+      ? Number(line.originalPrice) * qty
+      : null;
+  return listPriceAbove(list, Number(line.total) || 0);
+}
+
+function MembershipHeart({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span className="client-fin__covered-heart" title="Membership benefit" aria-label="Membership benefit">
+      ❤️{' '}
+    </span>
+  );
+}
+
+function ProviderClosedCell({
+  providerLabel,
+  canChange,
+  disabled,
+  onChange,
+}: {
+  providerLabel: string | null;
+  canChange: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <div className="client-fin__provider-cell">
+      <span className={providerLabel ? undefined : 'client-fin__provider-none'}>
+        {providerLabel ?? 'None'}
+      </span>
+      {canChange ? (
+        <button
+          type="button"
+          className="client-fin__btn-ghost client-fin__btn-ghost--compact client-fin__no-print"
+          disabled={disabled}
+          onClick={onChange}
+        >
+          Change
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 
@@ -929,6 +1003,67 @@ function methodLabel(method: VisitTenderMethod, paymentTypeName?: string | null)
   return method.charAt(0).toUpperCase() + method.slice(1);
 }
 
+/** "Visa •••• 4242", so staff can tell the owner which card was charged. */
+function cardFingerprint(tender: {
+  cardBrand?: string | null;
+  cardLast4?: string | null;
+}): string | null {
+  const last4 = (tender.cardLast4 || '').trim();
+  const brand = (tender.cardBrand || '').trim();
+  if (!last4 && !brand) return null;
+  const nice = brand
+    ? brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase()
+    : 'Card';
+  return last4 ? `${nice} •••• ${last4}` : nice;
+}
+
+function tenderPayLabel(tender: VisitInvoiceTender): string {
+  return cardFingerprint(tender) ?? methodLabel(tender.method, tender.paymentTypeName);
+}
+
+export type InvoiceWhere = 'Online store' | 'Visit' | 'Direct invoice';
+
+/** Where the charge was taken: the store, a SOAP visit, or a counter invoice. */
+function invoiceWhere(inv: VisitInvoice, orders: MailOrder[]): InvoiceWhere {
+  const token = `invoice:${inv.id}`;
+  if (orders.some((o) => o.origin === 'online_store' && (o.notes || '').includes(token))) {
+    return 'Online store';
+  }
+  if (inv.appointmentId != null || (inv.lines ?? []).some((line) => line.orderId)) return 'Visit';
+  return 'Direct invoice';
+}
+
+function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'direct' {
+  if (where === 'Online store') return 'store';
+  if (where === 'Visit') return 'visit';
+  return 'direct';
+}
+
+/** How a paid invoice was settled, from its live tenders. */
+function paidHowLabel(inv: VisitInvoice): string | null {
+  const names = [
+    ...new Set(
+      (inv.tenders ?? [])
+        .filter((tender) => !tender.voidedAt && (Number(tender.amount) || 0) > 0.009)
+        .map((tender) => tenderPayLabel(tender)),
+    ),
+  ];
+  if (names.length) return names.join(', ');
+  if ((Number(inv.amountPaid) || 0) <= 0.009 && Math.abs(Number(inv.total) || 0) <= 0.009) {
+    return inv.status === 'paid' ? 'No charge' : null;
+  }
+  return null;
+}
+
+function paidWhen(inv: VisitInvoice): string | null {
+  if (inv.paidAt) return inv.paidAt;
+  const times = (inv.tenders ?? [])
+    .filter((tender) => !tender.voidedAt && tender.receivedAt)
+    .map((tender) => tender.receivedAt)
+    .sort();
+  return times.length ? times[times.length - 1] : null;
+}
+
 function tenderMethodFromOption(optionType: PaymentOptionType, name?: string | null): VisitTenderMethod {
   if (/care\s*credit/i.test(name || '')) return 'carecredit';
   if (optionType === 'cash') return 'cash';
@@ -1202,6 +1337,7 @@ export default function ClientFinancialWorkspace({
   const [estimateEditorId, setEstimateEditorId] = useState<string | null>(null);
   const [selected, setSelected] = useState<VisitInvoice | null>(null);
   const [evetSelected, setEvetSelected] = useState<NormalizedInvoice | null>(null);
+  const [ledgerCreditKey, setLedgerCreditKey] = useState<string | null>(null);
   const [evetLoaded, setEvetLoaded] = useState<NormalizedInvoice[]>(evetInvoices);
   const [filter, setFilter] = useState<LedgerFilter>('all');
   const [loading, setLoading] = useState(true);
@@ -2177,11 +2313,13 @@ export default function ClientFinancialWorkspace({
           paid: Number(inv.amountPaid) || 0,
         }),
         actorNote,
+        where: invoiceWhere(inv, mailOrders),
+        paidHow: paidHowLabel(inv),
         paymentNote: voidedPaymentNote(
           (inv.tenders ?? [])
             .filter((tender) => tender.voidedAt)
             .map((tender) => ({
-              label: methodLabel(tender.method, tender.paymentTypeName),
+              label: tenderPayLabel(tender),
               amount: Number(tender.amount) || 0,
             })),
         ),
@@ -2261,12 +2399,14 @@ export default function ClientFinancialWorkspace({
             total: -evetAccountCredit.amount,
             paid: 0,
             due: -evetAccountCredit.amount,
+            isAccountCredit: true,
           },
         ]
       : [];
     const activityRows: LedgerRow[] = (evetCreditActivity ?? []).map((a) => ({
       key: `evet:credit-activity:${a.id}`,
       source: 'evet',
+      creditActivity: a,
       label: a.amount > 0 ? 'Credit added to account' : 'Credit removed from account',
       date: a.at ? formatTs(a.at) : '—',
       sortAt: ledgerTime(a.at),
@@ -2295,6 +2435,7 @@ export default function ClientFinancialWorkspace({
     visits,
     allPets,
     staffById,
+    mailOrders,
   ]);
 
   const visibleLedger = ledger.filter((row) => {
@@ -2337,7 +2478,7 @@ export default function ClientFinancialWorkspace({
   // If Scout had nothing open on load, open the newest unpaid eVet invoice once it arrives.
   useEffect(() => {
     if (loading) return;
-    if (selected != null || evetSelected != null) return;
+    if (selected != null || evetSelected != null || ledgerCreditKey != null) return;
     if (initialInvoiceId || openNew) return;
     const openEvet = unpaidEvet
       .slice()
@@ -2451,28 +2592,38 @@ export default function ClientFinancialWorkspace({
             : undefined,
         clientName,
         lines: evet
-          ? evet.lines.map((l) => ({
-              description: l.description,
-              pet: l.patient,
-              qty: Number(l.qty) || 1,
-              amount: l.total,
-              listAmount:
-                l.originalPrice != null ? l.originalPrice * (Number(l.qty) || 1) : null,
-            }))
+          ? evet.lines.map((l) => {
+              const qty = Number(l.qty) || 1;
+              const listAmount =
+                l.originalPrice != null ? l.originalPrice * qty : null;
+              const amount = l.total;
+              return {
+                description: l.description,
+                pet: l.patient,
+                qty,
+                amount,
+                listAmount,
+                membershipBenefit: evetLineMembershipBenefit(l),
+              };
+            })
           : (scout!.lines ?? [])
               // Charges the catalog marks hidden stay off the client's copy. The
               // money is still in the totals — only the line is withheld.
               .filter((l) => l.isDeleted !== true && l.hideOnInvoice !== true)
-              .map((l) => ({
-                description: l.description,
-                pet: petName(l.patientId, l.patientName),
-                qty: Number(l.qty) || 1,
-                amount: Number(l.amount) || 0,
-                listAmount:
-                  l.listUnitPrice != null
-                    ? Number(l.listUnitPrice) * (Number(l.qty) || 1)
-                    : null,
-              })),
+              .map((l) => {
+                const qty = Number(l.qty) || 1;
+                const amount = Number(l.amount) || 0;
+                const listAmount =
+                  l.listUnitPrice != null ? Number(l.listUnitPrice) * qty : null;
+                return {
+                  description: l.description,
+                  pet: petName(l.patientId, l.patientName),
+                  qty,
+                  amount,
+                  listAmount,
+                  membershipBenefit: lineMembershipBenefit(l),
+                };
+              }),
         payments: evet
           ? evetPays.map((p) => ({
               date: p.receivedAt ? formatTs(p.receivedAt) : evet.date,
@@ -3593,6 +3744,7 @@ export default function ClientFinancialWorkspace({
         refills: refillCount,
         refillExpiration: d.refillExpiration,
         instructions: d.instructions,
+        acuity: d.acuity === 'acute' || d.acuity === 'chronic' ? d.acuity : null,
       });
       if (changed) setMailOrders(await listMailOrders(VISIT_WORKFLOW_PRACTICE_ID));
     } catch (e: unknown) {
@@ -4392,7 +4544,18 @@ export default function ClientFinancialWorkspace({
     }
   }
 
-  const hasDetail = selected != null || evetSelected != null;
+  const hasDetail = selected != null || evetSelected != null || ledgerCreditKey != null;
+  const ledgerCreditDetail = useMemo(() => {
+    if (!ledgerCreditKey) return null;
+    if (ledgerCreditKey === 'evet:account-credit' && evetAccountCredit) {
+      return { kind: 'balance' as const, credit: evetAccountCredit };
+    }
+    const activity = (evetCreditActivity ?? []).find(
+      (a) => `evet:credit-activity:${a.id}` === ledgerCreditKey,
+    );
+    if (activity) return { kind: 'activity' as const, activity };
+    return null;
+  }, [ledgerCreditKey, evetAccountCredit, evetCreditActivity]);
 
   return (
     <div className="client-fin">
@@ -4511,7 +4674,9 @@ export default function ClientFinancialWorkspace({
                   {visibleLedger.map((row) => {
                     const on =
                       (row.scout && selected?.id === row.scout.id) ||
-                      (row.evet && evetSelected?.key === row.evet.key);
+                      (row.evet && evetSelected?.key === row.evet.key) ||
+                      ledgerCreditKey === row.key;
+                    const isCreditRow = row.isAccountCredit || row.creditActivity;
                     return (
                       <tr
                         key={row.key}
@@ -4529,6 +4694,7 @@ export default function ClientFinancialWorkspace({
                               });
                               return;
                             }
+                            setLedgerCreditKey(null);
                             setSelected(row.scout);
                             setEvetSelected(null);
                             setReturning(false);
@@ -4542,8 +4708,23 @@ export default function ClientFinancialWorkspace({
                               });
                               return;
                             }
+                            setLedgerCreditKey(null);
                             setEvetSelected(row.evet);
                             setSelected(null);
+                            setReturning(false);
+                            setEditing(false);
+                            onSelectInvoice?.(null);
+                          } else if (isCreditRow) {
+                            if (hasDirtySigs) {
+                              void appAlert({
+                                title: 'Directions not saved',
+                                message: INVOICE_DIRECTIONS_LEAVE_MESSAGE,
+                              });
+                              return;
+                            }
+                            setLedgerCreditKey(row.key);
+                            setSelected(null);
+                            setEvetSelected(null);
                             setReturning(false);
                             setEditing(false);
                             onSelectInvoice?.(null);
@@ -4554,6 +4735,14 @@ export default function ClientFinancialWorkspace({
                         <td>
                           {row.label}
                           <div className="client-fin__muted">
+                            {row.where ? (
+                              <span
+                                className={`client-fin__where client-fin__where--${invoiceWhereKind(row.where as InvoiceWhere)}`}
+                              >
+                                {row.where}
+                              </span>
+                            ) : null}
+                            {row.where ? ' · ' : ''}
                             {row.source === 'scout' ? 'Scout' : 'eVet'}
                             {row.actorNote ? ` · ${row.actorNote}` : ''}
                           </div>
@@ -4568,6 +4757,7 @@ export default function ClientFinancialWorkspace({
                         </td>
                         <td>
                           {money(row.paid)}
+                          {row.paidHow ? <div className="client-fin__muted">{row.paidHow}</div> : null}
                           {row.paymentNote ? (
                             <div className="client-fin__muted">{row.paymentNote}</div>
                           ) : null}
@@ -4693,7 +4883,101 @@ export default function ClientFinancialWorkspace({
 
         {hasDetail ? (
         <section className="client-fin__pane">
-          {evetSelected ? (
+          {ledgerCreditDetail ? (
+            <>
+              <div className="client-fin__pane-head">
+                <h2>
+                  {ledgerCreditDetail.kind === 'balance'
+                    ? 'Account credit on file'
+                    : ledgerCreditDetail.activity.amount > 0
+                      ? 'Credit added to account'
+                      : 'Credit removed from account'}
+                </h2>
+              </div>
+              {ledgerCreditDetail.kind === 'balance' ? (
+                <>
+                  <p className="client-fin__credit-lead">
+                    Unused credit from eVet that can apply to future invoices.
+                  </p>
+                  <dl className="client-fin__credit-facts">
+                    <div>
+                      <dt>Balance</dt>
+                      <dd>{money(ledgerCreditDetail.credit.amount)}</dd>
+                    </div>
+                    {ledgerCreditDetail.credit.asOf ? (
+                      <div>
+                        <dt>As of</dt>
+                        <dd>{formatTs(ledgerCreditDetail.credit.asOf)}</dd>
+                      </div>
+                    ) : null}
+                    <div>
+                      <dt>Source</dt>
+                      <dd>eVet</dd>
+                    </div>
+                  </dl>
+                </>
+              ) : (
+                <>
+                  <p className="client-fin__credit-lead">
+                    {ledgerCreditDetail.activity.amount > 0
+                      ? 'Credit was put on the household account.'
+                      : 'Credit was taken off the household account.'}
+                  </p>
+                  <dl className="client-fin__credit-facts">
+                    <div>
+                      <dt>Amount</dt>
+                      <dd>{money(Math.abs(ledgerCreditDetail.activity.amount))}</dd>
+                    </div>
+                    {ledgerCreditDetail.activity.at ? (
+                      <div>
+                        <dt>Date</dt>
+                        <dd>{formatTs(ledgerCreditDetail.activity.at)}</dd>
+                      </div>
+                    ) : null}
+                    {ledgerCreditDetail.activity.paymentTypeName ? (
+                      <div>
+                        <dt>Type</dt>
+                        <dd>{ledgerCreditDetail.activity.paymentTypeName}</dd>
+                      </div>
+                    ) : null}
+                    {ledgerCreditDetail.activity.cashierName ? (
+                      <div>
+                        <dt>Recorded by</dt>
+                        <dd>{ledgerCreditDetail.activity.cashierName}</dd>
+                      </div>
+                    ) : null}
+                    {ledgerCreditDetail.activity.receiptNumber != null ? (
+                      <div>
+                        <dt>Receipt</dt>
+                        <dd>#{ledgerCreditDetail.activity.receiptNumber}</dd>
+                      </div>
+                    ) : null}
+                    {ledgerCreditDetail.activity.notes ? (
+                      <div>
+                        <dt>Notes</dt>
+                        <dd>{ledgerCreditDetail.activity.notes}</dd>
+                      </div>
+                    ) : null}
+                    {ledgerCreditDetail.activity.isVoided ? (
+                      <div>
+                        <dt>Status</dt>
+                        <dd>
+                          Voided
+                          {ledgerCreditDetail.activity.voidedComments
+                            ? ` · ${ledgerCreditDetail.activity.voidedComments}`
+                            : ''}
+                        </dd>
+                      </div>
+                    ) : null}
+                    <div>
+                      <dt>Source</dt>
+                      <dd>eVet</dd>
+                    </div>
+                  </dl>
+                </>
+              )}
+            </>
+          ) : evetSelected ? (
             <>
               <div className="client-fin__pane-head">
                 <h2>eVet invoice #{evetSelected.number}</h2>
@@ -4761,12 +5045,12 @@ export default function ClientFinancialWorkspace({
                         <td>{line.date !== '—' ? line.date : evetSelected.date}</td>
                         <td>{patientChartName(line.patientId, line.patient)}</td>
                         <td>
-                          <div className="client-fin__item-name">{line.description}</div>
+                          <div className="client-fin__item-name">
+                            <MembershipHeart show={evetLineMembershipBenefit(line)} />
+                            {line.description}
+                          </div>
                           {line.isRemoved ? (
                             <div className="client-fin__removed-tag">Removed</div>
-                          ) : null}
-                          {line.isCovered ? (
-                            <div className="client-fin__muted">Membership</div>
                           ) : null}
                           {line.isWriteOff ? (
                             <div className="client-fin__muted">Write-off</div>
@@ -4775,7 +5059,7 @@ export default function ClientFinancialWorkspace({
                         <td>
                           {line.productionEmployee && line.productionEmployee !== '—'
                             ? line.productionEmployee
-                            : ''}
+                            : 'None'}
                         </td>
                         <td>{line.qty}</td>
                         <td className="client-fin__num">
@@ -4947,9 +5231,28 @@ export default function ClientFinancialWorkspace({
                                 : selected.status === 'open'
                                   ? 'Open invoice'
                                   : `Invoice · ${statusLabel(selected.status)}`}
-                  {selected.created ? (
-                    <span className="client-fin__opened">Opened {formatTs(selected.created)}</span>
-                  ) : null}
+                  {(() => {
+                    const where = invoiceWhere(selected, mailOrders);
+                    const how = paidHowLabel(selected);
+                    const when = paidWhen(selected);
+                    const settled =
+                      (Number(selected.amountPaid) || 0) > 0.009 ||
+                      (selected.status === 'paid' && Math.abs(Number(selected.total) || 0) <= 0.009);
+                    return (
+                      <>
+                        <span className={`client-fin__where client-fin__where--${invoiceWhereKind(where)}`}>
+                          {where}
+                        </span>
+                        <span className="client-fin__opened">
+                          {settled && when
+                            ? `Paid ${formatTs(when)}${how ? ` · ${how}` : ''}`
+                            : selected.created
+                              ? `Opened ${formatTs(selected.created)}${how ? ` · ${how}` : ''}`
+                              : how}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </h2>
                 <div className="client-fin__pane-actions">
                   {returning ? (
@@ -5346,7 +5649,16 @@ export default function ClientFinancialWorkspace({
                             : !line.trackLots ||
                               Boolean(mailedLineOrder) ||
                               line.inventoryLotBalanceId != null;
-                        const lineReady = showRxMeta
+                        // The mail queue owns the script, lot and approval for mailed lines.
+                        const mailWaiting = mailedLineOrder
+                          ? mailStageTone(mailedLineOrder) === 'wait'
+                          : false;
+                        const lineReady = mailedLineOrder
+                          ? !mailWaiting &&
+                            (mailedLineOrder.origin === 'online_store' ||
+                              noProviderLine ||
+                              line.providerEmployeeId != null)
+                          : showRxMeta
                           ? scriptApproved && !approveMissing && lotReady
                           : showVaxMeta
                             ? (noProviderLine || line.providerEmployeeId != null) &&
@@ -5356,6 +5668,11 @@ export default function ClientFinancialWorkspace({
                               ? (noProviderLine || line.providerEmployeeId != null) &&
                                 labState !== 'waiting'
                               : (noProviderLine || line.providerEmployeeId != null) && lotReady;
+                        const lineStateClass = lineReady
+                          ? 'client-fin__line--ready'
+                          : mailWaiting
+                            ? 'client-fin__line--mail-wait'
+                            : 'client-fin__line--pending';
                         const shippedMail = shippedMailForLine(line);
                         // No branch check here: mail order decides where it fills from,
                         // so requiring one before you can mail is backwards.
@@ -5542,7 +5859,7 @@ export default function ClientFinancialWorkspace({
                         return (
                         <Fragment key={line.id}>
                         <tr
-                          className={`${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                          className={`${lineStateClass}${
                             nestedUnderBundle ? ' client-fin__bundle-child' : ''
                           }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}${
                             isClinicSplitParent ? ' client-fin__line--clinic-split' : ''
@@ -5558,8 +5875,8 @@ export default function ClientFinancialWorkspace({
                               >
                                 {rxOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 <span className="client-fin__item-name">
-                                  {!isMailSplitChild && line.isCovered ? (
-                                    <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                                  {!isMailSplitChild ? (
+                                    <MembershipHeart show={lineMembershipBenefit(line)} />
                                   ) : null}
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                   {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
@@ -5578,8 +5895,8 @@ export default function ClientFinancialWorkspace({
                               </button>
                             ) : (
                               <div className="client-fin__item-name">
-                                {!isMailSplitChild && line.isCovered ? (
-                                  <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                                {!isMailSplitChild ? (
+                                  <MembershipHeart show={lineMembershipBenefit(line)} />
                                 ) : null}
                                 {isMailSplitChild ? 'Mailing' : line.description}
                                 {isMailSplitChild || mailedLineOrder ? (
@@ -5711,26 +6028,22 @@ export default function ClientFinancialWorkspace({
                                 ) : null}
                               </select>
                             ) : (
-                              <>
-                                {line.providerEmployeeId != null
-                                  ? providerIdLabel(line.providerEmployeeId)
-                                  : ''}
-                                {canChangeProviderAfterClose &&
-                                (selected.status === 'finalized' || selected.status === 'paid') ? (
-                                  <button
-                                    type="button"
-                                    className="btn-link client-fin__no-print"
-                                    style={{ marginLeft: 6, fontSize: 12 }}
-                                    disabled={busy}
-                                    onClick={() => {
-                                      setCorrectionError(null);
-                                      setProviderChangeLine(line);
-                                    }}
-                                  >
-                                    Change
-                                  </button>
-                                ) : null}
-                              </>
+                              <ProviderClosedCell
+                                providerLabel={
+                                  line.providerEmployeeId != null
+                                    ? providerIdLabel(line.providerEmployeeId)
+                                    : null
+                                }
+                                canChange={
+                                  canChangeProviderAfterClose &&
+                                  (selected.status === 'finalized' || selected.status === 'paid')
+                                }
+                                disabled={busy}
+                                onChange={() => {
+                                  setCorrectionError(null);
+                                  setProviderChangeLine(line);
+                                }}
+                              />
                             )}
                           </td>
                           <td className="client-fin__col-qty client-fin__num">
@@ -5801,7 +6114,7 @@ export default function ClientFinancialWorkspace({
                         </tr>
                         {showMeta && rxOpen ? (
                           showLabMeta ? (
-                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                          <tr className={`client-fin__line-meta ${lineStateClass}`}>
                             <td colSpan={invoiceMetaCols}>
                               <InvoiceLineLabResults
                                 results={lineLabResults ?? []}
@@ -5812,7 +6125,7 @@ export default function ClientFinancialWorkspace({
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
                           ) : showVaxMeta ? (
-                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
+                          <tr className={`client-fin__line-meta ${lineStateClass}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
                             <td colSpan={invoiceMetaCols}>
                               {linkedStock.linked && !mailedLineOrder ? (
                                 <LinkedStockInvoiceDetails
@@ -5899,7 +6212,7 @@ export default function ClientFinancialWorkspace({
                           </tr>
                           ) : (
                           <>
-                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
+                          <tr className={`client-fin__line-meta ${lineStateClass}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
                             <td colSpan={2}>
                               {canEdit && !isRefillFill ? (
                                 <label className={`client-fin__sig${rxMissing('instructions') ? ' is-missing' : ''}`}>
@@ -6143,7 +6456,7 @@ export default function ClientFinancialWorkspace({
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
                           {mailedLineOrder ? null : (
-                          <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                          <tr className={`client-fin__line-fulfill ${lineStateClass}`}>
                             <td colSpan={invoiceMetaCols}>
                               <div className="client-fin__rx-fulfill">
                                 {selected && !invoiceGone && selected.status !== 'void' ? (
@@ -6171,7 +6484,7 @@ export default function ClientFinancialWorkspace({
                         ) : null}
                         {showRxMeta ? (
                           <tr
-                            className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                            className={`client-fin__line-fulfill ${lineStateClass}${
                               nestedUnderBundle ? ' client-fin__bundle-child' : ''
                             }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}
                           >
@@ -6182,7 +6495,7 @@ export default function ClientFinancialWorkspace({
                           </tr>
                         ) : mailCheckbox ? (
                           <tr
-                            className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                            className={`client-fin__line-fulfill ${lineStateClass}${
                               isMailSplitChild ? ' client-fin__line--mail-split' : ''
                             }`}
                           >
@@ -6211,9 +6524,7 @@ export default function ClientFinancialWorkspace({
                         >
                           <td className="client-fin__col-item">
                             <div className="client-fin__item-name">
-                              {ship.isCovered ? (
-                                <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
-                              ) : null}
+                              <MembershipHeart show={lineMembershipBenefit(ship)} />
                               {ship.description}
                             </div>
                           </td>
@@ -6250,10 +6561,24 @@ export default function ClientFinancialWorkspace({
                                   </option>
                                 ) : null}
                               </select>
-                            ) : ship.providerEmployeeId != null ? (
-                              providerIdLabel(ship.providerEmployeeId)
                             ) : (
-                              ''
+                              <ProviderClosedCell
+                                providerLabel={
+                                  ship.providerEmployeeId != null
+                                    ? providerIdLabel(ship.providerEmployeeId)
+                                    : null
+                                }
+                                canChange={
+                                  canChangeProviderAfterClose &&
+                                  (selected!.status === 'finalized' || selected!.status === 'paid') &&
+                                  !shipNoProvider
+                                }
+                                disabled={busy}
+                                onChange={() => {
+                                  setCorrectionError(null);
+                                  setProviderChangeLine(ship);
+                                }}
+                              />
                             )}
                           </td>
                           <td className="client-fin__col-qty client-fin__num">
@@ -6327,9 +6652,7 @@ export default function ClientFinancialWorkspace({
                           >
                             <td className="client-fin__col-item">
                               <div className="client-fin__item-name">
-                                {child.isCovered ? (
-                                  <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
-                                ) : null}
+                                <MembershipHeart show={lineMembershipBenefit(child)} />
                                 {child.description}
                               </div>
                               {tagalongTaxHint(child) ? (
@@ -6464,7 +6787,7 @@ export default function ClientFinancialWorkspace({
                           : null;
                       const face: InvoiceFacePayment = {
                         key: t.id,
-                        method: methodLabel(t.method, t.paymentTypeName),
+                        method: tenderPayLabel(t),
                         amount: Number(t.amount) || 0,
                         date: formatTs(t.receivedAt),
                         cashier: isDiscountType(t.paymentTypeName ?? methodLabel(t.method), discountTypeNames)
@@ -6720,7 +7043,7 @@ export default function ClientFinancialWorkspace({
                   .map((t) => ({
                     key: t.id,
                     text: [
-                      `${methodLabel(t.method, t.paymentTypeName)} ${money(t.amount)}`,
+                      `${tenderPayLabel(t)} ${money(t.amount)}`,
                       t.voidedByEmployeeId != null
                         ? `voided by ${staffName(staffById.get(t.voidedByEmployeeId), t.voidedByEmployeeId)}`
                         : 'voided',

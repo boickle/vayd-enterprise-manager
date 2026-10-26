@@ -207,6 +207,11 @@ export default function SalesTaxReportPage() {
           </Box>
         ) : report ? (
           <>
+            {(report.warnings ?? []).map((w) => (
+              <Alert key={w} severity="warning" sx={{ mb: 2 }}>
+                {w}
+              </Alert>
+            ))}
             <Box
               sx={{
                 display: 'grid',
@@ -446,6 +451,44 @@ export default function SalesTaxReportPage() {
                     label="Auto-ship"
                     value={`${report.storeOrders.autoshipOrders} · ${money(report.storeOrders.autoshipSubtotal)}`}
                   />
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {(report.stripeBreakdown ?? []).length > 0 ? (
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="Stripe charges by source"
+                  subheader="Read from Stripe. Only memberships are added to sales here; store and Hill's to Home charges are already in eVet."
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Source</TableCell>
+                          <TableCell align="right">Charges</TableCell>
+                          <TableCell align="right">Amount</TableCell>
+                          <TableCell align="right">Refunded</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {report.stripeBreakdown.map((s) => (
+                          <TableRow key={s.kind}>
+                            <TableCell>
+                              {s.label}
+                              {s.inSubscriptions ? (
+                                <Chip size="small" label="In sales" variant="outlined" sx={{ ml: 1 }} />
+                              ) : null}
+                            </TableCell>
+                            <TableCell align="right">{s.count}</TableCell>
+                            <TableCell align="right">{money(s.amount)}</TableCell>
+                            <TableCell align="right">{s.refunded ? money(s.refunded) : '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </CardContent>
               </Card>
             ) : null}

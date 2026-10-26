@@ -65,6 +65,8 @@ export type ForwardBookingDecisionTarget = {
   soapEncounterId?: string | null;
   /** Provider the follow-up should be booked with, when known from the visit. */
   providerId?: number | null;
+  /** Source visit needs pre-meds — default for the queue row when the form leaves it unset. */
+  needsPremeds?: boolean;
 };
 
 export type ForwardBookingDecisionResult = {
@@ -118,6 +120,7 @@ export async function saveForwardBookingDecision(
       intervalUnit: disposition.intervalUnit!,
       primaryProviderId: target.providerId ?? undefined,
       bookingNotes: disposition.bookingNotes ?? undefined,
+      needsPremeds: form.needsPremeds ?? target.needsPremeds === true,
       createdVia: 'end_visit',
     });
   }

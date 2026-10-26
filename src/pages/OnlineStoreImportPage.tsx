@@ -12,9 +12,11 @@ import {
   listEcwidMaps,
   listOnlineStoreItems,
   listOnlineStoreListings,
+  deleteStoreCoupon,
   listStoreCoupons,
   createStoreCategory,
   listStoreCategories,
+  listingCategoryNames,
   patchEcwidMap,
   patchOnlineStoreItem,
   patchOnlineStoreListing,
@@ -69,87 +71,114 @@ function isMemorialCategory(value: string | null | undefined): boolean {
   return /^memorial items(\s*\/|$)/i.test(name);
 }
 
-function StoreCategorySelect({
+/**
+ * Chips for the categories a product is in, plus a dropdown to add another.
+ * onChange gets the full list; `added` is set when a category was just added.
+ */
+function StoreCategoryPicker({
   value,
   options,
   disabled,
   onChange,
 }: {
-  value: string;
+  value: string[];
   options: string[];
   disabled?: boolean;
-  onChange: (value: string) => void;
+  onChange: (next: string[], added?: string) => void;
 }) {
-  const names = [...new Set([value, ...options].filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const remaining = [...new Set(options.filter(Boolean))]
+    .filter((name) => !value.includes(name))
+    .sort((a, b) => a.localeCompare(b));
+  const add = (name: string) => {
+    const next = name.trim();
+    if (!next || value.includes(next)) return;
+    onChange([...value, next], next);
+  };
   return (
-    <select
-      className="settings-input"
-      value={value}
-      disabled={disabled}
-      onChange={(e) => {
-        const next = e.target.value;
-        if (next === '__new__') {
-          void appPrompt({
-            title: 'New store category',
-            message: 'Use a slash for a subcategory, like Heartworm / Chewables.',
-            placeholder: 'Category name',
-          }).then((typed) => {
-            const name = typed?.trim() || '';
-            if (name) onChange(name);
-          });
-          return;
-        }
-        onChange(next);
-      }}
-    >
-      <option value="">No category</option>
-      {names.map((name) => (
-        <option key={name} value={name}>
-          {name}
-        </option>
-      ))}
-      <option value="__new__">Add new category…</option>
-    </select>
+    <div className="store-category-picker">
+      {value.length ? (
+        <div className="store-category-picker__chips">
+          {value.map((name) => (
+            <span key={name} className="store-category-picker__chip">
+              {name}
+              <button
+                type="button"
+                className="store-variant-group__remove"
+                disabled={disabled}
+                title={`Remove from ${name}`}
+                aria-label={`Remove from ${name}`}
+                onClick={() => onChange(value.filter((row) => row !== name))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="settings-muted" style={{ fontWeight: 400 }}>
+          No category
+        </div>
+      )}
+      <select
+        className="settings-input"
+        aria-label="Add a category"
+        value=""
+        disabled={disabled}
+        onChange={(e) => {
+          const next = e.target.value;
+          if (next === '__new__') {
+            void appPrompt({
+              title: 'New store category',
+              message: 'Use a slash for a subcategory, like Heartworm / Chewables.',
+              placeholder: 'Category name',
+            }).then((typed) => add(typed || ''));
+            return;
+          }
+          add(next);
+        }}
+      >
+        <option value="">{value.length ? 'Add another category…' : 'Add a category…'}</option>
+        {remaining.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+        <option value="__new__">Add new category…</option>
+      </select>
+    </div>
   );
 }
 
 function StoreProductDefaults({
   approvalTag,
   featuredOnHome,
-  storeCategory,
+  storeCategories,
   categoryOptions,
   disabled,
   onApproval,
   onHighlight,
-  onCategory,
-  onCategoryCommit,
+  onCategories,
 }: {
   approvalTag: StoreItemRow['approvalTag'];
   featuredOnHome: boolean;
-  storeCategory: string;
+  storeCategories: string[];
   categoryOptions: string[];
   disabled?: boolean;
   onApproval: (value: StoreItemRow['approvalTag']) => void;
   onHighlight: (value: boolean) => void;
-  onCategory: (value: string) => void;
-  onCategoryCommit?: (value: string) => void;
+  onCategories: (next: string[], added?: string) => void;
 }) {
   return (
     <div className="store-add-workspace__defaults">
-      <label className="store-add-workspace__field">
-        <span>Store category</span>
-        <StoreCategorySelect
-          value={storeCategory}
+      <div className="store-add-workspace__field">
+        <span>Store categories</span>
+        <StoreCategoryPicker
+          value={storeCategories}
           options={categoryOptions}
           disabled={disabled}
-          onChange={(value) => {
-            onCategory(value);
-            onCategoryCommit?.(value);
-          }}
+          onChange={onCategories}
         />
-      </label>
+      </div>
       <label className="store-add-workspace__field">
         <span>Approval default</span>
         <select
@@ -457,7 +486,7 @@ function listingMatchesSearch(listing: StoreAdminListing, query: string): boolea
   const hay = [
     listing.name,
     listing.description,
-    listing.storeCategory,
+    ...listingCategoryNames(listing),
     ...listing.variants.flatMap((variant) => [
       variant.name,
       variant.code,
@@ -496,9 +525,9 @@ function categoryMatchesFilter(value: string, category: string): boolean {
 
 function listingMatchesCategory(listing: StoreAdminListing, category: string): boolean {
   if (!category) return true;
-  const value = listing.storeCategory?.trim() || '';
-  if (category === UNCATEGORIZED_FILTER) return !value;
-  return categoryMatchesFilter(value, category);
+  const names = listingCategoryNames(listing);
+  if (category === UNCATEGORIZED_FILTER) return names.length === 0;
+  return names.some((value) => categoryMatchesFilter(value, category));
 }
 
 function itemMatchesCategory(
@@ -662,6 +691,11 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
   const [homeFilter, setHomeFilter] = useState<'' | 'on' | 'off'>('');
   const [autoshipFilter, setAutoshipFilter] = useState<AutoshipFilter>('');
   const [showAllItems, setShowAllItems] = useState(false);
+  const [itemsView, setItemsView] = useState<'live' | 'removed'>('live');
+  const [listedNotice, setListedNotice] = useState<{
+    listing: StoreAdminListing;
+    listed: boolean;
+  } | null>(null);
   const [bulkAutoshipFrequency, setBulkAutoshipFrequency] = useState('monthly');
   const [itemPage, setItemPage] = useState(1);
   const [imageTick, setImageTick] = useState(0);
@@ -670,7 +704,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
     const [m, i, listingsRows, c, cats] = await Promise.all([
       listEcwidMaps(practiceId),
       listOnlineStoreItems(practiceId),
-      listOnlineStoreListings(practiceId),
+      listOnlineStoreListings(practiceId, { includeRemoved: true }),
       listStoreCoupons(practiceId),
       listStoreCategories(practiceId).catch(() => []),
     ]);
@@ -935,8 +969,29 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
     setError(null);
     try {
       await patchOnlineStoreListing(practiceId, listing.listingId, { listed: false });
-      setListings((prev) => prev.filter((row) => row.listingId !== listing.listingId));
-      setFlash(`${listing.name} is hidden from the store.`);
+      setListings((prev) =>
+        prev.map((row) => (row.listingId === listing.listingId ? { ...row, listed: false } : row))
+      );
+      setFlash(null);
+      setListedNotice({ listing, listed: false });
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreToStore = async (listing: StoreAdminListing) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await patchOnlineStoreListing(practiceId, listing.listingId, { listed: true });
+      setListings((prev) =>
+        prev.map((row) => (row.listingId === listing.listingId ? { ...row, listed: true } : row))
+      );
+      setFlash(null);
+      setListedNotice({ listing, listed: true });
       await load();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -995,24 +1050,34 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
       [
         ...new Set([
           ...managedCategories,
-          ...listings.map((row) => row.storeCategory).filter(Boolean) as string[],
+          ...listings.flatMap((row) => listingCategoryNames(row)),
         ]),
       ].sort((a, b) => a.localeCompare(b)),
     [listings, managedCategories]
   );
+  const liveListings = useMemo(
+    () => listings.filter((listing) => listing.listed !== false),
+    [listings]
+  );
+  const removedListings = useMemo(
+    () => listings.filter((listing) => listing.listed === false),
+    [listings]
+  );
+  /** Store items tab shows either what shoppers can see or what was removed (restorable). */
+  const viewListings = itemsView === 'removed' ? removedListings : liveListings;
   const categoryFilterGroups = useMemo(
     () =>
       buildCategoryFilterGroups(
         storeCategories,
         (category) =>
-          listings.filter((listing) => listingMatchesCategory(listing, category))
+          viewListings.filter((listing) => listingMatchesCategory(listing, category))
             .length
       ),
-    [listings, storeCategories]
+    [viewListings, storeCategories]
   );
   const uncategorizedCount = useMemo(
-    () => listings.filter((listing) => !listing.storeCategory?.trim()).length,
-    [listings]
+    () => viewListings.filter((listing) => listingCategoryNames(listing).length === 0).length,
+    [viewListings]
   );
 
   const rememberCategory = (name: string) => {
@@ -1026,7 +1091,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
 
   const filteredListings = useMemo(
     () =>
-      listings.filter(
+      viewListings.filter(
         (listing) =>
           listingMatchesCategory(listing, categoryFilter) &&
           listingMatchesSearch(listing, itemQuery) &&
@@ -1034,7 +1099,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
           (!homeFilter || (homeFilter === 'on') === Boolean(listing.featuredOnHome)) &&
           listingMatchesAutoship(listing, autoshipFilter)
       ),
-    [approvalFilter, autoshipFilter, categoryFilter, homeFilter, itemQuery, listings]
+    [approvalFilter, autoshipFilter, categoryFilter, homeFilter, itemQuery, viewListings]
   );
   const itemPageSize = showAllItems
     ? Math.max(1, filteredListings.length)
@@ -1057,9 +1122,9 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
   const categoryListings = useMemo(
     () =>
       categoryFilter
-        ? listings.filter((listing) => listingMatchesCategory(listing, categoryFilter))
-        : listings,
-    [categoryFilter, listings]
+        ? viewListings.filter((listing) => listingMatchesCategory(listing, categoryFilter))
+        : viewListings,
+    [categoryFilter, viewListings]
   );
   const autoshipTargetItems = useMemo(() => {
     if (!categoryFilter) return items;
@@ -1104,7 +1169,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
   const memorialInventoryIds = useMemo(() => {
     const ids = new Set<number>();
     for (const listing of listings) {
-      if (!isMemorialCategory(listing.storeCategory)) continue;
+      if (!listingCategoryNames(listing).some(isMemorialCategory)) continue;
       for (const variant of listing.variants) {
         if (variant.inventoryItemId) ids.add(variant.inventoryItemId);
       }
@@ -1226,7 +1291,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
         }}
         aria-label="Filter store items by category"
       >
-        <option value="">All categories ({listings.length})</option>
+        <option value="">All categories ({viewListings.length})</option>
         {uncategorizedCount ? (
           <option value={UNCATEGORIZED_FILTER}>Uncategorized ({uncategorizedCount})</option>
         ) : null}
@@ -1299,6 +1364,39 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
           >
             Dismiss
           </button>
+        </div>
+      ) : null}
+      {listedNotice && tab === 'items' && !addStoreOpen ? (
+        <div
+          className={`store-listed-notice${listedNotice.listed ? ' is-restored' : ''}`}
+          role="status"
+        >
+          <span>
+            <strong>{listedNotice.listing.name}</strong>{' '}
+            {listedNotice.listed
+              ? 'is back on the store.'
+              : 'was removed from the store. Shoppers can no longer see it — it’s under Removed if you need it back.'}
+          </span>
+          <span className="store-listed-notice__actions">
+            {listedNotice.listed ? null : (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => void restoreToStore(listedNotice.listing)}
+              >
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => setListedNotice(null)}
+              aria-label="Dismiss message"
+            >
+              Dismiss
+            </button>
+          </span>
         </div>
       ) : null}
       {addStoreOpen && tab === 'items' ? null : flash ? (
@@ -1658,6 +1756,32 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
               alignItems: 'center',
             }}
           >
+            <div className="store-items-view-toggle" role="tablist" aria-label="Store items view">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={itemsView === 'live'}
+                className={itemsView === 'live' ? 'btn primary' : 'btn secondary'}
+                onClick={() => {
+                  setItemsView('live');
+                  setItemPage(1);
+                }}
+              >
+                On the store ({liveListings.length})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={itemsView === 'removed'}
+                className={itemsView === 'removed' ? 'btn primary' : 'btn secondary'}
+                onClick={() => {
+                  setItemsView('removed');
+                  setItemPage(1);
+                }}
+              >
+                Removed ({removedListings.length})
+              </button>
+            </div>
             <input
               className="settings-input"
               style={{ maxWidth: 420, flex: '1 1 240px' }}
@@ -1775,30 +1899,38 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                     />
                     <div style={{ fontWeight: 600 }}>{listing.name}</div>
                   </div>
-                  <label className="store-add-workspace__field" style={{ marginTop: 8 }}>
-                    <span>Store category</span>
-                    <StoreCategorySelect
-                      value={listing.storeCategory || ''}
+                  <div className="store-add-workspace__field" style={{ marginTop: 8 }}>
+                    <span>Store categories</span>
+                    <StoreCategoryPicker
+                      value={listingCategoryNames(listing)}
                       options={storeCategories}
                       disabled={busy}
-                      onChange={(storeCategory) => {
-                        void rememberCategory(storeCategory);
-                        if ((listing.storeCategory || '') === storeCategory) return;
+                      onChange={(next, added) => {
+                        if (added) void rememberCategory(added);
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId
+                              ? { ...row, storeCategory: next[0] ?? null, storeCategories: next }
+                              : row
+                          )
+                        );
                         void patchOnlineStoreListing(practiceId, listing.listingId, {
-                          storeCategory: storeCategory || null,
-                        }).then((updated) => {
-                          if (!updated) return;
-                          setListings((prev) =>
-                            prev.map((row) =>
-                              row.listingId === listing.listingId
-                                ? { ...row, ...updated }
-                                : row
-                            )
-                          );
-                        });
+                          storeCategories: next,
+                        })
+                          .then((updated) => {
+                            if (!updated) return;
+                            setListings((prev) =>
+                              prev.map((row) =>
+                                row.listingId === listing.listingId
+                                  ? { ...row, ...updated }
+                                  : row
+                              )
+                            );
+                          })
+                          .catch((err) => setError(apiErrorMessage(err)));
                       }}
                     />
-                  </label>
+                  </div>
                   <StoreSaleEditor
                     {...saleFieldsFromListing(listing)}
                     saleActive={listing.saleActive}
@@ -1906,6 +2038,14 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                                   {variant.catalogItemType === 'procedure' ? (
                                     <span className="settings-muted"> · procedure</span>
                                   ) : null}
+                                  {!(Number(variant.onlineStorePrice) > 0) ? (
+                                    <span
+                                      className="store-variant-zero-price"
+                                      title="Options without a price are hidden from shoppers. Set a price on the item or remove this option."
+                                    >
+                                      $0 · hidden from shoppers
+                                    </span>
+                                  ) : null}
                                   {variant.inventoryItemId ? (
                                     <label className="store-variant-group__autoship">
                                       <input
@@ -2012,14 +2152,25 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                   </label>
                 </td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    disabled={busy}
-                    onClick={() => void removeFromStore(listing)}
-                  >
-                    Remove from store
-                  </button>
+                  {listing.listed === false ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => void restoreToStore(listing)}
+                    >
+                      Restore to store
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={busy}
+                      onClick={() => void removeFromStore(listing)}
+                    >
+                      Remove from store
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -2127,6 +2278,10 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
           coupons={coupons}
           onSave={async (body) => {
             await saveStoreCoupon(practiceId, body);
+            await load();
+          }}
+          onDelete={async (id) => {
+            await deleteStoreCoupon(practiceId, id);
             await load();
           }}
         />
@@ -2330,7 +2485,7 @@ function AddStoreProductWizard({
   const [approvalTag, setApprovalTag] =
     useState<StoreItemRow['approvalTag']>('approved');
   const [featuredOnHome, setFeaturedOnHome] = useState(false);
-  const [storeCategory, setStoreCategory] = useState('');
+  const [storeCategories, setStoreCategories] = useState<string[]>([]);
   const [sale, setSale] = useState<StoreSaleFields>({
     saleType: null,
     saleValue: null,
@@ -2347,7 +2502,7 @@ function AddStoreProductWizard({
     if (initialDraft) {
       setApprovalTag(initialDraft.approvalTag);
       setFeaturedOnHome(Boolean(initialDraft.featuredOnHome));
-      setStoreCategory(initialDraft.storeCategory || '');
+      setStoreCategories(listingCategoryNames(initialDraft));
       setSale(saleFieldsFromListing(initialDraft));
     }
   }, [initialDraft]);
@@ -2376,11 +2531,17 @@ function AddStoreProductWizard({
         description,
         approvalTag,
         featuredOnHome,
-        storeCategory: storeCategory.trim() || null,
+        storeCategory: storeCategories[0] ?? null,
         saleType: sale.saleType,
         saleValue: sale.saleValue,
         saleEndsAt: sale.saleEndsAt,
       });
+      if (storeCategories.length > 1) {
+        const withCategories = await patchOnlineStoreListing(practiceId, created.listingId, {
+          storeCategories,
+        });
+        if (withCategories) created = withCategories;
+      }
       if (pendingImage) {
         const withImage = await uploadOnlineStoreListingImage(
           practiceId,
@@ -2465,7 +2626,7 @@ function AddStoreProductWizard({
     approvalTag?: StoreItemRow['approvalTag'];
     featuredOnHome?: boolean;
     description?: string | null;
-    storeCategory?: string | null;
+    storeCategories?: string[];
     saleType?: StoreSaleType | null;
     saleValue?: number | null;
     saleEndsAt?: string | null;
@@ -2567,7 +2728,7 @@ function AddStoreProductWizard({
             <StoreProductDefaults
               approvalTag={draft.approvalTag}
               featuredOnHome={Boolean(draft.featuredOnHome)}
-              storeCategory={draft.storeCategory || ''}
+              storeCategories={listingCategoryNames(draft)}
               categoryOptions={categoryOptions}
               disabled={busy}
               onApproval={(value) => {
@@ -2578,12 +2739,12 @@ function AddStoreProductWizard({
                 setDraft((prev) => (prev ? { ...prev, featuredOnHome: value } : prev));
                 void patchDraftListing({ featuredOnHome: value });
               }}
-              onCategory={(value) => {
-                setDraft((prev) => (prev ? { ...prev, storeCategory: value || null } : prev));
-              }}
-              onCategoryCommit={(value) => {
-                void createStoreCategory(practiceId, value).catch(() => undefined);
-                void patchDraftListing({ storeCategory: value || null });
+              onCategories={(next, added) => {
+                setDraft((prev) =>
+                  prev ? { ...prev, storeCategory: next[0] ?? null, storeCategories: next } : prev
+                );
+                if (added) void createStoreCategory(practiceId, added).catch(() => undefined);
+                void patchDraftListing({ storeCategories: next });
               }}
             />
             <StoreSaleEditor
@@ -2763,14 +2924,14 @@ function AddStoreProductWizard({
           <StoreProductDefaults
             approvalTag={approvalTag}
             featuredOnHome={featuredOnHome}
-            storeCategory={storeCategory}
+            storeCategories={storeCategories}
             categoryOptions={categoryOptions}
             disabled={busy}
             onApproval={setApprovalTag}
             onHighlight={setFeaturedOnHome}
-            onCategory={setStoreCategory}
-            onCategoryCommit={(value) => {
-              if (value) void createStoreCategory(practiceId, value).catch(() => undefined);
+            onCategories={(next, added) => {
+              setStoreCategories(next);
+              if (added) void createStoreCategory(practiceId, added).catch(() => undefined);
             }}
           />
           <StoreSaleEditor
@@ -3047,39 +3208,321 @@ function StoreItemsPager({
   );
 }
 
+type CouponDraft = {
+  id: number | null;
+  code: string;
+  name: string;
+  discountType: 'percent' | 'amount';
+  amount: string;
+  minSubtotal: string;
+  uses: 'unlimited' | 'once' | 'once_per_customer';
+  membershipOnly: boolean;
+  freeShipping: boolean;
+  active: boolean;
+};
+
+const blankCoupon = (): CouponDraft => ({
+  id: null,
+  code: '',
+  name: '',
+  discountType: 'percent',
+  amount: '10',
+  minSubtotal: '',
+  uses: 'unlimited',
+  membershipOnly: false,
+  freeShipping: false,
+  active: true,
+});
+
+function couponFromRow(row: StoreCoupon): CouponDraft {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    discountType: row.discountType === 'amount' ? 'amount' : 'percent',
+    amount: String(Number(row.amount)),
+    minSubtotal: row.minSubtotal != null && Number(row.minSubtotal) > 0 ? String(Number(row.minSubtotal)) : '',
+    uses: row.oncePerCustomer ? 'once_per_customer' : row.maxUses === 1 ? 'once' : 'unlimited',
+    membershipOnly: Boolean(row.membershipOnly),
+    freeShipping: Boolean(row.freeShipping),
+    active: row.active !== false,
+  };
+}
+
+function couponDiscountLabel(row: StoreCoupon): string {
+  const amount = Number(row.amount);
+  const off = row.discountType === 'amount' ? `$${amount.toFixed(2)} off` : `${amount}% off`;
+  return row.freeShipping ? `${off} and free shipping` : off;
+}
+
+function couponLimitLabel(row: StoreCoupon): string {
+  const parts: string[] = [];
+  if (row.minSubtotal != null && Number(row.minSubtotal) > 0) {
+    parts.push(`orders over $${Number(row.minSubtotal).toFixed(2)}`);
+  } else {
+    parts.push('all orders');
+  }
+  if (row.membershipOnly) parts.push('members');
+  if (row.oncePerCustomer) parts.push('once per customer');
+  else if (row.maxUses === 1) parts.push('single use');
+  else if (row.maxUses != null) parts.push(`${row.maxUses} uses`);
+  else parts.push('unlimited');
+  return parts.join(' · ');
+}
+
+function randomCouponCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+}
+
 function CouponEditor({
   coupons,
   onSave,
+  onDelete,
 }: {
   coupons: StoreCoupon[];
-  onSave: (body: { code: string; name: string; amount: number; membershipOnly: boolean }) => Promise<void>;
+  onSave: (body: {
+    id?: number;
+    code: string;
+    name: string;
+    discountType: 'percent' | 'amount';
+    amount: number;
+    minSubtotal: number | null;
+    maxUses: number | null;
+    oncePerCustomer: boolean;
+    membershipOnly: boolean;
+    freeShipping: boolean;
+    active: boolean;
+  }) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
 }) {
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
-  const [amount, setAmount] = useState('10');
+  const [draft, setDraft] = useState<CouponDraft | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<CouponDraft>) =>
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const save = async () => {
+    if (!draft) return;
+    const code = draft.code.trim();
+    const name = draft.name.trim();
+    const amount = Number(draft.amount);
+    if (!code || !name) {
+      setError('Enter a code and a name.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 0 || (amount === 0 && !draft.freeShipping)) {
+      setError('Enter the discount, or turn on free shipping.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const min = Number(draft.minSubtotal);
+      await onSave({
+        ...(draft.id ? { id: draft.id } : {}),
+        code,
+        name,
+        discountType: draft.discountType,
+        amount,
+        minSubtotal: Number.isFinite(min) && min > 0 ? min : null,
+        maxUses: draft.uses === 'once' ? 1 : null,
+        oncePerCustomer: draft.uses === 'once_per_customer',
+        membershipOnly: draft.membershipOnly,
+        freeShipping: draft.freeShipping,
+        active: draft.active,
+      });
+      setDraft(null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-        <input className="settings-input" placeholder="CODE" value={code} onChange={(e) => setCode(e.target.value)} />
-        <input className="settings-input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input className="settings-input" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
-        <button
-          type="button"
-          className="btn primary"
-          onClick={() => void onSave({ code, name, amount: Number(amount) || 10, membershipOnly: false })}
-        >
-          Save coupon
+      <p className="settings-section-description">
+        Codes customers enter at checkout. A coupon takes a dollar amount or a percent off the
+        order. Membership discounts stay on the membership plan and are not these codes.
+      </p>
+      {error ? <div className="settings-message settings-error-message">{error}</div> : null}
+      {draft ? (
+        <div className="store-coupon-form">
+          <label className="settings-label">
+            Code
+            <span className="store-coupon-code">
+              <input
+                className="settings-input"
+                value={draft.code}
+                onChange={(e) => set({ code: e.target.value.toUpperCase() })}
+                placeholder="SAVE10"
+              />
+              <button
+                type="button"
+                className="btn secondary btn-sm"
+                onClick={() => set({ code: randomCouponCode() })}
+              >
+                Generate
+              </button>
+            </span>
+          </label>
+          <label className="settings-label">
+            Name
+            <input
+              className="settings-input"
+              value={draft.name}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="Spring sale"
+            />
+          </label>
+          <label className="settings-label">
+            Discount
+            <span className="store-coupon-discount">
+              <input
+                className="settings-input"
+                type="number"
+                min={0}
+                value={draft.amount}
+                onChange={(e) => set({ amount: e.target.value })}
+              />
+              <select
+                className="settings-input"
+                value={draft.discountType}
+                onChange={(e) => set({ discountType: e.target.value as CouponDraft['discountType'] })}
+              >
+                <option value="percent">% off the order</option>
+                <option value="amount">$ off the order</option>
+              </select>
+            </span>
+          </label>
+          <label className="settings-label">
+            Orders
+            <span className="store-coupon-discount">
+              <select
+                className="settings-input"
+                value={draft.minSubtotal ? 'minimum' : 'all'}
+                onChange={(e) => set({ minSubtotal: e.target.value === 'all' ? '' : draft.minSubtotal || '50' })}
+              >
+                <option value="all">All orders</option>
+                <option value="minimum">Subtotal over</option>
+              </select>
+              <input
+                className="settings-input"
+                type="number"
+                min={0}
+                placeholder="No minimum"
+                value={draft.minSubtotal}
+                onChange={(e) => set({ minSubtotal: e.target.value })}
+              />
+            </span>
+          </label>
+          <label className="settings-label">
+            Uses
+            <select
+              className="settings-input"
+              value={draft.uses}
+              onChange={(e) => set({ uses: e.target.value as CouponDraft['uses'] })}
+            >
+              <option value="unlimited">Unlimited</option>
+              <option value="once_per_customer">Once per customer</option>
+              <option value="once">Single use</option>
+            </select>
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.membershipOnly}
+              onChange={(e) => set({ membershipOnly: e.target.checked })}
+            />
+            Members only
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.freeShipping}
+              onChange={(e) => set({ freeShipping: e.target.checked })}
+            />
+            Free shipping
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.active}
+              onChange={(e) => set({ active: e.target.checked })}
+            />
+            Active
+          </label>
+          <div className="store-coupon-form__actions">
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>
+              {draft.id ? 'Save changes' : 'Save coupon'}
+            </button>
+            <button type="button" className="btn secondary" disabled={busy} onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="btn primary" onClick={() => { setError(null); setDraft(blankCoupon()); }}>
+          Add coupon
         </button>
-      </div>
-      <ul>
-        {coupons.map((c) => (
-          <li key={c.id}>
-            <strong>{c.code}</strong> — {c.name} ({c.amount}
-            {c.discountType === 'percent' ? '%' : ''}
-            {c.membershipOnly ? ', members' : ''})
-          </li>
-        ))}
-      </ul>
+      )}
+      <table className="settings-table" style={{ marginTop: 16 }}>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Discount</th>
+            <th>Limits</th>
+            <th>Used</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {coupons.map((row) => (
+            <tr key={row.id} style={row.active === false ? { opacity: 0.55 } : undefined}>
+              <td><strong>{row.code}</strong></td>
+              <td>{row.name}</td>
+              <td>{couponDiscountLabel(row)}</td>
+              <td>{couponLimitLabel(row)}</td>
+              <td>{row.usedCount ?? 0}{row.maxUses != null ? ` / ${row.maxUses}` : ''}</td>
+              <td>
+                <div className="store-category-actions">
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm"
+                    disabled={busy}
+                    onClick={() => { setError(null); setDraft(couponFromRow(row)); }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm store-category-delete"
+                    disabled={busy}
+                    onClick={() => {
+                      void appConfirm({
+                        title: `Delete ${row.code}?`,
+                        message: 'Customers will no longer be able to use this code.',
+                        confirmLabel: 'Delete coupon',
+                      }).then((yes) => {
+                        if (yes) void onDelete(row.id).catch((err) => setError(apiErrorMessage(err)));
+                      });
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {!coupons.length ? (
+            <tr>
+              <td colSpan={6} className="settings-muted">No coupons yet.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
     </div>
   );
 }

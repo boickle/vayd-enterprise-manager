@@ -349,6 +349,8 @@ export type Appointment = {
   isNewClientAtBooking?: boolean;
   isNewPatient?: boolean;
   isNewClient?: boolean;
+  /** Pet needs pre-meds — arrival window forced to the practice pre-meds band; calendar shows the pre-meds marker. */
+  needsPremeds?: boolean;
 };
 
 export type DeclinedInventoryItem = {

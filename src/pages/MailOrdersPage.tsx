@@ -41,6 +41,14 @@ import { formatAutoshipFrequency } from './store/storeCartState';
 import MailOrderFillLabels from '../components/soap/MailOrderFillLabels';
 import EditAutoshipModal from '../components/soap/EditAutoshipModal';
 import MailOrderClientCommsPanel from '../components/soap/MailOrderClientCommsPanel';
+import MailRxDecisionFields, {
+  initialMailRxDecisionFromLine,
+  mailRxDecisionMissing,
+  parsedMailRefills,
+  type MailRxDecisionDraft,
+} from '../components/soap/MailRxDecisionFields';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
+import { clampRefillExpiration, refillExpirationCapNote } from '../utils/printRxLabel';
 import MailShipAddressPicker, {
   saveMailingAddressOnFile,
   shipBodyFromFields,
@@ -65,12 +73,14 @@ import {
   clientNameFromPatientRow,
   patientDisplayName,
 } from '../utils/briefDisplay';
-import { appPrompt } from '../utils/appDialog';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
 import { useCan } from '../permissions/PermissionContext';
 import './Settings.css';
 import './MailOrders.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+
+const MAIL_PRACTICE_TZ =
+  (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
 function practiceIdFromToken(token: string | null): number {
   try {
@@ -485,11 +495,18 @@ function TrackingLink({ order }: { order: MailOrder }) {
   );
 }
 
+function orderIsAutoship(order: MailOrder): boolean {
+  return Boolean(order.autoship) || (order.lines || []).some((line) => line.autoshipFrequency);
+}
+
 function notifyMessageFor(order: MailOrder, pickup: boolean): string {
   const hi = `Hi ${firstName(order.customerName)}, `;
   const what = orderContents(order);
+  const changes = orderIsAutoship(order)
+    ? ` If you want to make any changes, sign in to your client portal: ${window.location.origin}/client-portal`
+    : '';
   if (pickup) {
-    return `${hi}${what} is ready for pickup${order.shippingChargeName ? ` at ${order.shippingChargeName}` : ''} (order #${order.id}).`;
+    return `${hi}${what} is ready for pickup${order.shippingChargeName ? ` at ${order.shippingChargeName}` : ''} (order #${order.id}).${changes}`;
   }
   const carrier = carrierName(order.carrier);
   const url = trackingUrl(order.carrier, order.trackingCode);
@@ -498,7 +515,7 @@ function notifyMessageFor(order: MailOrder, pickup: boolean): string {
     : order.trackingCode
       ? ` ${carrier ? `${carrier} tracking` : 'Tracking'} number: ${order.trackingCode}.`
       : '';
-  return `${hi}${what} has shipped (order #${order.id}).${tracking}`;
+  return `${hi}${what} has shipped (order #${order.id}).${tracking}${changes}`;
 }
 
 function money(value?: number | null): string {
@@ -1147,6 +1164,26 @@ function OrderDetail({
   });
   const [savingScriptId, setSavingScriptId] = useState<number | null>(null);
   const [resendOpen, setResendOpen] = useState<Record<number, boolean>>({});
+  /** Mail team approving a line themselves instead of sending a doctor task. */
+  const [selfApprove, setSelfApprove] = useState<
+    Record<number, MailRxDecisionDraft & { reason: string; error: string | null }>
+  >({});
+
+  const clearSelfApproveForLineIds = (lineIds: number[]) => {
+    if (!lineIds.length) return;
+    setSelfApprove((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of lineIds) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  };
+
   const [fillError, setFillError] = useState<string | null>(null);
   const canSelfCheck = useCan('mail_order.check.self_override');
   const [editAutoshipLine, setEditAutoshipLine] = useState<MailOrderLine | null>(null);
@@ -2581,6 +2618,9 @@ function OrderDetail({
                   <li>{line.primaryProviderName || open.doctorName || 'No primary provider'}</li>
                   {line.authorizedRefills != null ? (
                     <li className="mail-queue__refills">
+                      {line.authorizedAcuity
+                        ? `${line.authorizedAcuity === 'chronic' ? 'Chronic' : 'Acute'} · `
+                        : ''}
                       {line.authorizedRefills} refill{line.authorizedRefills === 1 ? '' : 's'}
                       {line.authorizedRefillExpiration
                         ? `, expire ${line.authorizedRefillExpiration}`
@@ -2661,6 +2701,7 @@ function OrderDetail({
                               notes: taskNote.trim() || undefined,
                               lineIds: [line.id],
                             }).then((order) => {
+                              clearSelfApproveForLineIds([line.id]);
                               onOrderUpdated(order);
                               setViewStep('needs_approval');
                               return order;
@@ -2722,6 +2763,7 @@ function OrderDetail({
                                 notes: taskNote.trim() || undefined,
                                 lineIds: [line.id],
                               }).then((order) => {
+                                clearSelfApproveForLineIds([line.id]);
                                 onOrderUpdated(order);
                                 setViewStep('needs_approval');
                                 return order;
@@ -2742,34 +2784,169 @@ function OrderDetail({
                         <button
                           type="button"
                           className="mail-queue__btn"
+                          aria-expanded={Boolean(selfApprove[line.id])}
                           onClick={() =>
-                            void (async () => {
-                              const reason = await appPrompt({
-                                title: 'No approval needed',
-                                message:
-                                  'Why can this fill proceed without a doctor task? (chart, refills on file, etc.)',
-                                placeholder: 'e.g. Refills on file · chart OK',
-                                confirmLabel: 'Confirm',
-                                cancelLabel: 'Cancel',
-                              });
-                              if (!reason?.trim()) return;
-                              await onRun(() =>
-                                overrideMailLineApproval(
-                                  practiceId,
-                                  open.id,
-                                  line.id,
-                                  reason.trim(),
-                                ).then((order) => {
-                                  onOrderUpdated(order);
-                                  return order;
-                                }),
-                              );
-                            })()
+                            setSelfApprove((prev) => {
+                              if (prev[line.id]) {
+                                const next = { ...prev };
+                                delete next[line.id];
+                                return next;
+                              }
+                              return {
+                                ...prev,
+                                [line.id]: {
+                                  ...initialMailRxDecisionFromLine(line),
+                                  reason: '',
+                                  error: null,
+                                },
+                              };
+                            })
                           }
                         >
-                          No approval needed…
+                          {selfApprove[line.id] ? 'Cancel' : 'Approve here…'}
                         </button>
                       </div>
+                      {selfApprove[line.id] ? (
+                        <div className="mail-queue__self-approve">
+                          <p className="mail-queue__meta-line">
+                            {line.approvalTaskOpen && line.approvalTaskAssigneeName
+                              ? `Approve here and take it back from ${line.approvalTaskAssigneeName}. Their task is removed, with this note, so they cannot also approve it. This still goes on the pet's Rx.`
+                              : "Approve without a doctor task (refills on file, chart OK). This goes on the pet's Rx, so fill in all of it."}
+                          </p>
+                          <MailRxDecisionFields
+                            value={selfApprove[line.id]}
+                            autoship={Boolean(line.autoshipFrequency)}
+                            onChange={(next) =>
+                              setSelfApprove((prev) => ({
+                                ...prev,
+                                [line.id]: { ...prev[line.id], ...next, error: null },
+                              }))
+                            }
+                            onError={(message) =>
+                              setSelfApprove((prev) => ({
+                                ...prev,
+                                [line.id]: { ...prev[line.id], error: message },
+                              }))
+                            }
+                            chartExtra={
+                              line.patientId ? (
+                                <BookPatientChartButton
+                                  patientId={String(line.patientId)}
+                                  patientName={line.patientName || group.petName || 'Patient'}
+                                  practiceId={practiceId}
+                                  practiceTz={MAIL_PRACTICE_TZ}
+                                  showAlerts
+                                  label="View details"
+                                  className="mail-queue__pet-link"
+                                  onApplyRefillExpiration={(dateInput) => {
+                                    setSelfApprove((prev) => ({
+                                      ...prev,
+                                      [line.id]: {
+                                        ...prev[line.id],
+                                        expiration: clampRefillExpiration(dateInput),
+                                        expirationCapNote: refillExpirationCapNote(dateInput),
+                                        error: null,
+                                      },
+                                    }));
+                                  }}
+                                />
+                              ) : null
+                            }
+                          />
+                          <label className="settings-label" style={{ marginTop: 10 }}>
+                            {line.approvalTaskOpen ? 'Note for the closed task' : 'Why no doctor task?'}
+                            <input
+                              className="settings-input"
+                              value={selfApprove[line.id].reason}
+                              placeholder={
+                                line.approvalTaskOpen
+                                  ? 'e.g. Dr. Frey said OK on Slack'
+                                  : 'e.g. Refills on file · chart OK'
+                              }
+                              onChange={(e) =>
+                                setSelfApprove((prev) => ({
+                                  ...prev,
+                                  [line.id]: {
+                                    ...prev[line.id],
+                                    reason: e.target.value,
+                                    error: null,
+                                  },
+                                }))
+                              }
+                            />
+                          </label>
+                          {selfApprove[line.id].error ? (
+                            <p className="mail-queue__error" role="alert">
+                              {selfApprove[line.id].error}
+                            </p>
+                          ) : null}
+                          <div className="mail-queue__actions">
+                            <button
+                              type="button"
+                              className="mail-queue__btn is-primary"
+                              onClick={() =>
+                                void (async () => {
+                                  const draft = selfApprove[line.id];
+                                  const fail = (message: string) =>
+                                    setSelfApprove((prev) => ({
+                                      ...prev,
+                                      [line.id]: { ...prev[line.id], error: message },
+                                    }));
+                                  if (!currentScript.trim() || /^use as directed\.?$/i.test(currentScript.trim())) {
+                                    fail('Write directions for this item below first.');
+                                    return;
+                                  }
+                                  const missing = mailRxDecisionMissing(draft);
+                                  if (missing) {
+                                    fail(missing);
+                                    return;
+                                  }
+                                  if (!draft.reason.trim()) {
+                                    fail(
+                                      line.approvalTaskOpen
+                                        ? 'Say why you are approving here, so the task shows why it was closed.'
+                                        : 'Say why no doctor task is needed.',
+                                    );
+                                    return;
+                                  }
+                                  const refills = parsedMailRefills(draft.refills) ?? 0;
+                                  const ok = await onRun(async () => {
+                                    if (scriptDirty) {
+                                      await pharmacyMailAction(practiceId, open.id, {
+                                        action: 'update_script',
+                                        lineId: line.id,
+                                        scriptText: currentScript.trim(),
+                                      });
+                                    }
+                                    const order = await overrideMailLineApproval(
+                                      practiceId,
+                                      open.id,
+                                      line.id,
+                                      draft.reason.trim(),
+                                      {
+                                        refills,
+                                        expiration: refills > 0 ? draft.expiration : null,
+                                        acuity: draft.acuity as 'acute' | 'chronic',
+                                      },
+                                    );
+                                    onOrderUpdated(order);
+                                    return order;
+                                  });
+                                  if (ok) {
+                                    setSelfApprove((prev) => {
+                                      const next = { ...prev };
+                                      delete next[line.id];
+                                      return next;
+                                    });
+                                  }
+                                })()
+                              }
+                            >
+                              Approve
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {lineNeedsApproval(line) && line.lineStatus === 'send_back' ? (
                         <p className="mail-queue__meta-line">Doctor sent this back for changes.</p>
                       ) : null}

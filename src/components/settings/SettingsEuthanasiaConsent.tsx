@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { getPracticeSettings, updatePracticeSettings } from '../../api/practiceSettings';
 import {
+  listingCategoryNames,
   listOnlineStoreListings,
   listStoreCategories,
   type StoreAdminListing,
@@ -58,7 +59,7 @@ function memorialSubcategoryNames(
     const chip = child.split(' / ')[0]?.trim();
     if (chip) names.add(chip);
   };
-  for (const listing of listings) add(listing.storeCategory);
+  for (const listing of listings) listingCategoryNames(listing).forEach(add);
   for (const name of categoryNames) add(name);
   return [...names].sort((a, b) => a.localeCompare(b));
 }

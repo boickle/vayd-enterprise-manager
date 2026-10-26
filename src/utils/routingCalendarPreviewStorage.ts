@@ -67,6 +67,14 @@ export type RoutingCalendarPreviewPayloadV1 = {
   appointmentTypeChosenInRouting?: boolean;
   /** Calculate Time dropdown value (`AppointmentType.name`) at preview time. */
   routingStatsTypeKey?: string;
+  /** Routing searched with the pre-meds window — book modal starts with the box checked. */
+  needsPremeds?: boolean;
+  /** Routing pre-checked it from history — book modal decides per pet instead of all pets. */
+  premedsAutoChecked?: boolean;
+  /** Routing had pre-meds history but the user unchecked it — book modal keeps it unchecked. */
+  premedsDeclined?: boolean;
+  /** Source forward booking was flagged pre-meds — book modal warns when the box is unchecked. */
+  premedsHistory?: boolean;
   clientDisplayLabel?: string;
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;

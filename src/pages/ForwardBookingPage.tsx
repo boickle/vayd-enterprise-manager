@@ -2375,6 +2375,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                             showAlerts
                           />
                         ) : null}
+                        {entry.needsPremeds ? (
+                          <span className="premeds-pill" title="Book with the pre-meds arrival window">
+                            Pre-meds
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                     <div

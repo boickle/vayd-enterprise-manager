@@ -21,9 +21,9 @@ import {
 import {
   normalizeAppointmentTypeName,
   pointsPerPatientForType,
-  findCalmingPremedAppointmentType,
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
+import { tightenWindowSourceForPremeds } from './premedsWindow';
 import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
 
 export type AppointmentRequestBookedApptSummary = {
@@ -353,31 +353,23 @@ function requestDataUsesCalmingMedications(
   );
 }
 
-function calmingPremedWindowSource(
-  catalog?: AppointmentTypeCatalog | null,
-): AppointmentTypeWindowSource | undefined {
-  if (!catalog) return undefined;
-  const types = [...catalog.byId.values()];
-  const premed = findCalmingPremedAppointmentType(types);
-  if (!premed) return undefined;
-  return {
-    name: premed.name,
-    prettyName: premed.prettyName,
-    windowBeforeMinutes: premed.windowBeforeMinutes,
-    windowAfterMinutes: premed.windowAfterMinutes,
-  };
-}
-
 function appointmentTypeWindowSource(
   requestData: Record<string, unknown>,
   bookedSummary: AppointmentRequestBookedApptSummary | null | undefined,
   catalog?: AppointmentTypeCatalog | null,
 ): AppointmentTypeWindowSource | undefined {
-  // Mixed households adopt the Pre-Meds arrival window when any pet uses calming meds.
-  if (requestDataUsesCalmingMedications(requestData)) {
-    const premed = calmingPremedWindowSource(catalog);
-    if (premed) return premed;
-  }
+  const base = baseAppointmentTypeWindowSource(requestData, bookedSummary, catalog);
+  // Calming meds (any pet) narrow the household window to the pre-meds window.
+  return requestDataUsesCalmingMedications(requestData)
+    ? tightenWindowSourceForPremeds(base)
+    : base;
+}
+
+function baseAppointmentTypeWindowSource(
+  requestData: Record<string, unknown>,
+  bookedSummary: AppointmentRequestBookedApptSummary | null | undefined,
+  catalog?: AppointmentTypeCatalog | null,
+): AppointmentTypeWindowSource | undefined {
 
   const internalName = resolveBookedVisitInternalTypeName(requestData, bookedSummary, catalog);
   if (internalName && catalog) {

@@ -26,12 +26,15 @@ import {
   formatFromAlias,
   isEmailBodyEmpty,
   loadSendAsAliases,
+  plainTextFromHtml,
   signatureHtmlForFromAlias,
   submitCompose,
 } from './gmail/gmailCompose';
+import { sanitizeCommunicationHtml } from '../utils/sanitizeCommunicationHtml';
 import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
 import MessageTemplateHtmlEditor from './messageTemplates/MessageTemplateHtmlEditor';
 import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
+import { wrapBrandedClientEmailHtml } from '../utils/brandedClientEmailHtml';
 
 export type EmailRegardingPatient = { id: number; name: string };
 export type { EmailRecipientChoice };
@@ -42,6 +45,10 @@ type Props = {
   clientLabel: string;
   initialSubject: string;
   initialBodyText: string;
+  /** HTML body for the template editor (overrides initialBodyText when set). */
+  initialBodyHtml?: string;
+  /** Wrap the message in the standard client email shell (logo + layout) before send. */
+  brandedShellOnSend?: boolean;
   /** When set, skip the client inbox lookup and use this To line instead. */
   initialTo?: string;
   recipientChoices?: EmailRecipientChoice[];
@@ -77,6 +84,8 @@ export function ClientEmailComposeModal({
   clientLabel,
   initialSubject,
   initialBodyText,
+  initialBodyHtml,
+  brandedShellOnSend = false,
   initialTo,
   recipientChoices,
   mergeValues,
@@ -152,7 +161,7 @@ export function ClientEmailComposeModal({
   }
 
   useEffect(() => {
-    if (!open || clientId == null) {
+    if (!open) {
       setLoading(false);
       setSending(false);
       setLoadError(null);
@@ -170,13 +179,19 @@ export function ClientEmailComposeModal({
       return;
     }
 
+    if (clientId == null && !initialTo?.trim()) {
+      setLoadError('No recipient email address.');
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
     setSendError(null);
     setSignatureHtml('');
     setSubject(initialSubject);
-    setBodyText(initialBodyText);
+    setBodyText(initialBodyHtml?.trim() || initialBodyText);
     setAttachments(initialAttachments ?? []);
     setRecipientKey(recipientChoices?.[0]?.key ?? null);
 
@@ -185,20 +200,23 @@ export function ClientEmailComposeModal({
         if (!gmailAllowed) {
           throw new Error('Gmail access is not available for your account.');
         }
-        const [clientRaw, mailboxesRes] = await Promise.all([
-          fetchClientByIdStaff(clientId),
-          fetchGmailMailboxes(),
-        ]);
+        const mailboxesRes = await fetchGmailMailboxes();
         if (cancelled) return;
 
-        if (initialTo != null) {
-          setTo(initialTo);
-        } else {
-          const emails = clientEmailsFromStaffPayload(clientRaw);
-          if (emails.length === 0) {
-            throw new Error('No client email address on file.');
+        if (clientId != null) {
+          const clientRaw = await fetchClientByIdStaff(clientId);
+          if (cancelled) return;
+          if (initialTo != null) {
+            setTo(initialTo);
+          } else {
+            const emails = clientEmailsFromStaffPayload(clientRaw);
+            if (emails.length === 0) {
+              throw new Error('No client email address on file.');
+            }
+            setTo(emails.join(', '));
           }
-          setTo(emails.join(', '));
+        } else {
+          setTo(initialTo!.trim());
         }
 
         const shared = sharedConnectedMailboxes(mailboxesRes.mailboxes);
@@ -218,7 +236,17 @@ export function ClientEmailComposeModal({
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, initialSubject, initialBodyText, initialTo, gmailAllowed]);
+  }, [
+    open,
+    clientId,
+    initialSubject,
+    initialBodyText,
+    initialBodyHtml,
+    initialTo,
+    gmailAllowed,
+    initialAttachments,
+    recipientChoices,
+  ]);
 
   const handleFromChange = (nextFrom: string) => {
     setFrom(nextFrom);
@@ -257,10 +285,26 @@ export function ClientEmailComposeModal({
     setSending(true);
     setSendError(null);
     try {
-      const { bodyText: text, bodyHtml } = composeBodiesFromUserContent({
-        userContent: bodyText,
-        signatureHtml,
-      });
+      const { bodyText: text, bodyHtml } = brandedShellOnSend
+        ? (() => {
+            const inner = sanitizeCommunicationHtml(bodyText.trim());
+            const sig = signatureHtml.trim();
+            let html = wrapBrandedClientEmailHtml(inner);
+            if (sig) {
+              html = html.replace(
+                '</body>',
+                `<div style="margin-top:24px">${sig}</div></body>`,
+              );
+            }
+            const plain = [plainTextFromHtml(inner), sig ? plainTextFromHtml(sig) : '']
+              .filter(Boolean)
+              .join('\n\n');
+            return { bodyText: plain, bodyHtml: html };
+          })()
+        : composeBodiesFromUserContent({
+            userContent: bodyText,
+            signatureHtml,
+          });
       await submitCompose({
         mailbox,
         from,

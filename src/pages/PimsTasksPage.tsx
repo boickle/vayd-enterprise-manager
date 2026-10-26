@@ -38,6 +38,7 @@ import {
   type TaskSummaryResponse,
 } from '../api/tasks';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { isMailOrderApprovalTask } from '../utils/taskPanelKind';
 import { subscribePracticeTasks } from '../utils/taskRealtime';
 import {
   filterMyOpenTasksByAssignedTab,
@@ -50,7 +51,16 @@ import {
   type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
-import { FORWARD_BOOKING_TASK_ADDED_PARAM } from '../utils/forwardBookingCreateLink';
+import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import type { ForwardBookingEntry } from '../api/forwardBooking';
+import {
+  FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
+  FORWARD_BOOKING_CREATE_ON_TASKS_PARAM,
+  FORWARD_BOOKING_CREATE_PATIENT_PARAM,
+  FORWARD_BOOKING_TASK_ADDED_PARAM,
+  type CreateForwardBookingPrefill,
+} from '../utils/forwardBookingCreateLink';
+import { completeForwardBookingTask } from '../utils/forwardBookingTaskComplete';
 import {
   mailOrderTaskStatusClass,
   mailOrderTaskStatusLabel,
@@ -395,6 +405,15 @@ export default function PimsTasksPage() {
   );
   const myEmployeeId = myEmployeeIds[0] ?? null;
   const [branchFilter, setBranchFilter] = useState<string>('');
+  /** Admin-only: empty means the signed-in person. */
+  const [viewEmployeeId, setViewEmployeeId] = useState('');
+  const viewedEmployeeId = useMemo(() => {
+    if (!isPracticeAdmin || viewEmployeeId === '') return undefined;
+    const id = Number(viewEmployeeId);
+    if (!Number.isFinite(id) || id <= 0) return undefined;
+    if (myEmployeeIds.includes(id)) return undefined;
+    return id;
+  }, [isPracticeAdmin, viewEmployeeId, myEmployeeIds]);
   const [tab, setTab] = useState<TabId>('active');
   const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
@@ -437,6 +456,35 @@ export default function PimsTasksPage() {
   const [bulkReassignIds, setBulkReassignIds] = useState<number[] | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [forwardBookingCreateOpen, setForwardBookingCreateOpen] = useState(false);
+  const [forwardBookingPrefill, setForwardBookingPrefill] = useState<CreateForwardBookingPrefill | null>(
+    null,
+  );
+  const [forwardBookingSourceTaskId, setForwardBookingSourceTaskId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get(FORWARD_BOOKING_CREATE_ON_TASKS_PARAM) !== '1') return;
+    const patientId = Number(searchParams.get(FORWARD_BOOKING_CREATE_PATIENT_PARAM));
+    const appointmentId = Number(searchParams.get(FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM));
+    const taskId = Number(searchParams.get('taskId'));
+    if (
+      Number.isFinite(patientId) &&
+      patientId > 0 &&
+      Number.isFinite(appointmentId) &&
+      appointmentId > 0
+    ) {
+      setForwardBookingPrefill({ patientId, appointmentId });
+      setForwardBookingSourceTaskId(
+        Number.isFinite(taskId) && taskId > 0 ? taskId : null,
+      );
+      setForwardBookingCreateOpen(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete(FORWARD_BOOKING_CREATE_ON_TASKS_PARAM);
+    next.delete(FORWARD_BOOKING_CREATE_PATIENT_PARAM);
+    next.delete(FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (searchParams.get('new') !== '1') return;
@@ -497,24 +545,27 @@ export default function PimsTasksPage() {
     }
     return m;
   }, [employees]);
+  const viewedPersonName =
+    viewedEmployeeId != null ? (employeeMap.get(viewedEmployeeId) ?? 'this person') : null;
 
   const branchIdNum = branchFilter === '' ? undefined : Number(branchFilter);
 
   const loadTaskSummary = useCallback(async () => {
     try {
-      const summary = await fetchTasksSummary(
-        branchIdNum != null && Number.isFinite(branchIdNum) ? { branchId: branchIdNum } : undefined
-      );
+      const summary = await fetchTasksSummary({
+        ...(branchIdNum != null && Number.isFinite(branchIdNum) ? { branchId: branchIdNum } : {}),
+        ...(viewedEmployeeId != null ? { forEmployeeId: viewedEmployeeId } : {}),
+      });
       setTaskSummary(summary);
       return summary;
     } catch {
       setTaskSummary(EMPTY_SUMMARY);
       return EMPTY_SUMMARY;
     }
-  }, [branchIdNum]);
+  }, [branchIdNum, viewedEmployeeId]);
 
   const loadAssignedOpenTasks = useCallback(async () => {
-    if (myEmployeeIds.length === 0) {
+    if (viewedEmployeeId == null && myEmployeeIds.length === 0) {
       setMyOpenTasks([]);
       return [];
     }
@@ -522,15 +573,16 @@ export default function PimsTasksPage() {
       involvement: 'assigned',
       includeDone: false,
       branchId: branchIdNum,
+      forEmployeeId: viewedEmployeeId,
       limit: CLIENT_FILTER_CAP,
       offset: 0,
     });
     setMyOpenTasks(res.items);
     return res.items;
-  }, [branchIdNum, myEmployeeIds]);
+  }, [branchIdNum, myEmployeeIds, viewedEmployeeId]);
 
   const loadWatchingOpenTasks = useCallback(async () => {
-    if (myEmployeeIds.length === 0) {
+    if (viewedEmployeeId == null && myEmployeeIds.length === 0) {
       setWatchingTasks([]);
       return [];
     }
@@ -538,12 +590,13 @@ export default function PimsTasksPage() {
       involvement: 'watching',
       includeDone: false,
       branchId: branchIdNum,
+      forEmployeeId: viewedEmployeeId,
       limit: CLIENT_FILTER_CAP,
       offset: 0,
     });
     setWatchingTasks(res.items);
     return filterVisibleWatchingTasks(res.items);
-  }, [branchIdNum, myEmployeeIds]);
+  }, [branchIdNum, myEmployeeIds, viewedEmployeeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -590,15 +643,18 @@ export default function PimsTasksPage() {
       return;
     }
     if (!isBucketTab(tab)) return;
-    const rows = myEmployeeIds.length === 0 ? [] : filterMyOpenTasksByAssignedTab(myOpenTasks, tab);
+    const rows =
+      viewedEmployeeId == null && myEmployeeIds.length === 0
+        ? []
+        : filterMyOpenTasksByAssignedTab(myOpenTasks, tab);
     setItems(rows);
     setTotal(rows.length);
     setOffset(rows.length);
-  }, [tab, myOpenTasks, visibleWatchingTasks, myEmployeeIds]);
+  }, [tab, myOpenTasks, visibleWatchingTasks, myEmployeeIds, viewedEmployeeId]);
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [tab, branchFilter]);
+  }, [tab, branchFilter, viewedEmployeeId]);
 
   useEffect(() => {
     if (tab !== 'watching') return;
@@ -650,6 +706,7 @@ export default function PimsTasksPage() {
             involvement: 'created',
             includeDone: true,
             branchId: branchIdNum,
+            forEmployeeId: viewedEmployeeId,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
@@ -663,6 +720,9 @@ export default function PimsTasksPage() {
             includeDone: true,
             status: 'done',
             branchId: branchIdNum,
+            ...(viewedEmployeeId != null
+              ? { involvement: 'assigned' as const, forEmployeeId: viewedEmployeeId }
+              : {}),
             limit: PAGE_SIZE,
             offset: 0,
           });
@@ -683,7 +743,7 @@ export default function PimsTasksPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, branchFilter, branchIdNum, roleFilter, myEmployeeIds]);
+  }, [tab, branchFilter, branchIdNum, roleFilter, myEmployeeIds, viewedEmployeeId]);
 
   useEffect(() => {
     const slice = items.slice(0, LINK_FETCH_CAP);
@@ -719,6 +779,9 @@ export default function PimsTasksPage() {
         includeDone: true,
         status: 'done',
         branchId: branchIdNum,
+        ...(viewedEmployeeId != null
+          ? { involvement: 'assigned' as const, forEmployeeId: viewedEmployeeId }
+          : {}),
         limit: PAGE_SIZE,
         offset,
       });
@@ -730,7 +793,7 @@ export default function PimsTasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, branchIdNum, offset]);
+  }, [tab, branchIdNum, offset, viewedEmployeeId]);
 
   const refreshList = useCallback(() => {
     setLoading(true);
@@ -754,6 +817,7 @@ export default function PimsTasksPage() {
             involvement: 'created',
             includeDone: true,
             branchId: branchIdNum,
+            forEmployeeId: viewedEmployeeId,
             limit: CLIENT_FILTER_CAP,
             offset: 0,
           });
@@ -766,6 +830,9 @@ export default function PimsTasksPage() {
             includeDone: true,
             status: 'done',
             branchId: branchIdNum,
+            ...(viewedEmployeeId != null
+              ? { involvement: 'assigned' as const, forEmployeeId: viewedEmployeeId }
+              : {}),
             limit: PAGE_SIZE,
             offset: 0,
           });
@@ -796,7 +863,15 @@ export default function PimsTasksPage() {
         setLoading(false);
       }
     })();
-  }, [tab, branchIdNum, roleFilter, loadAssignedOpenTasks, loadWatchingOpenTasks, loadTaskSummary]);
+  }, [
+    tab,
+    branchIdNum,
+    roleFilter,
+    viewedEmployeeId,
+    loadAssignedOpenTasks,
+    loadWatchingOpenTasks,
+    loadTaskSummary,
+  ]);
 
   const backFromDetail = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -848,6 +923,39 @@ export default function PimsTasksPage() {
     });
   };
 
+  const closeForwardBookingCreate = useCallback(() => {
+    setForwardBookingCreateOpen(false);
+    setForwardBookingPrefill(null);
+    setForwardBookingSourceTaskId(null);
+  }, []);
+
+  const onForwardBookingCreated = useCallback(
+    (entry: ForwardBookingEntry) => {
+      const taskId = forwardBookingSourceTaskId;
+      closeForwardBookingCreate();
+      if (taskId != null) {
+        void completeForwardBookingTask(taskId, entry).then((closed) => {
+          if (closed) setForwardBookingAddedTaskId(taskId);
+          refreshList();
+          notifyTasksChanged();
+        });
+        return;
+      }
+      refreshList();
+      notifyTasksChanged();
+    },
+    [closeForwardBookingCreate, forwardBookingSourceTaskId, refreshList],
+  );
+
+  const forwardBookingCreateModal =
+    forwardBookingCreateOpen ? (
+      <CreateForwardBookingModal
+        prefill={forwardBookingPrefill}
+        onClose={closeForwardBookingCreate}
+        onCreated={onForwardBookingCreated}
+      />
+    ) : null;
+
   const taskIdNum = taskIdParam.trim() ? Number(taskIdParam.trim()) : NaN;
   if (taskIdParam.trim() && Number.isFinite(taskIdNum)) {
     return (
@@ -869,6 +977,7 @@ export default function PimsTasksPage() {
             notifyTasksChanged();
           }}
         />
+        {forwardBookingCreateModal}
       </div>
     );
   }
@@ -988,7 +1097,9 @@ export default function PimsTasksPage() {
                 Assign to me
               </button>
             ) : null}
-            {canAct && row.kind !== 'callback' ? (
+            {canAct &&
+            row.kind !== 'callback' &&
+            !isMailOrderApprovalTask({ title: row.title, links }) ? (
               <button type="button" className="pims-task-card__btn pims-task-card__btn--done" onClick={() => void handleMarkDone(row.id)}>
                 Mark done
               </button>
@@ -1038,15 +1149,40 @@ export default function PimsTasksPage() {
                     ? 'Future tasks'
                     : 'Tasks'}
           </h1>
-          {tab === 'sent' && <p className="pims-tasks__subtitle">Created by me</p>}
-          {tab === 'active' && <p className="pims-tasks__subtitle">Assigned to me — due now</p>}
-          {tab === 'expired' && <p className="pims-tasks__subtitle">Assigned to me — overdue</p>}
-          {tab === 'upcoming' && (
+          {tab === 'sent' && (
             <p className="pims-tasks__subtitle">
-              Assigned to me, not due yet — re-assign before time off
+              {viewedPersonName ? `Created by ${viewedPersonName}` : 'Created by me'}
             </p>
           )}
-          {tab === 'watching' && <p className="pims-tasks__subtitle">Tasks you watch (not assigned to you)</p>}
+          {tab === 'active' && (
+            <p className="pims-tasks__subtitle">
+              {viewedPersonName ? `Assigned to ${viewedPersonName} — due now` : 'Assigned to me — due now'}
+            </p>
+          )}
+          {tab === 'expired' && (
+            <p className="pims-tasks__subtitle">
+              {viewedPersonName
+                ? `Assigned to ${viewedPersonName} — overdue`
+                : 'Assigned to me — overdue'}
+            </p>
+          )}
+          {tab === 'upcoming' && (
+            <p className="pims-tasks__subtitle">
+              {viewedPersonName
+                ? `Assigned to ${viewedPersonName}, not due yet`
+                : 'Assigned to me, not due yet — re-assign before time off'}
+            </p>
+          )}
+          {tab === 'watching' && (
+            <p className="pims-tasks__subtitle">
+              {viewedPersonName
+                ? `Tasks ${viewedPersonName} watches (not assigned to them)`
+                : 'Tasks you watch (not assigned to you)'}
+            </p>
+          )}
+          {tab === 'completed' && viewedPersonName ? (
+            <p className="pims-tasks__subtitle">Completed tasks assigned to {viewedPersonName}</p>
+          ) : null}
           {tab === 'unassigned' && (
             <p className="pims-tasks__subtitle">
               Open queue — grab one, or filter by branch and role (CL / Brunswick)
@@ -1056,6 +1192,32 @@ export default function PimsTasksPage() {
       </div>
 
       <div className="pims-tasks__toolbar">
+        {isPracticeAdmin ? (
+          <label className="pims-tasks__filter">
+            <span>Person</span>
+            <select
+              className="pims-tasks__select"
+              value={viewedEmployeeId != null ? String(viewedEmployeeId) : ''}
+              onChange={(e) => setViewEmployeeId(e.target.value)}
+              aria-label="View tasks for"
+            >
+              <option value="">Me</option>
+              {employees
+                .filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id))
+                .slice()
+                .sort((a, b) =>
+                  (formatEmployeeDisplayName(a) || a.email).localeCompare(
+                    formatEmployeeDisplayName(b) || b.email,
+                  ),
+                )
+                .map((e) => (
+                  <option key={e.id} value={String(e.id)}>
+                    {formatEmployeeDisplayName(e) || e.email}
+                  </option>
+                ))}
+            </select>
+          </label>
+        ) : null}
         <div className="pims-tasks__tabs" role="tablist" aria-label="Task views">
           {(
             [
@@ -1287,6 +1449,8 @@ export default function PimsTasksPage() {
           }}
         />
       )}
+
+      {forwardBookingCreateModal}
     </div>
   );
 }

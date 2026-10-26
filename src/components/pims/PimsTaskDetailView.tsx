@@ -19,7 +19,7 @@ import {
   type TaskLinkEntityType,
   TASK_LINK_ENTITY_TYPES,
 } from '../../api/tasks';
-import { respondMailApproval } from '../../api/onlineStore';
+import { respondMailApproval, type MailLineRxDecision } from '../../api/onlineStore';
 import type { PracticeBranch } from '../../api/branchInventory';
 import type { Employee, EmployeeRole } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
@@ -321,7 +321,7 @@ export default function PimsTaskDetailView({
 
   const handleMailApproval = async (
     outcome: 'approved' | 'rejected' | 'send_back',
-    lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
+    lineRefills?: MailLineRxDecision[],
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
     approvalBasis?: 'standard' | 'chart' | 'refills',
   ) => {
@@ -477,13 +477,6 @@ export default function PimsTaskDetailView({
                   Move
                 </button>
               )}
-              {canMutate && task.status !== 'done' && mailOrderId != null && (
-                <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void handleComplete()}>
-                  <CheckCircle2 size={18} />
-                  Mark complete
-                </button>
-              )}
-
             </>
           )}
         </div>

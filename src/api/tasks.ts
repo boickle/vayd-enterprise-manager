@@ -152,6 +152,8 @@ export type ListTasksParams = {
   roleId?: number;
   /** Open work assigned to this employee (self, or any employee when admin). */
   assignedToEmployeeId?: number;
+  /** Whose assigned / watching / created tasks to list. Another person is admin-only. */
+  forEmployeeId?: number;
   /** Only tasks linked to this patient — e.g. the callbacks open on one pet. */
   patientId?: number;
   limit?: number;
@@ -185,6 +187,7 @@ export async function listTasks(params?: ListTasksParams): Promise<TaskListRespo
 
 export async function fetchTasksSummary(params?: {
   branchId?: number;
+  forEmployeeId?: number;
 }): Promise<TaskSummaryResponse> {
   const { data } = await http.get<TaskSummaryResponse>('/tasks/summary', { params });
   const empty: TaskSummaryBucket = { active: 0, expired: 0, upcoming: 0, total: 0 };

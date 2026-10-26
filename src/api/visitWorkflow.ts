@@ -197,6 +197,8 @@ export type VisitInvoiceTender = {
   changeGiven?: number | null;
   checkNumber?: string | null;
   stripePaymentIntentId?: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
   /** Dollars already refunded via Stripe against this tender. */
   refundedAmount?: number;
   receivedAt: string;

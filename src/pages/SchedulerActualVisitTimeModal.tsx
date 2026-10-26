@@ -24,6 +24,7 @@ import {
   type ForwardBookingInterval,
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
+import { appointmentShowsPremedsCardMarker } from '../utils/schedulerNewPatientCardMarker';
 import {
   appointmentPracticeDateKey,
   combineDateAndTimeToUtc,
@@ -457,6 +458,10 @@ export function SchedulerActualVisitTimeModal({
   );
   const [forwardBookingProviderId, setForwardBookingProviderId] = useState(() =>
     defaultForwardBookingProviderId(appt)
+  );
+  /** null = follow each source visit's own pre-meds flag. */
+  const [forwardNeedsPremedsOverride, setForwardNeedsPremedsOverride] = useState<boolean | null>(
+    null
   );
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -951,6 +956,9 @@ export function SchedulerActualVisitTimeModal({
       try {
         await createForwardBooking({
           ...payload,
+          ...(forwardNeedsPremedsOverride != null
+            ? { needsPremeds: forwardNeedsPremedsOverride }
+            : {}),
           createdVia: 'end_visit',
         });
       } catch (e: unknown) {
@@ -969,6 +977,7 @@ export function SchedulerActualVisitTimeModal({
     forwardBookingMode,
     forwardBookingProviderId,
     forwardInterval,
+    forwardNeedsPremedsOverride,
     householdFollowUpAppointmentIds,
     householdVisits,
     isStartOnly,
@@ -1903,9 +1912,13 @@ export function SchedulerActualVisitTimeModal({
                     labsTaskTitle,
                     labsTaskStartLocal,
                     labsTaskDueLocal,
+                    needsPremeds:
+                      forwardNeedsPremedsOverride ?? appointmentShowsPremedsCardMarker(appt),
                   }}
                   onChange={(patch) => {
                     forwardBookingUserEditedRef.current = true;
+                    if (patch.needsPremeds !== undefined)
+                      setForwardNeedsPremedsOverride(patch.needsPremeds);
                     if (patch.mode !== undefined) setForwardBookingMode(patch.mode);
                     if (patch.forwardAmount !== undefined) setForwardAmount(patch.forwardAmount);
                     if (patch.forwardUnit !== undefined) setForwardUnit(patch.forwardUnit);

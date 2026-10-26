@@ -42,9 +42,17 @@ const KIND_PANELS: Partial<Record<TaskKind, TaskPanelKind>> = {
   lab_result: 'lab_result',
 };
 
+/** Doctor/mail approval work tied to a mail order — not a generic to-do. */
+export function isMailOrderApprovalTask(
+  task: Pick<PanelKindInput, 'title' | 'links'>,
+): boolean {
+  if (task.links?.some((l) => l.entityType === 'mail_order')) return true;
+  return /^Approve mail order #\d+/i.test(task.title?.trim() ?? '');
+}
+
 export function taskPanelKind(task: PanelKindInput): TaskPanelKind {
   // A mail order carries its own approval flow and outranks everything else.
-  if (task.links?.some((l) => l.entityType === 'mail_order')) return 'mail_order';
+  if (isMailOrderApprovalTask(task)) return 'mail_order';
 
   // Older invoice rows may have a blank kind; the trigger / bill UUID still
   // means this is payment work, not a generic callback jot.

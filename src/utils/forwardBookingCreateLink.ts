@@ -3,6 +3,8 @@ import { FORWARD_BOOKING_LIST_PATH } from './forwardBookingReturnSession';
 export { FORWARD_BOOKING_LIST_PATH };
 
 export const FORWARD_BOOKING_CREATE_NEW_PARAM = 'new';
+/** Opens create modal on `/schedule/tasks` without colliding with task `new=1`. */
+export const FORWARD_BOOKING_CREATE_ON_TASKS_PARAM = 'fbCreate';
 export const FORWARD_BOOKING_CREATE_PATIENT_PARAM = 'patientId';
 export const FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM = 'appointmentId';
 export const FORWARD_BOOKING_CREATE_RETURN_TO_PARAM = 'returnTo';
@@ -60,12 +62,22 @@ export function buildCreateForwardBookingUrl(args: {
   appointmentId: number;
   returnTo?: string | null;
 }): string {
+  const returnTo = sanitizeForwardBookingReturnTo(args.returnTo);
+  const sourceTaskId = returnTo ? taskIdFromForwardBookingReturnPath(returnTo) : null;
+  if (sourceTaskId != null) {
+    const params = new URLSearchParams({
+      taskId: String(sourceTaskId),
+      [FORWARD_BOOKING_CREATE_ON_TASKS_PARAM]: '1',
+      [FORWARD_BOOKING_CREATE_PATIENT_PARAM]: String(args.patientId),
+      [FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM]: String(args.appointmentId),
+    });
+    return `/schedule/tasks?${params.toString()}`;
+  }
   const params = new URLSearchParams({
     [FORWARD_BOOKING_CREATE_NEW_PARAM]: '1',
     [FORWARD_BOOKING_CREATE_PATIENT_PARAM]: String(args.patientId),
     [FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM]: String(args.appointmentId),
   });
-  const returnTo = sanitizeForwardBookingReturnTo(args.returnTo);
   if (returnTo) params.set(FORWARD_BOOKING_CREATE_RETURN_TO_PARAM, returnTo);
   return `${FORWARD_BOOKING_LIST_PATH}?${params.toString()}`;
 }

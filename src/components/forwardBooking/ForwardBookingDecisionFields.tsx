@@ -8,6 +8,7 @@ import {
   FORWARD_BOOKING_UNIT_OPTIONS,
 } from '../../utils/forwardBookingFromAppointment';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import { PremedsCheckbox } from '../PremedsCheckbox';
 import './ForwardBookingDecisionFields.css';
 
 export const FORWARD_BOOKING_MODE_OPTIONS: {
@@ -329,6 +330,11 @@ export default function ForwardBookingDecisionFields({
                       }}
                     />
                   </label>
+                  <PremedsCheckbox
+                    checked={value.needsPremeds === true}
+                    onChange={(next) => onChange({ needsPremeds: next })}
+                    disabled={intervalDisabled}
+                  />
                 </div>
               ) : null}
 

@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
+  dismissAbandonedCart,
   listAbandonedCarts,
+  previewAbandonedCartEmail,
   resendAbandonedCart,
   type AbandonedCart,
 } from '../api/onlineStore';
+import { appConfirm } from '../utils/appDialog';
 import { formatAutoshipFrequency } from './store/storeCartState';
+import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
 import './Settings.css';
 import './MailOrders.css';
 import './StoreOps.css';
@@ -57,18 +61,77 @@ export default function AbandonedCartsPage() {
     recoveredCount: 0,
     recoveredSales: 0,
     emailedCount: 0,
+    removedCount: 0,
     automaticRecoveryEnabled: true,
   });
-  const [filter, setFilter] = useState<'open' | 'emailed' | 'recovered' | 'all'>('open');
+  const [filter, setFilter] = useState<'open' | 'emailed' | 'recovered' | 'removed' | 'all'>(
+    'open',
+  );
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [emailDraft, setEmailDraft] = useState<{
+    cartId: number;
+    clientId: number | null;
+    customerName: string | null;
+    to: string;
+    subject: string;
+    text: string;
+    messageHtml: string;
+  } | null>(null);
+
+  const openEmail = (cart: AbandonedCart) => {
+    setError(null);
+    setBusyId(cart.id);
+    void previewAbandonedCartEmail(practiceId, cart.id)
+      .then((draft) =>
+        setEmailDraft({
+          cartId: cart.id,
+          clientId: cart.clientId,
+          customerName: cart.customerName,
+          to: draft.to,
+          subject: draft.subject,
+          text: draft.text,
+          messageHtml: draft.messageHtml?.trim() || draft.text,
+        }),
+      )
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not open that email'))
+      .finally(() => setBusyId(null));
+  };
+
+  const markCartReminderSent = (cartId: number, payload: { subject: string; text: string; html?: string }) => {
+    setBusyId(cartId);
+    setError(null);
+    return resendAbandonedCart(practiceId, cartId, {
+      subject: payload.subject.trim(),
+      text: payload.text.trim(),
+      html: payload.html,
+      markOnly: true,
+    })
+      .then((next) => {
+        const previous = carts.find((row) => row.id === next.id);
+        setCarts((rows) => rows.map((row) => (row.id === next.id ? next : row)));
+        setStats((current) => ({
+          ...current,
+          emailedCount: current.emailedCount + (previous?.emailed ? 0 : 1),
+        }));
+        setEmailDraft(null);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Could not update cart');
+        throw e;
+      })
+      .finally(() => setBusyId(null));
+  };
 
   const reload = () =>
     listAbandonedCarts(practiceId)
       .then((data) => {
         setCarts(data.carts || []);
-        setStats(data.stats);
+        setStats({
+          ...data.stats,
+          removedCount: data.stats.removedCount ?? 0,
+        });
       })
       .catch((e) => {
         const message =
@@ -81,11 +144,40 @@ export default function AbandonedCartsPage() {
     void reload();
   }, [practiceId]);
 
+  const removeCart = (cart: AbandonedCart) => {
+    void (async () => {
+      const ok = await appConfirm({
+        title: 'Remove from open list?',
+        message:
+          'This cart will move to Removed. You can still find it there — it will not get more automatic reminders.',
+        confirmLabel: 'Remove',
+      });
+      if (!ok) return;
+      setBusyId(cart.id);
+      setError(null);
+      try {
+        const next = await dismissAbandonedCart(practiceId, cart.id);
+        setCarts((rows) => rows.map((row) => (row.id === next.id ? next : row)));
+        setStats((current) => ({
+          ...current,
+          totalCarts: Math.max(0, current.totalCarts - 1),
+          removedCount: current.removedCount + 1,
+        }));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not remove cart');
+      } finally {
+        setBusyId(null);
+      }
+    })();
+  };
+
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return carts.filter((cart) => {
       // "Open" is every cart that has not checked out, including ones already reminded.
-      if (filter === 'open' && cart.status === 'recovered') return false;
+      if (filter === 'open' && (cart.status === 'recovered' || cart.status === 'removed')) {
+        return false;
+      }
       if (filter !== 'open' && filter !== 'all' && cart.status !== filter) return false;
       if (!needle) return true;
       const hay = [
@@ -135,9 +227,10 @@ export default function AbandonedCartsPage() {
 
       <div className="mail-queue__filters">
         {([
-          ['open', 'Open'],
+          ['open', `Open (${stats.totalCarts})`],
           ['emailed', 'Emailed'],
           ['recovered', 'Recovered'],
+          ['removed', `Removed (${stats.removedCount})`],
           ['all', 'All'],
         ] as const).map(([key, label]) => (
           <button
@@ -170,10 +263,10 @@ export default function AbandonedCartsPage() {
       <div className="mail-queue__list">
         {visible.map((cart) => (
           <article key={cart.id} className="mail-queue__card">
-            <div className="mail-queue__synopsis">
-              <div>
+            <div className="mail-queue__synopsis store-ops__cart-row">
+              <div className="store-ops__cart-who">
                 <div className="mail-queue__id">#{cart.id}</div>
-                <div className="mail-queue__when">{when(cart.touchedAt)}</div>
+                <div className="mail-queue__when">Last active {when(cart.touchedAt)}</div>
                 {cart.clientId ? (
                   <Link
                     className="mail-queue__pet-link"
@@ -211,17 +304,32 @@ export default function AbandonedCartsPage() {
                   className={`mail-queue__badge ${
                     cart.status === 'recovered'
                       ? 'is-go'
-                      : cart.status === 'emailed'
-                        ? 'is-wait'
-                        : 'is-warn'
+                      : cart.status === 'removed'
+                        ? ''
+                        : cart.status === 'emailed'
+                          ? 'is-wait'
+                          : 'is-warn'
                   }`}
+                  style={
+                    cart.status === 'removed'
+                      ? { background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }
+                      : undefined
+                  }
                 >
                   {cart.status === 'recovered'
                     ? `Recovered: order #${cart.recoveredMailOrderId}`
-                    : cart.emailed
-                      ? `Reminder sent${cart.reminderCount > 1 ? ` ×${cart.reminderCount}` : ''}`
-                      : 'Open'}
+                    : cart.status === 'removed'
+                      ? 'Removed'
+                      : cart.emailed
+                        ? `Reminder sent${cart.reminderCount > 1 ? ` ×${cart.reminderCount}` : ''}`
+                        : 'Open'}
                 </span>
+                {cart.status === 'removed' && cart.dismissedAt ? (
+                  <span className="mail-queue__meta">Removed {when(cart.dismissedAt)}</span>
+                ) : null}
+                {cart.status !== 'recovered' && cart.status !== 'removed' && cart.reminderSentAt ? (
+                  <span className="mail-queue__meta">Last emailed {when(cart.reminderSentAt)}</span>
+                ) : null}
               </div>
               <div className="store-ops__row-actions">
                 <div className={`store-ops__amount${cart.status === 'recovered' ? ' is-recovered' : ''}`}>
@@ -234,28 +342,29 @@ export default function AbandonedCartsPage() {
                   >
                     View order
                   </Link>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    disabled={busyId === cart.id}
-                    onClick={() => {
-                      setBusyId(cart.id);
-                      setError(null);
-                      void resendAbandonedCart(practiceId, cart.id)
-                        .then((next) => {
-                          setCarts((rows) => rows.map((row) => (row.id === next.id ? next : row)));
-                          setStats((current) => ({
-                            ...current,
-                            emailedCount: current.emailedCount + (cart.emailed ? 0 : 1),
-                          }));
-                        })
-                        .catch((e) => setError(e instanceof Error ? e.message : 'Could not resend'))
-                        .finally(() => setBusyId(null));
-                    }}
-                  >
-                    Resend email
-                  </button>
+                ) : cart.status === 'removed' ? null : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={busyId === cart.id}
+                      onClick={() => openEmail(cart)}
+                    >
+                      {busyId === cart.id && emailDraft?.cartId !== cart.id
+                        ? 'Opening…'
+                        : cart.emailed
+                          ? 'Resend email'
+                          : 'Send email'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={busyId === cart.id}
+                      onClick={() => removeCart(cart)}
+                    >
+                      Remove
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -267,6 +376,27 @@ export default function AbandonedCartsPage() {
           </p>
         )}
       </div>
+      {emailDraft ? (
+        <ClientEmailComposeModal
+          open
+          title="Send cart reminder"
+          clientId={emailDraft.clientId}
+          clientLabel={emailDraft.customerName?.trim() || emailDraft.to}
+          initialTo={emailDraft.to}
+          initialSubject={emailDraft.subject}
+          initialBodyText={emailDraft.text}
+          initialBodyHtml={emailDraft.messageHtml}
+          brandedShellOnSend
+          onClose={() => setEmailDraft(null)}
+          onAfterSend={async ({ subject, bodyText, bodyHtml }) => {
+            await markCartReminderSent(emailDraft.cartId, {
+              subject,
+              text: bodyText,
+              html: bodyHtml,
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -35,6 +35,8 @@ export type EditVisitFormSnapshot = {
   confirmStatusName: string;
   isComplete: boolean;
   allDay: boolean;
+  /** Omitted when the form does not show the pre-meds toggle. */
+  needsPremeds?: boolean;
 };
 
 export type CommitLinkVisitClientInput = {
@@ -303,6 +305,9 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         ...(typeName ? { appointmentTypeName: typeName } : {}),
         ...(description ? { description } : {}),
         ...(instructions ? { instructions } : {}),
+        ...(input.form.needsPremeds !== undefined
+          ? { needsPremeds: input.form.needsPremeds }
+          : {}),
         /** PATCH on existing visit — not manual booking; skip role type permission gate. */
         bookedViaRouting: true,
       }
@@ -318,6 +323,9 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         ...(confirmStatusName ? { confirmStatusName } : {}),
         isComplete: input.form.isComplete,
         allDay: input.form.allDay,
+        ...(input.form.needsPremeds !== undefined
+          ? { needsPremeds: input.form.needsPremeds }
+          : {}),
         appointmentStart: input.appointmentStart,
         appointmentEnd: input.appointmentEnd,
         /** PATCH on existing visit — not manual booking; skip role type permission gate. */

@@ -37,3 +37,12 @@ export function appointmentShowsNewPatientCardMarker(a: Appointment): boolean {
 
   return false;
 }
+
+/** True when the visit needs pre-meds (staff checkbox, client answer, or the Pre-Meds type). */
+export function appointmentShowsPremedsCardMarker(a: Appointment): boolean {
+  if (isPracticeCalendarBlockAppointment(a)) return false;
+  const row = a as Appointment & Record<string, unknown>;
+  if (truthyApiFlag(row.needsPremeds)) return true;
+  const type = row.appointmentType as { isCalmingPremedType?: unknown } | null | undefined;
+  return truthyApiFlag(type?.isCalmingPremedType);
+}

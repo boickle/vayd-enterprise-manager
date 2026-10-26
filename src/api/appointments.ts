@@ -15,6 +15,26 @@ import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type RangeAppointment = Appointment;
 
+/** A pet's most recent past visit, returned only when that visit needed pre-meds. */
+export type PremedsHistoryVisit = {
+  patientId: number;
+  appointmentId: number;
+  appointmentStart: string;
+  appointmentTypeName: string | null;
+};
+
+export async function fetchPremedsHistory(
+  practiceId: number,
+  patientIds: Array<string | number>
+): Promise<PremedsHistoryVisit[]> {
+  const ids = [...new Set(patientIds.map((id) => String(id).trim()).filter((id) => /^\d+$/.test(id)))];
+  if (!ids.length) return [];
+  const { data } = await http.get<PremedsHistoryVisit[]>('/appointments/premeds-history', {
+    params: { practiceId, patientIds: ids.join(',') },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 /** Normalized confirm/status strings that mean “do not show on practice calendar” (PIMS + presets). */
 const PRACTICE_CALENDAR_CANCELLED_STATUSES = new Set([
   'canceled appointment',
@@ -117,6 +137,8 @@ export type CreateAppointmentPayload = {
   appointmentEnd: string;
   description?: string;
   instructions?: string;
+  /** Pet needs pre-meds — forces the practice pre-meds arrival window (default ±30). */
+  needsPremeds?: boolean;
   equipment?: string;
   medications?: string;
   treatmentId?: number;

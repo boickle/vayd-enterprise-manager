@@ -112,6 +112,8 @@ export type ForwardBookingDispositionFormState = {
   labsTaskTitle: string;
   labsTaskStartLocal: string;
   labsTaskDueLocal: string;
+  /** Forward booking queue row needs pre-meds (not stored on the disposition). */
+  needsPremeds?: boolean;
 };
 
 export function forwardBookingFormStateFromDisposition(

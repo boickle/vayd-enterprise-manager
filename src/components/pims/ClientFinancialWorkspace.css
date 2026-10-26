@@ -178,6 +178,30 @@
   color: #64748b;
 }
 
+.client-fin__where {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.client-fin__where--store {
+  background: #ccfbf1;
+  color: #115e59;
+}
+
+.client-fin__where--visit {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.client-fin__where--direct {
+  background: #e2e8f0;
+  color: #334155;
+}
+
 .client-fin__pane-actions {
   display: flex;
   flex-wrap: wrap;
@@ -606,6 +630,10 @@
 
 .client-fin__invoice tr.client-fin__line--ready td {
   background: #fff;
+}
+
+.client-fin__invoice tr.client-fin__line--mail-wait td {
+  background: #fffbeb;
 }
 
 .client-fin__line-check {
@@ -1776,6 +1804,58 @@
 
 .client-fin__covered-heart {
   font-style: normal;
+}
+
+.client-fin__provider-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.client-fin__provider-none {
+  color: #64748b;
+}
+
+.client-fin__btn-ghost--compact {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.client-fin__credit-lead {
+  margin: 0 0 12px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.client-fin__credit-facts {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.client-fin__credit-facts > div {
+  display: grid;
+  grid-template-columns: minmax(88px, 34%) 1fr;
+  gap: 8px 12px;
+  align-items: baseline;
+}
+
+.client-fin__credit-facts dt {
+  margin: 0;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.client-fin__credit-facts dd {
+  margin: 0;
+  color: #0f172a;
 }
 
 .client-fin__actions .soap-reader-picker {

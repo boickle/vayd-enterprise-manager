@@ -8,6 +8,7 @@ import type {
   ForwardBookingIntervalUnit,
 } from '../api/forwardBooking';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import { appointmentShowsPremedsCardMarker } from './schedulerNewPatientCardMarker';
 import {
   normalizeAppointmentTypeName,
   type AppointmentTypeCatalog,
@@ -582,6 +583,7 @@ export function buildCreateForwardBookingPayloadFromAppointment(
     description: appt.description ?? null,
     instructions: appt.instructions ?? null,
     serviceMinutes: minutes,
+    needsPremeds: appointmentShowsPremedsCardMarker(appt),
     ...(bookingNotes != null ? { bookingNotes } : {}),
   };
 }

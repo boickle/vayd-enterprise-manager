@@ -36,6 +36,35 @@
   align-items: center;
 }
 
+.mail-queue__synopsis.store-ops__cart-row {
+  grid-template-columns:
+    minmax(170px, 1fr)
+    minmax(150px, 1fr)
+    minmax(200px, 1.6fr)
+    minmax(130px, 0.8fr)
+    minmax(120px, auto);
+}
+
+.store-ops__cart-row > * {
+  min-width: 0;
+}
+
+.store-ops__cart-who .mail-queue__pet-link,
+.store-ops__cart-who .mail-queue__meta {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.store-ops__cart-row .mail-queue__badges {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.store-ops__cart-row .store-ops__row-actions .btn {
+  white-space: nowrap;
+}
+
 .store-ops__amount {
   font-size: 22px;
   font-weight: 700;

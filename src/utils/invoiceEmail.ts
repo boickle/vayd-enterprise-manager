@@ -10,6 +10,8 @@ export type InvoiceEmailLine = {
   amount: number;
   /** Pre-discount / list total. Shown struck through when higher than `amount`. */
   listAmount?: number | null;
+  /** Membership fully or partly paid for this line. */
+  membershipBenefit?: boolean;
 };
 
 export type InvoiceEmailPayment = {
@@ -61,7 +63,7 @@ export function invoiceTableHtml(model: InvoiceEmailModel): string {
   const rows = model.lines
     .map(
       (line) => `<tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(line.description)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${line.membershipBenefit ? '❤️ ' : ''}${escapeHtml(line.description)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(line.pet ?? '—')}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${line.qty ?? 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${lineAmountHtml(line)}</td>

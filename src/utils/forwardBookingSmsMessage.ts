@@ -7,6 +7,7 @@ import { fetchDoctorDayEffectiveWindowIsosForAppointment } from './appointmentRo
 import { isFixedTimeTypeName } from './editVisitTimePreview';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
 import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
+import { windowSourceForVisit } from './premedsWindow';
 import { computeHoldSpotReleaseDeadline, formatHoldSpotReleaseDeadlineShort, type HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
 import { applySystemTemplateIfCustom } from './messageTemplateCache';
@@ -251,7 +252,12 @@ export function computedArrivalWindowFromAppointmentType(
 export function appointmentArrivalWindowIsosForSms(
   appt: Pick<
     Appointment,
-    'effectiveWindow' | 'arrivalWindow' | 'appointmentStart' | 'appointmentEnd' | 'appointmentType'
+    | 'effectiveWindow'
+    | 'arrivalWindow'
+    | 'appointmentStart'
+    | 'appointmentEnd'
+    | 'appointmentType'
+    | 'needsPremeds'
   >,
   practiceTz: string,
   appointmentType?: AppointmentTypeWindowFields | null
@@ -260,10 +266,14 @@ export function appointmentArrivalWindowIsosForSms(
   const schedEnd = pickStr(appt.appointmentEnd);
   if (!schedStart) return null;
 
-  const type =
+  const baseType =
     appointmentType ??
     (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ??
     null;
+  const type =
+    (windowSourceForVisit(baseType ?? undefined, appt.needsPremeds) as
+      | AppointmentTypeWindowFields
+      | undefined) ?? null;
 
   const ew = appt.effectiveWindow;
   if (ew?.startIso?.trim() && ew?.endIso?.trim()) {

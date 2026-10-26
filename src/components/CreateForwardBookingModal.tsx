@@ -14,6 +14,8 @@ import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } fro
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import type { Appointment } from '../api/roomLoader';
 import { SchedulerHouseholdPetRow } from './SchedulerHouseholdPetRow';
+import { PremedsCheckbox } from './PremedsCheckbox';
+import { appointmentShowsPremedsCardMarker } from '../utils/schedulerNewPatientCardMarker';
 import {
   enrichRoutingClientPatientsMembership,
   extractActivePatientsFromClientStaffRecord,
@@ -149,6 +151,10 @@ export function CreateForwardBookingModal({
     () => appointments.find((a) => String(a.id) === selectedAppointmentId) ?? null,
     [appointments, selectedAppointmentId]
   );
+  const [needsPremeds, setNeedsPremeds] = useState(false);
+  useEffect(() => {
+    setNeedsPremeds(selectedAppointment ? appointmentShowsPremedsCardMarker(selectedAppointment) : false);
+  }, [selectedAppointment]);
 
   const forwardBookingSourceStartIso = useMemo(() => {
     if (!selectedAppointment || selectedAppointmentId === NO_ASSOCIATED_VISIT) return null;
@@ -485,6 +491,7 @@ export function CreateForwardBookingModal({
         }
         const created = await createForwardBooking({
           ...payload,
+          needsPremeds,
           createdVia: 'manual',
         });
         onCreated(created);
@@ -530,6 +537,7 @@ export function CreateForwardBookingModal({
       }
       const created = await createForwardBooking({
         ...payload,
+        needsPremeds,
         createdVia: 'end_visit',
       });
       onCreated(created);
@@ -662,6 +670,12 @@ export function CreateForwardBookingModal({
                   {patientContext.alerts}
                 </div>
               ) : null}
+              <PremedsCheckbox
+                checked={needsPremeds}
+                onChange={setNeedsPremeds}
+                disabled={busy}
+                emphasizeWhenChecked
+              />
             </div>
           ) : null}
 

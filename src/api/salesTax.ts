@@ -76,6 +76,17 @@ export type SalesTaxReport = {
   tieOut: { salesWithTax: number; received: number; difference: number };
   paymentBasis: { applied: number; taxable: number; exempt: number; tax: number };
   scout: { invoices: number; gross: number; tax: number };
+  stripeBreakdown: SalesTaxStripeRow[];
+  warnings: string[];
+};
+
+export type SalesTaxStripeRow = {
+  kind: 'membership' | 'store_autoship' | 'ecwid' | 'hills_to_home' | 'scout' | 'other';
+  label: string;
+  count: number;
+  amount: number;
+  refunded: number;
+  inSubscriptions: boolean;
 };
 
 export async function fetchSalesTaxReport(start: string, end: string): Promise<SalesTaxReport> {

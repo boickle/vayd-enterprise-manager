@@ -55,6 +55,13 @@ export function clampRefillExpiration(value: string, from: string = todayInput()
   return date > max ? max : date;
 }
 
+/** Shown when a chart date is past the one-year refill limit and gets cut back. */
+export function refillExpirationCapNote(requested: string, from: string = todayInput()): string | null {
+  const date = toDateInput(requested);
+  if (!date || !refillExpirationExceedsMax(date, from)) return null;
+  return `Refills can only run 1 year, so ${displayDate(date)} was set to ${displayDate(maxRefillExpirationInput(from))}.`;
+}
+
 export function refillExpirationExceedsMax(value: string, from: string = todayInput()): boolean {
   const date = toDateInput(value);
   return Boolean(date && date > maxRefillExpirationInput(from));

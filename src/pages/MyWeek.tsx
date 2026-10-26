@@ -2006,6 +2006,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   endIso: h.endIso,
                   effectiveWindow: h.effectiveWindow ?? h.primary?.effectiveWindow,
                   appointmentType: h.primary?.appointmentType ?? null,
+                  needsPremeds: (h.primary as { needsPremeds?: boolean } | undefined)?.needsPremeds,
                   practiceTz: day.timezone,
                 }),
               })),

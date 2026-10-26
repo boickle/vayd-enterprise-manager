@@ -9,6 +9,7 @@ import {
   resolveForwardBookingIntervalFromEntry,
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
+import { PremedsCheckbox } from './PremedsCheckbox';
 import '../pages/Scheduler.css';
 import '../pages/Settings.css';
 
@@ -64,6 +65,7 @@ export function EditForwardBookingModal({
     entry.primaryProvider?.id != null ? String(entry.primaryProvider.id) : '',
   );
   const [bookingNotes, setBookingNotes] = useState(entry.bookingNotes ?? '');
+  const [needsPremeds, setNeedsPremeds] = useState(entry.needsPremeds === true);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -134,6 +136,7 @@ export function EditForwardBookingModal({
         intervalUnit: forwardUnit,
         primaryProviderId: nextProvider,
         bookingNotes: bookingNotes.trim() ? bookingNotes.trim() : null,
+        needsPremeds,
       });
       onSaved(updated);
       onClose();
@@ -268,6 +271,7 @@ export function EditForwardBookingModal({
               style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14 }}
             />
           </label>
+          <PremedsCheckbox checked={needsPremeds} onChange={setNeedsPremeds} disabled={busy} />
         </div>
 
         <div className="scheduler-edit-footer">

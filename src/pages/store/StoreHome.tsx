@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { publicStoreProducts, storeListingImageUrl, type StoreListing } from '../../api/onlineStore';
+import {
+  listingCategoryNames,
+  listingInStoreCategory,
+  publicHiddenStoreCategories,
+  publicStoreProducts,
+  storeListingImageUrl,
+  type StoreListing,
+} from '../../api/onlineStore';
 import './Store.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
@@ -17,18 +24,11 @@ function categoryParent(raw: string | null | undefined): string {
   return categoryParts(raw)[0] || '';
 }
 
-function listingInCategory(listing: StoreListing, selected: string): boolean {
-  const cat = (listing.storeCategory || '').trim();
-  if (!selected) return true;
-  if (cat === selected) return true;
-  return cat.startsWith(`${selected} / `) || cat.startsWith(`${selected}/`);
-}
-
 function listingMatchesQuery(listing: StoreListing, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (listing.name.toLowerCase().includes(q)) return true;
-  if ((listing.storeCategory || '').toLowerCase().includes(q)) return true;
+  if (listingCategoryNames(listing).some((cat) => cat.toLowerCase().includes(q))) return true;
   return listing.variants.some(
     (variant) =>
       variant.name.toLowerCase().includes(q) ||
@@ -42,6 +42,7 @@ export default function StoreHome() {
   const [category, setCategory] = useState(() => searchParams.get('category')?.trim() || '');
   const [browse, setBrowse] = useState<'featured' | 'all'>('featured');
   const [items, setItems] = useState<StoreListing[]>([]);
+  const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const applyCategory = (next: string) => {
@@ -58,6 +59,9 @@ export default function StoreHome() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    void publicHiddenStoreCategories(PRACTICE_ID).then((names) => {
+      if (!cancelled) setHiddenCategories(names);
+    });
     void publicStoreProducts(PRACTICE_ID)
       .then((rows) => {
         if (!cancelled) setItems(rows);
@@ -71,13 +75,18 @@ export default function StoreHome() {
   }, []);
 
   const groups = useMemo(() => {
+    const isHidden = (name: string) =>
+      hiddenCategories.some((h) => name === h || name.startsWith(`${h} / `));
     const parents = new Map<string, Set<string>>();
     for (const item of items) {
-      const parts = categoryParts(item.storeCategory);
-      if (!parts.length) continue;
-      const parent = parts[0];
-      if (!parents.has(parent)) parents.set(parent, new Set());
-      if (parts.length > 1) parents.get(parent)!.add(parts.slice(1).join(' / '));
+      for (const cat of listingCategoryNames(item)) {
+        const parts = categoryParts(cat);
+        if (!parts.length || isHidden(parts.join(' / '))) continue;
+        const parent = parts[0];
+        if (isHidden(parent)) continue;
+        if (!parents.has(parent)) parents.set(parent, new Set());
+        if (parts.length > 1) parents.get(parent)!.add(parts.slice(1).join(' / '));
+      }
     }
     return [...parents.entries()]
       .map(([parent, kids]) => ({
@@ -85,7 +94,7 @@ export default function StoreHome() {
         children: [...kids].sort((a, b) => a.localeCompare(b)),
       }))
       .sort((a, b) => a.parent.localeCompare(b.parent));
-  }, [items]);
+  }, [items, hiddenCategories]);
 
   const selectedParent = categoryParent(category);
   const selectedGroup = groups.find((group) => group.parent === selectedParent);
@@ -95,7 +104,7 @@ export default function StoreHome() {
   const hasFeatured = featured.length > 0;
   const visible = useMemo(() => {
     const matched = items.filter(
-      (item) => listingMatchesQuery(item, q) && listingInCategory(item, category)
+      (item) => listingMatchesQuery(item, q) && listingInStoreCategory(item, category)
     );
     if (q.trim() || category) return matched;
     if (browse === 'featured' && hasFeatured) {

@@ -104,6 +104,8 @@ import { startFreshNewAppointmentRouting } from './utils/routingNewAppointment';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
 import { listMessageTemplates } from './api/messageTemplates';
+import { ensurePracticePremedsWindowLoaded } from './utils/premedsWindow';
+import { currentPracticeId } from './utils/practiceIdFromToken';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
@@ -487,6 +489,7 @@ export default function App() {
     void listMessageTemplates().catch(() => {
       /* local fallback hydrates itself */
     });
+    void ensurePracticePremedsWindowLoaded(currentPracticeId());
   }, [token, isClient]);
 
   // Keep-alive list for employee tabs (home + all page paths)

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router';
 import {
   MAIL_CANCEL_REASON_LABELS,
   createStaffMailOrder,
@@ -11,6 +12,7 @@ import {
   withdrawMailOrder,
   type MailCancelReason,
   type MailOrder,
+  type MailRxAcuity,
 } from '../../api/onlineStore';
 import { VISIT_WORKFLOW_PRACTICE_ID, type VisitInvoiceLine } from '../../api/visitWorkflow';
 import MailOrderPrompt, { type MailOrderPromptResult } from './MailOrderPrompt';
@@ -42,6 +44,36 @@ export function mailStageLabel(order: MailOrder): string {
     default:
       return 'In mail queue';
   }
+}
+
+/** Which part of the mail flow this item is sitting in, for the pill color. */
+export function mailStageTone(order: MailOrder): 'wait' | 'go' | 'done' {
+  if (isMailOrderShipped(order)) return 'done';
+  if (mailStageLabel(order) === 'Waiting on doctor') return 'wait';
+  if (order.clientQuestionPendingAt) return 'wait';
+  return 'go';
+}
+
+/** The one thing the item is waiting on right now, or how it left. */
+export function mailStageDetail(order: MailOrder, itemId?: number | null): string | null {
+  const lines = order.lines || [];
+  const forItem = itemId != null ? lines.filter((l) => l.inventoryItemId === itemId) : [];
+  const scope = forItem.length ? forItem : lines;
+  if (order.status === 'picked_up') return null;
+  if (isMailOrderShipped(order)) {
+    return order.trackingCode ? `Tracking ${order.trackingCode}` : null;
+  }
+  if (scope.some((l) => l.lineStatus === 'rejected')) return 'Doctor declined this item';
+  if (scope.some((l) => l.lineStatus === 'send_back')) return 'Doctor sent it back for changes';
+  const awaiting = scope.find((l) => l.lineStatus === 'awaiting_doctor_approval');
+  if (awaiting) {
+    return awaiting.approvalTaskOpen && awaiting.approvalTaskAssigneeName
+      ? `Approval task with ${awaiting.approvalTaskAssigneeName}`
+      : 'Approval task not sent yet';
+  }
+  if (order.clientQuestionPendingAt) return 'Waiting on the client';
+  if (order.payAfterApproval && order.paymentStatus !== 'paid') return 'Waiting on payment';
+  return null;
 }
 
 function resolvedCancelForLine(
@@ -166,7 +198,12 @@ export function mailOrderWaitsForQueueApproval(order: MailOrder | null | undefin
 export async function approveMailOrderFromInvoice(
   order: MailOrder,
   line: { catalogItemId?: number | null; stockInventoryItemId?: number | null },
-  rx: { refills: number; refillExpiration?: string | null; instructions: string }
+  rx: {
+    refills: number;
+    refillExpiration?: string | null;
+    instructions: string;
+    acuity?: MailRxAcuity | null;
+  }
 ): Promise<boolean> {
   if (mailOrderWaitsForQueueApproval(order)) return false;
   const waiting = (order.lines || []).filter(
@@ -188,6 +225,7 @@ export async function approveMailOrderFromInvoice(
       lineId: row.id,
       refills: rx.refills,
       expiration: rx.refills > 0 ? rx.refillExpiration || null : null,
+      acuity: rx.acuity ?? null,
     })),
     lineScripts: targets.map((row) => ({ lineId: row.id, scriptText: rx.instructions.trim() })),
   });
@@ -390,9 +428,21 @@ export default function MailInvoiceLineCheckbox({
       .finally(() => setBusy(false));
   };
 
+  const fromStore = order?.origin === 'online_store';
+  const stageDetail = order ? mailStageDetail(order, line.catalogItemId) : null;
+
   return (
     <>
       <div className="mail-mode" onClick={(e) => e.stopPropagation()}>
+        {fromStore && order ? (
+          <Link
+            className="mail-mode__source"
+            to={`/schedule/mail-orders?orderId=${encodeURIComponent(String(order.id))}`}
+            title="Open this order in the mail queue"
+          >
+            Mail order · Online store #{order.id}
+          </Link>
+        ) : (
         <div className="mail-mode__toggle" role="group" aria-label="How this item is filled">
           <button
             type="button"
@@ -426,9 +476,15 @@ export default function MailInvoiceLineCheckbox({
             {on && Number(line.qty) > 1 ? ` (${Number(line.qty)})` : ''}
           </button>
         </div>
+        )}
         {order ? (
           <div className={`mail-mode__status${pending ? ' is-cancel-pending' : ''}`}>
-            <span className="mail-mode__stage">{mailStageLabel(order)}</span>
+            <span className={`mail-mode__stage is-${mailStageTone(order)}`}>
+              {mailStageLabel(order)}
+            </span>
+            {stageDetail && !pending ? (
+              <span className="mail-mode__detail">{stageDetail}</span>
+            ) : null}
             {pending ? (
               <span>
                 Cancellation requested

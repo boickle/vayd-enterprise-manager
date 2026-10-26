@@ -75,6 +75,14 @@ export function salesTaxSections(report: SalesTaxReport): ReportSection[] {
       rows: [[s.orders, s.subtotal, s.discount, s.shipping, s.tax, s.total, s.autoshipOrders, s.autoshipSubtotal]],
     });
   }
+  if ((report.stripeBreakdown ?? []).length > 0) {
+    sections.push({
+      title: 'Stripe charges by source (for reference)',
+      note: 'Only memberships are added to sales; store and Hill\'s to Home charges are already in eVet.',
+      columns: ['Source', 'Charges', 'Amount', 'Refunded', 'In sales'],
+      rows: report.stripeBreakdown.map((s) => [s.label, s.count, s.amount, s.refunded, s.inSubscriptions ? 'Yes' : 'No']),
+    });
+  }
   sections.push({
     title: 'Payments received (tie-out)',
     note: 'Payments by the date received. Differences from sales are timing, unpaid balances, and credits.',
@@ -93,6 +101,13 @@ export function salesTaxSections(report: SalesTaxReport): ReportSection[] {
     columns: ['Payments applied', 'Exempt', 'Taxable', 'Tax'],
     rows: [[report.paymentBasis.applied, report.paymentBasis.exempt, report.paymentBasis.taxable, report.paymentBasis.tax]],
   });
+  if ((report.warnings ?? []).length > 0) {
+    sections.unshift({
+      title: 'Warnings: this report is incomplete',
+      columns: ['Warning'],
+      rows: report.warnings.map((w) => [w]),
+    });
+  }
   return sections;
 }
 
@@ -107,7 +122,7 @@ const money = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
 function isMoneyColumn(name: string): boolean {
-  return !/^(line|count|times|invoices|orders|auto-ship orders|type|category|source|reason|description|payment type|counted as income)$/i.test(name);
+  return !/^(line|count|times|invoices|orders|auto-ship orders|type|category|source|reason|description|payment type|counted as income|charges|in sales|warning)$/i.test(name);
 }
 
 export async function downloadSalesTaxPdf(report: SalesTaxReport): Promise<void> {
@@ -232,6 +247,8 @@ export async function downloadSalesTaxExcel(report: SalesTaxReport): Promise<voi
     if (s.title.startsWith('Use tax')) return sheetNames[3];
     if (s.title.startsWith('Online store')) return sheetNames[4];
     if (s.title.startsWith('Payments')) return sheetNames[5];
+    if (s.title.startsWith('Stripe')) return 'Stripe';
+    if (s.title.startsWith('Warnings')) return 'Warnings';
     return sheetNames[6];
   });
   await writeXlsxFile(sections.map(toSheet), {

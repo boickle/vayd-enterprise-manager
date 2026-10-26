@@ -1070,6 +1070,7 @@ export default function DoctorDayVisual({
             endIso: h.endIso,
             effectiveWindow: h.primary?.effectiveWindow,
             appointmentType: (h.primary as any)?.appointmentType ?? null,
+            needsPremeds: (h.primary as any)?.needsPremeds,
             practiceTz: practiceTimeZone,
           }),
         } as any;

@@ -71,6 +71,21 @@
   border-radius: 8px;
 }
 
+.mail-queue__self-approve {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #ccfbf1;
+  border-radius: 10px;
+  background: #f0fdfa;
+}
+
+.mail-queue__error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
 .mail-queue__task-status {
   margin: 0 0 8px;
   font-size: 13px;

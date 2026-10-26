@@ -629,6 +629,10 @@
   cursor: pointer;
   font-weight: 600;
 }
+.vayd-store button.primary:disabled, .vayd-store .primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .vayd-store button.ghost {
   background: #ecfff8;
   border: 1px solid #0f766e;
@@ -815,9 +819,22 @@
   width: auto;
   margin-top: 2px;
 }
+.vayd-store__place-err {
+  margin: 14px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #9b1c1c;
+  font-size: 14px;
+  line-height: 1.4;
+}
 .vayd-store__place {
   display: block;
   width: 100%;
+  margin-top: 10px;
+}
+.vayd-store__autoship-note--checkout + .vayd-store__place {
   margin-top: 22px;
 }
 .vayd-store__cart-table {

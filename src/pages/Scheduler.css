@@ -1630,6 +1630,46 @@ label.scheduler-go-date-heading {
   z-index: 1;
 }
 
+/**
+ * Needs pre-meds: violet/white striped bar down the left edge + violet dashed
+ * inner outline. Uses ::before so it stacks with the new-patient hatch (::after).
+ */
+.scheduler-event--premeds {
+  outline: 2px dashed #7c3aed;
+  outline-offset: -3px;
+  padding-left: 10px;
+}
+
+.scheduler-event--premeds::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 7px;
+  pointer-events: none;
+  border-radius: inherit;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    180deg,
+    #7c3aed 0px,
+    #7c3aed 5px,
+    #ffffff 5px,
+    #ffffff 8px
+  );
+}
+
+.scheduler-event--premeds > *:not(.scheduler-appt-card-icons-tr) {
+  position: relative;
+  z-index: 1;
+}
+
+.scheduler-event--premeds > .scheduler-appt-card-icons-tr {
+  z-index: 2;
+}
+
 .scheduler-event--calendar-only-draggable {
   cursor: grab;
   touch-action: none;

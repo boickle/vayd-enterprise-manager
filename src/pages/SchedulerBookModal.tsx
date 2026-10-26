@@ -2,6 +2,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
+import { PremedsCheckbox } from '../components/PremedsCheckbox';
+import {
+  PREMEDS_FORWARD_BOOKING_REASON,
+  premedsHistoryNotice,
+  premedsHistoryVisitReason,
+  usePremedsHistory,
+} from '../utils/premedsHistory';
 import {
   createAppointment,
   patchAppointment,
@@ -174,6 +181,8 @@ type RoutingBookVisitEdit = {
   appointmentTypeId: string;
   description: string;
   instructions: string;
+  /** Pet needs pre-meds — forces the pre-meds arrival window. */
+  needsPremeds: boolean;
   /** Routing preview — book without linking a patient. */
   isNoPatient?: boolean;
 };
@@ -304,6 +313,14 @@ export type SchedulerBookPrefill = {
     appointmentEnd: string;
   };
   defaultInstructions?: string;
+  /** Pre-check "Needs pre-meds" (routing search had it checked). */
+  needsPremeds?: boolean;
+  /** `needsPremeds` came from history, not the user — pre-check per pet from history instead. */
+  premedsAutoChecked?: boolean;
+  /** Routing had pre-meds history but the user unchecked it — don't pre-check from history. */
+  premedsDeclined?: boolean;
+  /** Source forward booking was flagged pre-meds — pre-check its pets; warn when unchecked. */
+  premedsHistory?: boolean;
   allDay?: boolean;
   additionalEmployeeIds?: number[];
   /** Forward booking list → routing book — server + POST …/complete attribution. */
@@ -680,6 +697,7 @@ export function SchedulerBookModal({
 
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [needsPremeds, setNeedsPremeds] = useState(false);
   const [alternateAddressText, setAlternateAddressText] = useState('');
   const [alternateAddressFields, setAlternateAddressFields] = useState<AddressFields>(() => ({
     ...EMPTY_ADDRESS_FIELDS,
@@ -1088,6 +1106,53 @@ export function SchedulerBookModal({
     });
   }, [clientPets, prefill?.excludePatientIds, routingBookKeepPatientIds]);
 
+  const premedsHistoryLookupIds = useMemo(
+    () => [...petChoices.map((p) => String(p.id)), ...routingBookKeepPatientIds],
+    [petChoices, routingBookKeepPatientIds]
+  );
+  const premedsHistoryByPatient = usePremedsHistory(
+    practiceId,
+    premedsHistoryLookupIds,
+    open && !isRescheduleBook
+  );
+  /** Why a pet's "Needs pre-meds" should start checked: flagged forward booking or last visit. */
+  const premedsReasonsFor = useCallback(
+    (patientId: string | null | undefined): string[] => {
+      const id = patientId?.trim();
+      if (!id || isRescheduleBook) return [];
+      const reasons: string[] = [];
+      if (prefill?.premedsHistory) {
+        const fbIds = [
+          ...(prefill.preferredPatientIds ?? []).map((v) => String(v).trim()),
+          prefill.preferredPatientId?.trim() ?? '',
+        ].filter(Boolean);
+        if (fbIds.length === 0 || fbIds.includes(id)) reasons.push(PREMEDS_FORWARD_BOOKING_REASON);
+      }
+      const visit = premedsHistoryByPatient.get(id);
+      if (visit) reasons.push(premedsHistoryVisitReason(visit));
+      return reasons;
+    },
+    [
+      isRescheduleBook,
+      prefill?.premedsHistory,
+      prefill?.preferredPatientIds,
+      prefill?.preferredPatientId,
+      premedsHistoryByPatient,
+    ]
+  );
+  /**
+   * Starting "Needs pre-meds" for a pet: a deliberate routing choice applies to every pet; a
+   * routing uncheck despite history stays unchecked; otherwise pets with history start checked.
+   */
+  const defaultPremedsFor = useCallback(
+    (patientId: string | null | undefined): boolean => {
+      if (prefill?.needsPremeds === true && prefill?.premedsAutoChecked !== true) return true;
+      if (prefill?.premedsDeclined === true) return false;
+      return premedsReasonsFor(patientId).length > 0;
+    },
+    [prefill?.needsPremeds, prefill?.premedsAutoChecked, prefill?.premedsDeclined, premedsReasonsFor]
+  );
+
   const patientAlertsById = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of clientPets) {
@@ -1300,6 +1365,7 @@ export function SchedulerBookModal({
       setDescription(prefill?.defaultDescription?.trim() ?? '');
     }
     setInstructions(prefill?.defaultInstructions?.trim() ?? '');
+    setNeedsPremeds(prefill?.needsPremeds === true);
     setAlternateAddressText(prefill?.routingAlternateAddress?.trim() ?? '');
     setAlternateAddressFields(
       addressFieldsFromFreeText(prefill?.routingAlternateAddress?.trim() ?? '')
@@ -1432,6 +1498,20 @@ export function SchedulerBookModal({
     };
   }, [bookSessionKey, open, slot, prefill?.clientId, prefill?.clientLabel]);
 
+  /** Single-pet booking: pets already pre-checked from history this session (uncheck sticks). */
+  const premedsPrecheckedPetsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    premedsPrecheckedPetsRef.current = new Set();
+  }, [bookSessionKey, open]);
+  useEffect(() => {
+    if (!open || prefill?.routingPreviewBook || isRescheduleBook) return;
+    const pid = selectedPatientId?.trim();
+    if (!pid || premedsPrecheckedPetsRef.current.has(pid)) return;
+    if (!defaultPremedsFor(pid)) return;
+    premedsPrecheckedPetsRef.current.add(pid);
+    setNeedsPremeds(true);
+  }, [open, prefill?.routingPreviewBook, isRescheduleBook, selectedPatientId, defaultPremedsFor]);
+
   useEffect(() => {
     if (!prefill?.preferredPatientId?.trim()) return;
     const want = prefill.preferredPatientId.trim();
@@ -1463,6 +1543,7 @@ export function SchedulerBookModal({
     })();
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
     const defaultStaffNotes = prefill.defaultInstructions?.trim() ?? '';
+    const defaultPremeds = prefill.needsPremeds === true;
 
     if (!clientReady) {
       setRoutingBookVisitEdits([
@@ -1474,6 +1555,7 @@ export function SchedulerBookModal({
           appointmentTypeId: defaultTypeForNoPatient,
           description: defaultDesc,
           instructions: defaultStaffNotes,
+          needsPremeds: defaultPremeds,
         },
       ]);
       return;
@@ -1510,7 +1592,7 @@ export function SchedulerBookModal({
       routingPreviewNameById.set(String(p.id), p.name);
     }
 
-    const patientRows = petChoices.map((p) => {
+    const patientRows: RoutingBookVisitEdit[] = petChoices.map((p) => {
       const patientId = String(p.id);
       return {
         patientId,
@@ -1519,6 +1601,7 @@ export function SchedulerBookModal({
         appointmentTypeId: defaultType,
         description: defaultDesc,
         instructions: defaultStaffNotes,
+        needsPremeds: defaultPremedsFor(patientId),
       };
     });
     for (const patientId of preferredPatientIdSet) {
@@ -1530,6 +1613,7 @@ export function SchedulerBookModal({
         appointmentTypeId: defaultType,
         description: defaultDesc,
         instructions: defaultStaffNotes,
+        needsPremeds: defaultPremedsFor(patientId),
       });
     }
 
@@ -1547,6 +1631,7 @@ export function SchedulerBookModal({
           existing.appointmentTypeId = String(patch.appointmentTypeId);
           existing.description = patch.description;
           existing.instructions = patch.instructions;
+          existing.needsPremeds = patch.needsPremeds === true || defaultPremedsFor(existing.patientId);
         } else {
           patientRows.push({
             patientId: patch.patientId,
@@ -1555,6 +1640,7 @@ export function SchedulerBookModal({
             appointmentTypeId: String(patch.appointmentTypeId),
             description: patch.description,
             instructions: patch.instructions,
+            needsPremeds: patch.needsPremeds === true || defaultPremedsFor(patch.patientId),
           });
         }
       }
@@ -1572,6 +1658,7 @@ export function SchedulerBookModal({
       appointmentTypeId: defaultTypeForNoPatient,
       description: defaultDesc,
       instructions: defaultStaffNotes,
+      needsPremeds: defaultPremeds,
     };
     setRoutingBookVisitEdits([...patientRows, noPatientRow]);
   }, [
@@ -1581,12 +1668,14 @@ export function SchedulerBookModal({
     prefill?.appointmentTypeId,
     prefill?.defaultDescription,
     prefill?.defaultInstructions,
+    prefill?.needsPremeds,
     prefill?.preferredPatientId,
     prefill?.preferredPatientIds,
     prefill?.routingPreviewPatients,
     prefill?.forwardBookingVisitCompletes,
     prefill?.appointmentRequestVisitPatches,
     petChoices,
+    defaultPremedsFor,
     routingBookFullAppointmentTypes,
     noPatientBookAppointmentTypes,
     resolveDefaultBookTypeId,
@@ -2453,6 +2542,7 @@ export function SchedulerBookModal({
                 staffNotesForNewBook(
                   appendExploreAlternativeCreatedStaffNote(rawInstructions, originalWhen)
                 ) || undefined,
+              ...(needsPremeds ? { needsPremeds: true } : {}),
               ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
               ...joinWaitlistCreateExtras,
             });
@@ -2480,6 +2570,7 @@ export function SchedulerBookModal({
           }
           await patchAppointment(rescheduleId, {
             ...patchBody,
+            ...(!perVisitReschedule ? { needsPremeds } : {}),
             appointmentTypeId: Number(resolvedAppointmentTypeId),
             description: rawDescription || null,
             instructions:
@@ -2515,6 +2606,7 @@ export function SchedulerBookModal({
             ...(bookAllDay ? { allDay: true } : {}),
             description: descriptionForNewBook(visit.description) || undefined,
             instructions: staffNotesForNewBook(visit.instructions) || undefined,
+            needsPremeds: visit.needsPremeds,
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
             ...forwardBookingCreateExtras,
             ...joinWaitlistCreateExtras,
@@ -2557,6 +2649,7 @@ export function SchedulerBookModal({
           ...(bookAllDay ? { allDay: true } : {}),
           description: descriptionForNewBook(description) || undefined,
           instructions: staffNotesForNewBook(instructions) || undefined,
+          needsPremeds,
           ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           ...forwardBookingCreateExtras,
           ...joinWaitlistCreateExtras,
@@ -3364,6 +3457,16 @@ export function SchedulerBookModal({
                       A patient is required for this appointment type.
                     </p>
                   ) : null}
+                  {!allDayBookSession ? (
+                    <PremedsCheckbox
+                      checked={needsPremeds}
+                      onChange={setNeedsPremeds}
+                      notice={premedsHistoryNotice(
+                        premedsReasonsFor(selectedPatientId),
+                        needsPremeds
+                      )}
+                    />
+                  ) : null}
                 </Field>
               </div>
 
@@ -3935,6 +4038,27 @@ export function SchedulerBookModal({
                           <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
                             No routing appointment types allow booking without a patient.
                           </p>
+                        ) : null}
+                        {!visit.isNoPatient ? (
+                          <PremedsCheckbox
+                            checked={visit.needsPremeds}
+                            disabled={!visit.selected}
+                            notice={
+                              visit.selected
+                                ? premedsHistoryNotice(
+                                    premedsReasonsFor(visit.patientId),
+                                    visit.needsPremeds
+                                  )
+                                : null
+                            }
+                            onChange={(next) =>
+                              setRoutingBookVisitEdits((rows) =>
+                                rows.map((row, i) =>
+                                  i === idx ? { ...row, needsPremeds: next } : row
+                                )
+                              )
+                            }
+                          />
                         ) : null}
                       </Field>
                       <label className="scheduler-book-reschedule-visit-desc">

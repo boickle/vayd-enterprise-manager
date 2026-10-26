@@ -166,6 +166,8 @@ export type StoreListing = {
   listingId: string;
   name: string;
   storeCategory: string | null;
+  /** Every category the listing shows under; the first is storeCategory. */
+  storeCategories?: string[];
   description: string | null;
   imageInventoryItemId: number | null;
   imageProductId?: number | null;
@@ -241,6 +243,7 @@ export type MailOrderLine = {
   /** Refills the approving doctor wants the filler to put on this Rx. */
   authorizedRefills?: number | null;
   authorizedRefillExpiration?: string | null;
+  authorizedAcuity?: MailRxAcuity | null;
   refillsRemaining?: number | null;
   refillExpiresAt?: string | null;
   scriptText?: string | null;
@@ -400,6 +403,10 @@ export type StoreCoupon = {
   membershipOnly: boolean;
   active: boolean;
   freeShipping: boolean;
+  minSubtotal?: number | null;
+  maxUses?: number | null;
+  oncePerCustomer?: boolean;
+  usedCount?: number;
 };
 
 export function storeProductImageUrl(
@@ -554,9 +561,13 @@ export async function listOnlineStoreItems(practiceId: number) {
   return data ?? [];
 }
 
-export async function listOnlineStoreListings(practiceId: number) {
+export async function listOnlineStoreListings(
+  practiceId: number,
+  opts?: { includeRemoved?: boolean }
+) {
   const { data } = await http.get<StoreAdminListing[]>(
-    `/practice/${practiceId}/online-store/listings`
+    `/practice/${practiceId}/online-store/listings`,
+    opts?.includeRemoved ? { params: { includeRemoved: '1' } } : undefined
   );
   return data ?? [];
 }
@@ -650,6 +661,7 @@ export async function patchOnlineStoreListing(
     description?: string | null;
     name?: string;
     storeCategory?: string | null;
+    storeCategories?: string[];
     saleType?: StoreSaleType | null;
     saleValue?: number | null;
     saleEndsAt?: string | null;
@@ -723,6 +735,10 @@ export async function saveStoreCoupon(practiceId: number, body: Partial<StoreCou
     body
   );
   return data;
+}
+
+export async function deleteStoreCoupon(practiceId: number, id: number) {
+  await http.delete(`/practice/${practiceId}/online-store/coupons/${id}`);
 }
 
 export async function getMailOrder(practiceId: number, id: number) {
@@ -911,7 +927,7 @@ export async function respondMailApproval(
     approvalBasis?: 'standard' | 'chart' | 'refills';
     taskId?: number;
     lineIds?: number[];
-    lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>;
+    lineRefills?: MailLineRxDecision[];
     lineScripts?: Array<{ lineId: number; scriptText: string }>;
   },
 ) {
@@ -922,15 +938,26 @@ export async function respondMailApproval(
   return data;
 }
 
+export type MailRxAcuity = 'acute' | 'chronic';
+
+/** What the approver puts on the Rx for one mail order line. */
+export type MailLineRxDecision = {
+  lineId: number;
+  refills: number;
+  expiration?: string | null;
+  acuity?: MailRxAcuity | null;
+};
+
 export async function overrideMailLineApproval(
   practiceId: number,
   orderId: number,
   lineId: number,
   reason: string,
+  rx?: { refills: number; expiration?: string | null; acuity: MailRxAcuity },
 ) {
   const { data } = await http.post<MailOrder>(
     `/practice/${practiceId}/mail-orders/${orderId}/lines/${lineId}/override-approval`,
-    { reason },
+    { reason, ...(rx ?? {}) },
   );
   return data;
 }
@@ -1178,8 +1205,9 @@ export type AbandonedCart = {
   recoveredAt: string | null;
   recoveredMailOrderId: number | null;
   recoveredTotal: number | null;
-  status: 'open' | 'emailed' | 'recovered';
+  status: 'open' | 'emailed' | 'recovered' | 'removed';
   emailed: boolean;
+  dismissedAt?: string | null;
 };
 
 export type AbandonedCartsPayload = {
@@ -1189,6 +1217,7 @@ export type AbandonedCartsPayload = {
     recoveredCount: number;
     recoveredSales: number;
     emailedCount: number;
+    removedCount?: number;
     automaticRecoveryEnabled: boolean;
   };
 };
@@ -1200,9 +1229,37 @@ export async function listAbandonedCarts(practiceId: number) {
   return data;
 }
 
-export async function resendAbandonedCart(practiceId: number, id: number) {
+export type AbandonedCartEmailDraft = {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  messageHtml?: string;
+};
+
+export async function previewAbandonedCartEmail(practiceId: number, id: number) {
+  const { data } = await http.get<AbandonedCartEmailDraft>(
+    `/practice/${practiceId}/online-store/abandoned-carts/${id}/email`,
+  );
+  return data;
+}
+
+export async function resendAbandonedCart(
+  practiceId: number,
+  id: number,
+  email: { subject: string; text: string; html?: string; markOnly?: boolean },
+) {
   const { data } = await http.post<AbandonedCart>(
     `/practice/${practiceId}/online-store/abandoned-carts/${id}/resend`,
+    email,
+  );
+  return data;
+}
+
+export async function dismissAbandonedCart(practiceId: number, id: number) {
+  const { data } = await http.post<AbandonedCart>(
+    `/practice/${practiceId}/online-store/abandoned-carts/${id}/dismiss`,
+    {},
   );
   return data;
 }
@@ -1212,6 +1269,7 @@ export type StoreCategory = {
   name: string;
   sortOrder: number;
   source: 'ecwid' | 'manual';
+  hidden?: boolean;
   productCount: number;
 };
 
@@ -1233,7 +1291,7 @@ export async function createStoreCategory(practiceId: number, name: string) {
 export async function patchStoreCategory(
   practiceId: number,
   id: number,
-  body: { name?: string; sortOrder?: number },
+  body: { name?: string; sortOrder?: number; hidden?: boolean },
 ) {
   const { data } = await http.patch<StoreCategory>(
     `/practice/${practiceId}/online-store/categories/${id}`,
@@ -1242,8 +1300,24 @@ export async function patchStoreCategory(
   return data;
 }
 
-export async function deleteStoreCategory(practiceId: number, id: number) {
-  await http.delete(`/practice/${practiceId}/online-store/categories/${id}`);
+/** `moveTo`: category to move its products into, or '' to just take them out. */
+export async function deleteStoreCategory(practiceId: number, id: number, moveTo?: string) {
+  const { data } = await http.delete<{ ok: boolean; moved: number }>(
+    `/practice/${practiceId}/online-store/categories/${id}`,
+    { params: moveTo === undefined ? undefined : { moveTo } },
+  );
+  return data;
+}
+
+export async function publicHiddenStoreCategories(practiceId: number): Promise<string[]> {
+  try {
+    const { data } = await publicStoreClient.get<string[]>(`/public/store/categories/hidden`, {
+      params: { practiceId },
+    });
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function syncStoreCategoriesFromEcwid(practiceId: number) {
@@ -1251,6 +1325,27 @@ export async function syncStoreCategoriesFromEcwid(practiceId: number) {
     `/practice/${practiceId}/online-store/categories/sync-ecwid`,
   );
   return data;
+}
+
+/** All of a listing's categories, falling back to storeCategory for older responses. */
+export function listingCategoryNames(
+  listing: Pick<StoreListing, 'storeCategory' | 'storeCategories'>
+): string[] {
+  if (listing.storeCategories?.length) return listing.storeCategories;
+  const one = listing.storeCategory?.trim();
+  return one ? [one] : [];
+}
+
+/** True when any of the listing's categories is the selected one or sits under it. */
+export function listingInStoreCategory(
+  listing: Pick<StoreListing, 'storeCategory' | 'storeCategories'>,
+  selected: string
+): boolean {
+  const want = selected.trim();
+  if (!want) return true;
+  return listingCategoryNames(listing).some(
+    (cat) => cat === want || cat.startsWith(`${want} / `) || cat.startsWith(`${want}/`)
+  );
 }
 
 function asStoreListingArray(data: unknown): StoreListing[] {
@@ -1267,7 +1362,7 @@ function asStoreListingArray(data: unknown): StoreListing[] {
 function listingSearchHaystack(listing: StoreListing): string {
   return [
     listing.name,
-    listing.storeCategory,
+    ...listingCategoryNames(listing),
     ...(listing.variants ?? []).flatMap((v) => [v.name, v.code, v.optionLabel, v.strength, v.pack]),
   ]
     .filter(Boolean)
@@ -1405,14 +1500,15 @@ export async function publicStoreCartActivity(
 export async function publicPreviewCoupon(
   practiceId: number,
   code: string,
-  subtotal: number
+  subtotal: number,
+  opts?: { clientId?: number | null; member?: boolean }
 ) {
   const { data } = await http.post<{
     code: string;
     name: string;
     discount: number;
     freeShipping: boolean;
-  }>(`/public/store/coupon`, { practiceId, code, subtotal });
+  }>(`/public/store/coupon`, { practiceId, code, subtotal, ...opts });
   return data;
 }
 

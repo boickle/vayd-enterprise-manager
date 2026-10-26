@@ -1283,3 +1283,71 @@ input[type='number']::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+
+.premeds-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5b21b6;
+  cursor: pointer;
+}
+
+.premeds-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #7c3aed;
+}
+
+.premeds-checkbox-hint {
+  font-weight: 400;
+}
+
+.premeds-checkbox-notice {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #78350f;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.premeds-checkbox-notice--info {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e3a8a;
+}
+
+.premeds-checkbox-wrap--emphasized {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #c4b5fd;
+  background: #ede9fe;
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.12);
+}
+
+.premeds-checkbox-wrap--emphasized .premeds-checkbox {
+  margin-top: 0;
+  color: #4c1d95;
+}
+
+/** Small "Pre-meds" pill shown beside visit info (calendar, forward booking rows). */
+.premeds-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+  border: 1px solid #c4b5fd;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}

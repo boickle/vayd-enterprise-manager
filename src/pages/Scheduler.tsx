@@ -175,6 +175,7 @@ import { resolveArrivalWindowIsos } from '../utils/appointmentRoutedArrivalWindo
 import {
   buildEditVisitTimePreview,
   computeEditVisitTypePreviewWindowWarning,
+  editVisitPreviewChangesPremeds,
   effectiveWindowForTypePreview,
   type EditVisitTimePreview,
 } from '../utils/editVisitTimePreview';
@@ -209,7 +210,11 @@ import {
   buildTypeFillMap,
   colorsForAppointment,
 } from '../utils/schedulerAppointmentColors';
-import { appointmentShowsNewPatientCardMarker } from '../utils/schedulerNewPatientCardMarker';
+import {
+  appointmentShowsNewPatientCardMarker,
+  appointmentShowsPremedsCardMarker,
+} from '../utils/schedulerNewPatientCardMarker';
+import { windowSourceForVisit } from '../utils/premedsWindow';
 import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
@@ -3023,9 +3028,12 @@ function buildRoutingPreviewSyntheticAppointment(
   const effectiveWindow =
     optArrivalWindow?.windowStartIso && optArrivalWindow?.windowEndIso
       ? { startIso: optArrivalWindow.windowStartIso, endIso: optArrivalWindow.windowEndIso }
-      : effectiveWindowForScheduledStart(startIso, appointmentType, PRACTICE_TZ, {
-          appointmentEndIso: endIso,
-        });
+      : effectiveWindowForScheduledStart(
+          startIso,
+          windowSourceForVisit(appointmentType, preview.needsPremeds),
+          PRACTICE_TZ,
+          { appointmentEndIso: endIso }
+        );
 
   return {
     id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
@@ -3052,6 +3060,7 @@ function buildRoutingPreviewSyntheticAppointment(
         }
       : {}),
     ...(effectiveWindow ? { effectiveWindow } : {}),
+    ...(preview.needsPremeds ? { needsPremeds: true } : {}),
   } as Appointment;
 }
 
@@ -5927,14 +5936,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             editPreviewScoreCompare?.arrivalWindowAfter
           )
         : null);
+    const premedsChanged = editVisitPreviewChangesPremeds(editTimePreview);
     return base.map((a) => {
       if (a.id !== editTimePreview.appointmentId) return a;
+      const windowAfter =
+        arrivalAfter ??
+        (premedsChanged
+          ? effectiveWindowForTypePreview(
+              editTimePreview,
+              a.appointmentType as AppointmentType | undefined,
+              PRACTICE_TZ
+            )
+          : null);
       let merged: Appointment = {
         ...a,
         appointmentStart: editTimePreview.appointmentStart,
         appointmentEnd: editTimePreview.appointmentEnd,
         ...(draftType ? { appointmentType: draftType } : {}),
-        ...(arrivalAfter ? { effectiveWindow: arrivalAfter } : {}),
+        ...(windowAfter ? { effectiveWindow: windowAfter } : {}),
+        ...(typeof editTimePreview.needsPremeds === 'boolean'
+          ? { needsPremeds: editTimePreview.needsPremeds }
+          : {}),
       };
       if (
         editAppt &&
@@ -8101,6 +8123,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : {}),
       ...(forwardBookingCreatedVia ? { forwardBookingCreatedVia } : {}),
       ...(routingStatsTypeKey ? { routingStatsTypeKey } : {}),
+      ...(routingPreview.needsPremeds === true ||
+      (isReschedule && rescheduleSourceAppt && appointmentShowsPremedsCardMarker(rescheduleSourceAppt))
+        ? { needsPremeds: true }
+        : {}),
+      ...(routingPreview.premedsAutoChecked === true && !isReschedule
+        ? { premedsAutoChecked: true }
+        : {}),
+      ...(routingPreview.premedsDeclined === true ? { premedsDeclined: true } : {}),
+      ...(routingPreview.premedsHistory === true ? { premedsHistory: true } : {}),
       ...(isScheduleOptimizeCalendarPreview(routingPreview)
         ? {
             scheduleOptimizeMove: true,
@@ -10345,6 +10376,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       originalAppointmentStart: appt.appointmentStart,
       originalAppointmentEnd: appt.appointmentEnd,
       ...(typeName ? { originalAppointmentTypeName: typeName } : {}),
+      originalNeedsPremeds: appt.needsPremeds === true,
     };
   }, []);
 
@@ -10363,10 +10395,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       opts: { kind: 'time' | 'type'; appointmentTypeId?: number }
     ) => {
       if (!editAppt) return;
+      const draftNeedsPremeds = editVisitFormSnapshotRef.current?.snapshot?.needsPremeds;
       const preview = buildEditVisitTimePreview(editAppt.id, startUtc, endUtc, PRACTICE_TZ, {
         kind: opts.kind,
         ...editPreviewTypeFields(opts.appointmentTypeId),
         ...editPreviewOriginalFields(editAppt),
+        ...(typeof draftNeedsPremeds === 'boolean' ? { needsPremeds: draftNeedsPremeds } : {}),
       });
       if (!preview) return;
       setEditVisitHighlightIds(new Set());
@@ -10426,12 +10460,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               ...(editTimePreview.originalAppointmentTypeName
                 ? { originalAppointmentTypeName: editTimePreview.originalAppointmentTypeName }
                 : {}),
+              originalNeedsPremeds: editTimePreview.originalNeedsPremeds === true,
             }
           : editPreviewOriginalFields(editAppt);
+      const draftNeedsPremeds =
+        editVisitFormSnapshotRef.current?.snapshot?.needsPremeds ?? editTimePreview?.needsPremeds;
       const preview = buildEditVisitTimePreview(editAppt.id, startUtc, endUtc, PRACTICE_TZ, {
         kind,
         ...editPreviewTypeFields(typeIdForPreview),
         ...preservedOriginals,
+        ...(typeof draftNeedsPremeds === 'boolean' ? { needsPremeds: draftNeedsPremeds } : {}),
       });
       if (!preview) return;
       setEditTimePreview(preview);
@@ -10439,7 +10477,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       driveSoftRefreshRef.current = true;
       setDriveRefreshNonce((n) => n + 1);
     },
-    [editAppt, editPreviewTypeFields, editPreviewOriginalFields, editTimePreview?.appointmentTypeId, editTimePreview?.originalAppointmentStart, editTimePreview?.originalAppointmentEnd, editTimePreview?.originalAppointmentTypeName]
+    [editAppt, editPreviewTypeFields, editPreviewOriginalFields, editTimePreview?.appointmentTypeId, editTimePreview?.originalAppointmentStart, editTimePreview?.originalAppointmentEnd, editTimePreview?.originalAppointmentTypeName, editTimePreview?.originalNeedsPremeds, editTimePreview?.needsPremeds]
   );
 
   const dismissEditPlacementPreview = useCallback(() => {
@@ -10784,14 +10822,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             providers,
             appointmentTypes: typeList,
             calendarProvider: selectedPrimaryProvider,
+            newNeedsPremeds: editTimePreview.needsPremeds,
           })
         : fetchEditVisitTimeScoreCompare({
             appt: editAppt,
             newAppointmentStartIso: editTimePreview.appointmentStart,
             newAppointmentEndIso: editTimePreview.appointmentEnd,
             practiceDateKey,
+            practiceTz: PRACTICE_TZ,
             providers,
             calendarProvider: selectedPrimaryProvider,
+            newNeedsPremeds: editTimePreview.needsPremeds,
           });
 
     void scorePromise
@@ -10816,6 +10857,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     editTimePreview?.appointmentStart,
     editTimePreview?.appointmentEnd,
     editTimePreview?.practiceDateKey,
+    editTimePreview?.needsPremeds,
     editAppt,
     providers,
     typeList,
@@ -12515,6 +12557,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
                           const showNewPatientMarker = appointmentShowsNewPatientCardMarker(appt);
+                          const showPremedsMarker = appointmentShowsPremedsCardMarker(appt);
                           const member = appointmentPatientMember(appt);
                           const apptDriveHint =
                             showByDriveTime && resolvedPrimaryProviderId.trim()
@@ -12668,12 +12711,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               key={appt.id}
                               data-appt-id={appt.id != null ? String(appt.id) : undefined}
                               data-new-patient-marker={showNewPatientMarker ? '1' : undefined}
+                              data-premeds-marker={showPremedsMarker ? '1' : undefined}
                               data-edit-time-preview={isEditTimePreviewVisit ? '1' : undefined}
                               data-edit-visit-active={isEditVisitActiveSlot ? '1' : undefined}
                               data-reschedule-source={isRescheduleSourceVisit ? '1' : undefined}
                               className={[
                                 'scheduler-event',
                                 showNewPatientMarker ? 'scheduler-event--new-patient' : '',
+                                showPremedsMarker ? 'scheduler-event--premeds' : '',
                                 isCompactEvent ? 'scheduler-event--compact' : '',
                                 isEditTimePreviewVisit ? 'scheduler-edit-time-preview-slot' : '',
                                 isRescheduleSourceVisit ? 'scheduler-reschedule-source-slot' : '',
@@ -12687,11 +12732,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               ]
                                 .filter(Boolean)
                                 .join(' ')}
-                              aria-label={
-                                showNewPatientMarker
-                                  ? `${schedulerEventAppointmentTitle(appt)} (new patient)`
-                                  : schedulerEventAppointmentTitle(appt)
-                              }
+                              aria-label={[
+                                schedulerEventAppointmentTitle(appt),
+                                showNewPatientMarker ? '(new patient)' : '',
+                                showPremedsMarker ? '(needs pre-meds)' : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' ')}
                               style={{
                                 top: eventTop,
                                 height: h,
@@ -13565,8 +13612,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               practiceTz={PRACTICE_TZ}
               typeLabel={
                 editTimePreview.kind === 'type'
-                  ? typeList.find((t) => t.id === editTimePreview.appointmentTypeId)?.name ||
-                    typeList.find((t) => t.id === editTimePreview.appointmentTypeId)?.prettyName ||
+                  ? typeList.find((t) => t.id === editTimePreview.appointmentTypeId)?.prettyName ||
+                    typeList.find((t) => t.id === editTimePreview.appointmentTypeId)?.name ||
                     null
                   : null
               }

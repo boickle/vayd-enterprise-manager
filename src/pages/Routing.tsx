@@ -128,6 +128,7 @@ import {
 import {
   dismissRoutingForwardBookingWorkspace,
   forwardBookingRequiresScopeChoice,
+  forwardBookingIntentNeedsPremeds,
   forwardBookingScopeTargets,
   markForwardBookingIntentAppliedToRoutingForm,
   readRoutingForwardBookingIntent,
@@ -225,6 +226,13 @@ import {
 } from '../utils/schedulerCalendarHandoff';
 import './Routing.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import { PremedsCheckbox } from '../components/PremedsCheckbox';
+import {
+  PREMEDS_FORWARD_BOOKING_REASON,
+  premedsHistoryNotice,
+  premedsHistoryVisitReason,
+  usePremedsHistory,
+} from '../utils/premedsHistory';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -262,6 +270,9 @@ type RouteRequest = {
     clientId?: string;
     /** Sent to POST /routing/v2 when Calculate Time type is selected; omit for default ±60 window. */
     appointmentTypeId?: number;
+    /** Search with the practice pre-meds arrival window instead of the type's window. */
+    needsPremeds?: boolean;
+    practiceId?: number;
   };
 };
 
@@ -2294,6 +2305,15 @@ export default function Routing({
     [hasActiveForwardBookingWorkspace]
   );
 
+  /** Forward booking was flagged pre-meds — warn (not auto-check); the pet may not need them now. */
+  const forwardBookingPremedsHistory = useMemo(() => {
+    if (!activeForwardBookingIntent) return false;
+    const fresh = readRoutingForwardBookingIntent() ?? activeForwardBookingIntent;
+    return forwardBookingIntentNeedsPremeds(
+      forwardBookingScope ? { ...fresh, householdScope: forwardBookingScope } : fresh
+    );
+  }, [activeForwardBookingIntent, forwardBookingScope]);
+
   const lockForwardBookingClient = hasActiveForwardBookingWorkspace;
 
   const showForwardBookingScopeField = useMemo(
@@ -2343,6 +2363,48 @@ export default function Routing({
     () => hasActiveRescheduleIntent && rescheduleRequiresScopeChoice(activeRescheduleIntent),
     [hasActiveRescheduleIntent, activeRescheduleIntent]
   );
+
+  const premedsHistoryPatientIds = useMemo(() => {
+    if (selectedRoutingPatientIds.length > 0) return selectedRoutingPatientIds;
+    if (routingClientPatients.length === 1) return [routingClientPatients[0].id];
+    return [];
+  }, [selectedRoutingPatientIds, routingClientPatients]);
+  const premedsHistoryByPatient = usePremedsHistory(ROUTING_PRACTICE_ID, premedsHistoryPatientIds);
+  const routingPremedsReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (forwardBookingPremedsHistory) reasons.push(PREMEDS_FORWARD_BOOKING_REASON);
+    for (const id of premedsHistoryPatientIds) {
+      const visit = premedsHistoryByPatient.get(String(id));
+      if (!visit) continue;
+      const name = routingClientPatients.find((p) => String(p.id) === String(id))?.name;
+      reasons.push(premedsHistoryVisitReason(visit, name));
+    }
+    return reasons;
+  }, [
+    forwardBookingPremedsHistory,
+    premedsHistoryPatientIds,
+    premedsHistoryByPatient,
+    routingClientPatients,
+  ]);
+  const routingPremedsReasonKey = routingPremedsReasons.join('|');
+  /** Reasons already applied as a pre-check, so unchecking sticks until the reasons change. */
+  const premedsAutoCheckedKeyRef = useRef('');
+  const [premedsAutoChecked, setPremedsAutoChecked] = useState(false);
+  useEffect(() => {
+    if (!routingPremedsReasonKey) {
+      premedsAutoCheckedKeyRef.current = '';
+      setPremedsAutoChecked(false);
+      return;
+    }
+    // Moving an existing visit keeps that visit's own pre-meds setting.
+    if (hasActiveRescheduleIntent) return;
+    if (premedsAutoCheckedKeyRef.current === routingPremedsReasonKey) return;
+    premedsAutoCheckedKeyRef.current = routingPremedsReasonKey;
+    setPremedsAutoChecked(true);
+    setForm((f) =>
+      f.newAppt.needsPremeds === true ? f : { ...f, newAppt: { ...f.newAppt, needsPremeds: true } }
+    );
+  }, [routingPremedsReasonKey, hasActiveRescheduleIntent]);
 
   const routingRescheduleHighlightClass = useCallback(
     (field: RoutingPrefillFlashField | 'scope') => {
@@ -2672,6 +2734,7 @@ export default function Routing({
           ...f.newAppt,
           serviceMinutes:
             intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+          needsPremeds: intent.needsPremeds === true,
         },
       }));
 
@@ -2895,6 +2958,7 @@ export default function Routing({
           ...f.newAppt,
           serviceMinutes:
             intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+          needsPremeds: forwardBookingIntentNeedsPremeds(intent),
         },
       }));
 
@@ -3062,6 +3126,7 @@ export default function Routing({
           ...f.newAppt,
           serviceMinutes:
             intent.serviceMinutes > 0 ? intent.serviceMinutes : Math.max(15, f.newAppt.serviceMinutes || 45),
+          needsPremeds: (intent.pets ?? []).some((p) => p.usesCalmingMedications === true),
           ...(alternateAddress
             ? {
                 address: alternateAddress,
@@ -3603,6 +3668,12 @@ export default function Routing({
       ...(routingApptStatsTypeKey.trim()
         ? { routingStatsTypeKey: routingApptStatsTypeKey.trim() }
         : {}),
+      ...(form.newAppt.needsPremeds ? { needsPremeds: true } : {}),
+      ...(form.newAppt.needsPremeds && premedsAutoChecked ? { premedsAutoChecked: true } : {}),
+      ...(!form.newAppt.needsPremeds && routingPremedsReasons.length > 0
+        ? { premedsDeclined: true }
+        : {}),
+      ...(forwardBookingPremedsHistory ? { premedsHistory: true } : {}),
       clientDisplayLabel: form.newAppt.clientId?.trim() ? clientQuery.trim() || undefined : undefined,
       routingRequestId,
       candidateIndex,
@@ -5053,6 +5124,11 @@ export default function Routing({
     if (routingTypeId != null) {
       newApptPayload = { ...newApptPayload, appointmentTypeId: routingTypeId };
     }
+    if (newApptPayload.needsPremeds) {
+      newApptPayload = { ...newApptPayload, practiceId: ROUTING_PRACTICE_ID };
+    } else {
+      delete newApptPayload.needsPremeds;
+    }
 
     let cachedZone = addressZoneRef.current;
     const lookupAddr = (newApptPayload.address ?? '').trim();
@@ -6300,6 +6376,17 @@ export default function Routing({
                 />
               </label>
             </div>
+            <PremedsCheckbox
+              checked={form.newAppt.needsPremeds === true}
+              onChange={(next) => {
+                setPremedsAutoChecked(false);
+                onNewApptChange('needsPremeds', next);
+              }}
+              notice={premedsHistoryNotice(
+                routingPremedsReasons,
+                form.newAppt.needsPremeds === true
+              )}
+            />
             {(form.doctorId.trim() || asapAllDoctorSearch || multiDoctor) &&
             routingAppointmentTypes.length === 0 ? (
               <div className="muted routing-route-hint">

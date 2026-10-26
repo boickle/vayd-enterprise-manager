@@ -38,6 +38,29 @@ import {
   mailTypeAutoshipOnly,
   mailTypeShowOnOnlineStore,
 } from '../../utils/mailShippingTypes';
+
+/** Shipping first, then pickup, keeping the order within each kind. */
+function shipFirst(options: StoreFulfillmentOption[]): StoreFulfillmentOption[] {
+  return [
+    ...options.filter((row) => row.kind === 'shipping'),
+    ...options.filter((row) => row.kind !== 'shipping'),
+  ];
+}
+
+/** Ship starts selected. An all-autoship cart uses the free auto-ship option. */
+function defaultFulfillmentId(
+  options: StoreFulfillmentOption[],
+  allAutoship: boolean,
+): string {
+  const autoshipShip = options.find(
+    (row) => row.kind === 'shipping' && mailTypeAutoshipOnly(row),
+  );
+  const regularShip = options.find(
+    (row) => row.kind === 'shipping' && !mailTypeAutoshipOnly(row),
+  );
+  if (allAutoship && autoshipShip) return autoshipShip.id;
+  return regularShip?.id || autoshipShip?.id || options[0]?.id || '';
+}
 import {
   AUTOSHIP_FREQS,
   autoshipCadencePhrase,
@@ -275,11 +298,15 @@ export default function StoreCartPage() {
   };
 
   useEffect(() => {
+    const cartAllAutoship =
+      lines.length > 0 && lines.every((line) => Boolean(line.autoshipFrequency));
     void publicStoreFulfillment(PRACTICE_ID).then((rows) => {
-      const visible = rows.filter((row) => mailTypeShowOnOnlineStore(row));
+      const visible = shipFirst(rows.filter((row) => mailTypeShowOnOnlineStore(row)));
       setOptions(visible);
       setFulfillmentId((current) =>
-        visible.some((row) => row.id === current) ? current : visible[0]?.id || ''
+        visible.some((row) => row.id === current)
+          ? current
+          : defaultFulfillmentId(visible, cartAllAutoship),
       );
     });
     void publicStoreTax(PRACTICE_ID)
@@ -315,6 +342,9 @@ export default function StoreCartPage() {
       if (!info) return;
       const onFile = onFileShipAddress(info as Record<string, unknown>);
       setOnFileAddress(onFile);
+      if (onFile?.lines.length) {
+        setShipAddressConfirmed((current) => (current === '' ? 'yes' : current));
+      }
       setShip((prev) => ({
         ...prev,
         customerName:
@@ -462,12 +492,8 @@ export default function StoreCartPage() {
   }, [allAutoship, autoshipOption, fulfillmentId, selectedFulfillment]);
 
   const hasOnFileShip = Boolean(onFileAddress?.lines.length);
-  const shipReady = pickup
-    ? true
-    : hasOnFileShip
-      ? shipAddressConfirmed === 'yes' ||
-        (shipAddressConfirmed === 'no' && shipAddressComplete(ship))
-      : shipAddressComplete(ship);
+  const addressChosen = !hasOnFileShip || shipAddressConfirmed === 'yes' || shipAddressConfirmed === 'no';
+  const shipReady = pickup || (addressChosen && shipAddressComplete(ship));
   const askUpdateMailing =
     loggedIn &&
     !pickup &&
@@ -475,14 +501,20 @@ export default function StoreCartPage() {
     (shipAddressConfirmed === 'no' || !hasOnFileShip);
   const mailingUpdateReady =
     !askUpdateMailing || updateMailingOnFile === 'yes' || updateMailingOnFile === 'no';
-  const canPlace =
-    lines.length > 0 &&
-    !needsLogin &&
-    !petsMissing &&
-    Boolean(ship.customerName.trim()) &&
-    Boolean(ship.email.trim()) &&
-    shipReady &&
-    mailingUpdateReady;
+  const placeBlocker = !lines.length
+    ? 'Your cart is empty.'
+    : needsLogin
+      ? 'Log in to order prescription or auto-ship items.'
+      : petsMissing
+        ? 'Choose which pet each auto-ship or prescription item is for.'
+        : !ship.customerName.trim() || !ship.email.trim()
+          ? 'Enter the name and email for this order.'
+          : !shipReady
+            ? 'Add a mailing address before placing this order.'
+            : !mailingUpdateReady
+              ? 'Choose whether to save this as the mailing address on file.'
+              : null;
+  const canPlace = placeBlocker == null;
 
   return (
     <div className="vayd-store__cart">
@@ -781,7 +813,21 @@ export default function StoreCartPage() {
           <section>
             <h2>Fulfillment</h2>
             <div className="vayd-store__chips">
-              {options
+              {allAutoship && autoshipOption ? (
+                <button
+                  type="button"
+                  className={`vayd-store__chip${
+                    fulfillmentId === autoshipOption.id ||
+                    (!pickup && fulfillment != null && mailTypeAutoshipOnly(fulfillment))
+                      ? ' is-on'
+                      : ''
+                  }`}
+                  onClick={() => setFulfillmentId(autoshipOption.id)}
+                >
+                  Ship
+                </button>
+              ) : null}
+              {shipFirst(options)
                 .filter((option) => {
                   if (mailTypeAutoshipOnly(option)) return allAutoship && option.kind === 'pickup';
                   if (allAutoship && option.kind === 'shipping' && !mailTypeAutoshipAllowed(option)) {
@@ -799,20 +845,6 @@ export default function StoreCartPage() {
                     {option.label}
                   </button>
                 ))}
-              {allAutoship && autoshipOption ? (
-                <button
-                  type="button"
-                  className={`vayd-store__chip${
-                    fulfillmentId === autoshipOption.id ||
-                    (!pickup && fulfillment != null && mailTypeAutoshipOnly(fulfillment))
-                      ? ' is-on'
-                      : ''
-                  }`}
-                  onClick={() => setFulfillmentId(autoshipOption.id)}
-                >
-                  Ship
-                </button>
-              ) : null}
             </div>
             {pickup ? (
               <div className="vayd-store__autoship-note">
@@ -1057,7 +1089,10 @@ export default function StoreCartPage() {
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    void publicPreviewCoupon(PRACTICE_ID, coupon, subtotal)
+                    void publicPreviewCoupon(PRACTICE_ID, coupon, subtotal, {
+                      clientId,
+                      member: hasMemberPricing,
+                    })
                       .then((p) => {
                         setCouponOff(p.discount);
                         setCouponFreeShip(Boolean(p.freeShipping));
@@ -1133,17 +1168,21 @@ export default function StoreCartPage() {
             {petsMissing ? (
               <p className="vayd-store__err">Choose which pet each auto-ship or prescription item is for.</p>
             ) : null}
-            {err ? <p className="vayd-store__err">{err}</p> : null}
             {hasAutoship ? (
               <p className="vayd-store__autoship-note vayd-store__autoship-note--checkout">
                 {autoshipPlaceOrderNote(lines)}
               </p>
             ) : null}
+            {err ? <p className="vayd-store__place-err">{err}</p> : null}
             <button
               type="button"
               className="primary vayd-store__place"
-              disabled={busy || !canPlace}
+              disabled={busy}
               onClick={() => {
+                if (placeBlocker) {
+                  setErr(placeBlocker);
+                  return;
+                }
                 setBusy(true);
                 setErr(null);
                 void (async () => {
