@@ -128,16 +128,6 @@ export type ProductionIncentiveReport = {
   }>;
 };
 
-export type SendProductionIncentiveReportBody = {
-  granularity: ProductionIncentiveGranularity;
-  /** Any date inside the period being reported. */
-  date: string;
-  employeeIds: number[];
-  mode: 'individual' | 'combined';
-  additionalRecipients?: string[];
-  notes?: string;
-};
-
 export async function fetchProductionIncentiveSettings(): Promise<ProductionIncentiveSettings> {
   const { data } = await http.get('/analytics/production-incentive/settings');
   return data;
@@ -178,13 +168,6 @@ export async function fetchProductionIncentiveReport(params: {
   end: string;
 }): Promise<ProductionIncentiveReport> {
   const { data } = await http.get('/analytics/production-incentive/report', { params });
-  return data;
-}
-
-export async function sendProductionIncentiveReport(
-  body: SendProductionIncentiveReportBody
-): Promise<{ sent: Array<{ to: string[]; subject: string }>; skipped: string[] }> {
-  const { data } = await http.post('/analytics/production-incentive/report/send', body);
   return data;
 }
 

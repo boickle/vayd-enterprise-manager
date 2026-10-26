@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
   Alert,
@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -37,12 +36,12 @@ import {
   describePayoutSchedule,
   fetchProductionIncentiveReport,
   fetchProductionIncentiveSettings,
-  sendProductionIncentiveReport,
   type ProductionIncentiveEvaluation,
   type ProductionIncentiveGranularity,
   type ProductionIncentiveReport,
   type ProductionIncentiveSettings,
 } from '../api/productionIncentive';
+import { downloadProductionIncentiveReportPdf } from '../utils/productionIncentivePdf';
 
 const TREND_PERIODS = 6;
 /** Keeps the payout-period trend to about two years of data. */
@@ -251,7 +250,7 @@ export default function ProductionIncentiveAnalyticsPage() {
             disabled={!report?.doctors.length || !selectedPeriod}
             onClick={() => setSendOpen(true)}
           >
-            Send report
+            Download report
           </Button>
         </CardContent>
       </Card>
@@ -494,11 +493,10 @@ export default function ProductionIncentiveAnalyticsPage() {
       ) : null}
 
       {sendOpen && report && selectedPeriod && (
-        <SendReportDialog
+        <DownloadReportDialog
           report={report}
           granularity={granularity}
           periodLabel={selectedPeriod.label}
-          periodDate={selectedPeriod.start}
           onClose={() => setSendOpen(false)}
         />
       )}
@@ -506,179 +504,112 @@ export default function ProductionIncentiveAnalyticsPage() {
   );
 }
 
-function SendReportDialog({
+function DownloadReportDialog({
   report,
   granularity,
   periodLabel,
-  periodDate,
   onClose,
 }: {
   report: ProductionIncentiveReport;
   granularity: ProductionIncentiveGranularity;
   periodLabel: string;
-  periodDate: string;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(report.doctors.map((d) => d.employeeId))
+  const [choice, setChoice] = useState<string>(
+    report.doctors.length > 1 ? 'all' : String(report.doctors[0]?.employeeId ?? '')
   );
-  const [mode, setMode] = useState<'individual' | 'combined'>('individual');
-  const [recipientsRaw, setRecipientsRaw] = useState('');
   const [notes, setNotes] = useState('');
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
 
-  const additionalRecipients = useMemo(
-    () =>
-      recipientsRaw
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [recipientsRaw]
-  );
-  const invalidEmails = additionalRecipients.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  const missingEmail = report.doctors.filter((d) => selected.has(d.employeeId) && !d.email);
-
-  const toggle = (id: number) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const canSend =
-    selected.size > 0 &&
-    invalidEmails.length === 0 &&
-    (mode === 'individual' || additionalRecipients.length > 0) &&
-    !sending;
-
-  const handleSend = useCallback(async () => {
-    setSending(true);
+  const handleDownload = () => {
     setError(null);
+    const selectedIdx = report.periods.length - 1;
+    const period = report.periods[selectedIdx];
+    const payoutPeriod = report.payoutPeriod;
+    const doctors = (
+      choice === 'all'
+        ? report.doctors
+        : report.doctors.filter((d) => String(d.employeeId) === choice)
+    ).map((d) => ({
+      name: d.name,
+      goal: d.goal,
+      evaluation: d.periods[selectedIdx],
+      payout: d.payout,
+    }));
+    if (!period || !payoutPeriod || !doctors.length || doctors.some((d) => !d.evaluation)) {
+      setError('Select a doctor to download.');
+      return;
+    }
     try {
-      const res = await sendProductionIncentiveReport({
-        granularity,
-        date: periodDate,
-        employeeIds: [...selected],
-        mode,
-        additionalRecipients,
+      const filename = downloadProductionIncentiveReportPdf({
+        period,
+        payoutPeriod,
+        granularityLabel: GRANULARITIES.find((g) => g.value === granularity)?.label ?? granularity,
+        doctors,
+        generatedOn: report.today,
         notes: notes.trim() || undefined,
       });
-      const parts = [`Sent ${res.sent.length} email${res.sent.length === 1 ? '' : 's'}.`];
-      if (res.skipped.length) parts.push(`Skipped (no email on file): ${res.skipped.join(', ')}.`);
-      setResult(parts.join(' '));
+      setResult(`Downloaded ${filename}. Email it from your own mail app.`);
     } catch (e) {
-      setError(extractErr(e));
-    } finally {
-      setSending(false);
+      setError(e instanceof Error ? e.message : 'Could not create the PDF.');
     }
-  }, [additionalRecipients, granularity, mode, notes, periodDate, selected]);
+  };
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Send production incentive report – {periodLabel}</DialogTitle>
+      <DialogTitle>Download production incentive report – {periodLabel}</DialogTitle>
       <DialogContent dividers>
-        {result ? (
-          <Alert severity="success">{result}</Alert>
-        ) : (
-          <>
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Doctors
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', mb: 2 }}>
-              {report.doctors.map((d) => (
-                <FormControlLabel
-                  key={d.employeeId}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={selected.has(d.employeeId)}
-                      onChange={() => toggle(d.employeeId)}
-                    />
-                  }
-                  label={
-                    <span>
-                      {d.name}{' '}
-                      <Typography component="span" variant="caption" color="text.secondary">
-                        {d.email ?? 'no email on file'}
-                      </Typography>
-                    </span>
-                  }
-                />
-              ))}
-            </Box>
-
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Delivery
-            </Typography>
-            <RadioGroup
-              value={mode}
-              onChange={(e) => setMode(e.target.value as 'individual' | 'combined')}
-              sx={{ mb: 2 }}
-            >
-              <FormControlLabel
-                value="individual"
-                control={<Radio size="small" />}
-                label="One email per doctor with only their results (sent to the doctor and anyone listed below)"
-              />
-              <FormControlLabel
-                value="combined"
-                control={<Radio size="small" />}
-                label="One email with all selected doctors (sent only to the recipients below)"
-              />
-            </RadioGroup>
-
-            <TextField
-              label={mode === 'combined' ? 'Recipients' : 'Additional recipients (optional)'}
-              placeholder="team@vetatyourdoor.com, manager@vetatyourdoor.com"
-              fullWidth
-              size="small"
-              value={recipientsRaw}
-              onChange={(e) => setRecipientsRaw(e.target.value)}
-              error={invalidEmails.length > 0}
-              helperText={
-                invalidEmails.length
-                  ? `Invalid: ${invalidEmails.join(', ')}`
-                  : 'Separate multiple addresses with commas.'
-              }
-              sx={{ mb: 2 }}
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          Choose one doctor, or all doctors in a single PDF. The file downloads to your computer so
+          you can email it yourself.
+        </Typography>
+        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+          Doctor
+        </Typography>
+        <RadioGroup value={choice} onChange={(e) => setChoice(e.target.value)} sx={{ mb: 2 }}>
+          {report.doctors.length > 1 && (
+            <FormControlLabel
+              value="all"
+              control={<Radio size="small" />}
+              label="All doctors (one PDF)"
             />
-            <TextField
-              label="Notes"
-              placeholder="Great month, team! Here's where we landed…"
-              fullWidth
-              multiline
-              minRows={4}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              inputProps={{ maxLength: 5000 }}
+          )}
+          {report.doctors.map((d) => (
+            <FormControlLabel
+              key={d.employeeId}
+              value={String(d.employeeId)}
+              control={<Radio size="small" />}
+              label={d.name}
             />
-
-            {mode === 'individual' &&
-              missingEmail.length > 0 &&
-              additionalRecipients.length === 0 && (
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  No email on file for {missingEmail.map((d) => d.name).join(', ')}; they will be
-                  skipped unless you add recipients.
-                </Alert>
-              )}
-            {error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {error}
-              </Alert>
-            )}
-          </>
+          ))}
+        </RadioGroup>
+        <TextField
+          label="Notes (optional)"
+          placeholder="Included at the top of the PDF"
+          fullWidth
+          multiline
+          minRows={3}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          inputProps={{ maxLength: 5000 }}
+        />
+        {result && (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            {result}
+          </Alert>
+        )}
+        {error && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>{result ? 'Close' : 'Cancel'}</Button>
-        {!result && (
-          <Button variant="contained" disabled={!canSend} onClick={() => void handleSend()}>
-            {sending ? 'Sending…' : 'Send'}
-          </Button>
-        )}
+        <Button onClick={onClose}>Close</Button>
+        <Button variant="contained" disabled={!choice} onClick={handleDownload}>
+          Download PDF
+        </Button>
       </DialogActions>
     </Dialog>
   );
