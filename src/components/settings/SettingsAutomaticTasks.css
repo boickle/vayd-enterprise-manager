@@ -285,3 +285,58 @@
   background: var(--pill);
   font-size: 12px;
 }
+
+.auto-tasks__builtin-copy {
+  margin: 0;
+  padding: 0 16px 14px 62px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.auto-tasks__builtin {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.auto-tasks__builtin-title {
+  margin: 8px 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.auto-tasks__builtin-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auto-tasks__builtin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auto-tasks__builtin-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.auto-tasks__builtin-list strong {
+  font-size: 14px;
+}
+
+.auto-tasks__builtin-list span {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}

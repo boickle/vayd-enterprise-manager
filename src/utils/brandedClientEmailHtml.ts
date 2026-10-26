@@ -7,13 +7,16 @@ export function brandedClientEmailLogoUrl(): string {
   return `${base}/final_thick_lines_cropped.jpeg`;
 }
 
-export function wrapBrandedClientEmailHtml(bodyHtml: string, brandName = 'Vet At Your Door'): string {
+export function brandedClientEmailLogoBlock(brandName = 'Vet At Your Door'): string {
   const logoUrl = brandedClientEmailLogoUrl();
-  const logo = logoUrl
-    ? `<div style="text-align: center; margin-bottom: 28px;">
+  if (!logoUrl) return '';
+  return `<div style="text-align: center; margin-bottom: 28px;">
   <img src="${logoUrl}" alt="${brandName}" style="max-width: 180px; width: auto; height: auto; display: block; margin: 0 auto;" />
-</div>`
-    : '';
+</div>`;
+}
+
+export function wrapBrandedClientEmailHtml(bodyHtml: string, brandName = 'Vet At Your Door'): string {
+  const logo = brandedClientEmailLogoBlock(brandName);
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>

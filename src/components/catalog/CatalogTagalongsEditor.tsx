@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
+import { apiErrorMessage } from '../../api/http';
 import {
   createCatalogTagalong,
   deleteCatalogTagalong,
@@ -29,9 +30,23 @@ function searchableId(item: SearchableItem): number | null {
       ? item.procedure?.id
       : item.itemType === 'lab'
         ? item.lab?.id
-        : item.inventoryItem?.id;
+        : item.inventoryItem?.id ?? (item as { id?: number }).id;
   const id = Number(raw);
   return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function pickFromRule(row: CatalogTagalong): SearchableItem {
+  const id = row.addItemId;
+  const type = row.addItemType === 'procedure' || row.addItemType === 'lab' ? row.addItemType : 'inventory';
+  return {
+    itemType: type,
+    name: row.addItemName || `Item #${id}`,
+    code: row.addItemCode ?? undefined,
+    price: Number(row.addItemPrice) || 0,
+    inventoryItem: type === 'inventory' ? { id } : undefined,
+    procedure: type === 'procedure' ? { id } : undefined,
+    lab: type === 'lab' ? { id } : undefined,
+  };
 }
 
 export default function CatalogTagalongsEditor({
@@ -80,7 +95,7 @@ export default function CatalogTagalongsEditor({
     let canceled = false;
     setSearching(true);
     const t = window.setTimeout(() => {
-      void searchItems({ practiceId, q, limit: 12 })
+      void searchItems({ practiceId, q, code: q, limit: 20 })
         .then((list) => {
           if (!canceled) {
             setHits(
@@ -116,7 +131,10 @@ export default function CatalogTagalongsEditor({
         : picked?.itemType === 'inventory'
           ? 'inventory'
           : null;
-    if (!addId || !addItemType) return;
+    if (!addId || !addItemType) {
+      setError('Search and pick the catalog item this rule should add.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -135,9 +153,11 @@ export default function CatalogTagalongsEditor({
       setPicked(null);
       setQuery('');
       setHits([]);
+      setMinQty(maxQty.trim() === '' ? String((Number(minQty) || 1) + 1) : String(Number(maxQty) + 1));
+      setMaxQty('');
       await reload();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not save tagalong');
+      setError(apiErrorMessage(e) || 'Could not save tagalong');
     } finally {
       setSaving(false);
     }
@@ -234,6 +254,24 @@ export default function CatalogTagalongsEditor({
                     }}
                   >
                     Remove
+                  </button>{' '}
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      setPicked(pickFromRule(row));
+                      setQuery('');
+                      setHits([]);
+                      setMinQty(row.maxQty != null ? String(Number(row.maxQty) + 1) : String(Number(row.minQty) + 1));
+                      setMaxQty('');
+                      setAddQty(String(row.addQty || 1));
+                      setAddQtyMode(row.addQtyMode || 'fixed');
+                      setTaxMode(row.taxMode || 'after_tax');
+                      setIncludeInOnlineStore(row.includeInOnlineStore !== false);
+                      setError(null);
+                    }}
+                  >
+                    Another range
                   </button>
                 </td>
               </tr>
@@ -265,9 +303,12 @@ export default function CatalogTagalongsEditor({
                 className="settings-input"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search rebate SKU, fee, syringe…"
+                placeholder="Search rebate SKU, fee, syringe (name or code)…"
               />
               {searching ? <p className="settings-muted">Searching…</p> : null}
+              {!searching && query.trim().length >= 2 && hits.length === 0 ? (
+                <p className="settings-muted">No catalog items matched “{query.trim()}”.</p>
+              ) : null}
               {hits.length > 0 ? (
                 <div className="inv-stock-link__results">
                   {hits.map((hit) => (
@@ -339,10 +380,17 @@ export default function CatalogTagalongsEditor({
             type="button"
             className="btn primary"
             disabled={saving || !picked}
+            title={!picked ? 'Search and pick the catalog item to add' : undefined}
             onClick={() => void addRule()}
           >
             {saving ? 'Saving…' : 'Add tagalong'}
           </button>
+          {!picked ? (
+            <span className="settings-muted">
+              Search and pick an item first
+              {rows.length ? ', or use Another range on a row above' : ''}.
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

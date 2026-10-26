@@ -26,6 +26,13 @@
 
 .catalog-tagalongs__search {
   grid-column: 1 / -1;
+  position: relative;
+}
+
+.catalog-tagalongs__search .inv-stock-link__results {
+  position: relative;
+  z-index: 2;
+  max-height: 260px;
 }
 
 .catalog-tagalongs__actions {

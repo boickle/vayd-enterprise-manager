@@ -4,6 +4,8 @@ import { listMyAutoship, patchMyAutoship, type StoreAutoship } from '../../api/o
 import type { PatientPrescription } from '../../api/visitWorkflow';
 import { AUTOSHIP_FREQS, autoshipCadencePhrase, formatAutoshipFrequency } from '../store/storeCartState';
 import { Icon, PortalModal } from './PortalPrimitives';
+import AutoshipCardPanel from '../store/AutoshipCardPanel';
+import { listMyAutoshipCards, setMyAutoshipCard } from '../../api/autoshipCard';
 import { fmtDayLong, type PetWithWellness } from './portalShared';
 
 function isoPlusDays(days: number): string {
@@ -59,6 +61,7 @@ export default function AutoshipManageModal({
   const [pauseUntil, setPauseUntil] = useState('');
   const [showPause, setShowPause] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [showCard, setShowCard] = useState(false);
 
   const petDbId = pet.dbId && Number.isFinite(Number(pet.dbId)) ? Number(pet.dbId) : null;
 
@@ -278,6 +281,23 @@ export default function AutoshipManageModal({
           </span>
         </div>
       </div>
+
+      {sub.stripeSubscriptionId ? (
+        showCard ? (
+          <AutoshipCardPanel
+            load={() => listMyAutoshipCards(practiceId, sub.id)}
+            save={(pm) => setMyAutoshipCard(practiceId, sub.id, pm)}
+            name=""
+            buttonClass="pp-btn pp-btn--primary pp-btn--sm"
+            secondaryButtonClass="pp-btn pp-btn--ghost pp-btn--sm"
+            onSaved={(text) => onToast?.(text)}
+          />
+        ) : (
+          <button type="button" className="pp-link-btn" onClick={() => setShowCard(true)}>
+            Update the card for this auto-ship
+          </button>
+        )
+      ) : null}
 
       <div className="pp-autoship-actions">
         {sub.paused ? (

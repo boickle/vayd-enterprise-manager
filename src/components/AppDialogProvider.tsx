@@ -4,18 +4,26 @@ import { Ban, FileText, Receipt } from 'lucide-react';
 import {
   registerAppDialogHandler,
   type AppDialogRequest,
+  type AccountCreditDialogResult,
   type DeclineHowResult,
 } from '../utils/appDialog';
 import './AppDialog.css';
 
 type Queued = {
   req: AppDialogRequest;
-  resolve: (value: boolean | string | null | DeclineHowResult) => void;
+  resolve: (value: boolean | string | null | DeclineHowResult | AccountCreditDialogResult) => void;
 };
+
+function parseCreditAmount(raw: string): number | null {
+  const amount = Number(raw.replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(amount) || amount < 0.01) return null;
+  return amount;
+}
 
 export default function AppDialogProvider({ children }: { children: React.ReactNode }) {
   const [active, setActive] = useState<Queued | null>(null);
   const [promptValue, setPromptValue] = useState('');
+  const [amountValue, setAmountValue] = useState('');
   const queueRef = useRef<Queued[]>([]);
   const showingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -23,10 +31,11 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
   const present = (item: Queued) => {
     showingRef.current = true;
     setPromptValue(item.req.defaultValue ?? '');
+    setAmountValue('');
     setActive(item);
   };
 
-  const finish = (value: boolean | string | null | DeclineHowResult) => {
+  const finish = (value: boolean | string | null | DeclineHowResult | AccountCreditDialogResult) => {
     active?.resolve(value);
     const next = queueRef.current.shift();
     if (next) present(next);
@@ -55,7 +64,9 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
         finish(
           active.req.kind === 'alert'
             ? true
-            : active.req.kind === 'prompt' || active.req.kind === 'decline-how'
+            : active.req.kind === 'prompt' ||
+                active.req.kind === 'decline-how' ||
+                active.req.kind === 'account-credit'
               ? null
               : false,
         );
@@ -75,6 +86,11 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
       document.querySelector<HTMLButtonElement>('.app-dialog__choice')?.focus();
       return;
     }
+    if (active.req.kind === 'account-credit') {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      return;
+    }
     if (active.req.kind === 'prompt') {
       inputRef.current?.focus();
       inputRef.current?.select();
@@ -92,6 +108,9 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
   const promptMultiline = (req?.message.length ?? 0) > 80 || (req?.message.includes('\n') ?? false);
   const reasonNeeded = Boolean(req?.requireReason);
   const reasonOk = !reasonNeeded || promptValue.trim().length > 0;
+  const creditAmount = req?.kind === 'account-credit' ? parseCreditAmount(amountValue) : null;
+  const accountCreditOk =
+    req?.kind === 'account-credit' && creditAmount != null && promptValue.trim().length > 0;
   const itemName = req?.itemName?.trim();
 
   return (
@@ -104,7 +123,13 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
               role="presentation"
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget && req.kind !== 'alert') {
-                  finish(req.kind === 'prompt' || req.kind === 'decline-how' ? null : false);
+                  finish(
+                    req.kind === 'prompt' ||
+                      req.kind === 'decline-how' ||
+                      req.kind === 'account-credit'
+                      ? null
+                      : false,
+                  );
                 }
               }}
             >
@@ -183,6 +208,65 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
                         onClick={() => finish(null)}
                       >
                         {req.cancelLabel ?? 'Cancel'}
+                      </button>
+                    </div>
+                  </>
+                ) : req.kind === 'account-credit' ? (
+                  <>
+                    <h2 id="app-dialog-title" className="app-dialog__title">
+                      {req.title ?? 'Account credit'}
+                    </h2>
+                    {req.message.trim() ? <p className="app-dialog__body">{req.message}</p> : null}
+                    <label className="app-dialog__label" htmlFor="app-dialog-credit-amount">
+                      Amount
+                      <span>Required</span>
+                    </label>
+                    <input
+                      id="app-dialog-credit-amount"
+                      ref={(el) => {
+                        inputRef.current = el;
+                      }}
+                      className="app-dialog__field app-dialog__field--tight"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={amountValue}
+                      placeholder="0.00"
+                      onChange={(e) => setAmountValue(e.target.value)}
+                    />
+                    <label className="app-dialog__label" htmlFor="app-dialog-credit-reason">
+                      Reason
+                      <span>Required</span>
+                    </label>
+                    <textarea
+                      id="app-dialog-credit-reason"
+                      className="app-dialog__field app-dialog__field--tight"
+                      rows={3}
+                      value={promptValue}
+                      placeholder={
+                        req.placeholder ?? 'Professional courtesy, refund of a fee, …'
+                      }
+                      onChange={(e) => setPromptValue(e.target.value)}
+                    />
+                    <p className="app-dialog__footnote">Saved with your name on the account ledger.</p>
+                    <div className="app-dialog__actions">
+                      <button
+                        type="button"
+                        className="app-dialog__btn"
+                        onClick={() => finish(null)}
+                      >
+                        {req.cancelLabel ?? 'Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        className="app-dialog__btn app-dialog__btn--primary"
+                        disabled={!accountCreditOk}
+                        onClick={() => {
+                          if (!accountCreditOk || creditAmount == null) return;
+                          finish({ amount: creditAmount, description: promptValue.trim() });
+                        }}
+                      >
+                        {req.confirmLabel ?? 'Add credit'}
                       </button>
                     </div>
                   </>

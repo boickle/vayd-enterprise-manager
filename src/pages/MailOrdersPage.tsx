@@ -27,7 +27,9 @@ import {
   type MailPharmacyStage,
 } from '../api/onlineStore';
 import { sendClientSms } from '../api/clientSms';
-import { createClientPayLink, getInvoice } from '../api/visitWorkflow';
+import { createClientPayLink, getInvoice, type VisitInvoice } from '../api/visitWorkflow';
+import { fetchAppointmentById } from '../api/appointments';
+import { appConfirm } from '../utils/appDialog';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   extractPatientListFromSearchResponse,
@@ -38,9 +40,34 @@ import {
 import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import { formatAutoshipFrequency } from './store/storeCartState';
-import MailOrderFillLabels from '../components/soap/MailOrderFillLabels';
+import MailOrderFillLabels, { mailLabelDoctor } from '../components/soap/MailOrderFillLabels';
 import EditAutoshipModal from '../components/soap/EditAutoshipModal';
 import MailOrderClientCommsPanel from '../components/soap/MailOrderClientCommsPanel';
+import MailOrderRejectModal from '../components/soap/MailOrderRejectModal';
+import MailOrderPayTextModal from '../components/soap/MailOrderPayTextModal';
+import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
+import { recordScoutChartCommunication } from '../api/scoutChart';
+import {
+  defaultMailOrderRejectBodyText,
+  defaultMailOrderPartialRejectBodyText,
+  defaultMailOrderRejectSubject,
+  mailOrderRejectEmailBodyHtml,
+  mailOrderRejectedLines,
+  mailOrderRefundAmount,
+  mailOrderClientItemName,
+  mailOrderContactBodyHtml,
+  mailOrderContactSmsText,
+  mailOrderContactSubject,
+  mailOrderRegardingPatients,
+  mailOrderPayAmount,
+  mailOrderPayBodyHtml,
+  mailOrderPayInvoiceNeedsWait,
+  mailOrderPaySmsText,
+  mailOrderPaySubject,
+  mailOrderPayUsesFullInvoice,
+  mailOrderMailedInvoiceAmount,
+  type MailOrderLinkedInvoice,
+} from '../utils/mailOrderClientMessages';
 import MailRxDecisionFields, {
   initialMailRxDecisionFromLine,
   mailRxDecisionMissing,
@@ -99,6 +126,49 @@ const ORIGIN_LABEL: Record<MailOrder['origin'], string> = {
   kit: 'Kit',
 };
 
+function invoiceLineIdFromNotes(notes: string | null | undefined): string | null {
+  return notes?.match(/invoiceLine:([0-9a-f-]{36})/i)?.[1] ?? null;
+}
+
+function mailOrderOriginLabel(order: MailOrder): string {
+  if (order.origin === 'staff_mail') {
+    if (invoiceLineIdFromNotes(order.notes)) return 'Staff mail from visit';
+    if (linkedInvoiceId(order)) return 'Staff mail via direct invoice';
+  }
+  return ORIGIN_LABEL[order.origin];
+}
+
+type MailSynopsisPetItems = {
+  key: string;
+  patientId: number | null;
+  patientName: string;
+  lines: Array<{ key: string; label: string }>;
+};
+
+function mailSynopsisItemsByPet(order: MailOrder): MailSynopsisPetItems[] {
+  const groups = new Map<string, MailSynopsisPetItems>();
+  for (const line of order.lines || []) {
+    const patientName = line.patientName || 'Household';
+    const patientId = line.patientId ?? null;
+    const groupKey = patientId != null ? `p-${patientId}` : `n-${patientName}`;
+    const group =
+      groups.get(groupKey) ??
+      ({
+        key: groupKey,
+        patientId,
+        patientName,
+        lines: [],
+      } satisfies MailSynopsisPetItems);
+    const label = clientItemName(line.name || 'Item');
+    group.lines.push({
+      key: `${line.id}-${label}`,
+      label: `${label} × ${Number(line.quantity)}`,
+    });
+    groups.set(groupKey, group);
+  }
+  return [...groups.values()];
+}
+
 const STAGE_LABEL: Record<MailPharmacyStage, string> = {
   needs_approval: 'Needs approval',
   pending_client: 'Pending client',
@@ -128,14 +198,6 @@ type QueueFilter =
   | 'ready'
   | 'all';
 
-function payLabel(status?: string | null): string {
-  return status === 'paid' ? 'Paid' : 'Needs payment';
-}
-
-function fulfillmentLabel(order: MailOrder): string {
-  return isPickupOrder(order) ? 'Office pickup' : 'Ship';
-}
-
 function matchesMailSearch(order: MailOrder, query: string): boolean {
   const q = query.trim().toLowerCase().replace(/^#/, '');
   if (!q) return true;
@@ -161,6 +223,10 @@ function matchesQueueFilter(order: MailOrder, filter: QueueFilter): boolean {
   if (filter === 'cancel_requests') return mailCancelPending(order);
   if (filter === 'open') return mailCancelPending(order) || (stage !== 'done' && stage !== 'rejected');
   if (filter === 'ready') return stage === 'ship' || stage === 'ready_for_pickup';
+  // Partial rejects stay in Open, and also appear here until the client is contacted.
+  if (filter === 'rejected') {
+    return stage === 'rejected' || (anyMailLinesRejected(order) && !mailContactedDone(order));
+  }
   return stage === filter;
 }
 
@@ -211,8 +277,71 @@ function mailCheckDone(order: MailOrder): boolean {
   );
 }
 
+function isRejectOutreachNote(note: { kind?: string; notes?: string | null }): boolean {
+  return /reject-outreach|Rejected item outreach/i.test(note.notes || '');
+}
+
+function mailRejectOutreachDone(order: MailOrder): boolean {
+  return (order.approvalNotes || []).some(isRejectOutreachNote);
+}
+
+function mailFulfillmentContacted(order: MailOrder): boolean {
+  return (order.approvalNotes || []).some(
+    (note) => note.kind === 'contacted' && !isRejectOutreachNote(note),
+  );
+}
+
+/** Shipped / pickup / skip-contact for remaining items — not a rejection-only email. */
 function mailContactedDone(order: MailOrder): boolean {
-  return Boolean(order.clientContactedAt || order.processStatus === 'shipped');
+  const remaining = (order.lines || []).filter((line) => line.lineStatus !== 'rejected');
+  if (!remaining.length) {
+    return mailRejectOutreachDone(order) || mailFulfillmentContacted(order);
+  }
+  if (order.processStatus === 'shipped' && mailFulfillmentContacted(order)) return true;
+  return mailFulfillmentContacted(order);
+}
+
+function anyMailLinesRejected(order: MailOrder): boolean {
+  return (order.lines || []).some((line) => line.lineStatus === 'rejected');
+}
+
+function allMailLinesRejected(order: MailOrder): boolean {
+  const lines = order.lines || [];
+  return lines.length > 0 && lines.every((line) => line.lineStatus === 'rejected');
+}
+
+/** Rejected order (or a rejected line) the client has not been told about yet. */
+function mailRejectedNeedsClientContact(order: MailOrder): boolean {
+  if (mailRejectOutreachDone(order)) return false;
+  return pharmacyStageOf(order) === 'rejected' || anyMailLinesRejected(order);
+}
+
+function rejectedLineRefundTotal(order: MailOrder): number {
+  return (order.lines || [])
+    .filter((line) => line.lineStatus === 'rejected')
+    .reduce(
+      (sum, line) =>
+        sum + (Number(line.unitPrice) || 0) * Math.max(1, Number(line.quantity) || 1),
+      0,
+    );
+}
+
+function lineRefundLogged(order: MailOrder, lineId: number): boolean {
+  const marker = `refund:line:${lineId}`;
+  return (order.approvalNotes || []).some((note) => (note.notes || '').includes(marker));
+}
+
+function rejectedRefundStillDue(order: MailOrder): number {
+  if (order.rejectedRefundDue != null && Number(order.rejectedRefundDue) >= 0) {
+    return Math.round((Number(order.rejectedRefundDue) || 0) * 100) / 100;
+  }
+  return (order.lines || [])
+    .filter((line) => line.lineStatus === 'rejected' && !lineRefundLogged(order, line.id))
+    .reduce(
+      (sum, line) =>
+        sum + (Number(line.unitPrice) || 0) * Math.max(1, Number(line.quantity) || 1),
+      0,
+    );
 }
 
 function lineIsApproved(line: MailOrderLine): boolean {
@@ -264,7 +393,7 @@ function thanksAlreadySent(order: MailOrder): boolean {
 
 function pharmacyStageOf(order: MailOrder): MailPharmacyStage {
   if (order.pharmacyStage) return order.pharmacyStage;
-  if (order.status === 'cancelled' || order.approvalStatus === 'rejected') return 'rejected';
+  if (order.status === 'cancelled' || allMailLinesRejected(order)) return 'rejected';
   if (order.clientQuestionPendingAt) return 'pending_client';
   if (
     order.approvalStatus === 'needs_doctor_approval' ||
@@ -286,6 +415,99 @@ function pharmacyStageOf(order: MailOrder): MailPharmacyStage {
 
 function badgeClass(kind: 'go' | 'wait' | 'warn' | 'stop' | 'plain'): string {
   return `mail-queue__badge${kind === 'plain' ? '' : ` is-${kind}`}`;
+}
+
+function mailPharmacySteps(order: MailOrder): MailPharmacyStage[] {
+  const lastStep: MailPharmacyStage = isPickupOrder(order) ? 'ready_for_pickup' : 'ship';
+  return ['needs_approval', 'needs_payment', 'fill', lastStep, 'check', 'contacted'];
+}
+
+function mailOrderStepDone(order: MailOrder, step: MailPharmacyStage): boolean {
+  if (step === 'needs_approval') {
+    const lines = order.lines || [];
+    if (lines.length) return linesAllApproved(lines);
+    return !['needs_doctor_approval', 'approval_pending', 'send_back'].includes(
+      order.approvalStatus || '',
+    );
+  }
+  if (step === 'needs_payment') return (order.paymentStatus || 'awaiting_payment') === 'paid';
+  if (step === 'fill') {
+    const lines = order.lines || [];
+    if (lines.some((line) => line.trackLots)) {
+      return linesAllFilled(lines, order) && mailFillDone(order);
+    }
+    return mailFillDone(order);
+  }
+  if (step === 'ship' || step === 'ready_for_pickup') return mailShipDone(order);
+  if (step === 'check') return mailCheckDone(order);
+  if (step === 'contacted') return mailContactedDone(order);
+  return pharmacyStageOf(order) === 'done';
+}
+
+function mailOrderStepCompletedLabel(order: MailOrder, step: MailPharmacyStage): string {
+  const stage = pharmacyStageOf(order);
+  if (stage === 'rejected' && step === 'needs_approval') return 'Rejected';
+  if (step === 'needs_approval') return 'Approved';
+  if (step === 'needs_payment') return 'Paid';
+  if (step === 'fill') return 'Filled';
+  if (step === 'ship' || step === 'ready_for_pickup') {
+    if (mailAllPassedThrough(order)) return 'Drop-shipped';
+    return isPickupOrder(order) ? 'Pickup ready' : 'Label printed';
+  }
+  if (step === 'check') return 'Checked';
+  if (step === 'contacted') {
+    return order.clientContactKind === 'none' ? 'Do not contact' : 'Contacted';
+  }
+  return STAGE_LABEL[step];
+}
+
+type MailSynopsisBadge = { label: string; completed: boolean; kind: 'go' | 'wait' | 'warn' | 'stop' };
+
+function mailQueueSynopsisBadges(order: MailOrder): MailSynopsisBadge[] {
+  const stage = pharmacyStageOf(order);
+  if (stage === 'rejected') {
+    const badges: MailSynopsisBadge[] = [{ label: 'Rejected', completed: false, kind: 'stop' }];
+    if (!mailContactedDone(order)) {
+      badges.push({ label: 'Contact client', completed: false, kind: 'warn' });
+    }
+    return badges;
+  }
+  if (stage === 'done') {
+    return [{ label: 'Done', completed: true, kind: 'go' }];
+  }
+
+  const badges: MailSynopsisBadge[] = [];
+  for (const step of mailPharmacySteps(order)) {
+    if (mailOrderStepDone(order, step)) {
+      badges.push({
+        label: mailOrderStepCompletedLabel(order, step),
+        completed: true,
+        kind: 'go',
+      });
+    }
+  }
+
+  if (stage === 'pending_client') {
+    badges.push({ label: STAGE_LABEL.pending_client, completed: false, kind: 'wait' });
+    return badges;
+  }
+
+  if (!mailOrderStepDone(order, stage)) {
+    badges.push({
+      label: STAGE_LABEL[stage],
+      completed: false,
+      kind: stageBadgeKind(stage),
+    });
+  }
+
+  if (anyMailLinesRejected(order)) {
+    badges.push({ label: 'Item rejected', completed: false, kind: 'stop' });
+    if (!mailContactedDone(order)) {
+      badges.push({ label: 'Contact client', completed: false, kind: 'warn' });
+    }
+  }
+
+  return badges;
 }
 
 function stageBadgeKind(stage: MailPharmacyStage): 'go' | 'wait' | 'warn' | 'stop' {
@@ -359,51 +581,34 @@ function petNames(order: MailOrder): Array<{
   return [...fromLines.values()];
 }
 
-function itemsByPet(order: MailOrder): string[] {
-  const groups = new Map<string, string[]>();
-  for (const line of order.lines || []) {
-    const pet = line.patientName || 'Household';
-    const label = `${line.name} × ${Number(line.quantity)}`;
-    groups.set(pet, [...(groups.get(pet) || []), label]);
-  }
-  return [...groups.entries()].map(([pet, items]) => `${pet}: ${items.join(', ')}`);
-}
-
-function autoshipLabel(order: MailOrder): string | null {
-  const freqs = (order.lines || [])
-    .map((line) => line.autoshipFrequency)
-    .filter((value): value is string => Boolean(value))
-    .map((value) => formatAutoshipFrequency(value))
-    .filter((value, idx, all) => all.indexOf(value) === idx);
-  if (freqs.length) return freqs.join(', ');
-  return order.autoship ? 'Yes' : null;
-}
-
 function firstName(name?: string | null): string {
   return (name || '').trim().split(/\s+/)[0] || 'there';
 }
 
-type LinkedInvoiceAmount = { total: number; due: number };
+type LinkedInvoiceAmount = MailOrderLinkedInvoice;
 
 /** Orders sent from an invoice carry no prices of their own; the invoice holds what's owed. */
 function linkedInvoiceId(order: MailOrder): string | null {
   return order.notes?.match(/(?:^|\s)invoice:([0-9a-f-]{36})/i)?.[1] ?? null;
 }
 
-function orderAmount(order: MailOrder, linked?: LinkedInvoiceAmount | null): number {
-  if (Number(order.total) > 0.009 || !linked) return Number(order.total) || 0;
-  return linked.total;
+function mailedInvoiceAmount(order: MailOrder, linked?: LinkedInvoiceAmount | null): number {
+  return mailOrderMailedInvoiceAmount(order, linked);
 }
 
-/** Catalog names carry staff notes in caps ("- ADD REBATE FOR 2, 3, OR 4 DOSES"); clients shouldn't see those. */
+function orderAmount(order: MailOrder, linked?: LinkedInvoiceAmount | null): number {
+  if (Number(order.total) > 0.009) return Number(order.total) || 0;
+  const mailed = mailedInvoiceAmount(order, linked);
+  if (mailed > 0.009) return mailed;
+  const fromLines = (order.lines || []).reduce(
+    (sum, line) => sum + (Number(line.unitPrice) || 0) * (Number(line.quantity) || 1),
+    0,
+  );
+  return Math.round((fromLines + (Number(order.shipping) || 0)) * 100) / 100;
+}
+
 function clientItemName(name: string): string {
-  return name
-    .split(/\s+-\s+/)
-    .filter((part, i) => i === 0 || /[a-z]/.test(part))
-    .join(' - ')
-    .replace(/,\s*\(/g, ' (')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return mailOrderClientItemName(name);
 }
 
 function joinList(items: string[]): string {
@@ -445,14 +650,17 @@ function orderSubjectFor(order: MailOrder): string {
 }
 
 function payMessageFor(order: MailOrder, linked?: LinkedInvoiceAmount | null): string {
-  const amount = linked && !(Number(order.total) > 0.009) ? linked.due : Number(order.total) || 0;
-  return `Hi ${firstName(order.customerName)}, we have ${orderContents(order)} ready to send (order #${order.id}). The total is ${money(amount)} — once it’s paid we’ll get it on its way.`;
+  return mailOrderPaySmsText(
+    order,
+    firstName(order.customerName),
+    mailOrderPayAmount(order, linked),
+    null,
+    linked,
+  );
 }
 
 function notifySubjectFor(order: MailOrder, pickup: boolean): string {
-  return pickup
-    ? `${orderSubjectFor(order)} is ready for pickup`
-    : `${orderSubjectFor(order)} has shipped`;
+  return mailOrderContactSubject(order, pickup);
 }
 
 function carrierName(carrier?: string | null): string {
@@ -495,27 +703,8 @@ function TrackingLink({ order }: { order: MailOrder }) {
   );
 }
 
-function orderIsAutoship(order: MailOrder): boolean {
-  return Boolean(order.autoship) || (order.lines || []).some((line) => line.autoshipFrequency);
-}
-
 function notifyMessageFor(order: MailOrder, pickup: boolean): string {
-  const hi = `Hi ${firstName(order.customerName)}, `;
-  const what = orderContents(order);
-  const changes = orderIsAutoship(order)
-    ? ` If you want to make any changes, sign in to your client portal: ${window.location.origin}/client-portal`
-    : '';
-  if (pickup) {
-    return `${hi}${what} is ready for pickup${order.shippingChargeName ? ` at ${order.shippingChargeName}` : ''} (order #${order.id}).${changes}`;
-  }
-  const carrier = carrierName(order.carrier);
-  const url = trackingUrl(order.carrier, order.trackingCode);
-  const tracking = url
-    ? ` It’s on its way with ${carrier} — track it here: ${url}`
-    : order.trackingCode
-      ? ` ${carrier ? `${carrier} tracking` : 'Tracking'} number: ${order.trackingCode}.`
-      : '';
-  return `${hi}${what} has shipped (order #${order.id}).${tracking}${changes}`;
+  return mailOrderContactSmsText(order, pickup, firstName(order.customerName));
 }
 
 function money(value?: number | null): string {
@@ -671,6 +860,10 @@ export default function MailOrdersPage() {
     ];
   }, [rows, filter, search]);
   const cancelRequestCount = useMemo(() => rows.filter(mailCancelPending).length, [rows]);
+  const rejectedNeedsContactCount = useMemo(
+    () => rows.filter(mailRejectedNeedsClientContact).length,
+    [rows],
+  );
 
   const [linkedAmounts, setLinkedAmounts] = useState<Record<string, LinkedInvoiceAmount>>({});
   const linkedKey = useMemo(
@@ -697,10 +890,29 @@ export default function MailOrdersPage() {
     void Promise.all(
       ids.map((id) =>
         getInvoice(id)
-          .then((invoice) => {
+          .then((invoice: VisitInvoice) => {
             const total = Number(invoice.total) || 0;
-            const due = Math.max(0, total - (Number(invoice.amountPaid) || 0));
-            return [id, { total, due }] as const;
+            const paid = Number(invoice.amountPaid) || 0;
+            const due = Math.max(0, total - paid);
+            const lines = (invoice.lines || []).map((line) => ({
+              id: line.id,
+              amount: Number(line.amount) || 0,
+              taxAmount: Number(line.taxAmount) || 0,
+              tagalongOfLineId: line.tagalongOfLineId,
+              removed: line.isDeleted === true || Boolean(line.removedAt),
+            }));
+            return [
+              id,
+              {
+                total,
+                due,
+                paid,
+                created: invoice.created ?? invoice.finalizedAt ?? null,
+                appointmentId: invoice.appointmentId,
+                invoice,
+                lines,
+              },
+            ] as const;
           })
           .catch(() => null),
       ),
@@ -812,19 +1024,46 @@ export default function MailOrdersPage() {
             ['rejected', 'Rejected'],
             ['all', 'All'],
           ] as Array<[QueueFilter, string]>
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={filter === key}
-            className={`mail-queue__filter${filter === key ? ' is-active' : ''}`}
-            onClick={() => applyFilter(key)}
-          >
-            {label}
-          </button>
-        ))}
+        ).map(([key, label]) => {
+          const rejectedAlert = key === 'rejected' && rejectedNeedsContactCount > 0;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              className={`mail-queue__filter${filter === key ? ' is-active' : ''}${
+                rejectedAlert ? ' has-rejected-alert' : ''
+              }`}
+              onClick={() => applyFilter(key)}
+            >
+              {key === 'rejected' ? 'Rejected' : label}
+              {rejectedAlert ? (
+                <span
+                  className="mail-queue__filter-alert"
+                  aria-label={`${rejectedNeedsContactCount} rejected — contact client`}
+                >
+                  {rejectedNeedsContactCount}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
+
+      {rejectedNeedsContactCount > 0 && filter !== 'rejected' ? (
+        <div className="mail-queue__rejected-banner" role="status">
+          <strong>
+            {rejectedNeedsContactCount === 1
+              ? '1 rejected order'
+              : `${rejectedNeedsContactCount} rejected orders`}
+          </strong>{' '}
+          still need the client contacted (email or text).
+          <button type="button" className="mail-queue__rejected-banner-link" onClick={() => applyFilter('rejected')}>
+            Open Rejected
+          </button>
+        </div>
+      ) : null}
 
       {error && (
         <div className="settings-message settings-error-message">
@@ -837,10 +1076,10 @@ export default function MailOrdersPage() {
 
       <div className="mail-queue__list">
         {visible.map((row) => {
-          const stage = pharmacyStageOf(row);
+          const synopsisBadges = mailQueueSynopsisBadges(row);
+          const synopsisItems = mailSynopsisItemsByPet(row);
           const open = openId === row.id;
           const pets = petNames(row);
-          const ship = autoshipLabel(row);
           return (
             <article
               key={row.id}
@@ -861,7 +1100,7 @@ export default function MailOrdersPage() {
                 <div>
                   <div className="mail-queue__id">#{row.id}</div>
                   <div className="mail-queue__when">{formatOrderedAt(row.created)}</div>
-                  <div className="mail-queue__meta">{ORIGIN_LABEL[row.origin]}</div>
+                  <div className="mail-queue__origin-label">{mailOrderOriginLabel(row)}</div>
                 </div>
                 <div>
                   <div>
@@ -896,38 +1135,64 @@ export default function MailOrdersPage() {
                             ) : (
                               pet.name
                             )}
-                            {pet.weightLabel ? (
-                              <span className="mail-queue__weight"> · {pet.weightLabel}</span>
-                            ) : null}
                           </span>
                         ))
                       : 'No pet on file'}
                   </div>
                   <div className="mail-queue__meta">
-                    Dr {row.doctorName || '—'} · Created by {row.createdByName || row.customerName || '—'}
+                    {(() => {
+                      const name =
+                        row.origin === 'online_store'
+                          ? (row.lines || []).find((line) => line.scriptPrescriberName)
+                              ?.scriptPrescriberName
+                          : row.doctorName;
+                      return name ? `Dr ${name}` : 'No doctor on script';
+                    })()}{' '}
+                    · Created by{' '}
+                    {row.createdByName || row.customerName || '—'}
                   </div>
                 </div>
                 <div className="mail-queue__items">
-                  {itemsByPet(row).length
-                    ? itemsByPet(row).map((line) => <span key={line}>{line}</span>)
+                  {synopsisItems.length
+                    ? synopsisItems.map((group) => (
+                        <div key={group.key} className="mail-queue__item-group">
+                          <div className="mail-queue__item-pet">
+                            {group.patientId ? (
+                              <Link
+                                className="mail-queue__pet-link"
+                                to={`/schedule/patients?patientId=${encodeURIComponent(String(group.patientId))}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  rememberMailScroll(row.id);
+                                }}
+                              >
+                                {group.patientName}
+                              </Link>
+                            ) : (
+                              group.patientName
+                            )}
+                          </div>
+                          <ul className="mail-queue__item-list">
+                            {group.lines.map((item) => (
+                              <li key={item.key}>{item.label}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))
                     : '—'}
                 </div>
                 <div className="mail-queue__badges">
                   {mailCancelPending(row) ? (
                     <span className="mail-queue__badge-cancel">Cancellation requested</span>
                   ) : null}
-                  <span className={badgeClass(stageBadgeKind(stage))}>{STAGE_LABEL[stage]}</span>
-                  <span className={badgeClass(row.paymentStatus === 'paid' ? 'go' : 'wait')}>
-                    {payLabel(row.paymentStatus)}
-                  </span>
-                  {row.sendWithoutPayment && row.paymentStatus !== 'paid' ? (
-                    <span className={badgeClass('warn')}>Send without payment</span>
-                  ) : null}
-                  {row.payAfterApproval && row.paymentStatus !== 'paid' ? (
-                    <span className={badgeClass('warn')}>Collect payment after approval</span>
-                  ) : null}
-                  <span className={badgeClass('plain')}>{fulfillmentLabel(row)}</span>
-                  {ship ? <span className={badgeClass('wait')}>{ship}</span> : null}
+                  {synopsisBadges.map((badge, idx) => (
+                    <span
+                      key={idx}
+                      className={badgeClass(badge.completed ? 'go' : badge.kind)}
+                    >
+                      {badge.completed ? `✓ ${badge.label}` : badge.label}
+                    </span>
+                  ))}
                 </div>
                 <div className="mail-queue__total">
                   <div>{money(orderAmount(row, linkedAmountFor(row)))}</div>
@@ -1207,19 +1472,45 @@ function OrderDetail({
     lineIds: number[];
     label: string;
   } | null>(null);
-  const [paySubject, setPaySubject] = useState(`Payment for ${orderSubjectFor(open)}`);
+  const [paySubject, setPaySubject] = useState(() => mailOrderPaySubject(open, linkedAmount));
   const [payMessage, setPayMessage] = useState(() => payMessageFor(open, linkedAmount));
   const [payMessageSeed, setPayMessageSeed] = useState(() => payMessageFor(open, linkedAmount));
+  const [payEmailOpen, setPayEmailOpen] = useState(false);
+  const [payTextOpen, setPayTextOpen] = useState(false);
+  const [payLink, setPayLink] = useState<string | null>(null);
+  const [payLinked, setPayLinked] = useState<LinkedInvoiceAmount | null>(linkedAmount ?? null);
+  const [payPreparing, setPayPreparing] = useState(false);
+  const [payLogClient, setPayLogClient] = useState(true);
+  const [payIncludeEmr, setPayIncludeEmr] = useState(false);
+  const [payPatientIds, setPayPatientIds] = useState<number[]>(() =>
+    mailOrderRegardingPatients(open).map((p) => p.id),
+  );
+  useEffect(() => {
+    setPaySubject(mailOrderPaySubject(open, linkedAmount));
+    setPayLink(null);
+    setPayEmailOpen(false);
+    setPayTextOpen(false);
+    setPayPatientIds(mailOrderRegardingPatients(open).map((p) => p.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open.id]);
   useEffect(() => {
     const next = payMessageFor(open, linkedAmount);
     if (next === payMessageSeed) return;
     setPayMessage((current) => (current === payMessageSeed ? next : current));
     setPayMessageSeed(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedAmount?.due, linkedAmount?.total, open.total]);
+  }, [linkedAmount?.due, linkedAmount?.total, linkedAmount?.paid, open.total]);
+  useEffect(() => {
+    setPayLinked(linkedAmount ?? null);
+    setPaySubject(mailOrderPaySubject(open, linkedAmount));
+  }, [linkedAmount, open]);
   const [notifySubject, setNotifySubject] = useState(notifySubjectFor(open, pickup));
   const [notifyMessage, setNotifyMessage] = useState(() => notifyMessageFor(open, pickup));
   const [notifyMessageSeed, setNotifyMessageSeed] = useState(() => notifyMessageFor(open, pickup));
+  useEffect(() => {
+    setNotifySubject(notifySubjectFor(open, pickup));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open.id, pickup]);
   useEffect(() => {
     const next = notifyMessageFor(open, pickup);
     if (next === notifyMessageSeed) return;
@@ -1227,17 +1518,23 @@ function OrderDetail({
     setNotifyMessageSeed(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open.trackingCode, open.carrier, pickup]);
-  const [rejectSubject, setRejectSubject] = useState(
-    `Update on your Vet At Your Door order #${open.id}`,
-  );
   const [paySent, setPaySent] = useState<string | null>(null);
   const orderPaid = (open.paymentStatus || 'awaiting_payment') === 'paid';
+  const rejectWillRefund = mailOrderRefundAmount(open) != null;
+  const rejectRegardingPatients = useMemo(() => mailOrderRegardingPatients(open), [open]);
+  const [rejectSubject, setRejectSubject] = useState(() => defaultMailOrderRejectSubject(open.id));
   const [rejectMessage, setRejectMessage] = useState(() =>
-    orderPaid
-      ? `Hi ${firstName(open.customerName)}, we were not able to fill order #${open.id}. If you were charged, a refund is on the way.`
-      : `Hi ${firstName(open.customerName)}, we were not able to fill order #${open.id}.`,
+    defaultMailOrderRejectBodyText(firstName(open.customerName), open),
   );
   const [rejectNotes, setRejectNotes] = useState('');
+  const [rejectModal, setRejectModal] = useState<'email' | 'text' | null>(null);
+  const [rejectOutreachOnly, setRejectOutreachOnly] = useState(false);
+  const [refundRejectedOnSend, setRefundRejectedOnSend] = useState(true);
+  const [rejectLogClient, setRejectLogClient] = useState(true);
+  const [rejectIncludeEmr, setRejectIncludeEmr] = useState(true);
+  const [rejectPatientIds, setRejectPatientIds] = useState<number[]>(() =>
+    mailOrderRegardingPatients(open).map((p) => p.id),
+  );
   const [fillBranches, setFillBranches] = useState<PracticeBranch[]>([]);
   const [fillLocations, setFillLocations] = useState<InventoryBranchLocation[]>([]);
   const [fillBranchId, setFillBranchId] = useState<number | ''>(open.fillBranchId ?? '');
@@ -1256,8 +1553,13 @@ function OrderDetail({
     (fillSources[line.id]?.source ?? line.fulfillmentSource) === 'external';
   const [texting, setTexting] = useState(false);
   const [textedAt, setTextedAt] = useState<string | null>(null);
-  const [emailing, setEmailing] = useState(false);
   const [emailedAt, setEmailedAt] = useState<string | null>(null);
+  const [contactEmailOpen, setContactEmailOpen] = useState(false);
+  const [contactLogClient, setContactLogClient] = useState(true);
+  const [contactIncludeEmr, setContactIncludeEmr] = useState(false);
+  const [contactPatientIds, setContactPatientIds] = useState<number[]>(() =>
+    mailOrderRegardingPatients(open).map((p) => p.id),
+  );
   const [parcelType, setParcelType] = useState<MailParcelType>('mailer');
   const [parcelLength, setParcelLength] = useState('');
   const [parcelWidth, setParcelWidth] = useState('');
@@ -1266,6 +1568,7 @@ function OrderDetail({
   const [buyingLabel, setBuyingLabel] = useState(false);
   const [shipError, setShipError] = useState<string | null>(null);
   const [sendingThanks, setSendingThanks] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
   const shipBlocked = !mailFillDone(open) || !open.fillBranchId
     ? 'Mark this filled before buying a label.'
     : !(Number(weight) > 0)
@@ -1287,10 +1590,17 @@ function OrderDetail({
     });
 
   useEffect(() => {
+    setRejectSubject(defaultMailOrderRejectSubject(open.id));
+    setRejectMessage(defaultMailOrderRejectBodyText(firstName(open.customerName), open));
+    const pets = mailOrderRegardingPatients(open);
+    setRejectPatientIds(pets.map((p) => p.id));
+    setRejectLogClient(true);
+    setRejectIncludeEmr(pets.length > 0);
     setTextedAt(null);
     setTexting(false);
     setEmailedAt(null);
-    setEmailing(false);
+    setContactEmailOpen(false);
+    setContactPatientIds(pets.map((p) => p.id));
     setViewStep(stage === 'done' ? 'contacted' : stage);
     setSameCheckConfirm(null);
     const next: Record<number, string> = {};
@@ -1412,6 +1722,96 @@ function OrderDetail({
     });
   }, [open.id, open.doctorEmployeeId, open.doctorName, open.lines]);
 
+  const ensurePayLink = async (): Promise<string | null> => {
+    if (payLink) return payLink;
+    if (!open.clientId) return null;
+    try {
+      const link = await createClientPayLink(open.clientId);
+      const url = link.url?.trim() || null;
+      if (url) setPayLink(url);
+      return url;
+    } catch {
+      return null;
+    }
+  };
+
+  const linkedFromVisitInvoice = (invoice: VisitInvoice): LinkedInvoiceAmount => {
+    const total = Number(invoice.total) || 0;
+    const paid = Number(invoice.amountPaid) || 0;
+    return {
+      total,
+      due: Math.max(0, total - paid),
+      paid,
+      created: invoice.created ?? invoice.finalizedAt ?? null,
+      appointmentId: invoice.appointmentId,
+      invoice,
+      lines: (invoice.lines || []).map((line) => ({
+        id: line.id,
+        amount: Number(line.amount) || 0,
+        taxAmount: Number(line.taxAmount) || 0,
+        tagalongOfLineId: line.tagalongOfLineId,
+        removed: line.isDeleted === true || Boolean(line.removedAt),
+      })),
+    };
+  };
+
+  const loadPayLinked = async (): Promise<LinkedInvoiceAmount | null> => {
+    const id = linkedInvoiceId(open);
+    if (!id) return linkedAmount ?? null;
+    try {
+      const snapshot = linkedFromVisitInvoice(await getInvoice(id));
+      setPayLinked(snapshot);
+      return snapshot;
+    } catch {
+      return linkedAmount ?? payLinked ?? null;
+    }
+  };
+
+  const confirmPayIfInvoiceFresh = async (
+    linked: LinkedInvoiceAmount | null,
+  ): Promise<boolean> => {
+    let needsWait = mailOrderPayInvoiceNeedsWait({
+      invoiceCreated: linked?.created,
+    });
+    if (!needsWait && linked?.appointmentId) {
+      const appt = await fetchAppointmentById(linked.appointmentId);
+      needsWait = mailOrderPayInvoiceNeedsWait({
+        invoiceCreated: linked?.created,
+        appointmentStart: appt?.appointmentStart,
+        appointmentEnd: appt?.appointmentEnd,
+      });
+    }
+    if (!needsWait) return true;
+    return appConfirm({
+      title: 'Invoice may still be in progress',
+      message:
+        'Wait at least 60 minutes in case this appointment is still going and they have not paid yet. Continue only if you know checkout is finished.',
+      confirmLabel: 'Continue anyway',
+      cancelLabel: 'Wait',
+    });
+  };
+
+  const preparePayCompose = async (channel: 'email' | 'sms'): Promise<boolean> => {
+    setPaySent(null);
+    setPayPreparing(true);
+    try {
+      const linked = await loadPayLinked();
+      const allowed = await confirmPayIfInvoiceFresh(linked);
+      if (!allowed) return false;
+      const url = await ensurePayLink();
+      const amount = mailOrderPayAmount(open, linked);
+      setPaySubject(mailOrderPaySubject(open, linked));
+      setPayMessage(
+        mailOrderPaySmsText(open, firstName(open.customerName), amount, url, linked),
+      );
+      if (channel === 'email') setPayEmailOpen(true);
+      else setPayTextOpen(true);
+      return true;
+    } finally {
+      setPayPreparing(false);
+    }
+  };
+
   const sendClientText = async (message: string, typeLabel: string) => {
     if (!open.clientId) throw new Error('This order has no client record to text.');
     const patientIds = [
@@ -1447,6 +1847,9 @@ function OrderDetail({
     }
     return groups;
   }, [open.lines]);
+
+  const shipmentLineCount = (open.lines || []).length;
+  const canSplitShipment = shipmentLineCount > 1;
 
   const stepDone = (step: MailPharmacyStage) => {
     if (step === 'needs_approval') {
@@ -1612,83 +2015,38 @@ function OrderDetail({
               <p className="settings-muted" style={{ marginTop: 0 }}>
                 {open.sendWithoutPayment && !orderPaid
                   ? 'This order was sent without payment. Pharmacy work can finish, but the order is not done until the owner pays.'
-                  : 'Email an invoice or text a pay link. You can edit the message before it goes out.'}
+                  : mailOrderPayUsesFullInvoice(open, payLinked ?? linkedAmount)
+                    ? 'The visit invoice is still unpaid, so the email and text will include every unpaid line on that invoice — not just the mailed item.'
+                    : 'Open the email or text modal to review the invoice copy and pay link before anything is sent.'}
               </p>
+              {mailOrderPayInvoiceNeedsWait({
+                invoiceCreated: (payLinked ?? linkedAmount)?.created,
+              }) ? (
+                <p className="mail-queue__pay-wait" role="status">
+                  This invoice is from the last hour. Wait at least 60 minutes in case the
+                  appointment is still going and they have not paid yet.
+                </p>
+              ) : null}
               {open.sendWithoutPayment && !orderPaid ? (
                 <p className="mail-queue__sent" role="status">
                   Send without payment — awaiting owner payment
                 </p>
               ) : null}
-              <div className="mail-queue__compose">
-                <label className="settings-label">
-                  Email subject
-                  <input
-                    className="settings-input"
-                    value={paySubject}
-                    onChange={(e) => setPaySubject(e.target.value)}
-                  />
-                </label>
-                <label className="settings-label">
-                  Message
-                  <textarea
-                    className="settings-input"
-                    value={payMessage}
-                    onChange={(e) => setPayMessage(e.target.value)}
-                  />
-                </label>
-              </div>
               <div className="mail-queue__actions">
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={!open.clientId}
-                  onClick={async () => {
-                    setPaySent(null);
-                    const ok = await onRun(async () => {
-                      let message = payMessage.trim();
-                      try {
-                        const link = await createClientPayLink(open.clientId!);
-                        if (link.url && !message.includes(link.url)) {
-                          message = `${message}\n\nPay here: ${link.url}`;
-                          setPayMessage(message);
-                        }
-                      } catch {
-                        /* still send the note without a Stripe link */
-                      }
-                      return pharmacyMailAction(practiceId, open.id, {
-                        action: 'notify',
-                        subject: paySubject.trim() || undefined,
-                        message,
-                        typeLabel: 'Mail order payment email',
-                      });
-                    });
-                    setPaySent(ok ? 'Invoice email sent.' : 'Email not sent — see the error at the top of the page.');
-                  }}
+                  disabled={!open.clientId || payPreparing}
+                  title={!open.clientId ? 'No client record for Gmail email' : undefined}
+                  onClick={() => void preparePayCompose('email')}
                 >
-                  Email invoice
+                  {payPreparing ? 'Opening…' : 'Email invoice'}
                 </button>
                 <button
                   type="button"
                   className="btn secondary"
-                  disabled={!open.clientId}
-                  onClick={async () => {
-                    setPaySent(null);
-                    const ok = await onRun(async () => {
-                      let message = payMessage.trim();
-                      try {
-                        const link = await createClientPayLink(open.clientId!);
-                        if (link.url && !message.includes(link.url)) {
-                          message = `${message} Pay here: ${link.url}`;
-                          setPayMessage(message);
-                        }
-                      } catch {
-                        /* still send the text without a Stripe link */
-                      }
-                      await sendClientText(message, 'Mail order payment text');
-                      return addMailApprovalNote(practiceId, open.id, 'Pay-link text sent');
-                    });
-                    setPaySent(ok ? 'Pay-link text sent.' : 'Text not sent — see the error at the top of the page.');
-                  }}
+                  disabled={!open.clientId || payPreparing}
+                  onClick={() => void preparePayCompose('sms')}
                 >
                   Text to pay
                 </button>
@@ -1718,11 +2076,8 @@ function OrderDetail({
           {viewStep === 'fill' && (
             <>
               <p className="settings-muted" style={{ marginTop: 0 }}>
-                Mark this filled whenever the bag is ready, and choose the office and
-                location you took stock from (defaults to the online-store fulfillment
-                location). Ship and check stay locked until then. For items we don’t
-                stock, choose <strong>Ordered on another site</strong> on the item and
-                enter that site’s order number.
+                Choose where the stock comes from, then work down each item below: pick the
+                lot and print its labels. <strong>Mark filled</strong> is at the bottom.
               </p>
               <div
                 style={{
@@ -1776,96 +2131,6 @@ function OrderDetail({
                   </select>
                 </label>
               </div>
-              {(open.lines || []).some((line) => line.trackLots && !passesThrough(line)) ? (
-                <p className="settings-muted" style={{ margin: '0 0 12px' }}>
-                  Pick the lot on each item below.
-                </p>
-              ) : null}
-              <label className="settings-label mail-queue__field">
-                Notes for the checker
-                <textarea
-                  className="settings-input"
-                  value={checkNotes}
-                  onChange={(e) => setCheckNotes(e.target.value)}
-                  placeholder="Dose, count, anything the checker should see"
-                />
-              </label>
-              {(() => {
-                const lines = open.lines || [];
-                const fromStock = lines.some((line) => !passesThrough(line));
-                const missingLot = lines.some(
-                  (line) => !passesThrough(line) && line.trackLots && !fillLots[line.id]?.lotId,
-                );
-                const missingOrderRef = lines.some(
-                  (line) => passesThrough(line) && !fillSources[line.id]?.orderRef.trim(),
-                );
-                const fillBlocked = !employeeId
-                  ? 'Sign in as staff to mark filled.'
-                  : missingOrderRef
-                    ? 'Enter the other site’s order number for each item ordered there.'
-                    : !fromStock
-                      ? null
-                      : !fillBranchId
-                        ? 'Choose the office you filled from.'
-                        : !fillLocationId
-                          ? 'Choose the location you took stock from.'
-                          : missingLot
-                            ? 'Choose a lot for each item (or receive stock at this location first).'
-                            : null;
-                return (
-                  <div className="mail-queue__actions">
-                    {fillBlocked ? (
-                      <p className="settings-muted" style={{ margin: '0 0 8px', color: '#b45309' }}>
-                        {fillBlocked}
-                      </p>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="btn primary"
-                      disabled={Boolean(fillBlocked)}
-                      title={fillBlocked ?? undefined}
-                      onClick={() => {
-                        setFillError(null);
-                        void onRun(() =>
-                          pharmacyMailAction(practiceId, open.id, {
-                            action: 'fill',
-                            checkNotes,
-                            fillBranchId: fillBranchId === '' ? undefined : Number(fillBranchId),
-                            fillLocationId:
-                              fillLocationId === '' ? undefined : Number(fillLocationId),
-                            lineLots: lines.map((line) => ({
-                              lineId: line.id,
-                              inventoryLotBalanceId: fillLots[line.id]?.lotId ?? null,
-                              lotNumber: fillLots[line.id]?.lotNumber || null,
-                            })),
-                            lineSources: lines.map((line) => {
-                              const pick = fillSources[line.id];
-                              return passesThrough(line)
-                                ? {
-                                    lineId: line.id,
-                                    fulfillmentSource: 'external' as const,
-                                    externalVendor: pick?.vendor.trim() || null,
-                                    externalOrderRef: pick?.orderRef.trim() || null,
-                                  }
-                                : { lineId: line.id, fulfillmentSource: 'stock' as const };
-                            }),
-                          }).catch((e) => {
-                            setFillError(apiErrorMessage(e));
-                            throw e;
-                          }),
-                        );
-                      }}
-                    >
-                      Mark filled
-                    </button>
-                    {fillError ? (
-                      <p className="settings-muted" role="alert" style={{ margin: 0, color: '#b91c1c' }}>
-                        {fillError}
-                      </p>
-                    ) : null}
-                  </div>
-                );
-              })()}
             </>
           )}
 
@@ -2354,17 +2619,26 @@ function OrderDetail({
                 </p>
               ) : (
                 <>
+                  <p className="settings-muted" style={{ marginTop: 0 }}>
+                    Email goes through your shared Gmail send-as (same as other client emails). Text
+                    uses the draft below.
+                    {anyMailLinesRejected(open)
+                      ? ' A rejection email earlier does not complete this step while other items are still in the pharmacy.'
+                      : ''}
+                  </p>
+                  {orderPaid && rejectedRefundStillDue(open) > 0.009 ? (
+                    <label className="mail-queue__check" style={{ margin: '0 0 10px' }}>
+                      <input
+                        type="checkbox"
+                        checked={refundRejectedOnSend}
+                        onChange={(e) => setRefundRejectedOnSend(e.target.checked)}
+                      />
+                      Refund {money(rejectedRefundStillDue(open))} for rejected item(s) when contacting
+                    </label>
+                  ) : null}
                   <div className="mail-queue__compose">
                     <label className="settings-label">
-                      Subject
-                      <input
-                        className="settings-input"
-                        value={notifySubject}
-                        onChange={(e) => setNotifySubject(e.target.value)}
-                      />
-                    </label>
-                    <label className="settings-label">
-                      Message
+                      Text message
                       <textarea
                         className="settings-input"
                         value={notifyMessage}
@@ -2376,24 +2650,14 @@ function OrderDetail({
                     <button
                       type="button"
                       className="btn primary"
-                      disabled={emailing}
-                      onClick={() =>
-                        void (async () => {
-                          setEmailing(true);
-                          const ok = await onRun(() =>
-                            pharmacyMailAction(practiceId, open.id, {
-                              action: pickup ? 'ready_for_pickup' : 'notify',
-                              subject: notifySubject.trim() || undefined,
-                              message: notifyMessage.trim() || undefined,
-                              recordContact: true,
-                            }),
-                          );
-                          setEmailing(false);
-                          if (ok) setEmailedAt(sentClock());
-                        })()
-                      }
+                      disabled={!open.clientId}
+                      title={!open.clientId ? 'No client record for Gmail email' : undefined}
+                      onClick={() => {
+                        setRefundRejectedOnSend(rejectedRefundStillDue(open) > 0.009);
+                        setContactEmailOpen(true);
+                      }}
                     >
-                      {emailing ? 'Emailing…' : emailedAt ? 'Emailed' : 'Email client'}
+                      {emailedAt ? 'Emailed' : 'Email client'}
                     </button>
                     <button
                       type="button"
@@ -2410,6 +2674,8 @@ function OrderDetail({
                             return pharmacyMailAction(practiceId, open.id, {
                               action: 'complete',
                               notes: pickup ? 'Pickup text sent' : 'Shipped text sent',
+                              refundRejected:
+                                refundRejectedOnSend && rejectedRefundStillDue(open) > 0.009,
                             });
                           });
                           setTexting(false);
@@ -2460,10 +2726,11 @@ function OrderDetail({
             </>
           )}
 
-          {stage === 'rejected' && (
+          {anyMailLinesRejected(open) && (
             <p className="settings-muted" style={{ marginTop: 0 }}>
-              This order was rejected. Linked auto-ship is cancelled and a refund is issued when a
-              Stripe charge exists.
+              {allMailLinesRejected(open)
+                ? 'This order was rejected. Linked auto-ship is cancelled and a refund is issued when a Stripe charge exists.'
+                : 'One or more items were rejected by the doctor. Only those lines are refunded; the rest of the order can keep moving.'}
             </p>
           )}
 
@@ -2527,7 +2794,7 @@ function OrderDetail({
                     : line.lineStatus === 'rejected'
                       ? { label: 'Rejected', className: 'is-stop' }
                       : line.lineStatus === 'send_back'
-                        ? { label: 'Send back', className: 'is-warn' }
+                        ? { label: 'Sent back', className: 'is-warn' }
                         : null;
               const currentScript = scriptsByLine[line.id] ?? line.scriptText ?? '';
               const scriptDirty = currentScript.trim() !== (line.scriptText || '').trim();
@@ -2615,7 +2882,49 @@ function OrderDetail({
                       </>
                     ) : null}
                   </li>
-                  <li>{line.primaryProviderName || open.doctorName || 'No primary provider'}</li>
+                  <li>
+                    {(() => {
+                      const doctor = mailLabelDoctor(open, line);
+                      const providers = staff.filter((emp) => emp.isProvider);
+                      const options =
+                        doctor.employeeId &&
+                        !providers.some((emp) => emp.id === doctor.employeeId)
+                          ? staff.filter(
+                              (emp) => emp.isProvider || emp.id === doctor.employeeId,
+                            )
+                          : providers;
+                      return (
+                        <label className="mail-queue__doctor">
+                          <span className="settings-muted">Doctor</span>
+                          <select
+                            className="settings-input"
+                            value={doctor.employeeId ? String(doctor.employeeId) : ''}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const nextId = Number(e.target.value);
+                              if (!nextId || nextId === doctor.employeeId) return;
+                              void onRun(() =>
+                                pharmacyMailAction(practiceId, open.id, {
+                                  action: 'set_doctor',
+                                  lineId: line.id,
+                                  doctorEmployeeId: nextId,
+                                }),
+                              );
+                            }}
+                          >
+                            <option value="">
+                              {doctor.name ? doctor.name : 'No doctor on this script'}
+                            </option>
+                            {options.map((emp) => (
+                              <option key={emp.id} value={emp.id}>
+                                {formatEmployeeDisplayName(emp)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      );
+                    })()}
+                  </li>
                   {line.authorizedRefills != null ? (
                     <li className="mail-queue__refills">
                       {line.authorizedAcuity
@@ -2992,7 +3301,7 @@ function OrderDetail({
                     >
                       {savingScriptId === line.id ? 'Saving…' : 'Save directions'}
                     </button>
-                    {passesThrough(line) ? null : (
+                    {passesThrough(line) || viewStep === 'fill' ? null : (
                       <MailOrderFillLabels
                         className="mail-queue__btn"
                         order={open}
@@ -3045,7 +3354,7 @@ function OrderDetail({
                           <input
                             className="settings-input"
                             value={fillSources[line.id]?.vendor ?? ''}
-                            placeholder="e.g. Chewy"
+                            placeholder="e.g. Royal Canin"
                             onChange={(e) =>
                               setFillSources((prev) => ({
                                 ...prev,
@@ -3107,22 +3416,38 @@ function OrderDetail({
                   </div>
                 ) : null}
 
-                <div className="mail-queue__line-foot">
-                  <label className="mail-queue__check">
-                    <input
-                      type="checkbox"
-                      checked={splitIds.includes(line.id)}
-                      onChange={(e) =>
-                        setSplitIds((prev) =>
-                          e.target.checked
-                            ? [...prev, line.id]
-                            : prev.filter((id) => id !== line.id),
-                        )
-                      }
-                    />
-                    Split to new shipment
-                  </label>
-                </div>
+                {viewStep === 'fill' && !passesThrough(line) ? (
+                  <div className="mail-queue__section">
+                    <p className="mail-queue__section-label">Labels</p>
+                    <div className="mail-queue__actions">
+                      <MailOrderFillLabels
+                        className="mail-queue__btn"
+                        order={open}
+                        line={{ ...line, scriptText: currentScript }}
+                        checkNotes={checkNotes}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {canSplitShipment ? (
+                  <div className="mail-queue__line-foot">
+                    <label className="mail-queue__check">
+                      <input
+                        type="checkbox"
+                        checked={splitIds.includes(line.id)}
+                        onChange={(e) =>
+                          setSplitIds((prev) =>
+                            e.target.checked
+                              ? [...prev, line.id]
+                              : prev.filter((id) => id !== line.id),
+                          )
+                        }
+                      />
+                      Split to new shipment
+                    </label>
+                  </div>
+                ) : null}
               </div>
               );
             })}
@@ -3130,6 +3455,122 @@ function OrderDetail({
           );
         })}
 
+        {viewStep === 'fill' ? (
+          <div className="mail-queue__fill-finish">
+          <p className="mail-queue__fill-finish-title">Finish filling</p>
+          <ul className="mail-queue__fill-checklist">
+            {(open.lines || []).map((line) => {
+              const external = passesThrough(line);
+              const ready = external
+                ? Boolean(fillSources[line.id]?.orderRef.trim())
+                : !line.trackLots || Boolean(fillLots[line.id]?.lotId);
+              const status = external
+                ? ready
+                  ? `Ordered on ${fillSources[line.id]?.vendor.trim() || 'another site'}`
+                  : 'Needs the other site’s order #'
+                : !line.trackLots
+                  ? 'From our stock'
+                  : ready
+                    ? `Lot ${fillLots[line.id]?.lotNumber || 'picked'}`
+                    : 'Needs a lot';
+              return (
+                <li key={line.id} className={ready ? 'is-ready' : 'is-pending'}>
+                  <span className="mail-queue__fill-check">{ready ? '✓' : '•'}</span>
+                  <strong>{clientItemName(line.name)}</strong>
+                  <span className="settings-muted">{status}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <label className="settings-label mail-queue__field">
+            Notes for the checker
+            <textarea
+              className="settings-input"
+              value={checkNotes}
+              onChange={(e) => setCheckNotes(e.target.value)}
+              placeholder="Dose, count, anything the checker should see"
+            />
+          </label>
+          {(() => {
+            const lines = open.lines || [];
+            const fromStock = lines.some((line) => !passesThrough(line));
+            const missingLot = lines.some(
+              (line) => !passesThrough(line) && line.trackLots && !fillLots[line.id]?.lotId,
+            );
+            const missingOrderRef = lines.some(
+              (line) => passesThrough(line) && !fillSources[line.id]?.orderRef.trim(),
+            );
+            const fillBlocked = !employeeId
+              ? 'Sign in as staff to mark filled.'
+              : missingOrderRef
+                ? 'Enter the other site’s order number for each item ordered there.'
+                : !fromStock
+                  ? null
+                  : !fillBranchId
+                    ? 'Choose the office you filled from.'
+                    : !fillLocationId
+                      ? 'Choose the location you took stock from.'
+                      : missingLot
+                        ? 'Choose a lot for each item (or receive stock at this location first).'
+                        : null;
+            return (
+              <div className="mail-queue__actions">
+                {fillBlocked ? (
+                  <p className="settings-muted" style={{ margin: '0 0 8px', color: '#b45309' }}>
+                    {fillBlocked}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={Boolean(fillBlocked)}
+                  title={fillBlocked ?? undefined}
+                  onClick={() => {
+                    setFillError(null);
+                    void onRun(() =>
+                      pharmacyMailAction(practiceId, open.id, {
+                        action: 'fill',
+                        checkNotes,
+                        fillBranchId: fillBranchId === '' ? undefined : Number(fillBranchId),
+                        fillLocationId:
+                          fillLocationId === '' ? undefined : Number(fillLocationId),
+                        lineLots: lines.map((line) => ({
+                          lineId: line.id,
+                          inventoryLotBalanceId: fillLots[line.id]?.lotId ?? null,
+                          lotNumber: fillLots[line.id]?.lotNumber || null,
+                        })),
+                        lineSources: lines.map((line) => {
+                          const pick = fillSources[line.id];
+                          return passesThrough(line)
+                            ? {
+                                lineId: line.id,
+                                fulfillmentSource: 'external' as const,
+                                externalVendor: pick?.vendor.trim() || null,
+                                externalOrderRef: pick?.orderRef.trim() || null,
+                              }
+                            : { lineId: line.id, fulfillmentSource: 'stock' as const };
+                        }),
+                      }).catch((e) => {
+                        setFillError(apiErrorMessage(e));
+                        throw e;
+                      }),
+                    );
+                  }}
+                >
+                  Mark filled
+                </button>
+                {fillError ? (
+                  <p className="settings-muted" role="alert" style={{ margin: 0, color: '#b91c1c' }}>
+                    {fillError}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
+          </div>
+        ) : null}
+
+        {canSplitShipment ? (
         <div
           className="mail-queue__side-card"
           style={{ margin: '12px 0 0', padding: 12 }}
@@ -3169,6 +3610,7 @@ function OrderDetail({
             </button>
           </div>
         </div>
+        ) : null}
       </div>
 
       <div className="mail-queue__side">
@@ -3178,6 +3620,117 @@ function OrderDetail({
           rxLinePhone={rxLinePhone}
           onOrderUpdated={onOrderUpdated}
         />
+        {orderPaid && rejectedRefundStillDue(open) > 0.009 && !mailRejectedNeedsClientContact(open) ? (
+          <div className="mail-queue__side-card mail-queue__danger">
+            <h3>Refund rejected item(s)</h3>
+            <p className="settings-muted" style={{ marginTop: 0 }}>
+              The client was told about the rejection, but Stripe still needs a refund of{' '}
+              {money(rejectedRefundStillDue(open))}.
+            </p>
+            <div className="mail-queue__actions">
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() =>
+                  void onRun(() =>
+                    pharmacyMailAction(practiceId, open.id, { action: 'refund_rejected' }),
+                  )
+                }
+              >
+                Refund {money(rejectedRefundStillDue(open))}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {mailRejectedNeedsClientContact(open) ? (
+          <div className="mail-queue__side-card mail-queue__danger">
+            <h3>Rejected — contact client</h3>
+            <p className="settings-muted" style={{ marginTop: 0 }}>
+              {anyMailLinesRejected(open) && !allMailLinesRejected(open)
+                ? 'Tell the client which item(s) were rejected. This does not mark the rest of the order Contacted.'
+                : 'This order was rejected. Email or text the client.'}
+            </p>
+            {orderPaid && rejectedRefundStillDue(open) > 0.009 ? (
+              <p className="mail-queue__danger-text" style={{ margin: '0 0 10px' }}>
+                Rejected item(s) still need a refund of {money(rejectedRefundStillDue(open))}.
+              </p>
+            ) : orderPaid && rejectedLineRefundTotal(open) > 0.009 ? (
+              <p className="settings-muted" style={{ margin: '0 0 10px' }}>
+                Refund of {money(rejectedLineRefundTotal(open))} is already logged.
+              </p>
+            ) : null}
+            {mailOrderRejectedLines(open).length ? (
+              <ul className="settings-muted" style={{ margin: '0 0 10px', paddingLeft: 18 }}>
+                {mailOrderRejectedLines(open).map((line) => (
+                  <li key={line.id}>
+                    {line.patientName ? `${line.patientName}: ` : ''}
+                    {clientItemName(line.name)} × {Number(line.quantity) || 1}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {orderPaid && rejectedRefundStillDue(open) > 0.009 ? (
+              <label className="mail-queue__check" style={{ margin: '0 0 10px' }}>
+                <input
+                  type="checkbox"
+                  checked={refundRejectedOnSend}
+                  onChange={(e) => setRefundRejectedOnSend(e.target.checked)}
+                />
+                Refund {money(rejectedRefundStillDue(open))} when emailing or texting
+              </label>
+            ) : null}
+            <div className="mail-queue__actions">
+              {orderPaid && rejectedRefundStillDue(open) > 0.009 ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() =>
+                    void onRun(() =>
+                      pharmacyMailAction(practiceId, open.id, { action: 'refund_rejected' }),
+                    )
+                  }
+                >
+                  Refund {money(rejectedRefundStillDue(open))} now
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={!open.clientId}
+                title={!open.clientId ? 'No client record for Gmail email' : undefined}
+                onClick={() => {
+                  setRejectOutreachOnly(true);
+                  setRefundRejectedOnSend(rejectedRefundStillDue(open) > 0.009);
+                  setRejectMessage(
+                    mailOrderRejectedLines(open).length
+                      ? defaultMailOrderPartialRejectBodyText(firstName(open.customerName), open)
+                      : defaultMailOrderRejectBodyText(firstName(open.customerName), open),
+                  );
+                  setRejectModal('email');
+                }}
+              >
+                Email client
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={!open.clientId}
+                onClick={() => {
+                  setRejectOutreachOnly(true);
+                  setRefundRejectedOnSend(rejectedRefundStillDue(open) > 0.009);
+                  setRejectMessage(
+                    mailOrderRejectedLines(open).length
+                      ? defaultMailOrderPartialRejectBodyText(firstName(open.customerName), open)
+                      : defaultMailOrderRejectBodyText(firstName(open.customerName), open),
+                  );
+                  setRejectModal('text');
+                }}
+              >
+                Text client
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="mail-queue__side-card">
           <h3>Ship to</h3>
           {Number(open.otherBalanceDue) > 0.009 ? (
@@ -3267,7 +3820,46 @@ function OrderDetail({
           ) : null}
           {(open.approvalNotes || []).length ? (
             <div className="mail-queue__notes">
-              {(open.approvalNotes || []).map((note, idx) => (
+              {(() => {
+                const notes = open.approvalNotes || [];
+                const hidden = activityExpanded ? 0 : Math.max(0, notes.length - 2);
+                const visible = notes.slice(hidden);
+                return (
+                  <>
+                    {hidden > 0 ? (
+                      <button
+                        type="button"
+                        className="mail-queue__pet-link"
+                        style={{
+                          background: 'none',
+                          border: 0,
+                          padding: 0,
+                          cursor: 'pointer',
+                          font: 'inherit',
+                          textAlign: 'left',
+                        }}
+                        onClick={() => setActivityExpanded(true)}
+                      >
+                        Show {hidden} earlier
+                      </button>
+                    ) : notes.length > 2 ? (
+                      <button
+                        type="button"
+                        className="mail-queue__pet-link"
+                        style={{
+                          background: 'none',
+                          border: 0,
+                          padding: 0,
+                          cursor: 'pointer',
+                          font: 'inherit',
+                          textAlign: 'left',
+                        }}
+                        onClick={() => setActivityExpanded(false)}
+                      >
+                        Show latest only
+                      </button>
+                    ) : null}
+                    {visible.map((note, idx) => (
                 <div key={`${note.at}-${idx}`} className="mail-queue__note">
                   <strong>
                     {note.kind === 'task_sent'
@@ -3288,7 +3880,9 @@ function OrderDetail({
                                     ? 'Second-person check overridden'
                                     : note.kind === 'passed_through'
                                       ? 'Ordered on another site'
-                                      : 'Note'}
+                                      : note.kind === 'doctor'
+                                        ? 'Doctor changed'
+                                        : 'Note'}
                   </strong>
                   {note.actorName ? ` · ${note.actorName}` : ''}
                   {note.assignedToName ? ` → ${note.assignedToName}` : ''}
@@ -3297,7 +3891,10 @@ function OrderDetail({
                     <div style={{ whiteSpace: 'pre-wrap' }}>{note.notes}</div>
                   ) : null}
                 </div>
-              ))}
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           ) : (
             <p className="settings-muted" style={{ margin: 0 }}>
@@ -3331,78 +3928,291 @@ function OrderDetail({
           </div>
         </div>
 
-        {stage !== 'done' && stage !== 'rejected' && (
+        {stage !== 'done' && stage !== 'rejected' && !anyMailLinesRejected(open) && (
           <div className="mail-queue__side-card mail-queue__danger">
-            <h3>Reject</h3>
+            <h3>Reject entire order</h3>
             <p className="settings-muted" style={{ marginTop: 0 }}>
-              {orderPaid
-                ? 'Refunds the Stripe charge, cancels linked auto-ship, and can email or text the client.'
-                : 'Cancels the order and linked auto-ship. No refund is needed until they pay. You can email or text the client.'}
+              {rejectWillRefund
+                ? 'Refunds the full Stripe charge, cancels linked auto-ship, and can email or text the client.'
+                : 'Cancels the order and linked auto-ship. No refund applies. You can email or text the client.'}
             </p>
-            <label className="settings-label">
-              Internal reason
-              <input
-                className="settings-input"
-                value={rejectNotes}
-                onChange={(e) => setRejectNotes(e.target.value)}
-              />
-            </label>
-            <label className="settings-label">
-              Email subject
-              <input
-                className="settings-input"
-                value={rejectSubject}
-                onChange={(e) => setRejectSubject(e.target.value)}
-              />
-            </label>
-            <label className="settings-label mail-queue__field">
-              Client message
-              <textarea
-                className="settings-input"
-                value={rejectMessage}
-                onChange={(e) => setRejectMessage(e.target.value)}
-              />
-            </label>
             <div className="mail-queue__actions">
               <button
                 type="button"
                 className="btn secondary"
-                onClick={() =>
-                  void onRun(() =>
-                    pharmacyMailAction(practiceId, open.id, {
-                      action: 'reject',
-                      notes: rejectNotes.trim() || undefined,
-                      subject: rejectSubject.trim() || undefined,
-                      message: rejectMessage.trim() || undefined,
-                    }),
-                  )
-                }
+                disabled={!open.clientId}
+                title={!open.clientId ? 'No client record for Gmail email' : undefined}
+                onClick={() => {
+                  setRejectOutreachOnly(false);
+                  setRejectModal('email');
+                }}
               >
-                {orderPaid ? 'Reject + refund + email' : 'Reject + email'}
+                {rejectWillRefund ? 'Reject + refund + email' : 'Reject + email'}
               </button>
               <button
                 type="button"
                 className="btn secondary"
                 disabled={!open.clientId}
-                onClick={() =>
-                  void onRun(async () => {
-                    const order = await pharmacyMailAction(practiceId, open.id, {
-                      action: 'reject',
-                      notes: rejectNotes.trim() || undefined,
-                      subject: rejectSubject.trim() || undefined,
-                      message: undefined,
-                    });
-                    await sendClientText(rejectMessage.trim(), 'Mail order text');
-                    return addMailApprovalNote(practiceId, order.id, 'Rejection text sent');
-                  })
-                }
+                onClick={() => {
+                  setRejectOutreachOnly(false);
+                  setRejectModal('text');
+                }}
               >
-                {orderPaid ? 'Reject + refund + text' : 'Reject + text'}
+                {rejectWillRefund ? 'Reject + refund + text' : 'Reject + text'}
               </button>
             </div>
           </div>
         )}
       </div>
+      {contactEmailOpen && open.clientId ? (
+        <ClientEmailComposeModal
+          open
+          clientId={open.clientId}
+          clientLabel={open.customerName}
+          title={pickup ? 'Email — ready for pickup' : 'Email — order shipped'}
+          headerDescription={
+            rejectedRefundStillDue(open) > 0.009 && refundRejectedOnSend
+              ? `Sends from your shared Gmail send-as, refunds ${money(rejectedRefundStillDue(open))} for rejected item(s), then marks remaining items as contacted.`
+              : 'Sends from your shared Gmail send-as, then marks remaining items as contacted.'
+          }
+          initialSubject={notifySubject}
+          initialBodyText={notifyMessage}
+          initialBodyHtml={mailOrderContactBodyHtml(open, pickup, firstName(open.customerName))}
+          regardingPatients={rejectRegardingPatients}
+          regardingPatientIds={contactPatientIds}
+          onRegardingPatientIdsChange={setContactPatientIds}
+          patientEmrLogging="opt-in"
+          includeInPatientEmr={contactIncludeEmr}
+          onIncludeInPatientEmrChange={(next) => {
+            setContactIncludeEmr(next);
+            if (next && contactPatientIds.length === 0 && rejectRegardingPatients.length) {
+              setContactPatientIds(rejectRegardingPatients.map((p) => p.id));
+            }
+          }}
+          saveToClientCommunications={contactLogClient}
+          onSaveToClientCommunicationsChange={setContactLogClient}
+          onAfterSend={async ({ subject, bodyText, bodyHtml, to, from }) => {
+            const ok = await onRun(() =>
+              pharmacyMailAction(practiceId, open.id, {
+                action: 'email_sent',
+                notes: `Subject: ${subject}`,
+                message: bodyText,
+                refundRejected:
+                  refundRejectedOnSend && rejectedRefundStillDue(open) > 0.009,
+              }),
+            );
+            if (!ok) throw new Error('Email sent but the order could not be updated.');
+            setEmailedAt(sentClock());
+            if (contactLogClient || contactIncludeEmr) {
+              await recordScoutChartCommunication({
+                clientId: open.clientId!,
+                patientIds: contactIncludeEmr ? contactPatientIds : [],
+                channel: 'email',
+                body: bodyHtml || bodyText,
+                subject,
+                destination: to,
+                sentFrom: from,
+                typeLabel: pickup ? 'Mail order pickup email' : 'Mail order shipped email',
+                includeOnMedicalRecord: contactIncludeEmr,
+              });
+            }
+          }}
+          onClose={() => setContactEmailOpen(false)}
+        />
+      ) : null}
+      {rejectModal === 'email' && open.clientId ? (
+        <ClientEmailComposeModal
+          open
+          clientId={open.clientId}
+          clientLabel={open.customerName}
+          title={
+            rejectOutreachOnly
+              ? 'Email client about rejected item(s)'
+              : rejectWillRefund
+                ? 'Reject, refund, and email'
+                : 'Reject and email client'
+          }
+          headerDescription={
+            rejectOutreachOnly
+              ? rejectedRefundStillDue(open) > 0.009 && refundRejectedOnSend
+                ? `Emails the client from your shared Gmail send-as and refunds ${money(rejectedRefundStillDue(open))} for rejected item(s). Does not mark the rest of the order Contacted.`
+                : 'Emails the client from your shared Gmail send-as. Does not mark the rest of the order Contacted.'
+              : rejectWillRefund
+                ? 'Refunds the Stripe charge, cancels linked auto-ship, then sends this email from your shared Gmail send-as.'
+                : 'Cancels the order and linked auto-ship, then sends this email from your shared Gmail send-as.'
+          }
+          initialSubject={rejectSubject}
+          initialBodyText={rejectMessage}
+          initialBodyHtml={mailOrderRejectEmailBodyHtml(
+            open,
+            firstName(open.customerName),
+            rejectOutreachOnly || mailOrderRejectedLines(open).length > 0,
+          )}
+          regardingPatients={rejectRegardingPatients}
+          regardingPatientIds={rejectPatientIds}
+          onRegardingPatientIdsChange={setRejectPatientIds}
+          patientEmrLogging="opt-in"
+          includeInPatientEmr={rejectIncludeEmr}
+          onIncludeInPatientEmrChange={(next) => {
+            setRejectIncludeEmr(next);
+            if (next && rejectPatientIds.length === 0 && rejectRegardingPatients.length) {
+              setRejectPatientIds(rejectRegardingPatients.map((p) => p.id));
+            }
+          }}
+          saveToClientCommunications={rejectLogClient}
+          onSaveToClientCommunicationsChange={setRejectLogClient}
+          staffOnlyNote={rejectNotes}
+          onStaffOnlyNoteChange={setRejectNotes}
+          staffOnlyNoteRequired={!rejectOutreachOnly}
+          onBeforeSend={
+            rejectOutreachOnly
+              ? undefined
+              : async () => {
+                  const ok = await onRun(() =>
+                    pharmacyMailAction(practiceId, open.id, {
+                      action: 'reject',
+                      notes: rejectNotes.trim(),
+                      message: undefined,
+                    }),
+                  );
+                  if (!ok) throw new Error('Could not reject order.');
+                }
+          }
+          onAfterSend={async ({ subject, bodyText, bodyHtml, to, from }) => {
+            if (rejectOutreachOnly) {
+              const ok = await onRun(() =>
+                pharmacyMailAction(practiceId, open.id, {
+                  action: 'email_sent',
+                  rejectOutreach: true,
+                  refundRejected:
+                    refundRejectedOnSend && rejectedRefundStillDue(open) > 0.009,
+                  notes: `Rejected item outreach · ${subject}`,
+                  message: bodyText,
+                }),
+              );
+              if (!ok) throw new Error('Email sent but the order could not be updated.');
+            }
+            if (!rejectLogClient && !rejectIncludeEmr) return;
+            await recordScoutChartCommunication({
+              clientId: open.clientId!,
+              patientIds: rejectIncludeEmr ? rejectPatientIds : [],
+              channel: 'email',
+              body: bodyHtml || bodyText,
+              subject,
+              destination: to,
+              sentFrom: from,
+              typeLabel: rejectOutreachOnly
+                ? 'Mail order rejected item email'
+                : 'Mail order rejection email',
+              includeOnMedicalRecord: rejectIncludeEmr,
+            });
+          }}
+          onClose={() => {
+            setRejectModal(null);
+            setRejectOutreachOnly(false);
+          }}
+        />
+      ) : null}
+      {payEmailOpen && open.clientId ? (
+        <ClientEmailComposeModal
+          open
+          clientId={open.clientId}
+          clientLabel={open.customerName}
+          title="Email invoice"
+          headerDescription={
+            mailOrderPayUsesFullInvoice(open, payLinked ?? linkedAmount)
+              ? 'Sends from your shared Gmail send-as. This is the full unpaid visit invoice, including the mailed item. Nothing goes out until you confirm.'
+              : 'Sends from your shared Gmail send-as. Review the invoice and pay link, then send — nothing goes out until you confirm.'
+          }
+          initialSubject={paySubject}
+          initialBodyText={payMessage}
+          initialBodyHtml={mailOrderPayBodyHtml(
+            open,
+            firstName(open.customerName),
+            mailOrderPayAmount(open, payLinked ?? linkedAmount),
+            payLink,
+            payLinked ?? linkedAmount,
+          )}
+          regardingPatients={rejectRegardingPatients}
+          regardingPatientIds={payPatientIds}
+          onRegardingPatientIdsChange={setPayPatientIds}
+          patientEmrLogging="opt-in"
+          includeInPatientEmr={payIncludeEmr}
+          onIncludeInPatientEmrChange={(next) => {
+            setPayIncludeEmr(next);
+            if (next && payPatientIds.length === 0 && rejectRegardingPatients.length) {
+              setPayPatientIds(rejectRegardingPatients.map((p) => p.id));
+            }
+          }}
+          saveToClientCommunications={payLogClient}
+          onSaveToClientCommunicationsChange={setPayLogClient}
+          onAfterSend={async ({ subject, bodyText, bodyHtml, to, from }) => {
+            const ok = await onRun(() =>
+              addMailApprovalNote(
+                practiceId,
+                open.id,
+                `Payment invoice email sent · ${subject}`,
+              ),
+            );
+            if (!ok) throw new Error('Email sent but the order could not be updated.');
+            setPaySent('Invoice email sent.');
+            if (payLogClient || payIncludeEmr) {
+              await recordScoutChartCommunication({
+                clientId: open.clientId!,
+                patientIds: payIncludeEmr ? payPatientIds : [],
+                channel: 'email',
+                body: bodyHtml || bodyText,
+                subject,
+                destination: to,
+                sentFrom: from,
+                typeLabel: 'Mail order payment email',
+                includeOnMedicalRecord: payIncludeEmr,
+              });
+            }
+          }}
+          onClose={() => setPayEmailOpen(false)}
+        />
+      ) : null}
+      {payTextOpen ? (
+        <MailOrderPayTextModal
+          practiceId={practiceId}
+          order={open}
+          rxLinePhone={rxLinePhone}
+          regardingPatients={rejectRegardingPatients}
+          message={payMessage}
+          onMessageChange={setPayMessage}
+          onClose={() => setPayTextOpen(false)}
+          onRun={async (fn) => {
+            const ok = await onRun(fn);
+            if (ok) setPaySent('Pay-link text sent.');
+            return ok;
+          }}
+        />
+      ) : null}
+      {rejectModal === 'text' ? (
+        <MailOrderRejectModal
+          practiceId={practiceId}
+          order={open}
+          orderPaid={rejectOutreachOnly ? false : rejectWillRefund}
+          outreachOnly={rejectOutreachOnly}
+          refundRejected={
+            rejectOutreachOnly &&
+            refundRejectedOnSend &&
+            rejectedRefundStillDue(open) > 0.009
+          }
+          rxLinePhone={rxLinePhone}
+          regardingPatients={rejectRegardingPatients}
+          notes={rejectNotes}
+          onNotesChange={setRejectNotes}
+          message={rejectMessage}
+          onMessageChange={setRejectMessage}
+          onClose={() => {
+            setRejectModal(null);
+            setRejectOutreachOnly(false);
+          }}
+          onRun={onRun}
+        />
+      ) : null}
       {inventoryDetail ? (
         <InventoryItemDetailModal
           practiceId={practiceId}

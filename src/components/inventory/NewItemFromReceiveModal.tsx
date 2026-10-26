@@ -103,7 +103,7 @@ export default function NewItemFromReceiveModal({
       <div className="stock-lot-add-modal__card" onClick={(e) => e.stopPropagation()}>
         <h3>Add new item</h3>
         <p className="stock-lot-add-modal__item">
-          Goes on Cost Reviews when this shipment is finalized so the inventory manager can check
+          Goes on Cost Reviews when this shipment is finalized so a practice manager can check
           its cost and price.
         </p>
         <div className="stock-lot-add-modal__fields">

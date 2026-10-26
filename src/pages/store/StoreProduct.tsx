@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   formatBackInStock,
   publicStoreProduct,
@@ -20,14 +20,61 @@ import {
 import { expandStoreTagalongs } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
+import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 import './Store.css';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { useStorePracticeId } from './useStorePracticeId';
 
-const PRACTICE_ID = currentPracticeId();
+function weightRangeLbs(pack: string): { low: number; high: number } | null {
+  const match = pack.match(/(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg)?/i);
+  if (!match) return null;
+  let low = Number(match[1]);
+  let high = Number(match[2]);
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+  if (/kg/i.test(match[3] || '')) {
+    low *= 2.20462;
+    high *= 2.20462;
+  }
+  return low <= high ? { low, high } : { low: high, high: low };
+}
+
+/** The size whose range contains this weight. A weight on a shared boundary uses the higher range. */
+function packForWeight(packs: string[], lbs: number): string | null {
+  const hits = packs
+    .map((pack) => ({ pack, range: weightRangeLbs(pack) }))
+    .filter((row): row is { pack: string; range: { low: number; high: number } } => row.range != null)
+    .filter((row) => lbs + 0.001 >= row.range.low && lbs - 0.001 <= row.range.high)
+    .sort((a, b) => a.range.low - b.range.low || a.range.high - b.range.high);
+  return hits.length ? hits[hits.length - 1].pack : null;
+}
+
+function shortPetWeight(lbs: number | null | undefined): string | null {
+  if (lbs == null || !Number.isFinite(Number(lbs)) || Number(lbs) <= 0) return null;
+  const n = Number(lbs);
+  return Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n)} lb` : `${Math.round(n * 10) / 10} lb`;
+}
+
+function weighInDateLabel(at: string | null | undefined): string | null {
+  if (!at) return null;
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatLastWeightLine(lbs: number | null | undefined, at: string | null | undefined): string | null {
+  const shown = shortPetWeight(lbs);
+  if (!shown) return null;
+  const when = weighInDateLabel(at);
+  if (when) return `${shown}, taken ${when}`;
+  return `${shown} (weigh-in date not on file)`;
+}
 
 export default function StoreProduct() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { practiceId, ready } = useStorePracticeId();
+  const { loggedIn, pets } = useStoreMemberPricing();
+  const [patientId, setPatientId] = useState<number | null>(null);
   const [item, setItem] = useState<StoreListing | null>(null);
   const [catalog, setCatalog] = useState<StoreListing[]>([]);
   const [qty, setQty] = useState(1);
@@ -41,12 +88,13 @@ export default function StoreProduct() {
   const [added, setAdded] = useState(false);
 
   useEffect(() => {
-    void publicStoreProducts(PRACTICE_ID).then(setCatalog).catch(() => setCatalog([]));
-  }, []);
+    if (!ready) return;
+    void publicStoreProducts(practiceId).then(setCatalog).catch(() => setCatalog([]));
+  }, [practiceId, ready]);
 
   useEffect(() => {
-    if (!id) return;
-    void publicStoreProduct(PRACTICE_ID, id).then((row) => {
+    if (!id || !ready) return;
+    void publicStoreProduct(practiceId, id).then((row) => {
       setItem(row);
       const preferred = Number(id);
       const variants = row.variants || [];
@@ -63,7 +111,7 @@ export default function StoreProduct() {
       setStrength(first?.strength ?? null);
       setPack(first?.pack ?? null);
     });
-  }, [id]);
+  }, [id, practiceId, ready]);
 
   const strengths = useMemo(() => {
     if (!item) return [];
@@ -101,6 +149,31 @@ export default function StoreProduct() {
     Math.max(1, Math.floor(Number(qty) || 1))
   );
   const lastRecommendedRef = useRef<string | null>(null);
+  const petChoices = useMemo(
+    () =>
+      pets
+        .map((pet) => ({ pet, id: petDbId(pet) }))
+        .filter((row): row is { pet: (typeof pets)[number]; id: number } => row.id != null),
+    [pets],
+  );
+  const selectedPet = petChoices.find((row) => row.id === patientId)?.pet ?? null;
+  const petWeightLabel = formatLastWeightLine(selectedPet?.latestWeightLbs, selectedPet?.latestWeightAt);
+  const asksForPet =
+    loggedIn &&
+    (canAutoship ||
+      item?.approvalTag === 'needs_doctor_approval' ||
+      (item?.variants || []).length > 1);
+
+  useEffect(() => {
+    if (patientId != null && petChoices.some((row) => row.id === patientId)) return;
+    if (petChoices.length === 1) setPatientId(petChoices[0].id);
+  }, [patientId, petChoices]);
+
+  useEffect(() => {
+    if (selectedPet?.latestWeightLbs == null) return;
+    const match = packForWeight(packsForStrength, selectedPet.latestWeightLbs);
+    if (match) setPack(match);
+  }, [patientId, selectedPet?.latestWeightLbs, packsForStrength]);
 
   useEffect(() => {
     lastRecommendedRef.current = null;
@@ -192,9 +265,9 @@ export default function StoreProduct() {
         ← All products
       </Link>
       <div className="vayd-store__pdp-media">
-        {storeListingImageUrl(PRACTICE_ID, item, selected) ? (
+        {storeListingImageUrl(practiceId, item, selected) ? (
           <img
-            src={storeListingImageUrl(PRACTICE_ID, item, selected) ?? ''}
+            src={storeListingImageUrl(practiceId, item, selected) ?? ''}
             alt={item.name}
           />
         ) : (
@@ -283,6 +356,47 @@ export default function StoreProduct() {
             </div>
           </div>
         )}
+
+        {asksForPet ? (
+          <div className="vayd-store__option">
+            <div className="vayd-store__option-label">Pet</div>
+            {petChoices.length ? (
+              <div className="vayd-store__chips">
+                {petChoices.map((row) => {
+                  const weight = shortPetWeight(row.pet.latestWeightLbs);
+                  const when = weighInDateLabel(row.pet.latestWeightAt);
+                  const chipDetail = weight ? (when ? `${weight}, ${when}` : weight) : null;
+                  return (
+                    <button
+                      key={row.id}
+                      type="button"
+                      className={`vayd-store__chip${patientId === row.id ? ' is-on' : ''}`}
+                      onClick={() => setPatientId(row.id)}
+                    >
+                      {chipDetail ? `${row.pet.name} (${chipDetail})` : row.pet.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="vayd-store__autoship-note">No pets on this account yet.</p>
+            )}
+            {selectedPet ? (
+              <p className="vayd-store__pet-weight">
+                {petWeightLabel ? `Last weight ${petWeightLabel}` : 'No weight on file yet.'}
+              </p>
+            ) : petChoices.length > 1 ? (
+              <p className="vayd-store__autoship-note">Choose the pet this is for. You can change it at checkout.</p>
+            ) : null}
+          </div>
+        ) : !loggedIn && (item.variants || []).length > 1 ? (
+          <p className="vayd-store__autoship-note">
+            <Link to="/login" state={{ from: location }}>
+              Sign in
+            </Link>{' '}
+            to choose which pet this is for and see their last weight.
+          </p>
+        ) : null}
 
         {(item.variants || []).length > 1 && (
           <div className="vayd-store__option">
@@ -444,9 +558,14 @@ export default function StoreProduct() {
           <button
             type="button"
             className="primary"
-            disabled={!selected?.inventoryItemId || !orderable}
+            disabled={
+              !selected?.inventoryItemId ||
+              !orderable ||
+              (asksForPet && petChoices.length > 0 && patientId == null)
+            }
             onClick={() => {
               if (!selected?.inventoryItemId || !orderable) return;
+              if (asksForPet && petChoices.length > 0 && patientId == null) return;
               addToStoreCart({
                 inventoryItemId: selected.inventoryItemId,
                 name: selected.name,
@@ -472,7 +591,7 @@ export default function StoreProduct() {
                 storeProductId: item.storeProductId ?? null,
                 hasImage: Boolean(selected.hasImage || item.hasImage),
                 approvalTag: selected.approvalTag || item.approvalTag,
-                patientIds: [],
+                patientIds: patientId != null ? [patientId] : [],
                 taxLevelValue: selected.taxLevelValue ?? null,
               });
               setAdded(true);

@@ -67,6 +67,15 @@ type Props = {
   /** Optional: offer to log this send on the client record. */
   saveToClientCommunications?: boolean;
   onSaveToClientCommunicationsChange?: (next: boolean) => void;
+  /** Staff-only note (e.g. internal reject reason) shown above the client message. */
+  staffOnlyNote?: string;
+  onStaffOnlyNoteChange?: (next: string) => void;
+  staffOnlyNoteLabel?: string;
+  staffOnlyNoteRequired?: boolean;
+  /** Runs after validation and before Gmail send (e.g. refund + cancel order). */
+  onBeforeSend?: () => Promise<void>;
+  /** Replaces the default subtitle under the title when set. */
+  headerDescription?: string;
   onAfterSend?: (sent: {
     subject: string;
     bodyText: string;
@@ -101,6 +110,12 @@ export function ClientEmailComposeModal({
   onIncludeInPatientEmrChange,
   saveToClientCommunications = false,
   onSaveToClientCommunicationsChange,
+  staffOnlyNote,
+  onStaffOnlyNoteChange,
+  staffOnlyNoteLabel = 'Internal reason (staff only)',
+  staffOnlyNoteRequired = false,
+  onBeforeSend,
+  headerDescription,
   onAfterSend,
   onClose,
   onOpenEmailHistory,
@@ -282,9 +297,14 @@ export function ClientEmailComposeModal({
 
   const handleSend = async () => {
     if (!mailbox || !canSend) return;
+    if (staffOnlyNoteRequired && !staffOnlyNote?.trim()) {
+      setSendError('Add an internal reason for staff.');
+      return;
+    }
     setSending(true);
     setSendError(null);
     try {
+      await onBeforeSend?.();
       const { bodyText: text, bodyHtml } = brandedShellOnSend
         ? (() => {
             const inner = sanitizeCommunicationHtml(bodyText.trim());
@@ -377,7 +397,8 @@ export function ClientEmailComposeModal({
               {title}
             </h3>
             <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
-              Review and edit the email before sending to {recipient?.label ?? (recipientChoices?.length && to.trim() ? to.trim() : clientLabel)}.
+              {headerDescription ??
+                `Review and edit the email before sending to ${recipient?.label ?? (recipientChoices?.length && to.trim() ? to.trim() : clientLabel)}.`}
             </p>
             {mailbox && sharedInboxes.length === 1 ? (
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
@@ -417,6 +438,23 @@ export function ClientEmailComposeModal({
           <p role="alert" style={{ color: '#b91c1c', fontSize: 14, margin: '0 0 12px' }}>
             {sendError}
           </p>
+        ) : null}
+
+        {onStaffOnlyNoteChange ? (
+          <label style={{ display: 'block', marginBottom: 14 }}>
+            <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+              {staffOnlyNoteLabel}
+            </span>
+            <input
+              type="text"
+              className="settings-input"
+              style={{ width: '100%', boxSizing: 'border-box' }}
+              value={staffOnlyNote ?? ''}
+              disabled={sending}
+              onChange={(e) => onStaffOnlyNoteChange(e.target.value)}
+              placeholder="Why this order is being rejected"
+            />
+          </label>
         ) : null}
 
         {showSpinner ? (

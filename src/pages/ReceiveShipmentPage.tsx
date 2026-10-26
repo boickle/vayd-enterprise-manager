@@ -2368,7 +2368,7 @@ export default function ReceiveShipmentPage() {
                         </div>
                         {l.isNewItem ? (
                           <div style={{ marginTop: 2, fontSize: 13, color: '#075985' }}>
-                            New item — inventory manager will review on Cost Reviews
+                            New item — practice manager will review on Cost Reviews
                           </div>
                         ) : l.willUpdatePrice ? (
                           <div style={{ marginTop: 2, fontSize: 13, fontWeight: 600, color: '#2e7d32' }}>

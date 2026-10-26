@@ -83,7 +83,7 @@ import SettingsDepositBankAccounts from '../components/settings/SettingsDepositB
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
 import SettingsMemberships from '../components/settings/SettingsMemberships';
-import { useCan } from '../permissions/PermissionContext';
+import { useCan, usePermissions } from '../permissions/PermissionContext';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import FormsAdmin from './FormsAdmin';
 import SettingsLabForms from '../components/settings/SettingsLabForms';
@@ -515,6 +515,9 @@ export default function Settings() {
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
   const canManageMembershipPlans = useCan('membership.plan.manage');
+  const { hasRole } = usePermissions();
+  const canViewAutomaticTasks =
+    isAdmin || hasRole('practice_admin', 'practice_manager');
 
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
@@ -1376,6 +1379,36 @@ export default function Settings() {
               }
             }}
           />
+          {canViewAutomaticTasks ? (
+            <>
+              <h2 className="settings-section-title" style={{ marginTop: 28 }}>
+                Automatic Tasks
+              </h2>
+              <p className="settings-section-description">
+                Work Scout chases on its own. Practice managers can see the list. Admins can change
+                the rules.
+              </p>
+              <SettingsAutomaticTasks
+                practiceId={REMINDERS_PRACTICE_ID}
+                readOnly={!isAdmin}
+              />
+            </>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin && canViewAutomaticTasks) {
+    return (
+      <div className="container">
+        <div className="settings-page">
+          <h1 className="settings-title">Automatic Tasks</h1>
+          <p className="settings-section-description">
+            Work Scout chases on its own. This list is for practice managers and admins. The rules
+            themselves are changed by an admin.
+          </p>
+          <SettingsAutomaticTasks practiceId={REMINDERS_PRACTICE_ID} readOnly />
         </div>
       </div>
     );
@@ -3226,10 +3259,12 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Automatic Tasks</h2>
             <p className="settings-section-description">
-              Work that Scout chases on its own — an unfinished chart, an invoice left open, an
-              order nobody placed. Each rule decides how long something may sit, who the task goes
-              to, and whether it should come back if someone marks it done while the work is still
-              unfinished. Unfiled-call rules stay off that setting so waving a call off does not nag.
+              Work that Scout chases on its own — an unfinished chart, an invoice left open, a
+              membership signup that failed. Each rule decides how long something may sit, who the
+              task goes to, and whether it should come back if someone marks it done while the work
+              is still unfinished. Unfiled-call rules stay off that setting so waving a call off
+              does not nag. Built-in tasks below are listed for practice managers and admins and
+              are not switches.
             </p>
             <SettingsAutomaticTasks
               practiceId={REMINDERS_PRACTICE_ID}

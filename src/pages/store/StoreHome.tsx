@@ -9,9 +9,7 @@ import {
   type StoreListing,
 } from '../../api/onlineStore';
 import './Store.css';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
-
-const PRACTICE_ID = currentPracticeId();
+import { useStorePracticeId } from './useStorePracticeId';
 
 function categoryParts(raw: string | null | undefined): string[] {
   return String(raw || '')
@@ -43,7 +41,9 @@ export default function StoreHome() {
   const [browse, setBrowse] = useState<'featured' | 'all'>('featured');
   const [items, setItems] = useState<StoreListing[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const { practiceId, ready } = useStorePracticeId();
 
   const applyCategory = (next: string) => {
     setCategory(next);
@@ -57,14 +57,22 @@ export default function StoreHome() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!ready) return;
     let cancelled = false;
     setLoading(true);
-    void publicHiddenStoreCategories(PRACTICE_ID).then((names) => {
+    setLoadError(null);
+    void publicHiddenStoreCategories(practiceId).then((names) => {
       if (!cancelled) setHiddenCategories(names);
     });
-    void publicStoreProducts(PRACTICE_ID)
+    void publicStoreProducts(practiceId)
       .then((rows) => {
         if (!cancelled) setItems(rows);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setItems([]);
+          setLoadError('Could not load the store. Try refreshing the page.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -72,7 +80,7 @@ export default function StoreHome() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [practiceId, ready]);
 
   const groups = useMemo(() => {
     const isHidden = (name: string) =>
@@ -184,7 +192,7 @@ export default function StoreHome() {
       {loading ? <p>Loading store items…</p> : null}
       <div className="vayd-store__grid">
         {visible.map((item) => {
-          const imageSrc = storeListingImageUrl(PRACTICE_ID, item);
+          const imageSrc = storeListingImageUrl(practiceId, item);
           return (
           <Link key={item.listingId} className="vayd-store__card" to={`/store/${item.listingId}`}>
             <div className="vayd-store__card-media">
@@ -236,9 +244,11 @@ export default function StoreHome() {
       </div>
       {!loading && !visible.length ? (
         <p>
-          {q.trim() || category
-            ? 'No products match that search.'
-            : 'Nothing listed yet. Staff can add store items in Settings → Online store.'}
+          {loadError
+            ? loadError
+            : q.trim() || category
+              ? 'No products match that search.'
+              : 'No products are listed right now. Check back soon, or log in if you already have an account.'}
         </p>
       ) : null}
     </>

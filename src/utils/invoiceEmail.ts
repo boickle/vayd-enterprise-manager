@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { formatUsd } from './pimsInvoices';
+import { formatUsd, invoicePublicLabel } from './pimsInvoices';
 import type { GmailComposeAttachment } from '../api/gmail';
 
 export type InvoiceEmailLine = {
@@ -36,6 +36,148 @@ export type InvoiceEmailModel = {
   due: number;
   payLink?: string | null;
 };
+
+type StoreOpenInvoiceLike = {
+  label: string;
+  date: string | null;
+  clientName?: string;
+  due: number;
+  subtotal?: number;
+  tax?: number;
+  total?: number;
+  paid?: number;
+  lines: Array<{
+    description: string;
+    amount: number;
+    pet?: string | null;
+    qty?: number;
+    listAmount?: number | null;
+    membershipBenefit?: boolean;
+  }>;
+  payments?: InvoiceEmailPayment[];
+};
+
+function formatInvoiceDateTime(iso: string | null): string | undefined {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+export type VisitInvoiceEmailSource = {
+  id: string;
+  scoutInvoiceNumber?: number | null;
+  evetInvoiceNumber?: number | null;
+  created?: string | null;
+  subtotal: number;
+  taxTotal?: number;
+  total: number;
+  amountPaid: number;
+  lines?: Array<{
+    description: string;
+    patientName?: string | null;
+    qty?: number;
+    amount: number;
+    listUnitPrice?: number | null;
+    isCovered?: boolean;
+    isDeleted?: boolean;
+    hideOnInvoice?: boolean;
+    removedAt?: string | null;
+  }>;
+  tenders?: Array<{
+    receivedAt?: string | null;
+    paymentTypeName?: string | null;
+    method?: string;
+    amount: number;
+    voidedAt?: string | null;
+  }>;
+};
+
+/** Scout / visit invoice → the same table used when emailing from the client ledger. */
+export function visitInvoiceToEmailModel(
+  inv: VisitInvoiceEmailSource,
+  clientName: string,
+  payUrl?: string | null,
+): InvoiceEmailModel {
+  const lines = (inv.lines ?? [])
+    .filter((line) => line.isDeleted !== true && !line.removedAt && line.hideOnInvoice !== true)
+    .map((line) => {
+      const qty = Math.max(1, Number(line.qty) || 1);
+      const amount = Number(line.amount) || 0;
+      const listAmount =
+        line.listUnitPrice != null ? Number(line.listUnitPrice) * qty : null;
+      return {
+        description: line.description,
+        pet: (line.patientName || '').trim() || undefined,
+        qty,
+        amount,
+        listAmount,
+        membershipBenefit:
+          Boolean(line.isCovered) ||
+          (listAmount != null && listAmount > amount + 0.009),
+      };
+    });
+  const total = Number(inv.total) || 0;
+  const paid = Number(inv.amountPaid) || 0;
+  const due = Math.max(0, Math.round((total - paid) * 100) / 100);
+  return {
+    kind: due <= 0.009 ? 'receipt' : 'invoice',
+    label: `Invoice ${invoicePublicLabel(inv)}`,
+    date: formatInvoiceDateTime(inv.created ?? null),
+    clientName,
+    lines,
+    payments: (inv.tenders ?? [])
+      .filter((tender) => !tender.voidedAt)
+      .map((tender) => ({
+        date: tender.receivedAt ? formatInvoiceDateTime(tender.receivedAt) : undefined,
+        method: tender.paymentTypeName || tender.method || 'Payment',
+        amount: Number(tender.amount) || 0,
+      })),
+    subtotal: Number(inv.subtotal) || 0,
+    tax: Number(inv.taxTotal) || 0,
+    total,
+    paid,
+    due,
+    payLink: payUrl?.trim() || null,
+  };
+}
+
+/** Map portal / store open-invoice API rows to the same model used in emailed invoices. */
+export function storeOpenInvoiceToEmailModel(inv: StoreOpenInvoiceLike): InvoiceEmailModel {
+  const due = Number(inv.due) || 0;
+  const paid = Number(inv.paid) || 0;
+  const total = inv.total != null ? Number(inv.total) || 0 : due + paid;
+  const subtotal = inv.subtotal != null ? Number(inv.subtotal) || 0 : total;
+  const tax = Number(inv.tax) || 0;
+
+  return {
+    kind: 'invoice',
+    label: inv.label,
+    date: formatInvoiceDateTime(inv.date),
+    clientName: inv.clientName?.trim() || 'Client',
+    lines: (inv.lines || []).map((line) => ({
+      description: line.description,
+      pet: line.pet ?? undefined,
+      qty: line.qty ?? 1,
+      amount: Number(line.amount) || 0,
+      listAmount: line.listAmount,
+      membershipBenefit: Boolean(line.membershipBenefit),
+    })),
+    payments: inv.payments,
+    subtotal,
+    tax,
+    total,
+    paid,
+    due,
+    payLink: null,
+  };
+}
 
 function money(n: number): string {
   return formatUsd(Number(n) || 0);

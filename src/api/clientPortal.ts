@@ -51,6 +51,9 @@ export type Pet = {
   portalProfile?: PetPortalProfile | null;
   /** Hearts on this pet's snapshot from staff and family. */
   loves?: PetLoves | null;
+  /** Newest exam or staff weight, in pounds. */
+  latestWeightLbs?: number | null;
+  latestWeightAt?: string | null;
 };
 
 export type PetLoves = { count: number; mine: boolean };
@@ -744,6 +747,16 @@ export async function fetchClientPets(): Promise<Pet[]> {
         })) : undefined,
         portalProfile: normalizePortalProfile(p?.portalProfile),
         loves: normalizeLoves(p?.loves),
+        latestWeightLbs:
+          p?.latestWeightLbs != null && Number.isFinite(Number(p.latestWeightLbs))
+            ? Number(p.latestWeightLbs)
+            : null,
+        latestWeightAt:
+          typeof p?.latestWeightAt === 'string' && p.latestWeightAt.trim()
+            ? p.latestWeightAt
+            : p?.latestWeightAt != null
+              ? String(p.latestWeightAt)
+              : null,
       })) as Pet[];
     }
   } catch {

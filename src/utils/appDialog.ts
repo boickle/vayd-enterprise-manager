@@ -1,4 +1,6 @@
-export type AppDialogKind = 'confirm' | 'alert' | 'prompt' | 'decline-how';
+export type AppDialogKind = 'confirm' | 'alert' | 'prompt' | 'decline-how' | 'account-credit';
+
+export type AccountCreditDialogResult = { amount: number; description: string };
 
 export type AppDialogOptions = {
   title?: string;
@@ -17,7 +19,7 @@ export type DeclineHowResult = { recordOnChart: boolean; note: string };
 
 export type AppDialogRequest = AppDialogOptions & { kind: AppDialogKind };
 
-type AppDialogResult = boolean | string | null | DeclineHowResult;
+type AppDialogResult = boolean | string | null | DeclineHowResult | AccountCreditDialogResult;
 
 type AppDialogHandler = (req: AppDialogRequest) => Promise<AppDialogResult>;
 
@@ -44,6 +46,15 @@ function nativeFallback(req: AppDialogRequest): AppDialogResult {
   }
   if (req.kind === 'prompt') {
     return window.prompt(req.message, req.defaultValue ?? '');
+  }
+  if (req.kind === 'account-credit') {
+    const raw = window.prompt('Account credit amount (dollars):', '');
+    if (raw == null) return null;
+    const amount = Number(raw.replace(/[$,\s]/g, ''));
+    if (!Number.isFinite(amount) || amount < 0.01) return null;
+    const description = window.prompt(req.message || 'Reason for credit:', '')?.trim() ?? '';
+    if (!description) return null;
+    return { amount, description };
   }
   if (req.kind === 'decline-how') {
     const chart = window.confirm(`${req.message}\n\nOK = chart the decline. Cancel = pick the other option.`);
@@ -83,5 +94,13 @@ export function appPrompt(input: string | AppDialogOptions): Promise<string | nu
 export function appDeclineHow(input: AppDialogOptions): Promise<DeclineHowResult | null> {
   return run({ kind: 'decline-how', ...input }).then((v) =>
     v && typeof v === 'object' && 'recordOnChart' in v ? v : null,
+  );
+}
+
+export function appAccountCredit(
+  input: AppDialogOptions,
+): Promise<AccountCreditDialogResult | null> {
+  return run({ kind: 'account-credit', ...input }).then((v) =>
+    v && typeof v === 'object' && 'amount' in v && 'description' in v ? v : null,
   );
 }

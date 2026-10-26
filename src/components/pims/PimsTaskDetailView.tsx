@@ -326,6 +326,10 @@ export default function PimsTaskDetailView({
     approvalBasis?: 'standard' | 'chart' | 'refills',
   ) => {
     if (!task || mailOrderId == null || !canMutate) return;
+    if (outcome === 'rejected' && !approvalNote.trim()) {
+      setActionError('Add a note explaining why you are rejecting this order.');
+      return;
+    }
     setBusy(true);
     setActionError(null);
     try {

@@ -70,6 +70,7 @@ import MailOrdersPage from './pages/MailOrdersPage';
 import AbandonedCartsPage from './pages/AbandonedCartsPage';
 import StoreCategoriesPage from './pages/StoreCategoriesPage';
 import StoreSubscriptionsPage from './pages/StoreSubscriptionsPage';
+import AutoshipImportPage from './pages/AutoshipImportPage';
 import StoreLayout from './pages/store/StoreLayout';
 import StoreHome from './pages/store/StoreHome';
 import StoreProduct from './pages/store/StoreProduct';
@@ -814,6 +815,7 @@ export default function App() {
                         path="store-import"
                         element={<OnlineStoreImportPage view="import" />}
                       />
+                      <Route path="autoship-import" element={<AutoshipImportPage />} />
                       <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
                       <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
                       <Route path="auto-ships" element={<StoreSubscriptionsPage />} />

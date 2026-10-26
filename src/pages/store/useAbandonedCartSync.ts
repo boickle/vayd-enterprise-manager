@@ -4,8 +4,6 @@ import { readStoreCart } from './storeCartState';
 import { useStoreCart } from './useStoreCart';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = currentPracticeId();
-
 export function useAbandonedCartSync(
   email: string | null | undefined,
   clientId: number | null,
@@ -32,7 +30,7 @@ export function useAbandonedCartSync(
     if (!trimmed.includes('@')) return undefined;
     const t = window.setTimeout(() => {
       const current = readStoreCart();
-      void publicStoreCartActivity(PRACTICE_ID, {
+      void publicStoreCartActivity(currentPracticeId(), {
         email: trimmed,
         clientId,
         customerName: extras?.customerName || null,

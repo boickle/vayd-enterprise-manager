@@ -41,6 +41,17 @@
   white-space: pre-wrap;
 }
 
+.app-dialog__field--tight {
+  margin-top: 0;
+}
+
+.app-dialog__footnote {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
 .app-dialog__field {
   display: block;
   width: 100%;

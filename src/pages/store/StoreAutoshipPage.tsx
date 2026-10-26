@@ -4,11 +4,10 @@ import { useAuth } from '../../auth/useAuth';
 import { listMyAutoship, patchMyAutoship, type StoreAutoship } from '../../api/onlineStore';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './storeCartState';
 import './Store.css';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
-
-const PRACTICE_ID = currentPracticeId();
+import { useStorePracticeId } from './useStorePracticeId';
 
 export default function StoreAutoshipPage() {
+  const { practiceId } = useStorePracticeId();
   const auth = useAuth() as { token?: string | null };
   const [rows, setRows] = useState<StoreAutoship[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -16,20 +15,21 @@ export default function StoreAutoshipPage() {
 
   const load = () => {
     if (!auth.token) return;
-    void listMyAutoship(PRACTICE_ID)
+    void listMyAutoship(practiceId)
       .then(setRows)
       .catch((e) => setErr(e instanceof Error ? e.message : 'Could not load auto-ship items.'));
   };
 
   useEffect(() => {
     load();
-  }, [auth.token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.token, practiceId]);
 
   const run = async (id: number, body: Parameters<typeof patchMyAutoship>[2]) => {
     setBusyId(id);
     setErr(null);
     try {
-      const next = await patchMyAutoship(PRACTICE_ID, id, body);
+      const next = await patchMyAutoship(practiceId, id, body);
       setRows((current) =>
         body.cancel
           ? current.filter((row) => row.id !== id)

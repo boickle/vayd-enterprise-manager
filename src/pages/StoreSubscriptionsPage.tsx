@@ -9,6 +9,8 @@ import {
   type StoreStaffSubscription,
 } from '../api/onlineStore';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
+import AutoshipCardPanel from './store/AutoshipCardPanel';
+import { listStaffAutoshipCards, setStaffAutoshipCard } from '../api/autoshipCard';
 import './Settings.css';
 import './MailOrders.css';
 import './StoreOps.css';
@@ -102,6 +104,7 @@ export default function StoreSubscriptionsPage() {
   const [pauseRow, setPauseRow] = useState<StoreStaffSubscription | null>(null);
   const [pauseUntil, setPauseUntil] = useState(isoAddMonths(1));
   const [editRow, setEditRow] = useState<StoreStaffSubscription | null>(null);
+  const [cardRow, setCardRow] = useState<StoreStaffSubscription | null>(null);
   const [editItemId, setEditItemId] = useState(0);
   const [editQty, setEditQty] = useState('1');
   const [editFrequency, setEditFrequency] = useState('monthly');
@@ -412,6 +415,16 @@ export default function StoreSubscriptionsPage() {
                       >
                         {row.paused ? 'Resume' : 'Pause'}
                       </button>
+                      {row.stripeSubscriptionId ? (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={busyId === row.id}
+                          onClick={() => setCardRow(row)}
+                        >
+                          Card
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn secondary"
@@ -439,6 +452,38 @@ export default function StoreSubscriptionsPage() {
           <p className="settings-muted">No auto-ships in this filter yet.</p>
         )}
       </div>
+
+      {cardRow ? (
+        <div
+          className="settings-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="autoship-card-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCardRow(null);
+          }}
+        >
+          <div className="settings-modal">
+            <div className="settings-modal-header">
+              <h3 id="autoship-card-title">
+                Card for {cardRow.customerName || 'client'}: {cardRow.itemName}
+              </h3>
+              <button type="button" className="settings-modal-close" onClick={() => setCardRow(null)}>
+                ×
+              </button>
+            </div>
+            <AutoshipCardPanel
+              load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
+              save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
+              name={cardRow.customerName || ''}
+              email={cardRow.customerEmail}
+              buttonClass="btn primary"
+              secondaryButtonClass="btn secondary"
+              onSaved={(text) => setNote(text)}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {editRow ? (
         <div

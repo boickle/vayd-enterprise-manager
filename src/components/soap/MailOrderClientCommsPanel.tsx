@@ -20,6 +20,8 @@ import {
 } from '../../hooks/useOpenPhoneLineDirectory';
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { pharmacyMailAction, type MailOrder } from '../../api/onlineStore';
+import { recordScoutChartCommunication } from '../../api/scoutChart';
+import { mailOrderRegardingPatients } from '../../utils/mailOrderClientMessages';
 import { smsAllowsProductionOverride } from '../../utils/smsEnvironment';
 import { ClientMessagesHistoryModal } from '../ClientMessagesHistoryModal';
 import { ClientEmailHistoryModal } from '../ClientEmailHistoryModal';
@@ -112,6 +114,10 @@ export default function MailOrderClientCommsPanel({
   const [emailTo, setEmailTo] = useState('');
   const [subject, setSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
+  const [logClientComms, setLogClientComms] = useState(false);
+  const [includeEmr, setIncludeEmr] = useState(false);
+  const [emrPatientIds, setEmrPatientIds] = useState<number[]>([]);
+  const regardingPatients = useMemo(() => mailOrderRegardingPatients(order), [order]);
 
   useEffect(() => {
     setFromPhone(rxLinePhone || '');
@@ -288,11 +294,16 @@ export default function MailOrderClientCommsPanel({
 
   async function sendText() {
     if (!order.clientId || !draft.trim()) return;
+    if (includeEmr && emrPatientIds.length === 0) {
+      setError('Choose at least one pet for the patient EMR, or turn that off.');
+      return;
+    }
     setSending(true);
     setError(null);
     try {
+      const text = draft.trim();
       await sendClientSms(order.clientId, {
-        message: draft.trim(),
+        message: text,
         to: toPhone || undefined,
         from: fromPhone || undefined,
         source: 'mail_order',
@@ -307,6 +318,18 @@ export default function MailOrderClientCommsPanel({
         typeLabel: 'Mail order RX text',
         overrideNonProd: allowOverride ? overrideNonProd : undefined,
       });
+      if (logClientComms || includeEmr) {
+        await recordScoutChartCommunication({
+          clientId: order.clientId,
+          patientIds: includeEmr ? emrPatientIds : [],
+          channel: 'sms',
+          body: text,
+          destination: toPhone || undefined,
+          sentFrom: fromPhone || undefined,
+          typeLabel: 'Mail order RX text',
+          includeOnMedicalRecord: includeEmr,
+        });
+      }
       setDraft('');
       const refreshed = await fetchClientMessagesCached(order.clientId, { refresh: true });
       setMessages(refreshed.messages || []);
@@ -530,10 +553,54 @@ export default function MailOrderClientCommsPanel({
               placeholder="Ask about dose, address, pickup timing…"
             />
           </label>
+          <label className="mail-queue__check" style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={logClientComms}
+              onChange={(e) => setLogClientComms(e.target.checked)}
+            />
+            <span>
+              <strong>Add to client communications</strong>
+            </span>
+          </label>
+          <label className="mail-queue__check" style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={includeEmr}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setIncludeEmr(next);
+                if (next && emrPatientIds.length === 0 && regardingPatients.length) {
+                  setEmrPatientIds(regardingPatients.map((p) => p.id));
+                }
+              }}
+            />
+            <span>
+              <strong>Include in patient EMR</strong>
+            </span>
+          </label>
+          {includeEmr && regardingPatients.length > 0 ? (
+            <div style={{ margin: '6px 0 0', paddingLeft: 22 }}>
+              {regardingPatients.map((p) => (
+                <label key={p.id} className="mail-queue__check" style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={emrPatientIds.includes(p.id)}
+                    onChange={() =>
+                      setEmrPatientIds((prev) =>
+                        prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id],
+                      )
+                    }
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+          ) : null}
           {allowOverride ? (
             <label
               className="settings-label"
-              style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+              style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}
             >
               <input
                 type="checkbox"
@@ -550,7 +617,7 @@ export default function MailOrderClientCommsPanel({
               disabled={sending || !draft.trim()}
               onClick={() => void sendText()}
             >
-              {sending ? 'Sending…' : 'Send text + wait'}
+              {sending ? 'Sending…' : 'Send text + put into waiting status'}
             </button>
           </div>
         </>
@@ -647,7 +714,8 @@ export default function MailOrderClientCommsPanel({
           </strong>
           {!rxPreview.length && !loading ? (
             <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
-              No RX-line messages yet.
+              No unread messages on the RX line. Click Texts or Emails to see history for this
+              client.
             </p>
           ) : null}
           {rxPreview.map((message) => (

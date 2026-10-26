@@ -31,6 +31,8 @@ const TRIGGER_DESCRIPTIONS: Record<TaskAutomationTrigger, string> = {
   call_unfiled: 'A transcribed call was never filed to a chart or waved off.',
   lab_result_missing:
     'An in-house lab was charged and its results were never entered. The doctor on the visit is added as a watcher.',
+  membership_signup_failed:
+    'Someone tried to sign up for a membership and it failed. Two hours later they still are not a member.',
 };
 
 const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
@@ -39,6 +41,7 @@ const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
   order_list_item: 'Whoever asked for the item',
   call_unfiled: 'Whoever made the call',
   lab_result_missing: 'Whoever put the lab on the bill',
+  membership_signup_failed: 'The client liaison queue',
 };
 
 function employeeName(e: Employee): string {
@@ -67,10 +70,66 @@ const THRESHOLD_CHOICES = [60, 120, 240, 480, 720, 1440, 2880, 4320, 10080];
 
 type Props = {
   practiceId: number;
+  /** Practice managers can read the list. Admins can change the rules. */
+  readOnly?: boolean;
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
 };
 
-export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props) {
+/** Tasks Scout creates from code. They are not switches on this page. */
+const BUILTIN_TASKS: { name: string; when: string; who: string }[] = [
+  {
+    name: 'Renewal needs a plan',
+    when: 'A membership would renew onto an archived plan.',
+    who: 'Client liaison lead queue. Practice managers watch.',
+  },
+  {
+    name: 'Renewed with no plan chosen',
+    when: 'The anniversary passed and it renewed on the current plan.',
+    who: 'Client liaison lead queue. Practice managers watch.',
+  },
+  {
+    name: 'Renewal email not delivered',
+    when: 'The owner opted out of email, or the address bounced.',
+    who: 'Client liaison lead queue. Practice managers watch.',
+  },
+  {
+    name: 'Stripe refused the renewal price',
+    when: 'The new year started, but Stripe kept the old price.',
+    who: 'Client liaison lead queue. Practice managers watch.',
+  },
+  {
+    name: 'Inactive pet still on a membership',
+    when: 'A pet is inactive, or has a completed euthanasia visit, and the membership is still billing.',
+    who: 'Client liaison lead queue. Practice managers watch. It closes when the pet is active again or the membership is cancelled.',
+  },
+  {
+    name: 'Inactive client still being billed',
+    when: 'A client was made inactive outside the client page, so the pet’s membership was not cancelled.',
+    who: 'Client liaison lead queue. Practice managers watch.',
+  },
+  {
+    name: 'Weekly inventory count',
+    when: 'Items at a location are due for the weekly count.',
+    who: 'The people who count that location. The inventory manager watches.',
+  },
+  {
+    name: 'Count came up off',
+    when: 'A posted count is outside the practice’s alert thresholds.',
+    who: 'Whoever reviews counts at that office.',
+  },
+  {
+    name: 'Monthly shrink review',
+    when: 'Last month’s shrink or count accuracy needs a look.',
+    who: 'An inventory manager, with practice managers watching. Turned off from Inventory count alerts.',
+  },
+  {
+    name: 'Monthly par review',
+    when: 'Usage suggests changing par, min, or max.',
+    who: 'Whoever can change pars at that office. Turned off from par settings.',
+  },
+];
+
+export default function SettingsAutomaticTasks({ practiceId, readOnly = false, onMessage }: Props) {
   const [rules, setRules] = useState<TaskAutomationRule[]>([]);
   const [placeholders, setPlaceholders] = useState<
     Record<string, string[]>
@@ -161,16 +220,14 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
 
   if (loading) return <div className="auto-tasks__empty">Loading…</div>;
   if (loadError) return <div className="auto-tasks__error">{loadError}</div>;
-  if (!rules.length) {
-    return (
-      <div className="auto-tasks__empty">
-        No automatic tasks are set up for this practice yet.
-      </div>
-    );
-  }
-
   return (
     <div className="auto-tasks">
+      {!rules.length ? (
+        <div className="auto-tasks__empty">
+          No automatic tasks are set up for this practice yet.
+        </div>
+      ) : null}
+      {!readOnly && rules.length ? (
       <div className="auto-tasks__toolbar">
         <button
           type="button"
@@ -184,6 +241,7 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
           Rules otherwise run on their own every half hour.
         </span>
       </div>
+      ) : null}
 
       {rules.map((rule) => {
         const open = expandedId === rule.id;
@@ -199,8 +257,11 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
                 <input
                   type="checkbox"
                   checked={rule.isEnabled}
-                  disabled={saving}
-                  onChange={(e) => void save(rule, { isEnabled: e.target.checked })}
+                  disabled={saving || readOnly}
+                  onChange={(e) => {
+                    if (readOnly) return;
+                    void save(rule, { isEnabled: e.target.checked });
+                  }}
                 />
                 <span className="auto-tasks__toggle-track" aria-hidden="true" />
               </label>
@@ -218,13 +279,14 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
                       ? `Goes to the ${roleName(rule.assigneeRoleId) ?? 'chosen role'}.`
                       : rule.assigneeMode === 'employee'
                         ? 'Goes to one named person.'
-                        : 'Waits on the queue for someone to claim.'}{' '}
+                        : `Waits on the ${roleName(rule.queueRoleId) ?? 'unassigned'} queue.`}{' '}
                   {rule.recreateIfIncomplete
                     ? 'Comes back if they mark it done but the work is not.'
                     : 'Stays closed if they mark it done or take it off the list.'}
                 </p>
               </div>
 
+              {readOnly ? null : (
               <button
                 type="button"
                 className="auto-tasks__expand"
@@ -232,9 +294,14 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
               >
                 {open ? 'Done' : 'Edit'}
               </button>
+              )}
             </header>
 
-            {open && (
+            {readOnly && rule.bodyTemplate ? (
+              <p className="auto-tasks__builtin-copy">{rule.bodyTemplate}</p>
+            ) : null}
+
+            {!readOnly && open && (
               <div className="auto-tasks__body">
                 <div className="auto-tasks__grid">
                   <label className="auto-tasks__field">
@@ -495,6 +562,23 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
           </section>
         );
       })}
+
+      <section className="auto-tasks__builtin" aria-label="Built-in tasks">
+        <h3 className="auto-tasks__builtin-title">Built-in tasks</h3>
+        <p className="auto-tasks__builtin-note">
+          Scout creates these on its own. They are not switches here, so they cannot be edited or
+          turned off from this page.
+        </p>
+        <ul className="auto-tasks__builtin-list">
+          {BUILTIN_TASKS.map((task) => (
+            <li key={task.name}>
+              <strong>{task.name}</strong>
+              <span>{task.when}</span>
+              <span>{task.who}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

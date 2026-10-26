@@ -212,7 +212,8 @@ export type MailApprovalNote = {
     | 'contacted'
     | 'thanks'
     | 'check_override'
-    | 'passed_through';
+    | 'passed_through'
+    | 'doctor';
   notes?: string | null;
   actorName?: string | null;
   assignedToName?: string | null;
@@ -227,6 +228,9 @@ export type MailOrderLine = {
   weightLbs?: number | null;
   weightDate?: string | null;
   rxNumber?: number | null;
+  /** Doctor written on the existing prescription, when this line is a refill. */
+  scriptPrescriberEmployeeId?: number | null;
+  scriptPrescriberName?: string | null;
   name: string;
   strength: string | null;
   quantity: number;
@@ -378,6 +382,8 @@ export type MailOrder = {
    * Shown in red when the household owes money beyond this order.
    */
   otherBalanceDue?: number | null;
+  /** Unrefunded total for rejected line(s). */
+  rejectedRefundDue?: number | null;
   freeShipping: boolean;
   shippingChargeName: string | null;
   labelUrl: string | null;
@@ -476,6 +482,7 @@ export async function importStoreCatalog(practiceId: number, file: File) {
     products: number;
     variants: number;
     images: number;
+    unlisted?: number;
     unmatched: Array<{ productName: string; itemName: string; reason: string }>;
   }>(`/practice/${practiceId}/online-store/catalog-import`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -986,6 +993,8 @@ export async function pharmacyMailAction(
       | 'reject'
       | 'note'
       | 'notify'
+      | 'email_sent'
+      | 'refund_rejected'
       | 'complete'
       | 'ready_for_check'
       | 'update_script'
@@ -993,7 +1002,8 @@ export async function pharmacyMailAction(
       | 'thanks'
       | 'check_override'
       | 'pending_client'
-      | 'clear_client_pending';
+      | 'clear_client_pending'
+      | 'set_doctor';
     notes?: string;
     checkNotes?: string;
     message?: string;
@@ -1001,8 +1011,11 @@ export async function pharmacyMailAction(
     fillBranchId?: number;
     fillLocationId?: number;
     lineId?: number;
+    doctorEmployeeId?: number | null;
     scriptText?: string;
     recordContact?: boolean;
+    rejectOutreach?: boolean;
+    refundRejected?: boolean;
     /** Label for the client communications log entry. */
     typeLabel?: string;
     patientId?: number | null;
@@ -1512,12 +1525,83 @@ export async function publicPreviewCoupon(
   return data;
 }
 
+export type StoreOpenInvoiceLine = {
+  description: string;
+  amount: number;
+  pet?: string | null;
+  qty?: number;
+  listAmount?: number | null;
+  membershipBenefit?: boolean;
+};
+
+export type StoreOpenInvoicePayment = {
+  date?: string;
+  method?: string;
+  amount: number;
+};
+
+export type StoreOpenInvoice = {
+  id: string;
+  source: 'scout' | 'evet';
+  label: string;
+  date: string | null;
+  clientName?: string;
+  due: number;
+  subtotal?: number;
+  tax?: number;
+  total?: number;
+  paid?: number;
+  lines: StoreOpenInvoiceLine[];
+  payments?: StoreOpenInvoicePayment[];
+};
+
+export type StoreAccountPosition = {
+  available: number;
+  owed: number;
+  invoices: StoreOpenInvoice[];
+};
+
+export async function publicAccountCredit(
+  practiceId: number,
+  clientId: number,
+  email: string,
+): Promise<StoreAccountPosition> {
+  const { data } = await http.post<StoreAccountPosition>(`/public/store/account-credit`, {
+    practiceId,
+    clientId,
+    email,
+  });
+  return {
+    available: Number(data?.available) || 0,
+    owed: Number(data?.owed) || 0,
+    invoices: Array.isArray(data?.invoices) ? data.invoices : [],
+  };
+}
+
+export async function publicPayAccountBalance(
+  practiceId: number,
+  body: {
+    clientId: number;
+    email: string;
+    paymentMethodId: string;
+    customerName?: string | null;
+  },
+): Promise<{ paid: number }> {
+  const { data } = await http.post<{ paid: number }>(`/public/store/pay-balance`, {
+    practiceId,
+    ...body,
+  });
+  return { paid: Number(data?.paid) || 0 };
+}
+
 export async function publicCheckout(
   practiceId: number,
   body: {
     customerName: string;
     customerEmail?: string;
     couponCode?: string;
+    applyAccountCredit?: boolean;
+    payOutstanding?: boolean;
     paymentMethodId?: string | null;
     saveCard?: boolean;
     updateMailingOnFile?: boolean;

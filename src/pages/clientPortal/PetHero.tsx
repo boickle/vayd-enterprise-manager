@@ -24,6 +24,7 @@ export type HeroStat = {
   l: string;
   tone?: 'warn' | 'danger';
   onClick?: () => void;
+  action?: { label: string; onClick: () => void };
 };
 
 export default function PetHero({
@@ -31,6 +32,7 @@ export default function PetHero({
   membership,
   provider,
   stats,
+  account,
   chatOpen,
   chatIsMember,
   onRequestVisit,
@@ -51,6 +53,8 @@ export default function PetHero({
   membership: MembershipView;
   provider: PortalProvider | null;
   stats: HeroStat[];
+  /** Credit or balance, shown under the care-reminder stats. */
+  account?: React.ReactNode;
   chatOpen: boolean;
   chatIsMember: boolean;
   onRequestVisit: () => void;
@@ -358,25 +362,42 @@ export default function PetHero({
 
         {stats.length > 0 ? (
           <div className="pp-hero-status">
-            {stats.map((s) => (
-              <button
-                key={s.l}
-                type="button"
-                className={`pp-stat${s.tone ? ` pp-stat--${s.tone}` : ''}`}
-                onClick={s.onClick}
-                style={s.onClick ? undefined : { cursor: 'default' }}
-              >
-                <span className="pp-stat-icon" aria-hidden>
-                  {s.icon}
-                </span>
-                <span>
-                  <div className="pp-stat-k">{s.k}</div>
-                  <div className="pp-stat-l">{s.l}</div>
-                </span>
-              </button>
-            ))}
+            {stats.map((s) =>
+              s.action ? (
+                <div key={s.l} className={`pp-stat pp-stat--static${s.tone ? ` pp-stat--${s.tone}` : ''}`}>
+                  <span className="pp-stat-icon" aria-hidden>
+                    {s.icon}
+                  </span>
+                  <span className="pp-stat-body">
+                    <div className="pp-stat-k">{s.k}</div>
+                    <div className="pp-stat-l">{s.l}</div>
+                  </span>
+                  <button type="button" className="pp-btn pp-btn--primary pp-btn--xs pp-stat-action" onClick={s.action.onClick}>
+                    {s.action.label}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  key={s.l}
+                  type="button"
+                  className={`pp-stat${s.tone ? ` pp-stat--${s.tone}` : ''}`}
+                  onClick={s.onClick}
+                  style={s.onClick ? undefined : { cursor: 'default' }}
+                >
+                  <span className="pp-stat-icon" aria-hidden>
+                    {s.icon}
+                  </span>
+                  <span>
+                    <div className="pp-stat-k">{s.k}</div>
+                    <div className="pp-stat-l">{s.l}</div>
+                  </span>
+                </button>
+              ),
+            )}
           </div>
         ) : null}
+
+        {account}
 
         <div className="pp-hero-actions">
           <button type="button" className="pp-btn pp-btn--primary" onClick={onRequestVisit}>

@@ -7,11 +7,10 @@ import {
   type StoreFulfillmentOption,
 } from '../../api/onlineStore';
 import './Store.css';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
-
-const PRACTICE_ID = currentPracticeId();
+import { useStorePracticeId } from './useStorePracticeId';
 
 export default function StoreThanks() {
+  const { practiceId } = useStorePracticeId();
   const { id } = useParams();
   const location = useLocation();
   const order = (location.state as { order?: MailOrder } | null)?.order;
@@ -32,7 +31,7 @@ export default function StoreThanks() {
 
   useEffect(() => {
     let cancelled = false;
-    void publicStoreFulfillment(PRACTICE_ID).then((rows) => {
+    void publicStoreFulfillment(practiceId).then((rows) => {
       if (cancelled) return;
       const label = (order?.shippingChargeName || '').trim().toLowerCase();
       const match =
@@ -44,7 +43,7 @@ export default function StoreThanks() {
     return () => {
       cancelled = true;
     };
-  }, [order?.shippingChargeName, pickup]);
+  }, [order?.shippingChargeName, pickup, practiceId]);
 
   return (
     <>

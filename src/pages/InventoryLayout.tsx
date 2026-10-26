@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
-import { usePermissions } from '../permissions/PermissionContext';
+import { useCan, usePermissions } from '../permissions/PermissionContext';
 import { isInventoryOpsNavPath } from '../utils/catalogInventoryNav';
 import ReleasedStockLinksNotice from '../components/inventory/ReleasedStockLinksNotice';
 import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
@@ -109,6 +109,7 @@ export default function InventoryLayout({
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
   const canManage =
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
+  const canCostReview = isAdmin || useCan('inventory.cost_review.manage');
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
 
@@ -116,10 +117,13 @@ export default function InventoryLayout({
   if (!isAdmin && onPath('suppliers')) {
     return <Navigate to={`${basePath}/items`} replace />;
   }
-  if (!canManage && ['par-review', 'cost-reviews'].some(onPath)) {
+  if (!canManage && onPath('par-review')) {
     return <Navigate to={`${basePath}/counts`} replace />;
   }
-  if (!canSetup && ['par-seed', 'store-import'].some(onPath)) {
+  if (!canCostReview && onPath('cost-reviews')) {
+    return <Navigate to={`${basePath}/counts`} replace />;
+  }
+  if (!canSetup && ['par-seed', 'store-import', 'autoship-import'].some(onPath)) {
     return <Navigate to={`${basePath}/counts`} replace />;
   }
   if (location.pathname.startsWith('/schedule/inventory/mail-orders')) {
@@ -153,10 +157,13 @@ export default function InventoryLayout({
     { to: `${basePath}/par-levels`, label: 'Par Levels' },
     { to: `${basePath}/first-counts`, label: 'First / Annual Counts' },
     { to: `${basePath}/store-import`, label: 'Online Store Import' },
+    { to: `${basePath}/autoship-import`, label: 'Auto-ship Import' },
   ];
   const manageItems: NavItem[] = [
     { to: `${basePath}/par-review`, label: 'Par Review' },
-    { to: `${basePath}/cost-reviews`, label: 'Cost Reviews', badge: attention.costReviews },
+    ...(canCostReview
+      ? [{ to: `${basePath}/cost-reviews`, label: 'Cost Reviews', badge: attention.costReviews }]
+      : []),
     { to: '/schedule/analytics/inventory', label: 'Reports (shrink, counts, expiring) →' },
   ];
   const moveOrderItems: NavItem[] = [

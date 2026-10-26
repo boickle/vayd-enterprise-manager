@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
 import {
+  publicAccountCredit,
   publicCheckout,
   storeApiError,
   publicPreviewCoupon,
@@ -12,6 +13,7 @@ import {
   storeMasterImageUrl,
   storeProductImageUrl,
   type StoreFulfillmentOption,
+  type StoreOpenInvoice,
   type StoreReminderCadence,
   type StoreSavedCard,
   type StoreTagalongPreview,
@@ -31,6 +33,7 @@ import {
   storeTaxRateForLevel,
 } from './storePricing';
 import StoreCartCardEntry, { type StoreCartCardEntryHandle } from './StoreCartCardEntry';
+import StoreOpenInvoicesPanel from './StoreOpenInvoicesPanel';
 import { useAbandonedCartSync } from './useAbandonedCartSync';
 import {
   formatMailPickupLocation,
@@ -77,8 +80,9 @@ import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import { applyMemberStoreDiscount, memberDiscountForPets } from '../../utils/storeMemberPrice';
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 import StoreRebatePromo from './StoreRebatePromo';
+import StoreCheckoutLogin from './StoreCheckoutLogin';
 import './Store.css';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { useStorePracticeId } from './useStorePracticeId';
 
 function customFreqParts(frequency: string | null | undefined) {
   const match = /^every_(\d+)_(days|weeks|months)$/i.exec(frequency || '');
@@ -116,7 +120,6 @@ function autoshipPlaceOrderNote(lines: StoreCartLine[]): string | null {
   return `You'll receive shipments and be charged on each item's schedule (${schedule}) until you cancel.`;
 }
 
-const PRACTICE_ID = currentPracticeId();
 
 function lineNeedsApproval(line: StoreCartLine) {
   return line.approvalTag === 'needs_doctor_approval';
@@ -187,6 +190,7 @@ export default function StoreCartPage() {
   };
   const clientId = auth.userId && Number.isFinite(Number(auth.userId)) ? Number(auth.userId) : null;
   const loggedIn = Boolean(auth.token && clientId);
+  const { practiceId } = useStorePracticeId();
 
   const [lines, setLines] = useState(readStoreCart);
   // Item the shopper just added from elsewhere (e.g. portal "Reorder"): scroll
@@ -245,6 +249,12 @@ export default function StoreCartPage() {
   const [shipAddressConfirmed, setShipAddressConfirmed] = useState<'yes' | 'no' | ''>('');
   const [shipManualEntry, setShipManualEntry] = useState(false);
   const [updateMailingOnFile, setUpdateMailingOnFile] = useState<'yes' | 'no' | ''>('');
+  const [accountCredit, setAccountCredit] = useState(0);
+  const [amountOwed, setAmountOwed] = useState(0);
+  const [openInvoices, setOpenInvoices] = useState<StoreOpenInvoice[]>([]);
+  const [applyAccountCredit, setApplyAccountCredit] = useState(false);
+  const [payOutstanding, setPayOutstanding] = useState(false);
+  const [showOpenInvoices, setShowOpenInvoices] = useState(false);
 
   const persist = (next: StoreCartLine[]) => {
     writeStoreCart(next);
@@ -300,7 +310,7 @@ export default function StoreCartPage() {
   useEffect(() => {
     const cartAllAutoship =
       lines.length > 0 && lines.every((line) => Boolean(line.autoshipFrequency));
-    void publicStoreFulfillment(PRACTICE_ID).then((rows) => {
+    void publicStoreFulfillment(practiceId).then((rows) => {
       const visible = shipFirst(rows.filter((row) => mailTypeShowOnOnlineStore(row)));
       setOptions(visible);
       setFulfillmentId((current) =>
@@ -309,7 +319,7 @@ export default function StoreCartPage() {
           : defaultFulfillmentId(visible, cartAllAutoship),
       );
     });
-    void publicStoreTax(PRACTICE_ID)
+    void publicStoreTax(practiceId)
       .then((row) => {
         setTaxRates({
           name: row.name || 'Sales Tax',
@@ -319,7 +329,7 @@ export default function StoreCartPage() {
         });
       })
       .catch(() => undefined);
-    void publicStoreProducts(PRACTICE_ID)
+    void publicStoreProducts(practiceId)
       .then((listings) => {
         const next: Record<number, StoreTagalongPreview[]> = {};
         const cadences: Record<number, StoreReminderCadence> = {};
@@ -334,7 +344,42 @@ export default function StoreCartPage() {
         setCadenceByItem(cadences);
       })
       .catch(() => undefined);
-  }, []);
+  }, [practiceId]);
+
+  useEffect(() => {
+    if (!loggedIn || !clientId) {
+      setAccountCredit(0);
+      setAmountOwed(0);
+      setOpenInvoices([]);
+      setApplyAccountCredit(false);
+      setPayOutstanding(false);
+      return;
+    }
+    const email = ship.email.trim();
+    if (!email) return;
+    let cancelled = false;
+    void publicAccountCredit(practiceId, clientId, email)
+      .then((row) => {
+        if (cancelled) return;
+        const available = Number(row.available) || 0;
+        const owed = Number(row.owed) || 0;
+        setAccountCredit(available);
+        setAmountOwed(owed);
+        setOpenInvoices(row.invoices || []);
+        if (available < 0.01) setApplyAccountCredit(false);
+        if (owed < 0.01) setPayOutstanding(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccountCredit(0);
+          setAmountOwed(0);
+          setOpenInvoices([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, clientId, ship.email]);
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
@@ -369,7 +414,7 @@ export default function StoreCartPage() {
       setSelectedCardId('');
       return;
     }
-    void publicStoreCardOnFile(PRACTICE_ID, email).then((row) => {
+    void publicStoreCardOnFile(practiceId, email).then((row) => {
       const next = row.hasCard ? row.cards ?? [] : [];
       setCards(next);
       const recommended = next.find((c) => c.recommended) ?? next[0];
@@ -379,7 +424,7 @@ export default function StoreCartPage() {
   }, [ship.email]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  const needsLogin = rxLines.length > 0 && !loggedIn;
+  const needsLogin = lines.length > 0 && !loggedIn;
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -464,6 +509,11 @@ export default function StoreCartPage() {
     return roundStoreMoney(n);
   }, [chargedUnits, couponOff, extrasByIndex, lines, shipping, subtotal, taxRates]);
   const total = Math.max(0, subtotal - couponOff + shipping + tax);
+  const creditApplied =
+    applyAccountCredit && accountCredit > 0.009 ? Math.min(accountCredit, total) : 0;
+  const balanceApplied = payOutstanding && amountOwed > 0.009 ? amountOwed : 0;
+  const dueToday = Math.max(0, Math.round((total - creditApplied + balanceApplied) * 100) / 100);
+  const creditCoversOrder = creditApplied > 0.009 && dueToday < 0.01;
   const patientNamesById = useMemo(
     () =>
       Object.fromEntries(
@@ -504,7 +554,7 @@ export default function StoreCartPage() {
   const placeBlocker = !lines.length
     ? 'Your cart is empty.'
     : needsLogin
-      ? 'Log in to order prescription or auto-ship items.'
+      ? 'Log in with your client portal email and password to check out.'
       : petsMissing
         ? 'Choose which pet each auto-ship or prescription item is for.'
         : !ship.customerName.trim() || !ship.email.trim()
@@ -553,8 +603,8 @@ export default function StoreCartPage() {
                 line.hasImage === false
                   ? null
                   : line.storeProductId
-                    ? storeMasterImageUrl(PRACTICE_ID, line.storeProductId)
-                    : storeProductImageUrl(PRACTICE_ID, line.inventoryItemId);
+                    ? storeMasterImageUrl(practiceId, line.storeProductId)
+                    : storeProductImageUrl(practiceId, line.inventoryItemId);
               const rx = lineNeedsApproval(line);
               const needsPet = lineNeedsPet(line) || hasMemberPricing;
               const extras = extrasByIndex[i] ?? [];
@@ -793,22 +843,9 @@ export default function StoreCartPage() {
         </table>
       ) : null}
 
-      {needsLogin ? (
-        <div className="vayd-store__note">
-          Auto-ship and prescription items need a client login so we can attach them to the right pet.
-          <div className="vayd-store__actions">
-            <Link
-              className="primary"
-              to="/login"
-              state={{ from: { pathname: '/store/cart' } }}
-            >
-              Log in to continue
-            </Link>
-          </div>
-        </div>
-      ) : null}
+      {needsLogin ? <StoreCheckoutLogin /> : null}
 
-      {lines.length ? (
+      {lines.length && loggedIn ? (
         <div className="vayd-store__cart-grid">
           <section>
             <h2>Fulfillment</h2>
@@ -1081,6 +1118,75 @@ export default function StoreCartPage() {
 
           <aside className="vayd-store__cart-summary">
             <h2>Total</h2>
+            {accountCredit > 0.009 && total > 0.009 ? (
+              <div className="vayd-store__credit">
+                <p className="vayd-store__question">
+                  You have ${accountCredit.toFixed(2)} account credit.
+                </p>
+                <div className="vayd-store__choices">
+                  <label className={`vayd-store__choice${applyAccountCredit ? '' : ' is-on'}`}>
+                    <input
+                      type="radio"
+                      name="store-account-credit"
+                      checked={!applyAccountCredit}
+                      onChange={() => setApplyAccountCredit(false)}
+                    />
+                    <span>Leave it on my account</span>
+                  </label>
+                  <label className={`vayd-store__choice${applyAccountCredit ? ' is-on' : ''}`}>
+                    <input
+                      type="radio"
+                      name="store-account-credit"
+                      checked={applyAccountCredit}
+                      onChange={() => setApplyAccountCredit(true)}
+                    />
+                    <span>
+                      Apply ${Math.min(accountCredit, total).toFixed(2)} to this order
+                      {accountCredit > total + 0.009
+                        ? ` ($${(accountCredit - total).toFixed(2)} stays on the account)`
+                        : ''}
+                    </span>
+                  </label>
+                </div>
+              </div>
+            ) : null}
+            {amountOwed > 0.009 ? (
+              <div className="vayd-store__credit">
+                <p className="vayd-store__question">
+                  You have ${amountOwed.toFixed(2)} due on your account. You can check out either way.
+                </p>
+                <div className="vayd-store__choices">
+                  <label className={`vayd-store__choice${payOutstanding ? '' : ' is-on'}`}>
+                    <input
+                      type="radio"
+                      name="store-pay-balance"
+                      checked={!payOutstanding}
+                      onChange={() => setPayOutstanding(false)}
+                    />
+                    <span>Leave the balance for later</span>
+                  </label>
+                  <label className={`vayd-store__choice${payOutstanding ? ' is-on' : ''}`}>
+                    <input
+                      type="radio"
+                      name="store-pay-balance"
+                      checked={payOutstanding}
+                      onChange={() => setPayOutstanding(true)}
+                    />
+                    <span>Pay the ${amountOwed.toFixed(2)} balance with this order</span>
+                  </label>
+                </div>
+                {openInvoices.length ? (
+                  <button
+                    type="button"
+                    className="vayd-store__card-link"
+                    onClick={() => setShowOpenInvoices((current) => !current)}
+                  >
+                    {showOpenInvoices ? 'Hide invoices' : 'View invoices'}
+                  </button>
+                ) : null}
+                {showOpenInvoices ? <StoreOpenInvoicesPanel invoices={openInvoices} /> : null}
+              </div>
+            ) : null}
             <label className="vayd-store__cart-coupon">
               Coupon
               <span>
@@ -1089,7 +1195,7 @@ export default function StoreCartPage() {
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    void publicPreviewCoupon(PRACTICE_ID, coupon, subtotal, {
+                    void publicPreviewCoupon(practiceId, coupon, subtotal, {
                       clientId,
                       member: hasMemberPricing,
                     })
@@ -1124,13 +1230,33 @@ export default function StoreCartPage() {
                   <th>{taxRates.name || 'Sales tax'}</th>
                   <td>${tax.toFixed(2)}</td>
                 </tr>
-                <tr className="vayd-store__cart-grand">
+                <tr className={creditApplied || balanceApplied ? undefined : 'vayd-store__cart-grand'}>
                   <th>Total</th>
                   <td>${total.toFixed(2)}</td>
                 </tr>
+                {creditApplied ? (
+                  <tr>
+                    <th>Account credit</th>
+                    <td>−${creditApplied.toFixed(2)}</td>
+                  </tr>
+                ) : null}
+                {balanceApplied ? (
+                  <tr>
+                    <th>Account balance</th>
+                    <td>${balanceApplied.toFixed(2)}</td>
+                  </tr>
+                ) : null}
+                {creditApplied || balanceApplied ? (
+                  <tr className="vayd-store__cart-grand">
+                    <th>Due today</th>
+                    <td>${dueToday.toFixed(2)}</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
-            {cards.length && !enterNewCard ? (
+            {creditCoversOrder && !hasAutoship ? (
+              <p className="vayd-store__autoship-note">No card charge — this order is covered by your account credit.</p>
+            ) : cards.length && !enterNewCard ? (
               <div className="vayd-store__card-pay">
                 <label>
                   Card on file
@@ -1186,19 +1312,24 @@ export default function StoreCartPage() {
                 setBusy(true);
                 setErr(null);
                 void (async () => {
+                  const skipCard = creditCoversOrder && !hasAutoship;
                   let paymentMethodId: string | null = null;
                   let saveCard = true;
-                  if (enterNewCard || !cards.length) {
-                    const created = await newCardRef.current?.createPaymentMethod();
-                    paymentMethodId = created?.paymentMethodId ?? null;
-                    saveCard = created?.saveCard !== false;
-                  } else {
-                    paymentMethodId = selectedCardId || null;
+                  if (!skipCard) {
+                    if (enterNewCard || !cards.length) {
+                      const created = await newCardRef.current?.createPaymentMethod();
+                      paymentMethodId = created?.paymentMethodId ?? null;
+                      saveCard = created?.saveCard !== false;
+                    } else {
+                      paymentMethodId = selectedCardId || null;
+                    }
                   }
-                  const order = await publicCheckout(PRACTICE_ID, {
+                  const order = await publicCheckout(practiceId, {
                     customerName: ship.customerName,
                     customerEmail: ship.email,
                     couponCode: coupon || undefined,
+                    applyAccountCredit,
+                    payOutstanding,
                     clientId,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,

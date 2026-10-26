@@ -6,7 +6,8 @@ export type TaskAutomationTrigger =
   | 'invoice_open'
   | 'order_list_item'
   | 'call_unfiled'
-  | 'lab_result_missing';
+  | 'lab_result_missing'
+  | 'membership_signup_failed';
 
 export type TaskAutomationTiming = 'age' | 'end_of_day';
 

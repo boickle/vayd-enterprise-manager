@@ -207,6 +207,7 @@ export default function MailOrderTaskPanel({
   const [scriptsByLine, setScriptsByLine] = useState<Record<number, string>>({});
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [rejectNoteError, setRejectNoteError] = useState<string | null>(null);
   const syncedRef = useRef(false);
   const onSyncedRef = useRef(onPresentationSynced);
   onSyncedRef.current = onPresentationSynced;
@@ -536,13 +537,23 @@ export default function MailOrderTaskPanel({
           </p>
           <label className="pims-task-detail__field">
             <span>Notes</span>
+            <span className="pims-task-detail__muted" style={{ fontWeight: 400, fontSize: 12 }}>
+              Required when you reject
+            </span>
             <textarea
               rows={3}
               value={approvalNote}
-              onChange={(e) => onApprovalNoteChange(e.target.value)}
-              placeholder="Optional — e.g. dose confirmed in last SOAP"
+              onChange={(e) => {
+                onApprovalNoteChange(e.target.value);
+                if (rejectNoteError && e.target.value.trim()) setRejectNoteError(null);
+              }}
+              placeholder="Optional for approve or send back — required if you reject (e.g. dose not appropriate)"
+              aria-invalid={rejectNoteError ? true : undefined}
             />
           </label>
+          {rejectNoteError ? (
+            <p className="pims-task-detail__error" role="alert">{rejectNoteError}</p>
+          ) : null}
           <div className="pims-task-detail__actions" style={{ marginTop: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -556,7 +567,14 @@ export default function MailOrderTaskPanel({
               type="button"
               className="pims-task-detail__btn pims-task-detail__btn--secondary"
               disabled={busy}
-              onClick={() => onApprove('rejected')}
+              onClick={() => {
+                if (!approvalNote.trim()) {
+                  setRejectNoteError('Add a note explaining why you are rejecting this order.');
+                  return;
+                }
+                setRejectNoteError(null);
+                onApprove('rejected');
+              }}
             >
               Rejected
             </button>

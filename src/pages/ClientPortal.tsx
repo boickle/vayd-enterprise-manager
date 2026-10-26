@@ -50,6 +50,7 @@ import PreferencesModal from './clientPortal/PreferencesModal';
 import AutoshipManageModal from './clientPortal/AutoshipManageModal';
 import RememberedPetsCard from './clientPortal/RememberedPetsCard';
 import RenewalBanner from './clientPortal/RenewalBanner';
+import PortalAccountCard from './clientPortal/PortalAccountCard';
 import MembershipBenefitsModal, { membershipPerkLines } from './clientPortal/MembershipBenefitsModal';
 import { PortalModal } from './clientPortal/PortalPrimitives';
 import {
@@ -337,6 +338,12 @@ export default function ClientPortal() {
     const emailPart = userEmail.split('@')[0];
     return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
   }, [clientInfo, localClientInfo, appts, userEmail, rawApptsData]);
+
+  const accountEmail = useMemo(() => {
+    const info = clientInfo || localClientInfo;
+    const onFile = String(info?.email || info?.primaryEmail || '').trim();
+    return onFile || String(userEmail || '').trim();
+  }, [clientInfo, localClientInfo, userEmail]);
 
   // Enrich pets with provider names from appointments if missing
   const petsWithProvider = useMemo(() => {
@@ -627,7 +634,8 @@ export default function ClientPortal() {
       icon: '🏡',
       k: next ? `${relativeDay(next.startIso) || fmtShortDate(next.startIso)}` : 'None booked',
       l: next ? `Next visit · ${fmtTime(next.startIso)}` : 'Next visit',
-      onClick: next ? () => scrollTo(apptsRef) : goRequestVisit,
+      onClick: next ? () => scrollTo(apptsRef) : undefined,
+      action: next ? undefined : { label: 'Book now', onClick: goRequestVisit },
     });
     if (meds.length > 0) {
       out.push({ icon: '💊', k: `${meds.length} med${meds.length === 1 ? '' : 's'}`, l: 'Easy reorder', onClick: () => scrollTo(medsRef) });
@@ -786,6 +794,17 @@ export default function ClientPortal() {
               membership={membership}
               provider={selectedProvider}
               stats={heroStats}
+              account={
+                userId && (accountEmail || userEmail) ? (
+                  <PortalAccountCard
+                    clientId={Number(userId)}
+                    email={accountEmail || userEmail}
+                    cardEmail={userEmail}
+                    customerName={clientFirstName}
+                    onShop={() => goToStore()}
+                  />
+                ) : null
+              }
               chatOpen={isChatHoursOpen}
               chatIsMember={membership.hasActiveWellnessPlan || hasAnyPetWithPlan}
               onRequestVisit={goRequestVisit}

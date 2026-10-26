@@ -919,6 +919,21 @@
 .pp-stat:hover {
   background: var(--pp-teal-soft);
 }
+.pp-stat--static {
+  cursor: default;
+  flex-wrap: wrap;
+}
+.pp-stat--static:hover {
+  background: #fff;
+}
+.pp-stat-body {
+  flex: 1 1 80px;
+  min-width: 0;
+}
+.pp-stat-action {
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .pp-stat-icon {
   font-size: 20px;
 }
@@ -2387,4 +2402,124 @@
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;
+}
+
+.pp-account {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--pp-border);
+  border-radius: 14px;
+  padding: 9px 12px;
+}
+.pp-account__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pp-account__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 140px;
+}
+.pp-account__row .pp-btn {
+  margin-left: auto;
+}
+.pp-account p {
+  margin: 0;
+  color: var(--pp-muted);
+  font-size: 13px;
+}
+.pp-account__invoices {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.pp-account__invoices > li {
+  padding: 10px 12px;
+  border: 1px solid var(--pp-border);
+  border-radius: 12px;
+  background: var(--pp-mint);
+}
+.pp-account__invoices span,
+.pp-account__invoices ul {
+  display: block;
+  margin-top: 4px;
+  color: var(--pp-muted);
+  font-size: 13px;
+}
+.pp-account__pay {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--pp-border);
+}
+.pp-account__invoices-btn {
+  align-self: flex-start;
+}
+.pp-account__card-on-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pp-account__card-on-file label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+  max-width: 320px;
+}
+.pp-account__card-on-file select {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--pp-border);
+}
+.pp-account__card-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--pp-teal);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pp-account__invoice-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+}
+.pp-account__invoice-date {
+  display: block;
+  margin-top: 4px;
+  color: var(--pp-muted);
+  font-size: 13px;
+}
+.pp-account__invoice-lines {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--pp-muted);
+  font-size: 13px;
+}
+.pp-account__invoices--modal > li {
+  margin-bottom: 0;
+}
+.pp-account__note {
+  color: var(--pp-green-dark);
+  font-weight: 600;
+}
+.pp-account__error {
+  color: #b91c1c;
 }

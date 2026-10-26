@@ -1480,8 +1480,12 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                   void importStoreCatalog(practiceId, file)
                     .then(async (res) => {
                       const missed = res.unmatched.length;
+                      const removed = res.unlisted || 0;
                       setFlash(
                         `Updated ${res.products} products (${res.variants} options, ${res.images} photos).` +
+                          (removed
+                            ? ` Took ${removed} product${removed === 1 ? '' : 's'} off the store because they were not in the file.`
+                            : '') +
                           (missed
                             ? ` ${missed} row${missed === 1 ? '' : 's'} did not match an item here.`
                             : '')

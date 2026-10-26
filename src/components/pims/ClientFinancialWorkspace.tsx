@@ -127,7 +127,7 @@ import {
   type EvetCreditActivity,
   type NormalizedInvoice,
 } from '../../utils/pimsInvoices';
-import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
+import { appAccountCredit, appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import CheckoutReminders from '../soap/CheckoutReminders';
 import {
@@ -633,6 +633,7 @@ function ledgerArStatus(args: {
   if (status === 'void') return 'void';
   const due = (Number(args.total) || 0) - (Number(args.paid) || 0);
   if (due > 0.009) return 'open';
+  if ((Number(args.total) || 0) < -0.009 && due < -0.009) return 'credit';
   if ((Number(args.paid) || 0) > 0.009 || status === 'paid' || status === 'finalized') {
     return 'paid';
   }
@@ -3247,36 +3248,27 @@ export default function ClientFinancialWorkspace({
   }
 
   async function addManualAccountCredit() {
-    const raw = window.prompt('Account credit amount (dollars):', '');
-    if (raw == null) return;
-    const amount = Number(raw.replace(/[$,\s]/g, ''));
-    if (!Number.isFinite(amount) || amount < 0.01) {
-      setError('Enter a credit amount of at least $0.01.');
-      return;
-    }
-    const description = (
-      await appPrompt({
-        title: 'Account credit',
-        message: 'Why is this credit being given? This is saved with your name.',
-        confirmLabel: 'Add credit',
-        requireReason: true,
-        placeholder: 'Professional courtesy, refund of a fee, …',
-      })
-    )?.trim();
-    if (!description) return;
+    const entry = await appAccountCredit({
+      title: 'Account credit',
+      message: 'Adds credit to this client’s account balance.',
+      confirmLabel: 'Add credit',
+      placeholder: 'Professional courtesy, refund of a fee, …',
+    });
+    if (!entry) return;
+    const { amount, description } = entry;
     setBusy(true);
     setError(null);
     try {
-      const credit = await postAccountAdjustment({
+      await postAccountAdjustment({
         clientId,
         patientId: initialPatientId ?? linePatientId ?? null,
         amount: -Math.abs(amount),
         description,
         cashierEmployeeId,
       });
-      setSelected(credit);
-      onSelectInvoice?.(credit.id);
-      await refreshList(credit.id);
+      setSelected(null);
+      onSelectInvoice?.(null);
+      await refreshList();
       setNote(`Added ${money(amount)} account credit.`);
     } catch (e: unknown) {
       setError(apiErr(e));
@@ -4594,18 +4586,20 @@ export default function ClientFinancialWorkspace({
                 </span>
               </div>
             </div>
-            <button type="button" className="client-fin__btn" onClick={() => startNewInvoice()} disabled={busy}>
-              New invoice
-            </button>
-            <button
-              type="button"
-              className="client-fin__btn-ghost"
-              onClick={() => void addManualAccountCredit()}
-              disabled={busy}
-              title="Add a credit on this account"
-            >
-              Add credit
-            </button>
+            <div className="client-fin__pane-actions">
+              <button type="button" className="client-fin__btn" onClick={() => startNewInvoice()} disabled={busy}>
+                New invoice
+              </button>
+              <button
+                type="button"
+                className="client-fin__btn-ghost"
+                onClick={() => void addManualAccountCredit()}
+                disabled={busy}
+                title="Add a credit on this account"
+              >
+                Add credit
+              </button>
+            </div>
           </div>
           <div className="client-fin__pay-links client-fin__pay-links--ledger">
             <button
