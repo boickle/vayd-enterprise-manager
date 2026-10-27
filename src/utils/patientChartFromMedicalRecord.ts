@@ -5,6 +5,7 @@ import type { ScoutChartNote } from '../api/scoutChart';
 import type { TreatmentItem, TreatmentWithItems } from '../api/treatments';
 import type { PatientProblem, PostedVisitCharge, SoapEncounter } from '../api/visitWorkflow';
 import { resultedByLabel, type LabResult } from '../api/inHouseLabs';
+import type { IdexxResultSummary } from '../api/idexx';
 import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiveText';
 import { communicationBodyForDisplay } from './clientCommunicationDisplay';
 import { looksLikeHtmlFragment, soapHtmlToPlainText } from './sanitizeCommunicationHtml';
@@ -187,6 +188,8 @@ export type ChartRow = {
    * and the forms are run right from the timeline.
    */
   labResults?: LabResult[];
+  /** IDEXX send-out result; the row expands into the results view. */
+  idexxResult?: IdexxResultSummary;
   /** Visit charges: the invoice line billed, so lab forms can find their row. */
   invoiceLineId?: string;
   /** Vaccination billed on an invoice that isn't paid yet. */
@@ -216,6 +219,7 @@ export type ChartRowSource =
   | 'scoutNote'
   | 'mailOrder'
   | 'inHouseLab'
+  | 'idexxLab'
   | 'soapNote';
 
 export type MedicalRecordBundle = {
@@ -520,6 +524,25 @@ function visitChargeDetail(c: PostedVisitCharge, hint?: MedicationHint | null): 
   }
 
   return bits.join('\n');
+}
+
+/** IDEXX results received through Scout, one timeline row each. */
+export function chartRowsFromIdexxResults(results: IdexxResultSummary[] | null | undefined): ChartRow[] {
+  return (results ?? []).map((r) => {
+    const when = r.specimenCollectionDate ?? r.receivedAt ?? r.idexxUpdatedAt ?? null;
+    return {
+      id: `idexx:${r.id}`,
+      source: 'idexxLab',
+      typeLabel: 'IDEXX result',
+      description: r.testNames.length ? r.testNames.join(', ') : 'IDEXX results',
+      provider: r.veterinarian?.trim() || '—',
+      serviceDateIso: when,
+      sortTime: parseSortTime(when),
+      detailText: '',
+      idexxResult: r,
+      hasResult: r.status === 'COMPLETE',
+    };
+  });
 }
 
 /**

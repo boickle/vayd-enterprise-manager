@@ -21,6 +21,7 @@ import { fetchEmployee } from '../../api/appointmentSettings';
 import {
   summarizeOutsideRecords,
   type OutsideRecordDeclined,
+  type OutsideRecordPremeds,
   type OutsideRecordReminder,
 } from '../../api/soapScribe';
 import { useAuth } from '../../auth/useAuth';
@@ -163,6 +164,7 @@ export default function RecordDocumentsReview({
     version: number;
     reminders: OutsideRecordReminder[];
     declined: OutsideRecordDeclined[];
+    premeds: OutsideRecordPremeds | null;
   } | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const noteResultRef = useRef<OutsideRecordAcceptResult | null>(null);
@@ -460,6 +462,7 @@ export default function RecordDocumentsReview({
         version: (prev?.version ?? 0) + 1,
         reminders: result.reminders,
         declined: result.declined,
+        premeds: result.premeds,
       }));
       noteResultRef.current = null;
       setWorkspaceOpen(true);
@@ -810,6 +813,7 @@ export default function RecordDocumentsReview({
           onSummaryChange={setSummary}
           reminders={found.reminders}
           declined={found.declined}
+          premeds={found.premeds}
           writeSummaryNote={writeSummaryNote}
           onEntered={finishEntered}
           onClose={() => setWorkspaceOpen(false)}

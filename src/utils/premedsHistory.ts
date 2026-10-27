@@ -43,6 +43,12 @@ export function premedsHistoryVisitReason(
   visit: PremedsHistoryVisit,
   petName?: string | null
 ): string {
+  if (visit.source === 'chart' || !visit.appointmentStart) {
+    const note = visit.premedsNote?.trim();
+    return `${petName?.trim() || 'This pet'}'s chart says pre-meds for every visit${
+      note ? ` (${note})` : ''
+    }`;
+  }
   const when = DateTime.fromISO(visit.appointmentStart).toFormat('LLL d, yyyy');
   const type = visit.appointmentTypeName?.trim();
   const who = petName?.trim() ? `${petName.trim()}'s` : 'The';

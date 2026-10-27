@@ -578,6 +578,9 @@ export type ScoutPatientWrite = {
   neuterStatus?: string | null;
   weight?: number | null;
   alerts?: string | null;
+  /** Needs pre-visit meds for every visit; pre-checks "Needs pre-meds" when booking. */
+  needsPremeds?: boolean;
+  premedsNote?: string | null;
   primaryProviderId?: number | null;
   isActive?: boolean;
   /** Required when isActive is false. */

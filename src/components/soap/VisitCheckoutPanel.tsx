@@ -97,6 +97,11 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip from '../labs/LabResultChip';
+import IdexxChip from '../idexx/IdexxChip';
+import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
+import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
+import IdexxSendModal from '../idexx/IdexxSendModal';
+import { useIdexxInvoice } from '../idexx/useIdexxInvoice';
 import VisitDoseAndRxSection from './VisitDoseAndRxSection';
 import PlanOrdersSection from './PlanOrdersSection';
 import { listPatientMemberships, type PatientMembership } from '../../api/memberships';
@@ -1566,6 +1571,40 @@ export default function VisitCheckoutPanel({
     };
   }, [invoice?.id, labLineKey, clinicalRefreshSignal]);
 
+  // IDEXX send-out labs ride on the same lab lines: send from the bill, results come back here.
+  const idexx = useIdexxInvoice(invoice?.id, labLineKey, () => {
+    if (onInvoiceShouldRefresh) onInvoiceShouldRefresh();
+    else if (invoice?.id) void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
+  });
+  const [idexxSendFor, setIdexxSendFor] = useState<number | null>(null);
+  const idexxPetName = (petId: number) =>
+    roster.find((r) => r.patientId === petId)?.patientName ||
+    (invoice?.lines ?? []).find((l) => l.patientId === petId)?.patientName?.trim() ||
+    'this pet';
+  const renderIdexxSendStrip = (sectionPatientId: number | null) => {
+    if (!idexx.configured || disabled || !invoice || invoice.status !== 'open') return null;
+    const unsent = idexx.unsentFor(sectionPatientId);
+    const petIds = [...new Set(unsent.map((l) => l.patientId).filter((id): id is number => id != null))];
+    return petIds.map((petId) => {
+      const tests = unsent.filter((l) => l.patientId === petId);
+      return (
+        <div key={`idexx-${petId}`} className="idexx-send-strip">
+          <span className="idexx-send-strip__text">
+            <IdexxChip order={null} />
+            <span>
+              {tests.length} IDEXX test{tests.length === 1 ? '' : 's'} not sent
+              {sectionPatientId == null ? ` for ${idexxPetName(petId)}` : ''}
+              <span className="idexx-send-strip__tests"> · {tests.map((t) => t.labName).join(', ')}</span>
+            </span>
+          </span>
+          <button type="button" className="btn btn-sm" onClick={() => setIdexxSendFor(petId)}>
+            Send to IDEXX
+          </button>
+        </div>
+      );
+    });
+  };
+
   const onLabResultSaved = (saved: LabResult) => {
     if (!saved.visitInvoiceLineId) return;
     setLabResultsByLineId((prev) => {
@@ -1985,6 +2024,7 @@ export default function VisitCheckoutPanel({
     }
     if (!canEditLines || !invoice) return;
     void run(`remove:${line.id}`, async () => {
+      if (!(await idexx.confirmRemove(line.id, appConfirm))) return;
       const shippingIds = await cancelMailOrdersForInvoiceLines(invoice.id, [line]);
       for (const shippingId of shippingIds) {
         if (shippingId === line.id) continue;
@@ -2209,6 +2249,21 @@ export default function VisitCheckoutPanel({
               <span>Amt</span>
               <span />
             </div>
+            {idexxSendFor != null && invoice ? (
+              <IdexxSendModal
+                invoiceId={invoice.id}
+                patientId={idexxSendFor}
+                patientName={idexxPetName(idexxSendFor)}
+                onSync={idexx.sync}
+                lines={idexx.unsentFor(idexxSendFor)}
+                defaultVeterinarianId={rxLabel?.veterinarianEmployeeId ?? null}
+                onClose={() => setIdexxSendFor(null)}
+                onSent={() => {
+                  setIdexxSendFor(null);
+                  void idexx.reload();
+                }}
+              />
+            ) : null}
             {groupCheckoutLinesByPet(visibleCheckoutLines, roster).map((section, _i, allSections) => {
               const sectionPrevisit =
                 section.key === 'visit'
@@ -2277,6 +2332,7 @@ export default function VisitCheckoutPanel({
                 {multiPetRoster && section.onRoster && section.patientId != null
                   ? renderAddCharge(section.patientId, section.label)
                   : null}
+                {renderIdexxSendStrip(allSections.length > 1 ? section.patientId : null)}
                 {sectionPrevisit.length > 0 ? (
                   <div className="soap-invoice-previsit">
                     <div className="soap-invoice-previsit-banner">Pre-visit accepts</div>
@@ -2379,7 +2435,10 @@ export default function VisitCheckoutPanel({
                 const stock = linkedStockFromLine(l, stockDraw);
                 const lineLabResults = labResultsByLineId[l.id] ?? null;
                 const hasLabForms = Boolean(lineLabResults?.length);
+                const isIdexxLine = idexx.configured && idexx.isIdexxLine(l.id);
+                const idexxOrder = isIdexxLine ? idexx.lineOrder(l.id) : null;
                 const canExpand =
+                  isIdexxLine ||
                   isRefillLine ||
                   needsClinical ||
                   showClientNote ||
@@ -2456,6 +2515,10 @@ export default function VisitCheckoutPanel({
                           </span>
                         ) : null}
                         {hasLabForms ? <LabResultChip results={lineLabResults} /> : null}
+                        {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                        {idexxOrder ? (
+                          <IdexxRequisitionLink order={idexxOrder} onSync={idexx.sync} />
+                        ) : null}
                         {lineReady ? (
                           <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
                         ) : (
@@ -2933,6 +2996,33 @@ export default function VisitCheckoutPanel({
                               }}
                             />
                           </label>
+                        ) : null}
+                        {isIdexxLine ? (
+                          <div className="soap-invoice-line-clinical">
+                            {idexxOrder ? (
+                              <IdexxOrderPanel
+                                order={idexxOrder}
+                                patientName={l.patientId != null ? idexxPetName(l.patientId) : undefined}
+                                note={idexx.notes.find((n) => n.orderId === idexxOrder.id) ?? null}
+                                readOnly={disabled}
+                                onSync={idexx.sync}
+                                onChanged={() => void idexx.reload()}
+                              />
+                            ) : (
+                              <p className="idexx-order__note">
+                                Not sent to IDEXX yet.{' '}
+                                {!disabled && invoice.status === 'open' && l.patientId != null ? (
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm"
+                                    onClick={() => setIdexxSendFor(l.patientId!)}
+                                  >
+                                    Send to IDEXX
+                                  </button>
+                                ) : null}
+                              </p>
+                            )}
+                          </div>
                         ) : null}
                         {hasLabForms ? (
                           <div className="soap-invoice-line-clinical">

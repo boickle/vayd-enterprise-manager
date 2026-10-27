@@ -18,8 +18,11 @@ export type RangeAppointment = Appointment;
 /** A pet's most recent past visit, returned only when that visit needed pre-meds. */
 export type PremedsHistoryVisit = {
   patientId: number;
-  appointmentId: number;
-  appointmentStart: string;
+  /** 'chart': the pet is marked as needing pre-meds; 'visit': its last visit had them. */
+  source: 'chart' | 'visit';
+  premedsNote: string | null;
+  appointmentId: number | null;
+  appointmentStart: string | null;
   appointmentTypeName: string | null;
 };
 

@@ -195,6 +195,11 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
+import IdexxChip from '../idexx/IdexxChip';
+import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
+import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
+import IdexxSendModal from '../idexx/IdexxSendModal';
+import { useIdexxInvoice } from '../idexx/useIdexxInvoice';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -2164,6 +2169,17 @@ export default function ClientFinancialWorkspace({
     });
   }, []);
 
+  // IDEXX send-out labs ride on the same lab lines: send from the line, results come back on it.
+  const idexxInvoiceId = selected && !isUnsavedInvoice(selected) ? selected.id : null;
+  const idexx = useIdexxInvoice(idexxInvoiceId, labLoadKey, () => {
+    if (idexxInvoiceId) {
+      void getInvoice(idexxInvoiceId)
+        .then(setSelected)
+        .catch(() => undefined);
+    }
+  });
+  const [idexxSendFor, setIdexxSendFor] = useState<VisitInvoiceLine | null>(null);
+
   // Newly added meds still open so the sig can be written. Vaccines and existing
   // lines stay collapsed, same as the SOAP invoice: expand only when you tap them.
   useEffect(() => {
@@ -3838,6 +3854,7 @@ export default function ClientFinancialWorkspace({
       setError(shippedMailMessage(shipped));
       return;
     }
+    if (!(await idexx.confirmRemove(line.id, appConfirm))) return;
     let reason: string | null = null;
     if (removalNeedsReason(selected)) {
       reason = await askRemovalReason(`“${line.description}”`);
@@ -5428,6 +5445,21 @@ export default function ClientFinancialWorkspace({
                 <p className="client-fin__muted">No lines yet.</p>
               ) : (
                 <div className="client-fin__table-wrap client-fin__table-wrap--doc">
+                  {idexxSendFor?.patientId != null ? (
+                    <IdexxSendModal
+                      invoiceId={selected.id}
+                      patientId={idexxSendFor.patientId}
+                      patientName={idexxSendFor.patientName?.trim() || 'this pet'}
+                      onSync={idexx.sync}
+                      lines={idexx.unsentFor(idexxSendFor.patientId)}
+                      defaultVeterinarianId={idexxSendFor.providerEmployeeId ?? null}
+                      onClose={() => setIdexxSendFor(null)}
+                      onSent={() => {
+                        setIdexxSendFor(null);
+                        void idexx.reload();
+                      }}
+                    />
+                  ) : null}
                   <table className="client-fin__table client-fin__invoice client-fin__invoice--pets">
                     <thead>
                       <tr>
@@ -5578,7 +5610,13 @@ export default function ClientFinancialWorkspace({
                         const showLabMeta =
                           Boolean(lineLabResults?.length) && !showVaxMeta && !showRxMeta && !showLotOnly;
                         const labState = labResultsState(lineLabResults);
-                        const showMeta = showRxMeta || showVaxMeta || showLotOnly || showLabMeta;
+                        /** An IDEXX send-out lab: sent and followed from the line. */
+                        const isIdexxLine =
+                          idexx.configured && idexx.isIdexxLine(line.id) && !showLabMeta;
+                        const idexxOrder = isIdexxLine ? idexx.lineOrder(line.id) : null;
+                        const idexxUnsent = isIdexxLine && (!idexxOrder || idexxOrder.status === 'CANCELLED');
+                        const showMeta =
+                          showRxMeta || showVaxMeta || showLotOnly || showLabMeta || isIdexxLine;
                         const attachedShipping = lineGroups.attached.get(line.id) ?? [];
                         const attachedTagalongs = tagalongGroups.attached.get(line.id) ?? [];
                         const dirty = canEdit && showRxMeta && lineSigDirty(line);
@@ -5874,6 +5912,7 @@ export default function ClientFinancialWorkspace({
                                   ) : null}
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                   {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
+                                  {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -5925,6 +5964,16 @@ export default function ClientFinancialWorkspace({
                                 title="This catalog item has Show on Invoice turned off. Staff see the charge; it is left off the invoice the client receives."
                               >
                                 Not shown on client invoice
+                              </div>
+                            ) : null}
+                            {idexxOrder ? (
+                              <div className="client-fin__item-by">
+                                <IdexxRequisitionLink order={idexxOrder} onSync={idexx.sync} />
+                              </div>
+                            ) : null}
+                            {idexxUnsent && !rxOpen && canEdit ? (
+                              <div className="client-fin__item-by">
+                                Not sent to IDEXX — expand to send
                               </div>
                             ) : null}
                             {showLabMeta && !rxOpen && labState === 'waiting' ? (
@@ -6107,7 +6156,36 @@ export default function ClientFinancialWorkspace({
                           ) : null}
                         </tr>
                         {showMeta && rxOpen ? (
-                          showLabMeta ? (
+                          isIdexxLine ? (
+                          <tr className={`client-fin__line-meta ${lineStateClass}`}>
+                            <td colSpan={invoiceMetaCols}>
+                              {idexxOrder && !idexxUnsent ? (
+                                <IdexxOrderPanel
+                                  order={idexxOrder}
+                                  patientName={line.patientName?.trim() || undefined}
+                                  note={idexx.notes.find((n) => n.orderId === idexxOrder.id) ?? null}
+                                  readOnly={!canEdit}
+                                  onSync={idexx.sync}
+                                  onChanged={() => void idexx.reload()}
+                                />
+                              ) : (
+                                <p className="idexx-order__note">
+                                  Not sent to IDEXX yet.{' '}
+                                  {canEdit && line.patientId != null ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      onClick={() => setIdexxSendFor(line)}
+                                    >
+                                      Send to IDEXX
+                                    </button>
+                                  ) : null}
+                                </p>
+                              )}
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          ) : showLabMeta ? (
                           <tr className={`client-fin__line-meta ${lineStateClass}`}>
                             <td colSpan={invoiceMetaCols}>
                               <InvoiceLineLabResults

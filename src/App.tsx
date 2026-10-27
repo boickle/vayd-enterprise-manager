@@ -84,6 +84,8 @@ import PatientSnapshotsPage from './pages/PatientSnapshotsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import PendingLabsPage from './pages/PendingLabsPage';
+import LabsLayout from './pages/LabsLayout';
+import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import Scheduler from './pages/Scheduler';
@@ -882,7 +884,10 @@ export default function App() {
                     <Route path="catalog" element={<LegacyCatalogRedirect />} />
                     <Route path="catalog/*" element={<LegacyCatalogRedirect />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
-                    <Route path="in-house-labs" element={<PendingLabsPage />} />
+                    <Route element={<LabsLayout />}>
+                      <Route path="in-house-labs" element={<PendingLabsPage />} />
+                      <Route path="idexx-results" element={<IdexxResultsPage />} />
+                    </Route>
                     <Route path="settings" element={<Settings />} />
                     <Route
                       path="settings/forms"

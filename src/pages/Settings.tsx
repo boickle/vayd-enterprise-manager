@@ -75,6 +75,7 @@ import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmai
 import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
 import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
 import SettingsPracticeLetterhead from '../components/settings/SettingsPracticeLetterhead';
+import SettingsIntegrations from '../components/settings/SettingsIntegrations';
 import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasiaConsent';
 import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
 import SettingsAutomaticTasks from '../components/settings/SettingsAutomaticTasks';
@@ -98,6 +99,7 @@ import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const SETTINGS_TAB_IDS = [
   'practice-letterhead',
+  'integrations',
   'branches-locations',
   'euthanasia-consent',
   'outside-hospitals',
@@ -143,6 +145,7 @@ const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'patient-statuses', label: 'Patient Statuses' },
   { id: 'euthanasia-consent', label: 'Euthanasia Consent' },
   { id: 'outside-hospitals', label: 'Outside Hospitals' },
+  { id: 'integrations', label: 'Integrations' },
   { id: 'automatic-tasks', label: 'Automatic Tasks' },
   { id: 'room-loader', label: 'Room Loader' },
 ];
@@ -1540,6 +1543,20 @@ export default function Settings() {
         )}
 
         {activeTab === 'practice-letterhead' && <SettingsPracticeLetterhead />}
+
+        {activeTab === 'integrations' && (
+          <SettingsIntegrations
+            onMessage={(msg, kind) => {
+              if (kind === 'success') {
+                setSuccess(msg);
+                setError(null);
+              } else {
+                setError(msg);
+                setSuccess(null);
+              }
+            }}
+          />
+        )}
 
         {activeTab === 'branches-locations' && (
           <div className="settings-section">

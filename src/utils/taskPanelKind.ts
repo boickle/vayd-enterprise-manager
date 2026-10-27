@@ -21,6 +21,7 @@ export type TaskPanelKind =
   | 'invoice'
   | 'soap'
   | 'lab_result'
+  | 'idexx_result'
   | 'callback'
   | 'todo';
 
@@ -40,6 +41,7 @@ const KIND_PANELS: Partial<Record<TaskKind, TaskPanelKind>> = {
   invoice: 'invoice',
   soap: 'soap',
   lab_result: 'lab_result',
+  idexx_result: 'idexx_result',
 };
 
 /** Doctor/mail approval work tied to a mail order — not a generic to-do. */

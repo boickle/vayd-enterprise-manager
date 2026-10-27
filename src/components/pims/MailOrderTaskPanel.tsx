@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { DateTime } from 'luxon';
 import { Loader2, Sparkles } from 'lucide-react';
 import {
   getMailOrder,
@@ -15,49 +14,14 @@ import MailRxDecisionFields, {
   parsedMailRefills,
   type MailRxDecisionDraft,
 } from '../soap/MailRxDecisionFields';
-import { fetchPatientByIdStaff, fetchPatientMedicalRecordStaff } from '../../api/patients';
-import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { fetchPatientAppointmentsStaff } from '../../api/pimsAppointments';
-import {
-  listEncounters,
-  listPatientPrescriptions,
-  listProblems,
-  type PatientPrescription,
-  type PatientProblem,
-  type SoapEncounter,
-} from '../../api/visitWorkflow';
 import { chatAboutChart } from '../../api/soapScribe';
-import {
-  buildCaseHistorySource,
-  signalmentFromPatient,
-} from '../../utils/buildCaseHistorySource';
-import { clientIdFromPatientRow, clientNameFromPatientRow } from '../../utils/briefDisplay';
-import {
-  employeeDisplayName,
-  inactiveAtIso,
-  statusNameFromPatient,
-  type HouseholdPetStatusInput,
-} from '../../utils/householdPetStatus';
+import { loadPatientHistorySource } from '../../utils/patientHistorySource';
 import { formatAutoshipFrequency } from '../../pages/store/storeCartState';
-import type { MedicalRecordBundle } from '../../utils/patientChartFromMedicalRecord';
 import { stripCitationTokens } from '../../utils/chartCitation';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { clampRefillExpiration, refillExpirationCapNote } from '../../utils/printRxLabel';
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
-
-function unwrapPatientRecord(profile: unknown): Record<string, unknown> | null {
-  if (!profile || typeof profile !== 'object') return null;
-  const o = profile as Record<string, unknown>;
-  const nested = o.patient;
-  if (nested && typeof nested === 'object') {
-    return {
-      ...(nested as Record<string, unknown>),
-      client: o.client ?? (nested as Record<string, unknown>).client,
-    };
-  }
-  return o;
-}
 
 function isPlaceholderMailScript(text?: string | null): boolean {
   const t = (text || '').trim();
@@ -91,69 +55,10 @@ async function summarizePet(opts: {
   patientName: string;
   clientName: string | null;
 }): Promise<string> {
-  const today = DateTime.now().toISODate() || '';
-  const apptStart = DateTime.now().minus({ years: 20 }).toUTC().toISO();
-  const apptEnd = DateTime.now().plus({ years: 2 }).toUTC().toISO();
-  const [profile, problems, meds, encounters, medicalRecord, appointments] = await Promise.all([
-    fetchPatientByIdStaff(opts.patientId).catch(() => null),
-    listProblems(opts.patientId).catch(() => [] as PatientProblem[]),
-    listPatientPrescriptions(opts.patientId, { activeChronicOnly: true }).catch(
-      () => [] as PatientPrescription[],
-    ),
-    listEncounters({ patientId: opts.patientId }).catch(() => [] as SoapEncounter[]),
-    fetchPatientMedicalRecordStaff(opts.patientId).catch(() => null),
-    fetchPatientAppointmentsStaff(opts.patientId, {
-      practiceId: opts.practiceId,
-      start: apptStart ?? undefined,
-      end: apptEnd ?? undefined,
-      includeInactivePatient: true,
-    }).catch(() => []),
-  ]);
-  const rec = unwrapPatientRecord(profile);
-  const owner = rec ? clientNameFromPatientRow(rec) : opts.clientName;
-  let householdPets: HouseholdPetStatusInput[] = [];
-  const clientId = rec ? clientIdFromPatientRow(rec) : null;
-  if (clientId != null) {
-    const clientRow = await fetchClientByIdStaff(String(clientId)).catch(() => null);
-    if (clientRow && typeof clientRow === 'object') {
-      const rawPets = Array.isArray((clientRow as Record<string, unknown>).patients)
-        ? ((clientRow as Record<string, unknown>).patients as unknown[])
-        : [];
-      householdPets = rawPets
-        .map((raw): HouseholdPetStatusInput | null => {
-          if (!raw || typeof raw !== 'object') return null;
-          const p = raw as Record<string, unknown>;
-          const id = p.id != null ? String(p.id) : '';
-          if (!id) return null;
-          return {
-            id,
-            name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Pet #${id}`,
-            active: p.isActive !== false,
-            statusName: statusNameFromPatient(p),
-            inactiveAt: inactiveAtIso(p.inactiveAt),
-            inactivatedByName: employeeDisplayName(p.inactivatedByEmployee),
-          };
-        })
-        .filter((p): p is HouseholdPetStatusInput => p != null);
-    }
-  }
-  const src = buildCaseHistorySource({
-    patientId: String(opts.patientId),
-    patientName: opts.patientName,
-    clientName: owner,
-    signalment: signalmentFromPatient(rec),
-    problems,
-    meds,
-    encounters,
-    appointments,
-    patientRecord: rec,
-    medicalRecord: medicalRecord as MedicalRecordBundle | null,
-    asOfDate: today,
-    householdPets,
-  });
-  if (!src.text.trim()) return 'No chart text to summarize yet.';
+  const { text, owner, today } = await loadPatientHistorySource(opts);
+  if (!text.trim()) return 'No chart text to summarize yet.';
   const summary = await chatAboutChart({
-    sourceText: src.text,
+    sourceText: text,
     patientName: opts.patientName,
     clientName: owner,
     asOfDate: today,

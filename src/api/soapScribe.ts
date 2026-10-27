@@ -283,10 +283,18 @@ export type OutsideRecordReminder = {
 
 export type OutsideRecordDeclined = { item: string; date: string };
 
+/** Whether the records say the pet should get pre-visit meds before every visit. */
+export type OutsideRecordPremeds = {
+  recommended: boolean;
+  reason: string;
+  medication: string;
+};
+
 export type OutsideRecordsSummary = {
   summary: string;
   reminders: OutsideRecordReminder[];
   declined: OutsideRecordDeclined[];
+  premeds: OutsideRecordPremeds | null;
 };
 
 export async function summarizeChartText(opts: SummarizeChartTextOpts): Promise<string> {
@@ -301,6 +309,7 @@ export async function summarizeOutsideRecords(
     summary: data.summary,
     reminders: Array.isArray(data.reminders) ? data.reminders : [],
     declined: Array.isArray(data.declined) ? data.declined : [],
+    premeds: data.premeds ?? null,
   };
 }
 
@@ -308,11 +317,13 @@ async function postSummarizeChart(opts: SummarizeChartTextOpts): Promise<{
   summary: string;
   reminders?: OutsideRecordReminder[];
   declined?: OutsideRecordDeclined[];
+  premeds?: OutsideRecordPremeds;
 }> {
   const { data } = await http.post<{
     summary: string;
     reminders?: OutsideRecordReminder[];
     declined?: OutsideRecordDeclined[];
+    premeds?: OutsideRecordPremeds;
   }>('/scribe/summarize-chart', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
     mode: opts.mode,

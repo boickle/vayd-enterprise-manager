@@ -374,7 +374,7 @@ function CatalogDiscountRulesFields({
           Exclude percentage discounts
           <small style={{ display: 'block', color: '#6b7280' }}>
             Percent-off client statuses and personal % off won’t apply to this item.
-            Staff still get the Employee cost + % price on products.
+            Staff accounts still get their employee pricing.
           </small>
         </span>
       </label>

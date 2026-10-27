@@ -17,6 +17,7 @@ import {
   isCatalogNavPath,
   isInventoryOpsNavPath,
 } from '../utils/catalogInventoryNav';
+import { LABS_HOME, isLabsNavPath } from '../utils/labsNav';
 import { useCan } from '../permissions/PermissionContext';
 import '../pages/ScheduleLayout.css';
 
@@ -34,6 +35,7 @@ type SchedNavItemKey =
   | 'scheduling'
   | 'catalog'
   | 'inventory'
+  | 'labs'
   | 'tasks'
   | 'settings'
   | 'admin';
@@ -46,6 +48,7 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   scheduling: 'Scheduling',
   catalog: 'Catalog',
   inventory: 'Pharmacy',
+  labs: 'Labs',
   tasks: 'Tasks',
   settings: 'Settings',
   admin: 'Admin',
@@ -189,7 +192,7 @@ export default function NavbarScheduleHorizontalNav() {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
     keys.push('scheduling');
-    if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory');
+    if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory', 'labs');
     keys.push('tasks', 'snapshots');
     if (showAdminTab) keys.push('settings', 'admin');
     else if (canManageMembershipPlans) keys.push('settings');
@@ -313,6 +316,8 @@ export default function NavbarScheduleHorizontalNav() {
         return isCatalogNavPath(location.pathname);
       case 'inventory':
         return isInventoryOpsNavPath(location.pathname);
+      case 'labs':
+        return isLabsNavPath(location.pathname);
       case 'tasks':
         return location.pathname.startsWith('/schedule/tasks');
       case 'scheduling':
@@ -407,6 +412,18 @@ export default function NavbarScheduleHorizontalNav() {
             }
           >
             Pharmacy
+          </NavLink>
+        );
+      case 'labs':
+        return (
+          <NavLink
+            key="labs"
+            to={LABS_HOME}
+            className={() =>
+              `schedule-app__tab${isLabsNavPath(location.pathname) ? ' schedule-app__tab--active' : ''}`
+            }
+          >
+            Labs
           </NavLink>
         );
       case 'tasks':
@@ -617,6 +634,27 @@ export default function NavbarScheduleHorizontalNav() {
                         }}
                       >
                         Pharmacy
+                      </NavLink>
+                    );
+                  case 'labs':
+                    return (
+                      <NavLink
+                        key="more-labs"
+                        to={LABS_HOME}
+                        className={() =>
+                          `schedule-app__settings-link${
+                            isLabsNavPath(location.pathname)
+                              ? ' schedule-app__settings-link--active'
+                              : ''
+                          }`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Labs
                       </NavLink>
                     );
                   case 'tasks':

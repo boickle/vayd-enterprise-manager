@@ -29,6 +29,7 @@ export type TaskKind =
   | 'invoice'
   | 'order_list'
   | 'lab_result'
+  | 'idexx_result'
   | 'soap';
 
 const TASK_KIND_LABELS: Record<TaskKind, string> = {
@@ -37,6 +38,7 @@ const TASK_KIND_LABELS: Record<TaskKind, string> = {
   invoice: 'Invoice',
   order_list: 'Order list',
   lab_result: 'Lab results',
+  idexx_result: 'IDEXX results',
   soap: 'SOAP',
 };
 
@@ -54,6 +56,7 @@ export const TASK_LINK_ENTITY_TYPES = [
   'referral',
   'reminder',
   'mail_order',
+  'idexx_result',
 ] as const;
 
 export type TaskLinkEntityType = (typeof TASK_LINK_ENTITY_TYPES)[number];

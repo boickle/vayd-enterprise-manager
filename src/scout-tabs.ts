@@ -31,6 +31,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'mail-orders',
   'tasks',
   'in-house-labs',
+  'idexx-results',
   'clients',
   'patients',
   'patient-snapshots',

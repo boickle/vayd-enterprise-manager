@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router';
-import { AlertTriangle, Check, Clock, FlaskConical, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock, X } from 'lucide-react';
 import {
   isLabValueAbnormal,
   listPendingLabResults,
@@ -87,9 +87,6 @@ export default function PendingLabsPage() {
   return (
     <div className="pending-labs">
       <header className="pending-labs__head">
-        <h1 className="pending-labs__title">
-          <FlaskConical size={20} aria-hidden /> In-house labs
-        </h1>
         <div className="pending-labs__tabs" role="tablist" aria-label="Lab worklist filter">
           <button
             type="button"

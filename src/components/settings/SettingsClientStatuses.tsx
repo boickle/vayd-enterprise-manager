@@ -158,7 +158,7 @@ export default function SettingsClientStatuses({ onMessage }: Props) {
           loader, SOAP, and invoicing. You can set one default % or different rates for
           inventory, procedures, and labs — or price inventory at cost plus a markup
           (Employee is typically cost + 10%). Catalog items marked “Exclude percentage
-          discounts” skip this. Inactivate to hide from new picks without deleting history.
+          discounts” skip this, except for statuses marked Staff. Inactivate to hide from new picks without deleting history.
         </p>
       </div>
       {loading ? (

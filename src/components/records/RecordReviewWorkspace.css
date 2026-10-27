@@ -546,3 +546,47 @@
     border-bottom: 1px solid var(--rrw-line);
   }
 }
+
+/* Records suggest pre-visit meds: one click marks the pet so bookings pre-check it. */
+.rrw__premeds {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 18px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #c4b5fd;
+  background: #f5f3ff;
+  color: #4c1d95;
+  font-size: 13px;
+}
+.rrw__premeds > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.rrw__premeds-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rrw__premeds-text strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.rrw__premeds-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rrw__premeds-error {
+  color: #b91c1c;
+}
+@media (max-width: 640px) {
+  .rrw__premeds {
+    flex-wrap: wrap;
+  }
+}

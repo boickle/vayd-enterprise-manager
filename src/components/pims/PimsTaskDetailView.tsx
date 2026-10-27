@@ -42,6 +42,7 @@ import ForwardBookingTaskPanel from './ForwardBookingTaskPanel';
 import InvoiceTaskPanel from './InvoiceTaskPanel';
 import SoapTaskPanel from './SoapTaskPanel';
 import LabResultTaskPanel from './LabResultTaskPanel';
+import IdexxResultTaskPanel from './IdexxResultTaskPanel';
 import { getInvoice } from '../../api/visitWorkflow';
 import { invoiceIdFromTask } from '../../utils/invoiceTask';
 import { soapPathFromTaskLinks } from '../../utils/soapTask';
@@ -120,6 +121,8 @@ function linkHref(entityType: string, entityId: number): string | null {
       return buildSchedulerFocusAppointmentUrl(entityId);
     case 'mail_order':
       return `/schedule/mail-orders?orderId=${encodeURIComponent(String(entityId))}`;
+    case 'idexx_result':
+      return '/schedule/idexx-results';
     default:
       return null;
   }
@@ -575,14 +578,15 @@ export default function PimsTaskDetailView({
           {(task.kind === 'callback' ||
             panelKind === 'invoice' ||
             panelKind === 'soap' ||
-            panelKind === 'lab_result') && (
+            panelKind === 'lab_result' ||
+            panelKind === 'idexx_result') && (
             <span className="pims-task-detail__kind">
               {panelKind === 'invoice'
                 ? taskKindLabel('invoice')
                 : panelKind === 'soap'
                   ? taskKindLabel('soap')
-                  : panelKind === 'lab_result'
-                    ? taskKindLabel('lab_result')
+                  : panelKind === 'lab_result' || panelKind === 'idexx_result'
+                    ? taskKindLabel(panelKind)
                     : taskKindLabel(task.kind)}
             </span>
           )}
@@ -689,6 +693,17 @@ export default function PimsTaskDetailView({
           canComplete={canMutate}
           busy={busy}
           onComplete={() => void handleComplete()}
+        />
+      ) : null}
+
+      {panelKind === 'idexx_result' ? (
+        <IdexxResultTaskPanel
+          task={task}
+          readOnly={!showPanels}
+          onUpdated={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
         />
       ) : null}
 

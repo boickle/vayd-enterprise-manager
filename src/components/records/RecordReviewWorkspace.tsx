@@ -9,10 +9,15 @@ import {
   submitReminderFeedback,
   type SearchableItem,
 } from '../../api/roomLoader';
-import type { OutsideRecordDeclined, OutsideRecordReminder } from '../../api/soapScribe';
+import type {
+  OutsideRecordDeclined,
+  OutsideRecordPremeds,
+  OutsideRecordReminder,
+} from '../../api/soapScribe';
 import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
 import { appConfirm } from '../../utils/appDialog';
 import './RecordReviewWorkspace.css';
+import RecordPremedsSuggestion from './RecordPremedsSuggestion';
 
 export type WorkspaceDoc = {
   key: string;
@@ -62,6 +67,8 @@ type Props = {
   onSummaryChange: (next: string) => void;
   reminders: OutsideRecordReminder[];
   declined: OutsideRecordDeclined[];
+  /** The records' pre-visit meds finding, offered as a one-click chart flag. */
+  premeds?: OutsideRecordPremeds | null;
   /** Writes the Previous Medical Records note; returns false when it failed. */
   writeSummaryNote: () => Promise<boolean>;
   onEntered: (counts: { summary: boolean; reminders: number; declined: number }) => void;
@@ -234,6 +241,7 @@ export default function RecordReviewWorkspace({
   onSummaryChange,
   reminders,
   declined,
+  premeds = null,
   writeSummaryNote,
   onEntered,
   onClose,
@@ -493,6 +501,8 @@ export default function RecordReviewWorkspace({
             <X size={18} />
           </button>
         </header>
+
+        <RecordPremedsSuggestion patientId={patientId} patientName={patientName} premeds={premeds} />
 
         <div className="rrw__body">
           <section className="rrw__docs" aria-label="Documents">

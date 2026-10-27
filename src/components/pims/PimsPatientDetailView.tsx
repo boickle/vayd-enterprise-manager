@@ -84,6 +84,7 @@ import { listFormInvites, type FormInvite } from '../../api/forms';
 import {
   buildChartRowsFromMedicalRecord,
   mergeInHouseLabsIntoChart,
+  chartRowsFromIdexxResults,
   chartRowsFromClientRoomLoaders,
   chartRowsFromMailOrders,
   chartRowsFromRemovedVaccinations,
@@ -153,6 +154,7 @@ import {
   type PatientInactivationRecord,
 } from '../../api/patientInactivation';
 import { appAlert } from '../../utils/appDialog';
+import PatientPremedsBanner from './PatientPremedsBanner';
 import {
   previewDeathWrapUp,
   type DeathWrapUpPreview,
@@ -192,6 +194,9 @@ import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
 import { listPatientLabResults, type LabResult } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
+import IdexxChip from '../idexx/IdexxChip';
+import IdexxResultView from '../idexx/IdexxResultView';
+import { listIdexxResults, type IdexxResultSummary } from '../../api/idexx';
 import './detail/PimsDetailKit.css';
 import { ClientUploadedRecordsList } from '../ClientUploadedRecordsList';
 import './PimsPatientDetailView.css';
@@ -476,6 +481,25 @@ function ChartLabRowActions({
   open: boolean;
   onToggle: () => void;
 }) {
+  if (row.idexxResult) {
+    return (
+      <>
+        <IdexxChip order={{ status: 'SUBMITTED', results: [row.idexxResult] }} />
+        {!open ? (
+          <button
+            type="button"
+            className="pims-patient-detail__run-lab"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+          >
+            View results
+          </button>
+        ) : null}
+      </>
+    );
+  }
   if (!row.labResults?.length) return null;
   const waiting = labResultsState(row.labResults) === 'waiting';
   return (
@@ -512,6 +536,13 @@ function ChartRowExpandBody({
   /** In-house lab forms are run right here in the timeline. */
   onLabResultSaved?: (saved: LabResult) => void;
 }) {
+  if (row.idexxResult) {
+    return (
+      <div className="pims-patient-detail__expand-stack" onClick={(event) => event.stopPropagation()}>
+        <IdexxResultView resultId={row.idexxResult.id} />
+      </div>
+    );
+  }
   if (row.labResults?.length) {
     return (
       <div
@@ -1209,6 +1240,25 @@ export default function PimsPatientDetailView({
   const [visitCharges, setVisitCharges] = useState<PostedVisitCharge[]>([]);
   /** In-house lab forms (snap tests etc.), waiting or resulted, shown on the timeline. */
   const [labResults, setLabResults] = useState<LabResult[]>([]);
+  const [idexxResults, setIdexxResults] = useState<IdexxResultSummary[]>([]);
+  useEffect(() => {
+    const pid = Number(patientId);
+    if (!pid) {
+      setIdexxResults([]);
+      return;
+    }
+    let canceled = false;
+    void listIdexxResults({ patientId: pid, limit: 200 })
+      .then((res) => {
+        if (!canceled) setIdexxResults(res.items ?? []);
+      })
+      .catch(() => {
+        if (!canceled) setIdexxResults([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [patientId]);
   /** Every prescription on this patient — Scout-written (SOAP orders, EMR pins) and eVet. */
   const [prescriptions, setPrescriptions] = useState<PatientPrescription[]>([]);
   const [resolvingProblemId, setResolvingProblemId] = useState<string | null>(null);
@@ -1493,11 +1543,12 @@ export default function PimsPatientDetailView({
     // Snap tests and other in-house forms ride on their charge's row, or stand
     // alone while the bill is still open, so a WAITING lab shows from the chart.
     const withLabs = mergeInHouseLabsIntoChart(base, labResults);
+    const idexxRows = chartRowsFromIdexxResults(idexxResults);
     const removedDoses = chartRowsFromRemovedVaccinations(removedVaccinations);
-    return [...withLabs, ...soaps, ...loaders, ...notes, ...mail, ...removedDoses].sort(
+    return [...withLabs, ...idexxRows, ...soaps, ...loaders, ...notes, ...mail, ...removedDoses].sort(
       (a, b) => b.sortTime - a.sortTime
     );
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, patientId, removedVaccinations, soapNotes]);
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, idexxResults, patientId, removedVaccinations, soapNotes]);
 
   /** Removed entries (voided charges, removed files and doses) stay hidden unless asked for. */
   const chartRows = useMemo(
@@ -1702,7 +1753,11 @@ export default function PimsPatientDetailView({
   const labChartRows = useMemo(
     () =>
       chartRows.filter(
-        (r) => r.source === 'lab' || r.source === 'inHouseLab' || Boolean(r.labResults?.length)
+        (r) =>
+          r.source === 'lab' ||
+          r.source === 'inHouseLab' ||
+          r.source === 'idexxLab' ||
+          Boolean(r.labResults?.length)
       ),
     [chartRows]
   );
@@ -2466,6 +2521,13 @@ export default function PimsPatientDetailView({
         }
         afterReach={
           <>
+            {payload ? (
+              <PatientPremedsBanner
+                needsPremeds={payload.needsPremeds === true}
+                note={typeof payload.premedsNote === 'string' ? payload.premedsNote : null}
+                onSave={saveFields}
+              />
+            ) : null}
             {patientAlert || ownerAlert || connectionNotes ? (
             <div
               className={`pims-emr-header-alerts${
