@@ -128,6 +128,29 @@ export type ProductionIncentiveReport = {
   }>;
 };
 
+export type ProductionIncentiveMembershipPoint = {
+  /** YYYY-MM */
+  key: string;
+  label: string;
+  /** YYYY-MM-DD the counts were taken on. */
+  asOf: string;
+  patients: number;
+  members: number;
+  percent: number | null;
+};
+
+export type ProductionIncentiveMembership = {
+  asOf: string;
+  definition: string;
+  snapshots: Array<{ key: string; label: string; asOf: string }>;
+  practice: ProductionIncentiveMembershipPoint[];
+  doctors: Array<{
+    employeeId: number;
+    name: string;
+    points: ProductionIncentiveMembershipPoint[];
+  }>;
+};
+
 export async function fetchProductionIncentiveSettings(): Promise<ProductionIncentiveSettings> {
   const { data } = await http.get('/analytics/production-incentive/settings');
   return data;
@@ -168,6 +191,14 @@ export async function fetchProductionIncentiveReport(params: {
   end: string;
 }): Promise<ProductionIncentiveReport> {
   const { data } = await http.get('/analytics/production-incentive/report', { params });
+  return data;
+}
+
+export async function fetchProductionIncentiveMembership(params: {
+  end: string;
+  months?: number;
+}): Promise<ProductionIncentiveMembership> {
+  const { data } = await http.get('/analytics/production-incentive/membership', { params });
   return data;
 }
 

@@ -13,6 +13,15 @@ export type ProductionIncentivePdfDoctor = {
   goal: { baseGoal: number; goalPeriod: ProductionIncentiveGoalPeriod };
   evaluation: ProductionIncentiveEvaluation;
   payout: ProductionIncentiveEvaluation;
+  membership?: ProductionIncentivePdfMembership | null;
+};
+
+export type ProductionIncentivePdfMembership = {
+  percent: number | null;
+  members: number;
+  patients: number;
+  /** YYYY-MM-DD the counts were taken on. */
+  asOf: string;
 };
 
 export type ProductionIncentivePdfInput = {
@@ -20,10 +29,16 @@ export type ProductionIncentivePdfInput = {
   payoutPeriod: ProductionIncentivePeriod;
   granularityLabel: string;
   doctors: ProductionIncentivePdfDoctor[];
+  /** Shown only when the PDF covers more than one doctor. */
+  practiceMembership?: ProductionIncentivePdfMembership | null;
   /** YYYY-MM-DD the figures were prepared. */
   generatedOn?: string;
   notes?: string;
 };
+
+function membershipText(label: string, m: ProductionIncentivePdfMembership): string {
+  return `${label}: ${pct(m.percent)} (${m.members.toLocaleString('en-US')} of ${m.patients.toLocaleString('en-US')} patients) as of ${dayjs(m.asOf).format('MMM D, YYYY')}`;
+}
 
 type RGB = [number, number, number];
 
@@ -182,6 +197,11 @@ export function buildProductionIncentiveReportPdf(input: ProductionIncentivePdfI
       : input.generatedOn;
     writeLines([`Prepared ${prepared}.`], 9, MUTED);
   }
+  if (input.practiceMembership && doctors.length > 1) {
+    y += 0.04;
+    writeLines(wrap(membershipText('Practice membership', input.practiceMembership), 10), 10, INK);
+    y += 0.12;
+  }
   y += 0.08;
 
   if (notes) {
@@ -328,9 +348,17 @@ export function buildProductionIncentiveReportPdf(input: ProductionIncentivePdfI
         );
     pdf.setFontSize(10);
     const bonusLines = bonus ? wrap(bonus, 10) : [];
+    const membershipLines = doctor.membership
+      ? wrap(membershipText('Team membership', doctor.membership), 10)
+      : [];
     const blockHeight =
       nameLines.length * leading(13) +
-      (goalLine.length + vsdLine.length + paceLine.length + payoutLine.length + bonusLines.length) *
+      (goalLine.length +
+        vsdLine.length +
+        paceLine.length +
+        payoutLine.length +
+        bonusLines.length +
+        membershipLines.length) *
         leading(10) +
       0.12 +
       (ev.tiers.length + 1) * 0.28;
@@ -353,6 +381,7 @@ export function buildProductionIncentiveReportPdf(input: ProductionIncentivePdfI
     if (paceLine.length) writeLines(paceLine, 10, INK);
     if (payoutLine.length) writeLines(payoutLine, 10, INK);
     if (bonusLines.length) writeLines(bonusLines, 10, INK, 'bold');
+    if (membershipLines.length) writeLines(membershipLines, 10, INK);
     y += 0.08;
     drawTierTable(ev.tiers);
   });
