@@ -71,3 +71,21 @@ export function collectibleShare(
 export function scaleCollectible(amount: number, share: number): number {
   return (Number(amount) || 0) * share;
 }
+
+/** Bounds on the cash calibration so one odd month of collections cannot swing forecasts. */
+const CASH_CALIBRATION_MIN = 0.85;
+const CASH_CALIBRATION_MAX = 1.25;
+
+/**
+ * Treatment cash collected ÷ collectible treatment (provider VSD × share) over the same
+ * trailing window. Doctor-attributed VSD misses production with no production doctor and
+ * the share is an average, so practice cash has run 0–10% above it; this factor puts
+ * projected practice treatment on the same cash basis as the actual days. 1 when either
+ * side is missing.
+ */
+export function cashCalibrationFactor(treatmentCash: number, collectibleTreatment: number): number {
+  const cash = Number(treatmentCash) || 0;
+  const collectible = Number(collectibleTreatment) || 0;
+  if (cash <= 0 || collectible <= 0) return 1;
+  return Math.max(CASH_CALIBRATION_MIN, Math.min(CASH_CALIBRATION_MAX, cash / collectible));
+}
