@@ -61,6 +61,7 @@ import {
   PROJECTED_REVENUE_FETCH_CONCURRENCY,
 } from '../utils/projectedRevenueFetch';
 import {
+  cashCalibrationFactor,
   collectibleShare,
   EMPTY_COLLECTIBLE_RATES,
   ratesFromApi,
@@ -795,19 +796,43 @@ export default function ProjectedRevenueAnalyticsPage() {
     return out;
   }, [histDoctorResponses, collectibleRates]);
 
-  /** Actual pharmacy / membership payments by date (through today). */
-  const actualAncillaryByDate = useMemo(() => {
-    const out = new Map<string, { pharmacy: number; membership: number }>();
+  /**
+   * Actual payments by date (through today): treatment cash (Pulse payments less online
+   * pharmacy), pharmacy, and Square + Stripe membership.
+   */
+  const actualPaymentsByDate = useMemo(() => {
+    const out = new Map<string, { treatment: number; pharmacy: number; membership: number }>();
     for (const p of paymentHistorySeries) {
       const d = String(p?.date ?? '').slice(0, 10);
       if (!d) continue;
+      const pharmacy = Number(p.onlinePharmacyRevenue) || 0;
       out.set(d, {
-        pharmacy: Number(p.onlinePharmacyRevenue) || 0,
+        treatment: (Number(p.revenue) || 0) - pharmacy,
+        pharmacy,
         membership: membershipRevenueForPoint(p),
       });
     }
     return out;
   }, [paymentHistorySeries]);
+
+  /** Trailing treatment cash ÷ collectible provider VSD, applied to practice projections. */
+  const cashCalibration = useMemo(() => {
+    const todayD = dayjs().startOf('day');
+    const histEndStr = toLocalDateStr(todayD.subtract(1, 'day'));
+    const histStartStr = toLocalDateStr(todayD.subtract(VSD_ESTIMATE_LOOKBACK_DAYS, 'day'));
+    let cash = 0;
+    for (const [d, v] of actualPaymentsByDate) {
+      if (d >= histStartStr && d <= histEndStr) cash += v.treatment;
+    }
+    const share = collectibleShare(collectibleRates);
+    let collectible = 0;
+    for (const { response } of rateHistDoctorResponses) {
+      for (const p of response.series ?? []) {
+        collectible += scaleCollectible(Number(p?.total ?? 0), share);
+      }
+    }
+    return cashCalibrationFactor(cash, collectible);
+  }, [actualPaymentsByDate, rateHistDoctorResponses, collectibleRates]);
 
   /** Pharmacy + membership with measured daily growth (from Payments). */
   const ancillaryRates = useMemo(() => {
@@ -838,6 +863,11 @@ export default function ProjectedRevenueAnalyticsPage() {
       const f = fillCurve.fractionBookedByHorizon[h];
       return Number.isFinite(f) ? f : null;
     };
+
+    const isPractice = graphSelection === PRACTICE_TOTAL_ID;
+    // Practice totals are on a cash basis (actual days are collections), so projected
+    // practice treatment is lifted to the same basis. Single doctors stay on VSD.
+    const rateScale = isPractice ? cashCalibration : 1;
 
     return dates.map((date) => {
       const isActual = !dayjs(date).startOf('day').isAfter(todayD);
@@ -915,14 +945,36 @@ export default function ProjectedRevenueAnalyticsPage() {
           // happened yet. Adding a points estimate on top would count those twice; take
           // whichever view of the day is larger instead.
           const rate = collectibleRate(id);
-          const estimate = rate != null && bookedPts > 0 ? rate * bookedPts : 0;
+          const estimate = rate != null && bookedPts > 0 ? rate * rateScale * bookedPts : 0;
           if (estimate > actual) estimateExceedsActual = true;
           treatment += Math.max(actual, estimate);
         }
 
+        const paid = actualPaymentsByDate.get(date);
+        if (isPractice) {
+          // Collections are what the practice reports as revenue. Doctor VSD × share leaves
+          // out production with no production doctor and ran below cash, so a finished day
+          // uses its collections. Today has barely been collected yet, so it keeps the
+          // greater of collections so far and the booked estimate.
+          const cash = paid?.treatment ?? 0;
+          actualTreatment = cash;
+          if (isToday) {
+            if (treatment > cash) estimateExceedsActual = true;
+            treatment = Math.max(cash, treatment);
+          } else {
+            treatment = cash;
+          }
+        }
+
         const ancillaryActual = includeAncillary
-          ? (actualAncillaryByDate.get(date) ?? { pharmacy: 0, membership: 0 })
+          ? { pharmacy: paid?.pharmacy ?? 0, membership: paid?.membership ?? 0 }
           : { pharmacy: 0, membership: 0 };
+        if (includeAncillary && isToday) {
+          // Payments only show what has come in so far today; hold today at the run-rate.
+          const runRate = ancillaryForDate(ancillaryRates);
+          ancillaryActual.pharmacy = Math.max(ancillaryActual.pharmacy, runRate.pharmacy);
+          ancillaryActual.membership = Math.max(ancillaryActual.membership, runRate.membership);
+        }
         return {
           date,
           bookedEstimated: actualTreatment,
@@ -957,7 +1009,8 @@ export default function ProjectedRevenueAnalyticsPage() {
         const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
         const posted = postedFor(id);
         const working = isDoctorWorkingOnDate(doctorSchedules[id], date);
-        const rate = collectibleRate(id);
+        const baseRate = collectibleRate(id);
+        const rate = baseRate != null ? baseRate * rateScale : null;
         const weekdayProjection = typicalForDoctor(id, pts, dayFillFraction);
         // Off with something already booked: that is all there will be.
         const projection = working ? weekdayProjection : { projectedPoints: pts };
@@ -1104,7 +1157,8 @@ export default function ProjectedRevenueAnalyticsPage() {
     ratesByDoctor,
     ancillaryRates,
     actualTreatmentByDoctorByDate,
-    actualAncillaryByDate,
+    actualPaymentsByDate,
+    cashCalibration,
     doctorSchedules,
     weekdayCapacityByDoctor,
     collectibleRates,
@@ -1281,7 +1335,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       case 'estimated':
         return includeAncillary ? 'Total' : 'Treatment';
       case 'treatmentEstimated':
-        return 'Treatment (collectible)';
+        return includeAncillary ? 'Treatment' : 'Treatment (collectible)';
       case 'bookedEstimated':
         return 'Treatment on the books';
       case 'pharmacyEstimated':
@@ -1325,19 +1379,25 @@ export default function ProjectedRevenueAnalyticsPage() {
           Projected Revenue
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Past days use collectible treatment (VSD after membership coverage) and (for practice
-          totals) actual pharmacy / membership payments. Membership coverage is a trailing
-          practice-wide rate (membership discounts ÷ VSD over the last {VSD_ESTIMATE_LOOKBACK_DAYS}{' '}
-          complete days), applied evenly — it is not priced client by client for future visits.
-          Membership dues stay on their own line. Open A/R is left out: it is unpaid invoices
-          already on the books, not cash expected in this window, and new A/R versus collections
-          tends to average out. For today, each doctor&apos;s treatment starts from recent-half VSD
-          per point (total VSD ÷ total appointment points, using each visit&apos;s configured type
-          points), then that amount is reduced by the collectible share. The day shows the greater
-          of posted collectible treatment and that estimate — treatment is often invoiced at
-          booking, so the two are never added together. A doctor whose posted amount already meets
-          their daily revenue goal shows actual only. For future days, each scheduled doctor is
-          expected to reach their own average for that specific weekday over the trailing{' '}
+          For the practice total, past days are actual collections — treatment payments, online
+          pharmacy, and Square + Stripe membership — the same figures as the Payments page, and
+          projected practice treatment is scaled by trailing treatment cash ÷ collectible provider
+          VSD
+          {includeAncillary ? ` (currently ×${cashCalibration.toFixed(2)})` : ''} so forecast and
+          actual days are on the same cash basis; today is held at no less than its booked estimate
+          and the pharmacy / membership run-rate. For a single doctor, past days use collectible
+          treatment (VSD after membership coverage). Membership coverage is a trailing practice-wide
+          rate (membership discounts ÷ VSD over the last {VSD_ESTIMATE_LOOKBACK_DAYS} complete
+          days), applied evenly — it is not priced client by client for future visits. Membership
+          dues stay on their own line. Open A/R is left out: it is unpaid invoices already on the
+          books, not cash expected in this window, and new A/R versus collections tends to average
+          out. For today, each doctor&apos;s treatment starts from recent-half VSD per point (total
+          VSD ÷ total appointment points, using each visit&apos;s configured type points), then that
+          amount is reduced by the collectible share. The day shows the greater of posted
+          collectible treatment and that estimate — treatment is often invoiced at booking, so the
+          two are never added together. A doctor whose posted amount already meets their daily
+          revenue goal shows actual only. For future days, each scheduled doctor is expected to
+          reach their own average for that specific weekday over the trailing{' '}
           {DOCTOR_CAPACITY_LOOKBACK_DAYS} days, shown as Typical pts. For example, a doctor&apos;s
           recent Fridays determine future Fridays; Mondays do not affect them. Shortened days (e.g.
           a half-day schedule override) scale that average by the hours scheduled. Expected points
@@ -1490,13 +1550,14 @@ export default function ProjectedRevenueAnalyticsPage() {
                 <>
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">
-                      Treatment (collectible)
+                      Treatment
                     </Typography>
                     <Typography variant="h5">{fmtUSD(totals.treatmentEstimated)}</Typography>
                     {hasCollectibleLookback && (
                       <Typography variant="caption" color="text.secondary" display="block">
                         {(collectibleShareValue * 100).toFixed(1)}% of trailing VSD billed ·
-                        membership coverage {membershipCoveragePct.toFixed(1)}%
+                        membership coverage {membershipCoveragePct.toFixed(1)}% · cash ×
+                        {cashCalibration.toFixed(2)}
                       </Typography>
                     )}
                   </Box>
@@ -1621,9 +1682,11 @@ export default function ProjectedRevenueAnalyticsPage() {
             title={useDailyBuckets ? 'Revenue by day' : 'Revenue by week'}
             subheader={
               hasMixedActualProjected
-                ? 'Through today = actual collectible; after today = projected (treatment fill-in + ancillary)'
+                ? includeAncillary
+                  ? 'Through today = actual collections; after today = projected (treatment fill-in + ancillary)'
+                  : 'Through today = actual collectible; after today = projected (treatment fill-in)'
                 : includeAncillary
-                  ? 'Includes collectible treatment, pharmacy, and membership'
+                  ? 'Includes treatment, pharmacy, and membership collections'
                   : 'Collectible treatment for the selected provider'
             }
           />
