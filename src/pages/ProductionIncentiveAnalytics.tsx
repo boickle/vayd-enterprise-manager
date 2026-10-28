@@ -32,18 +32,45 @@ import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as ChartTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   GOAL_PERIOD_LABELS,
   describePayoutSchedule,
+  fetchProductionIncentiveMembership,
   fetchProductionIncentiveReport,
   fetchProductionIncentiveSettings,
   type ProductionIncentiveEvaluation,
   type ProductionIncentiveGranularity,
+  type ProductionIncentiveMembership,
+  type ProductionIncentiveMembershipPoint,
   type ProductionIncentiveReport,
   type ProductionIncentiveSettings,
 } from '../api/productionIncentive';
 import { downloadProductionIncentiveReportPdf } from '../utils/productionIncentivePdf';
 
 const TREND_PERIODS = 6;
+const MEMBERSHIP_MONTHS = 12;
+const PRACTICE_LINE_KEY = 'practice';
+const DOCTOR_COLORS = [
+  '#1565c0',
+  '#2e7d32',
+  '#c62828',
+  '#6a1b9a',
+  '#ef6c00',
+  '#00838f',
+  '#ad1457',
+  '#5d4037',
+  '#558b2f',
+  '#283593',
+];
 /** Keeps the payout-period trend to about two years of data. */
 const PAYOUT_TREND_MONTHS = 24;
 
@@ -112,6 +139,8 @@ export default function ProductionIncentiveAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [settings, setSettings] = useState<ProductionIncentiveSettings | null>(null);
+  const [membership, setMembership] = useState<ProductionIncentiveMembership | null>(null);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
   const payoutMonths = settings?.payoutMonths ?? 3;
 
   const start = shiftAnchor(
@@ -153,6 +182,33 @@ export default function ProductionIncentiveAnalyticsPage() {
   }, [granularity, start, end, settingsReady]);
 
   const selectedPeriod = report?.periods[report.periods.length - 1] ?? null;
+  const membershipEnd = selectedPeriod?.end ?? null;
+
+  useEffect(() => {
+    if (!membershipEnd) return;
+    let alive = true;
+    setMembershipError(null);
+    fetchProductionIncentiveMembership({ end: membershipEnd, months: MEMBERSHIP_MONTHS })
+      .then((data) => alive && setMembership(data))
+      .catch((e) => {
+        if (!alive) return;
+        setMembershipError(extractErr(e));
+        setMembership(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [membershipEnd]);
+
+  const membershipNow = useMemo(() => {
+    const byDoctor = new Map<number, ProductionIncentiveMembershipPoint>();
+    for (const d of membership?.doctors ?? []) {
+      const last = d.points[d.points.length - 1];
+      if (last) byDoctor.set(d.employeeId, last);
+    }
+    return byDoctor;
+  }, [membership]);
+  const practiceMembership = membership?.practice[membership.practice.length - 1] ?? null;
   const selectedIdx = (report?.periods.length ?? 1) - 1;
   const canGoForward = selectedPeriod?.status === 'complete';
   const payoutPeriod = report?.payoutPeriod ?? null;
@@ -286,6 +342,10 @@ export default function ProductionIncentiveAnalyticsPage() {
                   : ''
               } · Bonuses for ${isPayoutView ? 'this payout period' : `payout period ${payoutPeriod.label}`}: DVM ${fmtUSD(totals.dvmBonus)}, tech ${fmtUSD(totals.techBonus)}${
                 payoutPeriod.status === 'in_progress' ? ' (earned so far)' : ''
+              }${
+                practiceMembership
+                  ? ` · Practice membership ${fmtPct(practiceMembership.percent)} (${practiceMembership.members.toLocaleString()} of ${practiceMembership.patients.toLocaleString()} patients)`
+                  : ''
               }`}
             />
             <CardContent sx={{ overflowX: 'auto' }}>
@@ -312,6 +372,14 @@ export default function ProductionIncentiveAnalyticsPage() {
                     <TableCell align="right">DVM bonus</TableCell>
                     <TableCell align="right">Tech bonus</TableCell>
                     <TableCell>Next tier</TableCell>
+                    <TableCell align="right" sx={{ minWidth: 120 }}>
+                      Membership
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {membership
+                          ? `Team, as of ${dayjs(membership.asOf).format('MMM D')}`
+                          : 'Team'}
+                      </Typography>
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -417,6 +485,9 @@ export default function ProductionIncentiveAnalyticsPage() {
                             'All tiers reached'
                           )}
                         </TableCell>
+                        <TableCell align="right">
+                          <MembershipCell point={membershipNow.get(d.employeeId)} />
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -489,6 +560,8 @@ export default function ProductionIncentiveAnalyticsPage() {
               )}
             </CardContent>
           </Card>
+
+          <MembershipTrendCard membership={membership} error={membershipError} />
         </>
       ) : null}
 
@@ -497,6 +570,8 @@ export default function ProductionIncentiveAnalyticsPage() {
           report={report}
           granularity={granularity}
           periodLabel={selectedPeriod.label}
+          membershipByDoctor={membershipNow}
+          practiceMembership={practiceMembership}
           onClose={() => setSendOpen(false)}
         />
       )}
@@ -504,15 +579,214 @@ export default function ProductionIncentiveAnalyticsPage() {
   );
 }
 
+function MembershipCell({ point }: { point: ProductionIncentiveMembershipPoint | undefined }) {
+  if (!point) return <>—</>;
+  return (
+    <>
+      {fmtPct(point.percent)}
+      <Typography variant="caption" color="text.secondary" display="block">
+        {point.members.toLocaleString()} of {point.patients.toLocaleString()} patients
+      </Typography>
+    </>
+  );
+}
+
+type MembershipMetric = 'percent' | 'members';
+
+type MembershipLine = {
+  key: string;
+  name: string;
+  color: string;
+  isPractice: boolean;
+  points: ProductionIncentiveMembershipPoint[];
+};
+
+function MembershipTrendCard({
+  membership,
+  error,
+}: {
+  membership: ProductionIncentiveMembership | null;
+  error: string | null;
+}) {
+  const [metric, setMetric] = useState<MembershipMetric>('percent');
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+
+  const lines = useMemo<MembershipLine[]>(() => {
+    if (!membership) return [];
+    return [
+      {
+        key: PRACTICE_LINE_KEY,
+        name: 'Whole practice',
+        color: '#212121',
+        isPractice: true,
+        points: membership.practice,
+      },
+      ...membership.doctors.map((d, i) => ({
+        key: `doctor-${d.employeeId}`,
+        name: d.name,
+        color: DOCTOR_COLORS[i % DOCTOR_COLORS.length],
+        isPractice: false,
+        points: d.points,
+      })),
+    ];
+  }, [membership]);
+
+  const data = useMemo(
+    () =>
+      (membership?.snapshots ?? []).map((s, i) => {
+        const row: Record<string, string | number | null> = { label: s.label, asOf: s.asOf };
+        for (const line of lines) {
+          const p = line.points[i];
+          row[line.key] = p ? (metric === 'percent' ? p.percent : p.members) : null;
+        }
+        return row;
+      }),
+    [membership, lines, metric]
+  );
+
+  const toggleLine = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  return (
+    <Card sx={{ mt: 3 }}>
+      <CardHeader
+        title={`Membership over the last ${MEMBERSHIP_MONTHS} months`}
+        subheader={
+          membership?.definition ??
+          'Members as a share of each doctor’s team, taken at the end of each month.'
+        }
+        action={
+          <ButtonGroup size="small" sx={{ mt: 1, mr: 1 }}>
+            <Button
+              variant={metric === 'percent' ? 'contained' : 'outlined'}
+              onClick={() => setMetric('percent')}
+            >
+              Membership %
+            </Button>
+            <Button
+              variant={metric === 'members' ? 'contained' : 'outlined'}
+              onClick={() => setMetric('members')}
+            >
+              Members
+            </Button>
+          </ButtonGroup>
+        }
+      />
+      <CardContent>
+        {error ? (
+          <Alert severity="error">{error}</Alert>
+        ) : !membership ? (
+          <Box
+            sx={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <CircularProgress size={28} />
+          </Box>
+        ) : (
+          <>
+            <Box sx={{ height: 340 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    allowDecimals={metric === 'percent'}
+                    tickFormatter={(v) => (metric === 'percent' ? `${v}%` : String(v))}
+                  />
+                  <ChartTooltip
+                    content={({ active, label, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const idx = data.findIndex((row) => row.label === label);
+                      const asOf = idx >= 0 ? String(data[idx].asOf) : '';
+                      return (
+                        <Box
+                          sx={{
+                            bgcolor: 'background.paper',
+                            border: 1,
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            p: 1,
+                            fontSize: 12,
+                          }}
+                        >
+                          <Typography variant="caption" fontWeight={600} display="block">
+                            {asOf ? `As of ${dayjs(asOf).format('MMM D, YYYY')}` : label}
+                          </Typography>
+                          {lines
+                            .filter((line) => !hidden.has(line.key))
+                            .map((line) => {
+                              const p = idx >= 0 ? line.points[idx] : undefined;
+                              if (!p) return null;
+                              return (
+                                <Box
+                                  key={line.key}
+                                  sx={{ display: 'flex', gap: 1, justifyContent: 'space-between' }}
+                                >
+                                  <span style={{ color: line.color }}>{line.name}</span>
+                                  <span>
+                                    {fmtPct(p.percent)} · {p.members.toLocaleString()} of{' '}
+                                    {p.patients.toLocaleString()}
+                                  </span>
+                                </Box>
+                              );
+                            })}
+                        </Box>
+                      );
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                    onClick={(entry) => {
+                      const key = (entry as { dataKey?: unknown }).dataKey;
+                      if (typeof key === 'string') toggleLine(key);
+                    }}
+                  />
+                  {lines.map((line) => (
+                    <Line
+                      key={line.key}
+                      type="monotone"
+                      dataKey={line.key}
+                      name={line.name}
+                      stroke={line.color}
+                      strokeWidth={line.isPractice ? 3 : 2}
+                      strokeDasharray={line.isPractice ? '6 3' : undefined}
+                      dot={{ r: line.isPractice ? 3 : 2 }}
+                      hide={hidden.has(line.key)}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              Click a name in the legend to hide or show it. The last point is as of{' '}
+              {dayjs(membership.asOf).format('MMM D, YYYY')}.
+            </Typography>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DownloadReportDialog({
   report,
   granularity,
   periodLabel,
+  membershipByDoctor,
+  practiceMembership,
   onClose,
 }: {
   report: ProductionIncentiveReport;
   granularity: ProductionIncentiveGranularity;
   periodLabel: string;
+  membershipByDoctor: Map<number, ProductionIncentiveMembershipPoint>;
+  practiceMembership: ProductionIncentiveMembershipPoint | null;
   onClose: () => void;
 }) {
   const [choice, setChoice] = useState<string>(
@@ -536,6 +810,7 @@ function DownloadReportDialog({
       goal: d.goal,
       evaluation: d.periods[selectedIdx],
       payout: d.payout,
+      membership: membershipByDoctor.get(d.employeeId) ?? null,
     }));
     if (!period || !payoutPeriod || !doctors.length || doctors.some((d) => !d.evaluation)) {
       setError('Select a doctor to download.');
@@ -547,6 +822,7 @@ function DownloadReportDialog({
         payoutPeriod,
         granularityLabel: GRANULARITIES.find((g) => g.value === granularity)?.label ?? granularity,
         doctors,
+        practiceMembership,
         generatedOn: report.today,
         notes: notes.trim() || undefined,
       });
