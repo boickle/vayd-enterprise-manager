@@ -58,6 +58,7 @@ import {
 import type { AvgMinutesByTypeRow } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { VerifiedAddressField } from '../components/VerifiedAddressField';
 import type { AddressFields } from '../components/AddressAutocomplete';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
@@ -720,6 +721,8 @@ export function SchedulerBookModal({
   const [slotOfferComposeMessage, setSlotOfferComposeMessage] = useState('');
   const [slotOfferComposeError, setSlotOfferComposeError] = useState<string | null>(null);
   const [slotOfferOverwriteOpen, setSlotOfferOverwriteOpen] = useState(false);
+  const [slotOfferMessagesClientId, setSlotOfferMessagesClientId] = useState<number | null>(null);
+  const [slotOfferMessagesClientLabel, setSlotOfferMessagesClientLabel] = useState('');
   const slotOfferPendingPayloadRef = useRef<SendSlotOfferPayload | null>(null);
   const slotOfferComposeDraftRef = useRef<{
     payload: SendSlotOfferPayload;
@@ -3084,6 +3087,8 @@ export function SchedulerBookModal({
       setSlotOfferDraftMeta(null);
       slotOfferPendingPayloadRef.current = null;
       slotOfferConfirmOverwriteRef.current = false;
+      setSlotOfferMessagesClientId(null);
+      setSlotOfferMessagesClientLabel('');
       onSlotOfferSent?.(
         notesResult.warning ? { outreachNotesWarning: notesResult.warning } : undefined
       );
@@ -3117,7 +3122,40 @@ export function SchedulerBookModal({
     setSlotOfferDraftMeta(null);
     slotOfferPendingPayloadRef.current = null;
     slotOfferConfirmOverwriteRef.current = false;
+    setSlotOfferMessagesClientId(null);
+    setSlotOfferMessagesClientLabel('');
   }
+
+  function openSlotOfferMessagesHistory() {
+    const fromPayload = slotOfferPendingPayloadRef.current?.clientId;
+    const fromSelected = selectedClientId?.trim() ? Number(selectedClientId) : NaN;
+    const fromPrefill = prefill?.clientId?.trim() ? Number(prefill.clientId) : NaN;
+    const clientId =
+      fromPayload != null && Number.isFinite(fromPayload) && fromPayload > 0
+        ? fromPayload
+        : Number.isFinite(fromSelected) && fromSelected > 0
+          ? fromSelected
+          : Number.isFinite(fromPrefill) && fromPrefill > 0
+            ? fromPrefill
+            : null;
+    if (clientId == null) return;
+    setSlotOfferMessagesClientId(clientId);
+    setSlotOfferMessagesClientLabel(
+      selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'
+    );
+  }
+
+  const slotOfferMessagesHistoryModal = (
+    <ClientMessagesHistoryModal
+      open={slotOfferMessagesClientId != null}
+      clientId={slotOfferMessagesClientId}
+      clientLabel={slotOfferMessagesClientLabel}
+      onClose={() => {
+        setSlotOfferMessagesClientId(null);
+        setSlotOfferMessagesClientLabel('');
+      }}
+    />
+  );
 
   async function confirmSlotOfferEmailSend(email: SlotOfferEmailSend) {
     const base = slotOfferPendingPayloadRef.current;
@@ -3211,7 +3249,7 @@ export function SchedulerBookModal({
           onMessageChange={setSlotOfferComposeMessage}
           onClose={closeSlotOfferCompose}
           onSend={() => void confirmSlotOfferSend()}
-          onOpenMessagesHistory={() => {}}
+          onOpenMessagesHistory={openSlotOfferMessagesHistory}
           sending={sendingOffer}
           sendError={slotOfferComposeError}
           title="Text offer"
@@ -3221,6 +3259,7 @@ export function SchedulerBookModal({
           reviewNotes={slotOfferDraftMeta?.flags}
           messageHint={slotOfferDraftHint}
         />
+        {slotOfferMessagesHistoryModal}
         {slotOfferOverwriteOpen && typeof document !== 'undefined'
           ? createPortal(
               <div
@@ -4425,7 +4464,7 @@ export function SchedulerBookModal({
         onMessageChange={setSlotOfferComposeMessage}
         onClose={closeSlotOfferCompose}
         onSend={() => void confirmSlotOfferSend()}
-        onOpenMessagesHistory={() => {}}
+        onOpenMessagesHistory={openSlotOfferMessagesHistory}
         sending={sendingOffer}
         sendError={slotOfferComposeError}
         title="Text offer"
@@ -4435,6 +4474,7 @@ export function SchedulerBookModal({
         reviewNotes={slotOfferDraftMeta?.flags}
         messageHint={slotOfferDraftHint}
       />
+      {slotOfferMessagesHistoryModal}
       {slotOfferOverwriteOpen && typeof document !== 'undefined'
         ? createPortal(
             <div
