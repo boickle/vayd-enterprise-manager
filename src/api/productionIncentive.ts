@@ -128,14 +128,27 @@ export type ProductionIncentiveReport = {
   }>;
 };
 
-export type SendProductionIncentiveReportBody = {
-  granularity: ProductionIncentiveGranularity;
-  /** Any date inside the period being reported. */
-  date: string;
-  employeeIds: number[];
-  mode: 'individual' | 'combined';
-  additionalRecipients?: string[];
-  notes?: string;
+export type ProductionIncentiveMembershipPoint = {
+  /** YYYY-MM */
+  key: string;
+  label: string;
+  /** YYYY-MM-DD the counts were taken on. */
+  asOf: string;
+  patients: number;
+  members: number;
+  percent: number | null;
+};
+
+export type ProductionIncentiveMembership = {
+  asOf: string;
+  definition: string;
+  snapshots: Array<{ key: string; label: string; asOf: string }>;
+  practice: ProductionIncentiveMembershipPoint[];
+  doctors: Array<{
+    employeeId: number;
+    name: string;
+    points: ProductionIncentiveMembershipPoint[];
+  }>;
 };
 
 export async function fetchProductionIncentiveSettings(): Promise<ProductionIncentiveSettings> {
@@ -181,10 +194,11 @@ export async function fetchProductionIncentiveReport(params: {
   return data;
 }
 
-export async function sendProductionIncentiveReport(
-  body: SendProductionIncentiveReportBody
-): Promise<{ sent: Array<{ to: string[]; subject: string }>; skipped: string[] }> {
-  const { data } = await http.post('/analytics/production-incentive/report/send', body);
+export async function fetchProductionIncentiveMembership(params: {
+  end: string;
+  months?: number;
+}): Promise<ProductionIncentiveMembership> {
+  const { data } = await http.get('/analytics/production-incentive/membership', { params });
   return data;
 }
 

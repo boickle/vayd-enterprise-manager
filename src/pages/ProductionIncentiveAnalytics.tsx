@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
   Alert,
@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -33,18 +32,45 @@ import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as ChartTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   GOAL_PERIOD_LABELS,
   describePayoutSchedule,
+  fetchProductionIncentiveMembership,
   fetchProductionIncentiveReport,
   fetchProductionIncentiveSettings,
-  sendProductionIncentiveReport,
   type ProductionIncentiveEvaluation,
   type ProductionIncentiveGranularity,
+  type ProductionIncentiveMembership,
+  type ProductionIncentiveMembershipPoint,
   type ProductionIncentiveReport,
   type ProductionIncentiveSettings,
 } from '../api/productionIncentive';
+import { downloadProductionIncentiveReportPdf } from '../utils/productionIncentivePdf';
 
 const TREND_PERIODS = 6;
+const MEMBERSHIP_MONTHS = 12;
+const PRACTICE_LINE_KEY = 'practice';
+const DOCTOR_COLORS = [
+  '#1565c0',
+  '#2e7d32',
+  '#c62828',
+  '#6a1b9a',
+  '#ef6c00',
+  '#00838f',
+  '#ad1457',
+  '#5d4037',
+  '#558b2f',
+  '#283593',
+];
 /** Keeps the payout-period trend to about two years of data. */
 const PAYOUT_TREND_MONTHS = 24;
 
@@ -113,6 +139,8 @@ export default function ProductionIncentiveAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [settings, setSettings] = useState<ProductionIncentiveSettings | null>(null);
+  const [membership, setMembership] = useState<ProductionIncentiveMembership | null>(null);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
   const payoutMonths = settings?.payoutMonths ?? 3;
 
   const start = shiftAnchor(
@@ -154,6 +182,33 @@ export default function ProductionIncentiveAnalyticsPage() {
   }, [granularity, start, end, settingsReady]);
 
   const selectedPeriod = report?.periods[report.periods.length - 1] ?? null;
+  const membershipEnd = selectedPeriod?.end ?? null;
+
+  useEffect(() => {
+    if (!membershipEnd) return;
+    let alive = true;
+    setMembershipError(null);
+    fetchProductionIncentiveMembership({ end: membershipEnd, months: MEMBERSHIP_MONTHS })
+      .then((data) => alive && setMembership(data))
+      .catch((e) => {
+        if (!alive) return;
+        setMembershipError(extractErr(e));
+        setMembership(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [membershipEnd]);
+
+  const membershipNow = useMemo(() => {
+    const byDoctor = new Map<number, ProductionIncentiveMembershipPoint>();
+    for (const d of membership?.doctors ?? []) {
+      const last = d.points[d.points.length - 1];
+      if (last) byDoctor.set(d.employeeId, last);
+    }
+    return byDoctor;
+  }, [membership]);
+  const practiceMembership = membership?.practice[membership.practice.length - 1] ?? null;
   const selectedIdx = (report?.periods.length ?? 1) - 1;
   const canGoForward = selectedPeriod?.status === 'complete';
   const payoutPeriod = report?.payoutPeriod ?? null;
@@ -251,7 +306,7 @@ export default function ProductionIncentiveAnalyticsPage() {
             disabled={!report?.doctors.length || !selectedPeriod}
             onClick={() => setSendOpen(true)}
           >
-            Send report
+            Download report
           </Button>
         </CardContent>
       </Card>
@@ -287,6 +342,10 @@ export default function ProductionIncentiveAnalyticsPage() {
                   : ''
               } · Bonuses for ${isPayoutView ? 'this payout period' : `payout period ${payoutPeriod.label}`}: DVM ${fmtUSD(totals.dvmBonus)}, tech ${fmtUSD(totals.techBonus)}${
                 payoutPeriod.status === 'in_progress' ? ' (earned so far)' : ''
+              }${
+                practiceMembership
+                  ? ` · Practice membership ${fmtPct(practiceMembership.percent)} (${practiceMembership.members.toLocaleString()} of ${practiceMembership.patients.toLocaleString()} patients)`
+                  : ''
               }`}
             />
             <CardContent sx={{ overflowX: 'auto' }}>
@@ -313,6 +372,14 @@ export default function ProductionIncentiveAnalyticsPage() {
                     <TableCell align="right">DVM bonus</TableCell>
                     <TableCell align="right">Tech bonus</TableCell>
                     <TableCell>Next tier</TableCell>
+                    <TableCell align="right" sx={{ minWidth: 120 }}>
+                      Membership
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {membership
+                          ? `Team, as of ${dayjs(membership.asOf).format('MMM D')}`
+                          : 'Team'}
+                      </Typography>
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -418,6 +485,9 @@ export default function ProductionIncentiveAnalyticsPage() {
                             'All tiers reached'
                           )}
                         </TableCell>
+                        <TableCell align="right">
+                          <MembershipCell point={membershipNow.get(d.employeeId)} />
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -490,15 +560,18 @@ export default function ProductionIncentiveAnalyticsPage() {
               )}
             </CardContent>
           </Card>
+
+          <MembershipTrendCard membership={membership} error={membershipError} />
         </>
       ) : null}
 
       {sendOpen && report && selectedPeriod && (
-        <SendReportDialog
+        <DownloadReportDialog
           report={report}
           granularity={granularity}
           periodLabel={selectedPeriod.label}
-          periodDate={selectedPeriod.start}
+          membershipByDoctor={membershipNow}
+          practiceMembership={practiceMembership}
           onClose={() => setSendOpen(false)}
         />
       )}
@@ -506,179 +579,313 @@ export default function ProductionIncentiveAnalyticsPage() {
   );
 }
 
-function SendReportDialog({
+function MembershipCell({ point }: { point: ProductionIncentiveMembershipPoint | undefined }) {
+  if (!point) return <>—</>;
+  return (
+    <>
+      {fmtPct(point.percent)}
+      <Typography variant="caption" color="text.secondary" display="block">
+        {point.members.toLocaleString()} of {point.patients.toLocaleString()} patients
+      </Typography>
+    </>
+  );
+}
+
+type MembershipMetric = 'percent' | 'members';
+
+type MembershipLine = {
+  key: string;
+  name: string;
+  color: string;
+  isPractice: boolean;
+  points: ProductionIncentiveMembershipPoint[];
+};
+
+function MembershipTrendCard({
+  membership,
+  error,
+}: {
+  membership: ProductionIncentiveMembership | null;
+  error: string | null;
+}) {
+  const [metric, setMetric] = useState<MembershipMetric>('percent');
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+
+  const lines = useMemo<MembershipLine[]>(() => {
+    if (!membership) return [];
+    return [
+      {
+        key: PRACTICE_LINE_KEY,
+        name: 'Whole practice',
+        color: '#212121',
+        isPractice: true,
+        points: membership.practice,
+      },
+      ...membership.doctors.map((d, i) => ({
+        key: `doctor-${d.employeeId}`,
+        name: d.name,
+        color: DOCTOR_COLORS[i % DOCTOR_COLORS.length],
+        isPractice: false,
+        points: d.points,
+      })),
+    ];
+  }, [membership]);
+
+  const data = useMemo(
+    () =>
+      (membership?.snapshots ?? []).map((s, i) => {
+        const row: Record<string, string | number | null> = { label: s.label, asOf: s.asOf };
+        for (const line of lines) {
+          const p = line.points[i];
+          row[line.key] = p ? (metric === 'percent' ? p.percent : p.members) : null;
+        }
+        return row;
+      }),
+    [membership, lines, metric]
+  );
+
+  const toggleLine = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  return (
+    <Card sx={{ mt: 3 }}>
+      <CardHeader
+        title={`Membership over the last ${MEMBERSHIP_MONTHS} months`}
+        subheader={
+          membership?.definition ??
+          'Members as a share of each doctor’s team, taken at the end of each month.'
+        }
+        action={
+          <ButtonGroup size="small" sx={{ mt: 1, mr: 1 }}>
+            <Button
+              variant={metric === 'percent' ? 'contained' : 'outlined'}
+              onClick={() => setMetric('percent')}
+            >
+              Membership %
+            </Button>
+            <Button
+              variant={metric === 'members' ? 'contained' : 'outlined'}
+              onClick={() => setMetric('members')}
+            >
+              Members
+            </Button>
+          </ButtonGroup>
+        }
+      />
+      <CardContent>
+        {error ? (
+          <Alert severity="error">{error}</Alert>
+        ) : !membership ? (
+          <Box
+            sx={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <CircularProgress size={28} />
+          </Box>
+        ) : (
+          <>
+            <Box sx={{ height: 340 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    allowDecimals={metric === 'percent'}
+                    tickFormatter={(v) => (metric === 'percent' ? `${v}%` : String(v))}
+                  />
+                  <ChartTooltip
+                    content={({ active, label, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const idx = data.findIndex((row) => row.label === label);
+                      const asOf = idx >= 0 ? String(data[idx].asOf) : '';
+                      return (
+                        <Box
+                          sx={{
+                            bgcolor: 'background.paper',
+                            border: 1,
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            p: 1,
+                            fontSize: 12,
+                          }}
+                        >
+                          <Typography variant="caption" fontWeight={600} display="block">
+                            {asOf ? `As of ${dayjs(asOf).format('MMM D, YYYY')}` : label}
+                          </Typography>
+                          {lines
+                            .filter((line) => !hidden.has(line.key))
+                            .map((line) => {
+                              const p = idx >= 0 ? line.points[idx] : undefined;
+                              if (!p) return null;
+                              return (
+                                <Box
+                                  key={line.key}
+                                  sx={{ display: 'flex', gap: 1, justifyContent: 'space-between' }}
+                                >
+                                  <span style={{ color: line.color }}>{line.name}</span>
+                                  <span>
+                                    {fmtPct(p.percent)} · {p.members.toLocaleString()} of{' '}
+                                    {p.patients.toLocaleString()}
+                                  </span>
+                                </Box>
+                              );
+                            })}
+                        </Box>
+                      );
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                    onClick={(entry) => {
+                      const key = (entry as { dataKey?: unknown }).dataKey;
+                      if (typeof key === 'string') toggleLine(key);
+                    }}
+                  />
+                  {lines.map((line) => (
+                    <Line
+                      key={line.key}
+                      type="monotone"
+                      dataKey={line.key}
+                      name={line.name}
+                      stroke={line.color}
+                      strokeWidth={line.isPractice ? 3 : 2}
+                      strokeDasharray={line.isPractice ? '6 3' : undefined}
+                      dot={{ r: line.isPractice ? 3 : 2 }}
+                      hide={hidden.has(line.key)}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              Click a name in the legend to hide or show it. The last point is as of{' '}
+              {dayjs(membership.asOf).format('MMM D, YYYY')}.
+            </Typography>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DownloadReportDialog({
   report,
   granularity,
   periodLabel,
-  periodDate,
+  membershipByDoctor,
+  practiceMembership,
   onClose,
 }: {
   report: ProductionIncentiveReport;
   granularity: ProductionIncentiveGranularity;
   periodLabel: string;
-  periodDate: string;
+  membershipByDoctor: Map<number, ProductionIncentiveMembershipPoint>;
+  practiceMembership: ProductionIncentiveMembershipPoint | null;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(report.doctors.map((d) => d.employeeId))
+  const [choice, setChoice] = useState<string>(
+    report.doctors.length > 1 ? 'all' : String(report.doctors[0]?.employeeId ?? '')
   );
-  const [mode, setMode] = useState<'individual' | 'combined'>('individual');
-  const [recipientsRaw, setRecipientsRaw] = useState('');
   const [notes, setNotes] = useState('');
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
 
-  const additionalRecipients = useMemo(
-    () =>
-      recipientsRaw
-        .split(/[\s,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [recipientsRaw]
-  );
-  const invalidEmails = additionalRecipients.filter((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  const missingEmail = report.doctors.filter((d) => selected.has(d.employeeId) && !d.email);
-
-  const toggle = (id: number) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const canSend =
-    selected.size > 0 &&
-    invalidEmails.length === 0 &&
-    (mode === 'individual' || additionalRecipients.length > 0) &&
-    !sending;
-
-  const handleSend = useCallback(async () => {
-    setSending(true);
+  const handleDownload = () => {
     setError(null);
+    const selectedIdx = report.periods.length - 1;
+    const period = report.periods[selectedIdx];
+    const payoutPeriod = report.payoutPeriod;
+    const doctors = (
+      choice === 'all'
+        ? report.doctors
+        : report.doctors.filter((d) => String(d.employeeId) === choice)
+    ).map((d) => ({
+      name: d.name,
+      goal: d.goal,
+      evaluation: d.periods[selectedIdx],
+      payout: d.payout,
+      membership: membershipByDoctor.get(d.employeeId) ?? null,
+    }));
+    if (!period || !payoutPeriod || !doctors.length || doctors.some((d) => !d.evaluation)) {
+      setError('Select a doctor to download.');
+      return;
+    }
     try {
-      const res = await sendProductionIncentiveReport({
-        granularity,
-        date: periodDate,
-        employeeIds: [...selected],
-        mode,
-        additionalRecipients,
+      const filename = downloadProductionIncentiveReportPdf({
+        period,
+        payoutPeriod,
+        granularityLabel: GRANULARITIES.find((g) => g.value === granularity)?.label ?? granularity,
+        doctors,
+        practiceMembership,
+        generatedOn: report.today,
         notes: notes.trim() || undefined,
       });
-      const parts = [`Sent ${res.sent.length} email${res.sent.length === 1 ? '' : 's'}.`];
-      if (res.skipped.length) parts.push(`Skipped (no email on file): ${res.skipped.join(', ')}.`);
-      setResult(parts.join(' '));
+      setResult(`Downloaded ${filename}. Email it from your own mail app.`);
     } catch (e) {
-      setError(extractErr(e));
-    } finally {
-      setSending(false);
+      setError(e instanceof Error ? e.message : 'Could not create the PDF.');
     }
-  }, [additionalRecipients, granularity, mode, notes, periodDate, selected]);
+  };
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Send production incentive report – {periodLabel}</DialogTitle>
+      <DialogTitle>Download production incentive report – {periodLabel}</DialogTitle>
       <DialogContent dividers>
-        {result ? (
-          <Alert severity="success">{result}</Alert>
-        ) : (
-          <>
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Doctors
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', mb: 2 }}>
-              {report.doctors.map((d) => (
-                <FormControlLabel
-                  key={d.employeeId}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={selected.has(d.employeeId)}
-                      onChange={() => toggle(d.employeeId)}
-                    />
-                  }
-                  label={
-                    <span>
-                      {d.name}{' '}
-                      <Typography component="span" variant="caption" color="text.secondary">
-                        {d.email ?? 'no email on file'}
-                      </Typography>
-                    </span>
-                  }
-                />
-              ))}
-            </Box>
-
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Delivery
-            </Typography>
-            <RadioGroup
-              value={mode}
-              onChange={(e) => setMode(e.target.value as 'individual' | 'combined')}
-              sx={{ mb: 2 }}
-            >
-              <FormControlLabel
-                value="individual"
-                control={<Radio size="small" />}
-                label="One email per doctor with only their results (sent to the doctor and anyone listed below)"
-              />
-              <FormControlLabel
-                value="combined"
-                control={<Radio size="small" />}
-                label="One email with all selected doctors (sent only to the recipients below)"
-              />
-            </RadioGroup>
-
-            <TextField
-              label={mode === 'combined' ? 'Recipients' : 'Additional recipients (optional)'}
-              placeholder="team@vetatyourdoor.com, manager@vetatyourdoor.com"
-              fullWidth
-              size="small"
-              value={recipientsRaw}
-              onChange={(e) => setRecipientsRaw(e.target.value)}
-              error={invalidEmails.length > 0}
-              helperText={
-                invalidEmails.length
-                  ? `Invalid: ${invalidEmails.join(', ')}`
-                  : 'Separate multiple addresses with commas.'
-              }
-              sx={{ mb: 2 }}
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          Choose one doctor, or all doctors in a single PDF. The file downloads to your computer so
+          you can email it yourself.
+        </Typography>
+        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+          Doctor
+        </Typography>
+        <RadioGroup value={choice} onChange={(e) => setChoice(e.target.value)} sx={{ mb: 2 }}>
+          {report.doctors.length > 1 && (
+            <FormControlLabel
+              value="all"
+              control={<Radio size="small" />}
+              label="All doctors (one PDF)"
             />
-            <TextField
-              label="Notes"
-              placeholder="Great month, team! Here's where we landed…"
-              fullWidth
-              multiline
-              minRows={4}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              inputProps={{ maxLength: 5000 }}
+          )}
+          {report.doctors.map((d) => (
+            <FormControlLabel
+              key={d.employeeId}
+              value={String(d.employeeId)}
+              control={<Radio size="small" />}
+              label={d.name}
             />
-
-            {mode === 'individual' &&
-              missingEmail.length > 0 &&
-              additionalRecipients.length === 0 && (
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  No email on file for {missingEmail.map((d) => d.name).join(', ')}; they will be
-                  skipped unless you add recipients.
-                </Alert>
-              )}
-            {error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {error}
-              </Alert>
-            )}
-          </>
+          ))}
+        </RadioGroup>
+        <TextField
+          label="Notes (optional)"
+          placeholder="Included at the top of the PDF"
+          fullWidth
+          multiline
+          minRows={3}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          inputProps={{ maxLength: 5000 }}
+        />
+        {result && (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            {result}
+          </Alert>
+        )}
+        {error && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>{result ? 'Close' : 'Cancel'}</Button>
-        {!result && (
-          <Button variant="contained" disabled={!canSend} onClick={() => void handleSend()}>
-            {sending ? 'Sending…' : 'Send'}
-          </Button>
-        )}
+        <Button onClick={onClose}>Close</Button>
+        <Button variant="contained" disabled={!choice} onClick={handleDownload}>
+          Download PDF
+        </Button>
       </DialogActions>
     </Dialog>
   );
