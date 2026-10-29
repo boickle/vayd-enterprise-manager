@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   CreditCard,
+  Gift,
   Pencil,
   Phone,
   Receipt,
@@ -120,6 +121,7 @@ import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint'
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { useCan } from '../../permissions/PermissionContext';
 import { PermissionGate } from '../../permissions/PermissionGate';
+import GiftCardTenderForm from '../payments/GiftCardTenderForm';
 import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import '../pims/ClientFinancialWorkspace.css';
 import {
@@ -1832,6 +1834,7 @@ export default function VisitCheckoutPanel({
   const canOverrideRefillProduction = useCan('invoice.refill.production.override');
   const [voidPromptOpen, setVoidPromptOpen] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
+  const [giftCardOpen, setGiftCardOpen] = useState(false);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -3448,6 +3451,17 @@ export default function VisitCheckoutPanel({
                 >
                   <Receipt size={14} /> Check
                 </button>
+                <PermissionGate permission="gift_card.redeem">
+                  <button
+                    type="button"
+                    className={`soap-btn ghost${giftCardOpen ? ' is-active' : ''}`}
+                    disabled={payDisabled}
+                    title={!branchReady ? 'Choose the branch and location inventory is drawn from' : 'Take a gift card code as payment'}
+                    onClick={() => setGiftCardOpen((open) => !open)}
+                  >
+                    <Gift size={14} /> Gift card
+                  </button>
+                </PermissionGate>
               </>
             )}
             {!isPaid && !isVoid && status !== 'open' && (
@@ -3475,6 +3489,22 @@ export default function VisitCheckoutPanel({
               </button>
             )}
           </div>
+          {giftCardOpen && invoice && !isPaid && !isVoid ? (
+            <GiftCardTenderForm
+              invoiceId={invoice.id}
+              due={Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0))}
+              channel="visit"
+              onCancel={() => setGiftCardOpen(false)}
+              onApplied={(next, applied, card) => {
+                onInvoiceChange(next);
+                setGiftCardOpen(false);
+                const left = Math.round((card.balance - applied) * 100) / 100;
+                setNote(
+                  `Took $${applied.toFixed(2)} from gift card ••••${card.last4}. $${left.toFixed(2)} left on the card.`,
+                );
+              }}
+            />
+          ) : null}
           {!isPaid && !isVoid && (
             <p className="soap-hint">
               {paymentBlockedReason ? (

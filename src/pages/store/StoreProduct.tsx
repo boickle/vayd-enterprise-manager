@@ -20,6 +20,7 @@ import {
 import { expandStoreTagalongs } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
+import StoreGiftCardProduct from './StoreGiftCardProduct';
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 import './Store.css';
 import { useStorePracticeId } from './useStorePracticeId';
@@ -162,6 +163,7 @@ export default function StoreProduct() {
     loggedIn &&
     (canAutoship ||
       item?.approvalTag === 'needs_doctor_approval' ||
+      Boolean(item?.requiresPet) ||
       (item?.variants || []).length > 1);
 
   useEffect(() => {
@@ -210,6 +212,7 @@ export default function StoreProduct() {
   }, [canAutoship, customCount, customOn, customUnit, freq, recommendedFreq]);
 
   if (!item) return <p>Loading…</p>;
+  if (item.kind === 'gift_card') return <StoreGiftCardProduct listing={item} practiceId={practiceId} />;
 
   const bottle = Boolean(selected?.pack?.startsWith('Bottle'));
   const stockStatus = selected?.availability?.status ?? 'available';
@@ -591,6 +594,7 @@ export default function StoreProduct() {
                 storeProductId: item.storeProductId ?? null,
                 hasImage: Boolean(selected.hasImage || item.hasImage),
                 approvalTag: selected.approvalTag || item.approvalTag,
+                requiresPet: Boolean(item.requiresPet),
                 patientIds: patientId != null ? [patientId] : [],
                 taxLevelValue: selected.taxLevelValue ?? null,
               });

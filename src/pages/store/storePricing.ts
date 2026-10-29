@@ -111,3 +111,25 @@ export function storeTaxRateForLevel(
 export function roundStoreMoney(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
+
+/** What a buyer pays for a gift card of this face value. Matches checkout: never free. */
+export function storeGiftCardPrice(face: number, sale: StoreSale | null | undefined): number {
+  const value = roundStoreMoney(face);
+  const price = applyStoreSale(value, sale);
+  return price > 0 ? price : value;
+}
+
+/** Why an amount can't be bought from this listing, or null when it can. */
+export function storeGiftCardAmountError(
+  amount: number,
+  rules: { amounts: number[]; allowCustom: boolean; min: number | null; max: number | null },
+): string | null {
+  const face = roundStoreMoney(amount);
+  if (!(face > 0)) return 'Choose an amount.';
+  if (rules.amounts.includes(face)) return null;
+  if (!rules.allowCustom) return 'Choose one of the amounts above.';
+  const min = rules.min ?? 1;
+  if (face < min) return `Gift cards start at $${min.toFixed(2)}.`;
+  if (rules.max != null && face > rules.max) return `Gift cards can be up to $${rules.max.toFixed(2)}.`;
+  return null;
+}

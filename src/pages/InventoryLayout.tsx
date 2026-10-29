@@ -114,6 +114,7 @@ export default function InventoryLayout({
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
   const holdsCostReview = useCan('inventory.cost_review.manage');
   const canCostReview = isAdmin || holdsCostReview;
+  const canSeeGiftCards = useCan('gift_card.redeem');
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
 
@@ -151,6 +152,7 @@ export default function InventoryLayout({
     { to: `${basePath}/online-store`, label: 'Store items' },
     { to: `${basePath}/store-categories`, label: 'Categories' },
     { to: `${basePath}/abandoned-carts`, label: 'Abandoned carts' },
+    ...(canSeeGiftCards ? [{ to: `${basePath}/gift-cards`, label: 'Gift cards' }] : []),
   ];
   const mailOrdersTo = '/schedule/mail-orders';
   const autoShipsTo = `${basePath}/auto-ships`;

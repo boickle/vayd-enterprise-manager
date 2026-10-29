@@ -11,6 +11,7 @@ import { fetchClientInfo } from '../../api/clientPortal';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import StoreCartCardEntry, { type StoreCartCardEntryHandle } from '../store/StoreCartCardEntry';
 import StoreOpenInvoicesPanel from '../store/StoreOpenInvoicesPanel';
+import { StoreGiftCardCodeEntry, type AppliedGiftCard } from '../store/StoreGiftCardCart';
 import { PortalModal } from './PortalPrimitives';
 import '../store/Store.css';
 
@@ -47,6 +48,7 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingEmail, setBillingEmail] = useState(email.trim());
+  const [giftCodes, setGiftCodes] = useState<AppliedGiftCard[]>([]);
   const [billingPrefill, setBillingPrefill] = useState({
     name: customerName?.trim() || '',
     email: email.trim(),
@@ -119,31 +121,53 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
 
   if (credit < 0.01 && owed < 0.01 && !note) return null;
 
+  const giftCardBalance = giftCodes.reduce((sum, row) => sum + row.balance, 0);
+  // The server only applies gift cards to Scout invoices, never to eVet ones.
+  const giftCardEligible = invoices
+    .filter((inv) => inv.source === 'scout')
+    .reduce((sum, inv) => sum + (Number(inv.due) || 0), 0);
+  const giftCardApplied =
+    Math.round(Math.min(owed, giftCardEligible, giftCardBalance) * 100) / 100;
+  const giftCardLimited = giftCodes.length > 0 && giftCardApplied < giftCardBalance - 0.009;
+  const cardDue = Math.max(0, Math.round((owed - giftCardApplied) * 100) / 100);
+  const needsCard = cardDue > 0.009;
+
   async function payNow() {
     setBusy(true);
     setError(null);
     setNote(null);
     try {
-      let paymentMethodId = cardId;
-      if (enterNewCard || !cards.length) {
-        const created = await newCardRef.current?.createPaymentMethod();
-        paymentMethodId = created?.paymentMethodId ?? '';
-      }
-      if (!paymentMethodId) {
-        setError('Choose or enter a card to pay.');
-        return;
+      let paymentMethodId = '';
+      if (needsCard) {
+        paymentMethodId = cardId;
+        if (enterNewCard || !cards.length) {
+          const created = await newCardRef.current?.createPaymentMethod();
+          paymentMethodId = created?.paymentMethodId ?? '';
+        }
+        if (!paymentMethodId) {
+          setError('Choose or enter a card to pay.');
+          return;
+        }
       }
       const result = await publicPayAccountBalance(practiceId, {
         clientId,
         email: billingEmail.trim(),
         paymentMethodId,
         customerName,
+        giftCardCodes: giftCodes.map((row) => row.code),
       });
       setOwed(0);
       setInvoices([]);
       setPayOpen(false);
       setEnterNewCard(false);
-      setNote(`Paid ${money(result.paid)}. Thank you.`);
+      setGiftCodes([]);
+      setNote(
+        result.giftCardApplied > 0.009
+          ? `Paid ${money(result.paid)} (${money(result.giftCardApplied)} from gift card${
+              result.cardCharged > 0.009 ? `, ${money(result.cardCharged)} on your card` : ''
+            }). Thank you.`
+          : `Paid ${money(result.paid)}. Thank you.`,
+      );
     } catch (e: unknown) {
       setError(storeApiError(e));
     } finally {
@@ -199,7 +223,23 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
               </button>
             ) : null}
 
-            {enterNewCard || !cards.length ? (
+            <div className="vayd-store">
+              <StoreGiftCardCodeEntry
+                practiceId={practiceId}
+                applied={giftCodes}
+                onChange={setGiftCodes}
+                note="Gift cards pay invoices from your visits with us."
+              />
+              {giftCardLimited ? (
+                <p className="vayd-store__muted">
+                  {giftCardApplied > 0.009
+                    ? `${money(giftCardApplied)} of your gift card balance can go toward this payment. The rest stays on the card.`
+                    : 'Your gift card can’t be used for this balance. It stays on the card for a future visit.'}
+                </p>
+              ) : null}
+            </div>
+
+            {!needsCard ? null : enterNewCard || !cards.length ? (
               <div className="vayd-store">
                 <StoreCartCardEntry
                   ref={newCardRef}
@@ -226,7 +266,13 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
             )}
 
             <button type="button" className="pp-btn pp-btn--primary pp-btn--sm" disabled={busy} onClick={() => void payNow()}>
-              {busy ? 'Paying…' : `Pay ${money(owed)}`}
+              {busy
+                ? 'Paying…'
+                : giftCardApplied > 0.009
+                  ? needsCard
+                    ? `Pay ${money(owed)} (${money(cardDue)} on card)`
+                    : `Pay ${money(owed)} with gift card`
+                  : `Pay ${money(owed)}`}
             </button>
           </div>
         ) : null}

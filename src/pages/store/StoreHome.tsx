@@ -109,6 +109,7 @@ export default function StoreHome() {
   const childChips = selectedGroup?.children ?? [];
 
   const featured = useMemo(() => items.filter((item) => item.featuredOnHome), [items]);
+  const giftCardListing = useMemo(() => items.find((item) => item.kind === 'gift_card') ?? null, [items]);
   const hasFeatured = featured.length > 0;
   const visible = useMemo(() => {
     const matched = items.filter(
@@ -190,6 +191,28 @@ export default function StoreHome() {
         </div>
       ) : null}
       {loading ? <p>Loading store items…</p> : null}
+      {giftCardListing && !q.trim() && !category ? (
+        <div className="vayd-store__gift-tile">
+          <div>
+            <h2>Give the gift of care at home</h2>
+            <p>
+              Gift cards by email, sent now or on the day you pick
+              {giftCardListing.saleActive && giftCardListing.priceFromWas != null
+                ? ` — on sale: pay $${Number(giftCardListing.priceFrom).toFixed(2)} for a $${Number(giftCardListing.priceFromWas).toFixed(2)} card`
+                : ''}
+              . No account or pet needed.
+            </p>
+          </div>
+          <div className="vayd-store__gift-tile-actions">
+            <Link className="primary" to={`/store/${giftCardListing.listingId}`}>
+              Buy a gift card
+            </Link>
+            <Link className="ghost" to="/store/gift-cards/balance">
+              Check a balance
+            </Link>
+          </div>
+        </div>
+      ) : null}
       <div className="vayd-store__grid">
         {visible.map((item) => {
           const imageSrc = storeListingImageUrl(practiceId, item);
@@ -206,12 +229,12 @@ export default function StoreHome() {
               <div className="vayd-store__price">
                 {item.saleActive && item.priceFromWas != null ? (
                   <span className="vayd-store__price-was">
-                    {item.variants.length > 1 ? 'From ' : ''}
+                    {item.variants.length > 1 || item.kind === 'gift_card' ? 'From ' : ''}
                     ${Number(item.priceFromWas).toFixed(2)}
                   </span>
                 ) : null}
                 {item.priceFrom != null
-                  ? item.variants.length > 1
+                  ? item.variants.length > 1 || item.kind === 'gift_card'
                     ? `From $${Number(item.priceFrom).toFixed(2)}`
                     : `$${Number(item.priceFrom).toFixed(2)}`
                   : 'See details'}

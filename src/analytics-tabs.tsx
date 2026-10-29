@@ -37,6 +37,7 @@ const ProductionOverridesReportPage = React.lazy(
 );
 const CreditsDiscountsReportPage = React.lazy(() => import('./pages/CreditsDiscountsReportPage'));
 const SalesTaxReportPage = React.lazy(() => import('./pages/SalesTaxReportPage'));
+const GiftCardReportPage = React.lazy(() => import('./pages/GiftCardReportPage'));
 const SurveyResultsPage = React.lazy(() => import('./pages/SurveyResults'));
 const InventoryShrinkReportPage = React.lazy(() => import('./pages/InventoryShrinkReportPage'));
 const InventoryCountReportPage = React.lazy(() => import('./pages/InventoryCountReportPage'));
@@ -152,6 +153,15 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Credits and discounts given, and by whom.',
     element: <CreditsDiscountsReportPage />,
     role: ADMIN,
+  },
+  {
+    path: 'gift-cards',
+    label: 'Gift Cards',
+    category: 'financial',
+    description: 'Gift cards sold, redeemed, and still outstanding, for the books.',
+    element: <GiftCardReportPage />,
+    role: STAFF,
+    permissions: ['report.gift_cards'],
   },
   {
     path: 'square-reconciliation',

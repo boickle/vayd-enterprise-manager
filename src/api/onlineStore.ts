@@ -184,7 +184,32 @@ export type StoreListing = {
   saleEndsAt?: string | null;
   saleLabel?: string | null;
   saleActive?: boolean;
+  /** gift_card listings have no variants; the buyer picks an amount instead. */
+  kind?: 'standard' | 'gift_card';
+  requiresPet?: boolean;
+  giftCard?: StoreGiftCardSettings | null;
   variants: StoreVariant[];
+};
+
+export type StoreGiftCardSettings = {
+  amounts: number[];
+  allowCustom: boolean;
+  min: number | null;
+  max: number | null;
+  terms: string | null;
+  /** What buyers see: these terms, or the standard ones when none are set. */
+  displayTerms?: string | null;
+};
+
+/** Staff edits to a listing's gift card / pet settings. */
+export type StoreListingGiftCardPatch = {
+  kind?: 'standard' | 'gift_card';
+  requiresPet?: boolean;
+  giftCardAmounts?: number[] | null;
+  giftCardAllowCustom?: boolean;
+  giftCardMin?: number | null;
+  giftCardMax?: number | null;
+  giftCardTerms?: string | null;
 };
 
 export type StoreAdminVariant = StoreVariant & {
@@ -604,7 +629,7 @@ export async function createOnlineStoreProduct(
     saleValue?: number | null;
     saleEndsAt?: string | null;
     saleLabel?: string | null;
-  }
+  } & StoreListingGiftCardPatch
 ) {
   const { data } = await http.post<StoreAdminListing>(
     `/practice/${practiceId}/online-store/products`,
@@ -673,7 +698,7 @@ export async function patchOnlineStoreListing(
     saleValue?: number | null;
     saleEndsAt?: string | null;
     saleLabel?: string | null;
-  }
+  } & StoreListingGiftCardPatch
 ) {
   const { data } = await http.patch<StoreAdminListing>(
     `/practice/${practiceId}/online-store/listings/${encodeURIComponent(listingId)}`,
@@ -1585,14 +1610,55 @@ export async function publicPayAccountBalance(
     email: string;
     paymentMethodId: string;
     customerName?: string | null;
+    giftCardCodes?: string[];
   },
-): Promise<{ paid: number }> {
-  const { data } = await http.post<{ paid: number }>(`/public/store/pay-balance`, {
-    practiceId,
-    ...body,
-  });
-  return { paid: Number(data?.paid) || 0 };
+): Promise<{ paid: number; giftCardApplied: number; cardCharged: number }> {
+  try {
+    const { data } = await http.post<{ paid: number; giftCardApplied?: number; cardCharged?: number }>(
+      `/public/store/pay-balance`,
+      { practiceId, ...body }
+    );
+    return {
+      paid: Number(data?.paid) || 0,
+      giftCardApplied: Number(data?.giftCardApplied) || 0,
+      cardCharged: Number(data?.cardCharged) || 0,
+    };
+  } catch (err) {
+    throw new Error(storeApiError(err));
+  }
 }
+
+export type GiftCardCheckoutLine = {
+  kind: 'gift_card';
+  listingId: string | number;
+  amount: number;
+  quantity?: number;
+  recipientName?: string | null;
+  recipientEmail?: string | null;
+  fromName?: string | null;
+  message?: string | null;
+  deliverAt?: string | null;
+  sendToSelf?: boolean;
+};
+
+export type PurchasedGiftCard = {
+  id: string;
+  last4: string;
+  faceValue: number;
+  amountPaid: number;
+  recipientName: string | null;
+  recipientEmail: string | null;
+  deliverAt: string | null;
+  status: string;
+  /** Null when the card went to someone else; only the recipient gets the code. */
+  printUrl: string | null;
+};
+
+export type StoreCheckoutResult = Omit<MailOrder, 'id'> & {
+  id: number | null;
+  kind?: 'gift_cards';
+  giftCards?: PurchasedGiftCard[];
+};
 
 export async function publicCheckout(
   practiceId: number,
@@ -1616,16 +1682,20 @@ export async function publicCheckout(
       state?: string;
       postal?: string;
     };
-    lines: Array<{
-      inventoryItemId: number;
-      quantity: number;
-      autoshipFrequency?: string | null;
-      patientIds?: number[] | null;
-    }>;
+    giftCardCodes?: string[];
+    lines: Array<
+      | {
+          inventoryItemId: number;
+          quantity: number;
+          autoshipFrequency?: string | null;
+          patientIds?: number[] | null;
+        }
+      | GiftCardCheckoutLine
+    >;
   }
 ) {
   try {
-    const { data } = await http.post<MailOrder>(`/public/store/checkout`, {
+    const { data } = await http.post<StoreCheckoutResult>(`/public/store/checkout`, {
       practiceId,
       ...body,
     });

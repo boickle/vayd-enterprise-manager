@@ -100,7 +100,7 @@ export type EncounterOrder = {
   } | null;
 };
 
-export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'other';
+export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'gift_card' | 'other';
 
 export type VisitInvoiceLine = {
   id: string;
@@ -1173,6 +1173,9 @@ export async function addVisitTender(
     checkNumber?: string | null;
     stripePaymentIntentId?: string | null;
     discountReason?: string | null;
+    /** Required when method is gift_card. */
+    giftCardCode?: string | null;
+    giftCardChannel?: 'visit' | 'staff_ledger';
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(

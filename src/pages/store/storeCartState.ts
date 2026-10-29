@@ -97,6 +97,8 @@ export type StoreCartLine = {
   storeProductId?: number | null;
   hasImage?: boolean;
   approvalTag?: 'approved' | 'needs_doctor_approval';
+  /** The listing must be attached to a pet even though it is not a prescription. */
+  requiresPet?: boolean;
   patientIds?: number[];
   taxLevelValue?: number | null;
 };
@@ -171,8 +173,63 @@ export function storePortalReturnPath(ctx: StorePortalReturn | null): string {
   return '/client-portal';
 }
 
+/* ---------- gift cards ----------
+ * Kept apart from merchandise lines: a gift card has no inventory item, pet, tax, or
+ * shipping, and each one carries its own recipient. */
+const GIFT_KEY = 'vayd_store_gift_cart';
+
+export type StoreGiftCardLine = {
+  key: string;
+  listingId: string;
+  name: string;
+  /** Face value the recipient can spend. */
+  amount: number;
+  /** What the buyer pays per card (after any sale). */
+  price: number;
+  quantity: number;
+  sendToSelf: boolean;
+  recipientName: string;
+  recipientEmail: string;
+  /** How the card is signed; checkout uses the buyer's name when blank. */
+  fromName?: string;
+  message: string;
+  /** YYYY-MM-DD, or empty for "send now". */
+  deliverAt: string;
+};
+
+export function readStoreGiftCart(): StoreGiftCardLine[] {
+  try {
+    const raw = localStorage.getItem(GIFT_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeStoreGiftCart(lines: StoreGiftCardLine[]) {
+  localStorage.setItem(GIFT_KEY, JSON.stringify(lines));
+  window.dispatchEvent(new Event(STORE_CART_EVENT));
+}
+
+export function addGiftCardToCart(line: Omit<StoreGiftCardLine, 'key'>) {
+  const lines = readStoreGiftCart();
+  lines.push({ ...line, key: `gc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` });
+  writeStoreGiftCart(lines);
+  return lines;
+}
+
+export function removeGiftCardFromCart(key: string) {
+  writeStoreGiftCart(readStoreGiftCart().filter((l) => l.key !== key));
+}
+
+export function storeGiftCartTotal(lines: StoreGiftCardLine[] = readStoreGiftCart()): number {
+  return Math.round(lines.reduce((n, l) => n + l.price * l.quantity, 0) * 100) / 100;
+}
+
 export function storeCartCount(lines: StoreCartLine[] = readStoreCart()): number {
-  return lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+  const gifts = readStoreGiftCart().reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+  return lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0) + gifts;
 }
 
 export function storeCartSubtotal(lines: StoreCartLine[] = readStoreCart()): number {
@@ -207,6 +264,7 @@ export function addToStoreCart(line: StoreCartLine) {
       storeProductId: line.storeProductId ?? current.storeProductId,
       hasImage: line.hasImage ?? current.hasImage,
       approvalTag: line.approvalTag ?? current.approvalTag,
+      requiresPet: line.requiresPet ?? current.requiresPet,
       reminderCadence: line.reminderCadence ?? current.reminderCadence,
       recommendedFrequency: line.recommendedFrequency ?? current.recommendedFrequency,
     };

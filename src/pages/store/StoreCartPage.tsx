@@ -70,10 +70,20 @@ import {
   formatAutoshipFrequency,
   clearStorePortalReturn,
   readStoreCart,
+  storeGiftCartTotal,
   storePortalReturnPath,
   writeStoreCart,
+  writeStoreGiftCart,
   type StoreCartLine,
 } from './storeCartState';
+import { useStoreGiftCart } from './useStoreCart';
+import {
+  giftCardCheckoutLines,
+  StoreGiftCardCartLines,
+  StoreGiftCardCheckout,
+  StoreGiftCardCodeEntry,
+  type AppliedGiftCard,
+} from './StoreGiftCardCart';
 import { useStorePortalReturn } from './useStorePortalReturn';
 import { expandStoreTagalongs, storeRebatePromoCopy } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
@@ -126,7 +136,7 @@ function lineNeedsApproval(line: StoreCartLine) {
 }
 
 function lineNeedsPet(line: StoreCartLine) {
-  return lineNeedsApproval(line) || Boolean(line.autoshipFrequency);
+  return lineNeedsApproval(line) || Boolean(line.autoshipFrequency) || Boolean(line.requiresPet);
 }
 
 function titleCaseBrand(brand?: string | null) {
@@ -193,6 +203,9 @@ export default function StoreCartPage() {
   const { practiceId } = useStorePracticeId();
 
   const [lines, setLines] = useState(readStoreCart);
+  const giftLines = useStoreGiftCart();
+  const giftPurchaseTotal = storeGiftCartTotal(giftLines);
+  const [giftCodes, setGiftCodes] = useState<AppliedGiftCard[]>([]);
   // Item the shopper just added from elsewhere (e.g. portal "Reorder"): scroll
   // to it and flash it briefly so the landing is obvious.
   const [highlightItemId, setHighlightItemId] = useState<number | null>(() => {
@@ -512,8 +525,21 @@ export default function StoreCartPage() {
   const creditApplied =
     applyAccountCredit && accountCredit > 0.009 ? Math.min(accountCredit, total) : 0;
   const balanceApplied = payOutstanding && amountOwed > 0.009 ? amountOwed : 0;
-  const dueToday = Math.max(0, Math.round((total - creditApplied + balanceApplied) * 100) / 100);
-  const creditCoversOrder = creditApplied > 0.009 && dueToday < 0.01;
+  // Gift cards pay for merchandise only (after account credit), never other gift cards.
+  const giftCardApplied = roundStoreMoney(
+    Math.min(
+      giftCodes.reduce((n, row) => n + row.balance, 0),
+      Math.max(0, total - creditApplied),
+    ),
+  );
+  const dueToday = Math.max(
+    0,
+    Math.round((total - creditApplied - giftCardApplied + balanceApplied + giftPurchaseTotal) * 100) /
+      100,
+  );
+  const creditCoversOrder = (creditApplied > 0.009 || giftCardApplied > 0.009) && dueToday < 0.01;
+  const showDueToday =
+    creditApplied > 0.009 || balanceApplied > 0.009 || giftCardApplied > 0.009 || giftPurchaseTotal > 0.009;
   const patientNamesById = useMemo(
     () =>
       Object.fromEntries(
@@ -585,7 +611,7 @@ export default function StoreCartPage() {
           </Link>
         </div>
       </div>
-      {!lines.length ? <p>Your cart is empty.</p> : null}
+      {!lines.length && !giftLines.length ? <p>Your cart is empty.</p> : null}
 
       {lines.length ? (
         <table className="vayd-store__cart-table">
@@ -841,6 +867,22 @@ export default function StoreCartPage() {
             })}
           </tbody>
         </table>
+      ) : null}
+
+      <StoreGiftCardCartLines lines={giftLines} />
+
+      {!lines.length && giftLines.length ? (
+        <StoreGiftCardCheckout
+          practiceId={practiceId}
+          lines={giftLines}
+          clientId={loggedIn ? clientId : null}
+          prefill={{
+            name:
+              ship.customerName ||
+              [auth.clientInfo?.firstName, auth.clientInfo?.lastName].filter(Boolean).join(' '),
+            email: ship.email || auth.clientInfo?.email || '',
+          }}
+        />
       ) : null}
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
@@ -1210,6 +1252,16 @@ export default function StoreCartPage() {
                 </button>
               </span>
             </label>
+            <StoreGiftCardCodeEntry
+              practiceId={practiceId}
+              applied={giftCodes}
+              onChange={setGiftCodes}
+              note={
+                giftLines.length
+                  ? 'Gift cards apply to products in this order, not to gift cards you’re buying.'
+                  : undefined
+              }
+            />
             <table>
               <tbody>
                 <tr>
@@ -1230,7 +1282,7 @@ export default function StoreCartPage() {
                   <th>{taxRates.name || 'Sales tax'}</th>
                   <td>${tax.toFixed(2)}</td>
                 </tr>
-                <tr className={creditApplied || balanceApplied ? undefined : 'vayd-store__cart-grand'}>
+                <tr className={showDueToday ? undefined : 'vayd-store__cart-grand'}>
                   <th>Total</th>
                   <td>${total.toFixed(2)}</td>
                 </tr>
@@ -1240,13 +1292,25 @@ export default function StoreCartPage() {
                     <td>−${creditApplied.toFixed(2)}</td>
                   </tr>
                 ) : null}
+                {giftCardApplied > 0.009 ? (
+                  <tr>
+                    <th>Gift card</th>
+                    <td>−${giftCardApplied.toFixed(2)}</td>
+                  </tr>
+                ) : null}
+                {giftPurchaseTotal > 0.009 ? (
+                  <tr>
+                    <th>Gift cards</th>
+                    <td>${giftPurchaseTotal.toFixed(2)}</td>
+                  </tr>
+                ) : null}
                 {balanceApplied ? (
                   <tr>
                     <th>Account balance</th>
                     <td>${balanceApplied.toFixed(2)}</td>
                   </tr>
                 ) : null}
-                {creditApplied || balanceApplied ? (
+                {showDueToday ? (
                   <tr className="vayd-store__cart-grand">
                     <th>Due today</th>
                     <td>${dueToday.toFixed(2)}</td>
@@ -1255,7 +1319,15 @@ export default function StoreCartPage() {
               </tbody>
             </table>
             {creditCoversOrder && !hasAutoship ? (
-              <p className="vayd-store__autoship-note">No card charge — this order is covered by your account credit.</p>
+              <p className="vayd-store__autoship-note">
+                No card charge — this order is covered by your{' '}
+                {giftCardApplied > 0.009 && creditApplied > 0.009
+                  ? 'gift card and account credit'
+                  : giftCardApplied > 0.009
+                    ? 'gift card'
+                    : 'account credit'}
+                .
+              </p>
             ) : cards.length && !enterNewCard ? (
               <div className="vayd-store__card-pay">
                 <label>
@@ -1343,14 +1415,19 @@ export default function StoreCartPage() {
                       state: ship.state,
                       postal: ship.postal,
                     },
-                    lines: lines.map((l) => ({
-                      inventoryItemId: l.inventoryItemId,
-                      quantity: l.quantity,
-                      autoshipFrequency: l.autoshipFrequency,
-                      patientIds: l.patientIds || [],
-                    })),
+                    giftCardCodes: giftCodes.map((row) => row.code),
+                    lines: [
+                      ...lines.map((l) => ({
+                        inventoryItemId: l.inventoryItemId,
+                        quantity: l.quantity,
+                        autoshipFrequency: l.autoshipFrequency,
+                        patientIds: l.patientIds || [],
+                      })),
+                      ...giftCardCheckoutLines(giftLines),
+                    ],
                   });
                   writeStoreCart([]);
+                  writeStoreGiftCart([]);
                   nav(`/store/thanks/${order.id}`, { state: { order } });
                 })()
                   .catch((e) => setErr(storeApiError(e)))

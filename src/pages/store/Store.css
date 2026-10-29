@@ -1203,3 +1203,121 @@
   .vayd-store__card-entry { grid-template-columns: 1fr; }
   .vayd-store__nav { justify-content: center; flex-wrap: wrap; gap: 12px; }
 }
+
+/* ---------- gift cards ---------- */
+.vayd-store a.ghost {
+  display: inline-block;
+  background: #ecfff8;
+  border: 1px solid #0f766e;
+  color: #0f766e;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.vayd-store a.primary { display: inline-block; text-decoration: none; }
+.vayd-store__gift-art {
+  aspect-ratio: 1.586;
+  border-radius: 18px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: #fff;
+  background: linear-gradient(135deg, #0f766e 0%, #14b8a6 60%, #99f6e4 140%);
+  box-shadow: 0 14px 34px rgba(15, 118, 110, 0.28);
+}
+.vayd-store__gift-art-label { font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.9; }
+.vayd-store__gift-art-amount { font-size: 48px; font-weight: 800; }
+.vayd-store__gift-custom { display: grid; gap: 6px; max-width: 280px; margin: 0 0 14px; }
+.vayd-store__gift-dollar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid #d7e5df;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #fff;
+  font-weight: 700;
+}
+.vayd-store__gift-dollar input { border: 0; outline: none; padding: 10px 0; font-size: 16px; width: 100%; background: transparent; }
+.vayd-store__gift .vayd-store__cart-fields { margin-bottom: 14px; }
+.vayd-store__gift textarea { width: 100%; font: inherit; border-radius: 10px; border: 1.5px solid #d7e5df; padding: 8px 10px; }
+.vayd-store__gift-actions { display: grid; gap: 8px; margin: 16px 0 10px; }
+.vayd-store__gift-actions .primary { font-size: 16px; padding: 13px 18px; }
+.vayd-store__gift-added { margin: 0; color: #0f766e; font-weight: 600; }
+.vayd-store__gift-added a { color: inherit; text-decoration: underline; }
+.vayd-store__gift-terms { margin-top: 12px; font-size: 13.5px; color: #4b5563; }
+.vayd-store__gift-terms summary { cursor: pointer; font-weight: 600; color: #134e4a; }
+.vayd-store__gift-terms p { white-space: pre-wrap; }
+.vayd-store__gift-lines { margin-top: 18px; }
+.vayd-store__gift-line-msg { margin-top: 4px; font-size: 13.5px; font-style: italic; color: #4b5563; white-space: pre-wrap; }
+.vayd-store__gift-code { margin: 0 0 12px; }
+.vayd-store__gift-applied {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  border-radius: 10px;
+  background: #ecfff8;
+  color: #0f766e;
+  font-size: 14px;
+  font-weight: 600;
+}
+.vayd-store__gift-thanks { margin: 18px 0; padding: 16px 18px; border: 1.5px solid #99f6e4; border-radius: 14px; background: #fff; }
+.vayd-store__gift-thanks h2 { margin: 0 0 10px; font-size: 18px; }
+.vayd-store__gift-thanks ul { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px; }
+.vayd-store__gift-thanks li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.vayd-store__gift-tile {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 0 0 20px;
+  padding: 18px 22px;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(120deg, #0f766e 0%, #14b8a6 100%);
+}
+.vayd-store__gift-tile h2 { margin: 0 0 4px; font-size: 20px; color: #fff; }
+.vayd-store__gift-tile p { margin: 0; opacity: 0.95; }
+.vayd-store__gift-tile-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.vayd-store__gift-tile .primary { background: #fff !important; color: #0f766e !important; }
+.vayd-store__gift-tile a.ghost { background: transparent; color: #fff; border-color: #fff; }
+.vayd-store__gift-balance { max-width: 520px; }
+.vayd-store__gift-balance-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 0 0 14px; }
+.vayd-store__gift-balance-form label { display: grid; gap: 6px; flex: 1 1 260px; }
+.vayd-store__gift-balance-form input { font-size: 17px; letter-spacing: 0.06em; padding: 10px 12px; }
+
+.vayd-gift-print { max-width: 640px; margin: 32px auto; padding: 0 20px; font-family: inherit; color: #1d2a24; }
+.vayd-gift-print__msg { text-align: center; margin: 60px 20px; }
+.vayd-gift-print__actions { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.vayd-gift-print__actions .primary { background: #0f766e; color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+.vayd-gift-print__card {
+  border-radius: 20px;
+  padding: 26px 28px;
+  color: #fff;
+  background: linear-gradient(135deg, #0f766e 0%, #14b8a6 70%);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.vayd-gift-print__top { display: flex; justify-content: space-between; align-items: center; }
+.vayd-gift-print__top img { height: 42px; border-radius: 8px; background: #fff; padding: 4px; }
+.vayd-gift-print__top span { font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.vayd-gift-print__amount { font-size: 56px; font-weight: 800; margin: 18px 0 6px; }
+.vayd-gift-print__to, .vayd-gift-print__from { font-size: 17px; font-weight: 600; }
+.vayd-gift-print__message { margin: 12px 0 0; font-style: italic; white-space: pre-wrap; }
+.vayd-gift-print__code-label { margin-top: 22px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.85; }
+.vayd-gift-print__code { font-family: ui-monospace, Menlo, monospace; font-size: 26px; font-weight: 700; letter-spacing: 0.08em; }
+.vayd-gift-print__warn { color: #9b1c1c; font-weight: 700; }
+.vayd-gift-print__note { font-weight: 600; }
+.vayd-gift-print__how { margin-top: 22px; font-size: 14.5px; line-height: 1.5; }
+.vayd-gift-print__how h2 { font-size: 16px; margin: 0 0 6px; }
+.vayd-gift-print__terms { font-size: 12.5px; color: #4b5563; white-space: pre-wrap; }
+@media print {
+  .vayd-gift-print__actions { display: none; }
+  .vayd-gift-print { margin: 0 auto; }
+}

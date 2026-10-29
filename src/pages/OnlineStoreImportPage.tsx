@@ -37,6 +37,7 @@ import {
 import { uploadInventoryItemImage } from '../api/inventoryTools';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import StoreDescriptionEditor from './store/StoreDescriptionEditor';
+import StoreGiftCardSettingsEditor from '../components/onlineStore/StoreGiftCardSettings';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
 import './Settings.css';
 import './Catalog.css';
@@ -1699,6 +1700,30 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
             >
               + Add store item
             </button>
+            {!listings.some((row) => row.kind === 'gift_card') ? (
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={busy}
+                onClick={() => {
+                  void createOnlineStoreProduct(practiceId, {
+                    name: 'Gift Card',
+                    kind: 'gift_card',
+                    storeCategory: 'Gift Cards',
+                    giftCardAmounts: [25, 50, 100, 250],
+                    giftCardAllowCustom: true,
+                    giftCardMin: 10,
+                    giftCardMax: 500,
+                    description:
+                      '<p>Give the gift of care at home. Good toward visits, services, and anything in our online store. Delivered by email with a printable copy.</p>',
+                  })
+                    .then(() => load())
+                    .catch((err) => setError(apiErrorMessage(err)));
+                }}
+              >
+                + Add gift card listing
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn secondary"
@@ -1980,7 +2005,27 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                       });
                     }}
                   />
-                  {listing.variants.length ? (
+                  {listing.kind === 'gift_card' ? (
+                    <StoreGiftCardSettingsEditor
+                      value={listing.giftCard}
+                      disabled={busy}
+                      onSave={async (patch) => {
+                        const updated = await patchOnlineStoreListing(
+                          practiceId,
+                          listing.listingId,
+                          patch
+                        ).catch((err) => {
+                          throw new Error(apiErrorMessage(err));
+                        });
+                        if (!updated) return;
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId ? { ...row, ...updated } : row
+                          )
+                        );
+                      }}
+                    />
+                  ) : listing.variants.length ? (
                     <div className="store-variant-groups">
                       {groupVariantsByStrength(listing.variants).map((group) => (
                         <div key={`${listing.listingId}:${group.key}`}>
@@ -2111,34 +2156,65 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                       No options yet. Add inventory or procedures below.
                     </p>
                   )}
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    style={{ marginTop: 8 }}
-                    disabled={busy}
-                    onClick={() => {
-                      setWorkspaceListing(listing);
-                      setAddStoreOpen(true);
-                      writeItemsParams({ product: listing.listingId });
-                    }}
-                  >
-                    + Add option
-                  </button>
+                  {listing.kind !== 'gift_card' ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ marginTop: 8 }}
+                      disabled={busy}
+                      onClick={() => {
+                        setWorkspaceListing(listing);
+                        setAddStoreOpen(true);
+                        writeItemsParams({ product: listing.listingId });
+                      }}
+                    >
+                      + Add option
+                    </button>
+                  ) : null}
                 </td>
                 <td>
-                  <select
-                    className="settings-input"
-                    value={listing.approvalTag}
-                    onChange={(e) => {
-                      const approvalTag = e.target.value as StoreItemRow['approvalTag'];
-                      void patchOnlineStoreListing(practiceId, listing.listingId, {
-                        approvalTag,
-                      }).then(() => load());
-                    }}
-                  >
-                    <option value="approved">Approved</option>
-                    <option value="needs_doctor_approval">Needs doctor approval</option>
-                  </select>
+                  {listing.kind === 'gift_card' ? (
+                    <span className="settings-muted">Gift card · no pet or approval needed</span>
+                  ) : (
+                    <>
+                      <select
+                        className="settings-input"
+                        value={listing.approvalTag}
+                        onChange={(e) => {
+                          const approvalTag = e.target.value as StoreItemRow['approvalTag'];
+                          void patchOnlineStoreListing(practiceId, listing.listingId, {
+                            approvalTag,
+                          }).then(() => load());
+                        }}
+                      >
+                        <option value="approved">Approved</option>
+                        <option value="needs_doctor_approval">Needs doctor approval</option>
+                      </select>
+                      <label
+                        className="settings-muted"
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}
+                        title="Shoppers must log in and pick which pet this is for. Prescription items always require a pet."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(listing.requiresPet) || listing.approvalTag === 'needs_doctor_approval'}
+                          disabled={busy || listing.approvalTag === 'needs_doctor_approval'}
+                          onChange={(e) => {
+                            const requiresPet = e.target.checked;
+                            setListings((prev) =>
+                              prev.map((row) =>
+                                row.listingId === listing.listingId ? { ...row, requiresPet } : row
+                              )
+                            );
+                            void patchOnlineStoreListing(practiceId, listing.listingId, {
+                              requiresPet,
+                            }).catch((err) => setError(apiErrorMessage(err)));
+                          }}
+                        />
+                        Requires a pet
+                      </label>
+                    </>
+                  )}
                 </td>
                 <td>
                   <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

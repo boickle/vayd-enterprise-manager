@@ -66,6 +66,7 @@ import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
 import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
 import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
+import GiftCardsPage from './pages/GiftCardsPage';
 import MailOrdersPage from './pages/MailOrdersPage';
 import AbandonedCartsPage from './pages/AbandonedCartsPage';
 import StoreCategoriesPage from './pages/StoreCategoriesPage';
@@ -76,6 +77,8 @@ import StoreHome from './pages/store/StoreHome';
 import StoreProduct from './pages/store/StoreProduct';
 import StoreCartPage from './pages/store/StoreCartPage';
 import StoreThanks from './pages/store/StoreThanks';
+import StoreGiftCardBalance from './pages/store/StoreGiftCardBalance';
+import StoreGiftCardPrint from './pages/store/StoreGiftCardPrint';
 import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
@@ -685,10 +688,12 @@ export default function App() {
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
+          <Route path="/store/gift-cards/print/:token" element={<StoreGiftCardPrint />} />
           <Route path="/store" element={<StoreLayout />}>
             <Route index element={<StoreHome />} />
             <Route path="cart" element={<StoreCartPage />} />
             <Route path="autoship" element={<StoreAutoshipPage />} />
+            <Route path="gift-cards/balance" element={<StoreGiftCardBalance />} />
             <Route path="thanks/:id" element={<StoreThanks />} />
             <Route path=":id" element={<StoreProduct />} />
           </Route>
@@ -821,6 +826,7 @@ export default function App() {
                       <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
                       <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
                       <Route path="auto-ships" element={<StoreSubscriptionsPage />} />
+                      <Route path="gift-cards" element={<GiftCardsPage />} />
                       <Route
                         path="subscriptions"
                         element={<Navigate to="/schedule/inventory/auto-ships" replace />}

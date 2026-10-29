@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { storeLineUnitPrice } from './storePricing';
+import { storeGiftCardAmountError, storeGiftCardPrice, storeLineUnitPrice } from './storePricing';
+
+describe('storeGiftCardPrice', () => {
+  it('uses the listing sale: $100 card for $80 at 20% off', () => {
+    expect(storeGiftCardPrice(100, { saleType: 'percent', saleValue: 20, saleActive: true })).toBe(80);
+  });
+
+  it('never sells a card for $0', () => {
+    expect(storeGiftCardPrice(25, { saleType: 'amount', saleValue: 30, saleActive: true })).toBe(25);
+  });
+});
+
+describe('storeGiftCardAmountError', () => {
+  const rules = { amounts: [25, 50, 100], allowCustom: true, min: 10, max: 500 };
+
+  it('accepts presets and in-range custom amounts', () => {
+    expect(storeGiftCardAmountError(50, rules)).toBeNull();
+    expect(storeGiftCardAmountError(75, rules)).toBeNull();
+  });
+
+  it('explains out-of-range amounts', () => {
+    expect(storeGiftCardAmountError(5, rules)).toMatch(/start at/);
+    expect(storeGiftCardAmountError(600, rules)).toMatch(/up to \$500/);
+    expect(storeGiftCardAmountError(75, { ...rules, allowCustom: false })).toMatch(/amounts above/);
+  });
+});
 
 const line = (args: Parameters<typeof storeLineUnitPrice>[0]) =>
   Math.round(storeLineUnitPrice(args) * args.qty * 100) / 100;

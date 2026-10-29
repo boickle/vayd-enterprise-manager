@@ -1,16 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router';
-import { storeCartCount, storeCartSubtotal } from './storeCartState';
-import { useStoreCart } from './useStoreCart';
+import { storeCartCount, storeCartSubtotal, storeGiftCartTotal } from './storeCartState';
+import { useStoreCart, useStoreGiftCart } from './useStoreCart';
 import './Store.css';
 
 export default function StoreCartFloat() {
   const location = useLocation();
   const lines = useStoreCart();
+  const giftLines = useStoreGiftCart();
   const count = storeCartCount(lines);
   const [pop, setPop] = useState(false);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const rows = [
+    ...lines.map((line, i) => ({
+      key: `${line.inventoryItemId}-${i}`,
+      name: line.name,
+      quantity: line.quantity,
+      amount: line.unitPrice * line.quantity,
+    })),
+    ...giftLines.map((line) => ({
+      key: line.key,
+      name: `$${line.amount.toFixed(2)} gift card`,
+      quantity: line.quantity,
+      amount: line.price * line.quantity,
+    })),
+  ];
 
   useEffect(() => {
     if (!count) return;
@@ -38,6 +53,7 @@ export default function StoreCartFloat() {
   if (!count) return null;
   if (location.pathname === '/store/cart' || location.pathname === '/store/autoship') return null;
   if (location.pathname.startsWith('/consent/')) return null;
+  if (location.pathname.startsWith('/store/gift-cards/print/')) return null;
 
   return (
     <div
@@ -47,22 +63,22 @@ export default function StoreCartFloat() {
       <div className="vayd-store__cart-float-panel">
         <div className="vayd-store__cart-float-title">In your cart</div>
         <ul>
-          {lines.slice(0, 4).map((line, i) => (
-            <li key={`${line.inventoryItemId}-${i}`}>
+          {rows.slice(0, 4).map((row) => (
+            <li key={row.key}>
               <span>
-                {line.name}
-                {line.quantity > 1 ? ` × ${line.quantity}` : ''}
+                {row.name}
+                {row.quantity > 1 ? ` × ${row.quantity}` : ''}
               </span>
-              <span>${(line.unitPrice * line.quantity).toFixed(2)}</span>
+              <span>${row.amount.toFixed(2)}</span>
             </li>
           ))}
         </ul>
-        {lines.length > 4 ? (
-          <p className="vayd-store__cart-float-more">+{lines.length - 4} more</p>
+        {rows.length > 4 ? (
+          <p className="vayd-store__cart-float-more">+{rows.length - 4} more</p>
         ) : null}
         <div className="vayd-store__cart-float-total">
           <span>Subtotal</span>
-          <strong>${storeCartSubtotal(lines).toFixed(2)}</strong>
+          <strong>${(storeCartSubtotal(lines) + storeGiftCartTotal(giftLines)).toFixed(2)}</strong>
         </div>
         <Link to="/store/cart" className="primary">
           View cart
