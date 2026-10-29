@@ -81,6 +81,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   'room-loader': 'Room Loader',
   'appointment-form': 'Appt Request',
   'client-portal': 'Client Portal',
+  'evet-manual': 'Entered in eVet',
   unknown: 'Unknown',
 };
 
@@ -273,7 +274,8 @@ export default function MembershipPurchasesAnalyticsPage() {
       <Box sx={{ py: 2 }}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Totals use Eastern time ({MEMBERSHIP_PURCHASES_TIMEZONE}
-          {allTime ? ', all-time' : ''}). Optional practice filters the API to one location.
+          {allTime ? ', all-time' : ''}). Includes Scout checkouts and memberships
+          entered in eVet with no Scout payment. Optional practice filters the API to one location.
         </Typography>
 
         <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 2 }}>
@@ -406,7 +408,10 @@ export default function MembershipPurchasesAnalyticsPage() {
               </Grid>
               <Grid item xs={12} md={6}>
                 <Card variant="outlined">
-                  <CardHeader title="Heard about us (channel)" />
+                  <CardHeader
+                    title="Channel"
+                    subheader="Entered in eVet has no Scout checkout"
+                  />
                   <TableContainer>
                     <Table size="small">
                       <TableHead>
