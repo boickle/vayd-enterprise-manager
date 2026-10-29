@@ -104,16 +104,24 @@ export default function InventoryLayout({
   basePath = '/schedule/inventory',
 }: Props) {
   const isAdmin = useIsInventoryAdmin();
-  const { hasRole } = usePermissions();
+  const { hasRole, effective, error: permissionsError } = usePermissions();
+  // Opening a gated page directly (a link, a refresh) mounts before permissions load; deciding
+  // then would send a practice manager away from Cost Reviews. Wait for them first.
+  const permissionsReady = isAdmin || effective != null || permissionsError != null;
   const canSetup =
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
   const canManage =
     isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
-  const canCostReview = isAdmin || useCan('inventory.cost_review.manage');
+  const holdsCostReview = useCan('inventory.cost_review.manage');
+  const canCostReview = isAdmin || holdsCostReview;
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
 
   const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
+  const gated = ['par-review', 'cost-reviews', 'par-seed', 'store-import', 'autoship-import'];
+  if (!permissionsReady && gated.some(onPath)) {
+    return <p className="settings-muted">Loading…</p>;
+  }
   if (!isAdmin && onPath('suppliers')) {
     return <Navigate to={`${basePath}/items`} replace />;
   }
@@ -164,7 +172,7 @@ export default function InventoryLayout({
     ...(canCostReview
       ? [{ to: `${basePath}/cost-reviews`, label: 'Cost Reviews', badge: attention.costReviews }]
       : []),
-    { to: '/schedule/analytics/inventory', label: 'Reports (shrink, counts, expiring) →' },
+    { to: '/schedule/analytics/inventory', label: 'Reports (shrink, counts, expiring, controlled) →' },
   ];
   const moveOrderItems: NavItem[] = [
     { to: `${basePath}/counts`, label: 'Weekly Counts' },

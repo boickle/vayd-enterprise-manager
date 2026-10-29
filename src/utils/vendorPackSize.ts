@@ -1,4 +1,8 @@
-/** Infer stock units in one vendor pack from text like "25X1DS" or "10DS". */
+/**
+ * Stock units in one vendor pack, from the invoice line's text: doses ("25X1DS", "10DS"),
+ * counts ("180CT", "180 COUNT", "500 TABS", "100 CAPSULES", "6 PK") or "BOTTLE OF 100" (INV-A12).
+ * Strengths and volumes ("100MG", "20ML") are never read as a pack size. Same rule as the API.
+ */
 export function inferVendorPackSize(
   description: string | null | undefined
 ): number | null {
@@ -6,6 +10,16 @@ export function inferVendorPackSize(
     .replace(/\s+/g, ' ')
     .trim();
   if (!s) return null;
+  const counted = (n: number) => (Number.isFinite(n) && n > 1 ? n : null);
+  const bottleOf = s.match(/\b(?:bottle|btl|box|pack|pk) of (\d{1,4})\b/i);
+  if (bottleOf) return counted(Number(bottleOf[1]));
+  const count = s.match(
+    /\b(\d{1,4})\s*(?:ct|cnt|count|tabs?|tablets?|caps?|capsules?|caplets?|chews?|chewables?|pk|pack|ea)\b/i
+  );
+  if (count) {
+    const n = counted(Number(count[1]));
+    if (n != null) return n;
+  }
   const x1 = s.match(/\b(\d{1,4})\s*[xX×]\s*1(?:\s*(?:ds|doses?))?\b/i);
   if (x1) {
     const n = Number(x1[1]);

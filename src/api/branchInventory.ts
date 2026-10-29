@@ -94,6 +94,8 @@ export type BranchParItemLocation = {
   quantityOnHand: number;
   parLevel: number | null;
   belowPar: boolean;
+  /** No first count at this shelf yet (owner decision D4): its on-hand isn't real, so no lists. */
+  notCounted?: boolean;
 };
 
 export type BranchParItem = {
@@ -512,6 +514,8 @@ export type InventoryLotBalance = {
   quantityOnHand: number;
   /** One empty bottle from this lot, for counts by weight. */
   emptyBottleWeightGrams?: number | null;
+  /** Past its date (Eastern). Can't be sold, used at a visit or mailed. */
+  expired?: boolean;
 };
 
 /**
@@ -563,6 +567,8 @@ export type ExpiringLotLocation = {
   serialNumber: string | null;
   expirationDate: string;
   quantityOnHand: number;
+  /** Past its date with stock still on the shelf. */
+  expired?: boolean;
 };
 
 export type ExpiringLotItem = {
@@ -571,6 +577,8 @@ export type ExpiringLotItem = {
   code: string | null;
   soonestExpiration: string;
   totalQty: number;
+  /** Any lot of this item is expired with stock on the shelf; these come first. */
+  expired?: boolean;
   locations: ExpiringLotLocation[];
 };
 
@@ -797,6 +805,8 @@ export async function submitFirstCount(
     countedAt?: string | null;
     dryRun: boolean;
     mode?: CountUploadMode;
+    /** Post controlled lines whose weighed and counted mL disagree (staff confirmed). */
+    confirmWeighMismatch?: boolean;
   }
 ): Promise<FirstCountResult> {
   const { data } = await http.post<FirstCountResult>(

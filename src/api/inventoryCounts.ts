@@ -63,6 +63,8 @@ export type StaffCountSession = {
   locations: CountLocationCol[];
   lines: StaffCountLine[];
   submittedCount?: number;
+  /** Lines a sheet submit couldn't post; they stay open with the reason. */
+  errors?: Array<{ lineId: number; itemName: string | null; message: string }>;
 };
 
 export type CountReportRow = {

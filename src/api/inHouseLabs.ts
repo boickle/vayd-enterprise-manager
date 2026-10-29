@@ -133,6 +133,9 @@ export type LabResult = {
   resultedAt: string | null;
   serviceDate: string | null;
   patient?: { id: number; name?: string | null } | null;
+  /** Provider on the invoice line this lab was charged on. */
+  providerEmployeeId?: number | null;
+  providerName?: string | null;
   lab?: LabCatalogItem | null;
   resultedBy?: { id: number; firstName?: string | null; lastName?: string | null } | null;
 };

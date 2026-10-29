@@ -23,6 +23,8 @@ const MONEY_FIELDS = new Set([
 
 const SOURCE_NOTES: Record<string, string> = {
   bulk_price: 'Bulk price change',
+  shipment: 'Received shipment',
+  cost_review: 'Cost review',
   online_store: 'Online store settings',
   migration: 'Automatic update',
 };

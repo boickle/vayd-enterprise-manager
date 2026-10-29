@@ -29,6 +29,7 @@ import {
   getPatientMembershipAudit,
   listBundles,
   listPatientMemberships,
+  linkMembershipStripeSubscription,
   markMembershipOwnerChangeHandled,
   planBillingCadence,
   removeMembershipItem,
@@ -58,6 +59,7 @@ import {
   membershipPostVisitSignupWindowHours,
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
+import { shortStripeId, stripeSubscriptionUrl } from '../../utils/stripeDashboard';
 import {
   buildClientFinancialHref,
 } from '../../utils/clientFinancial';
@@ -299,6 +301,8 @@ export default function PatientMembershipPanel({
   const canResumeBenefits = useCan('membership.benefits.resume');
   const canHandleOwnerChange = useCan('membership.owner_change.handle');
   const canUpdateCard = useCan('membership.card.update');
+  const canViewStripe = useCan('membership.stripe.view');
+  const canLinkStripe = useCan('membership.stripe.link');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -743,6 +747,28 @@ export default function PatientMembershipPanel({
     setError(null);
     try {
       await markMembershipOwnerChangeHandled(membership.id, note.trim() || null);
+      await load();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function linkStripeSubscription() {
+    if (!membership) return;
+    const subscriptionId = await appPrompt({
+      title: 'Link Stripe subscription',
+      message:
+        'Paste the subscription id from Stripe (it starts with sub_). Scout checks it exists, is still billing, and isn’t linked to another membership, then names it after this pet in Stripe.',
+      placeholder: 'sub_…',
+      confirmLabel: 'Link',
+    });
+    if (!subscriptionId?.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await linkMembershipStripeSubscription(membership.id, subscriptionId.trim());
       await load();
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -1637,6 +1663,37 @@ export default function PatientMembershipPanel({
                           ? `${membership.onlineStoreDiscount}% off store orders`
                           : null,
                     },
+                    ...(canViewStripe
+                      ? [
+                          {
+                            label: 'Stripe subscription',
+                            value: membership.stripeSubscriptionId?.startsWith('sub_') ? (
+                              <a
+                                href={stripeSubscriptionUrl(membership.stripeSubscriptionId)}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={membership.stripeSubscriptionId}
+                              >
+                                {shortStripeId(membership.stripeSubscriptionId)} ↗
+                              </a>
+                            ) : canLinkStripe && membership.status !== 'inactive' ? (
+                              <span>
+                                Not linked ·{' '}
+                                <button
+                                  type="button"
+                                  className="pmp-link-btn"
+                                  disabled={busy}
+                                  onClick={() => void linkStripeSubscription()}
+                                >
+                                  Link
+                                </button>
+                              </span>
+                            ) : (
+                              'Not linked'
+                            ),
+                          },
+                        ]
+                      : []),
                   ]}
                 />
                 {canUpdateCard && membership.status !== 'inactive' ? (

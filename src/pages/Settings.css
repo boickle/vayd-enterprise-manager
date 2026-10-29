@@ -417,6 +417,14 @@
   color: #fff;
 }
 
+/* Order list: the order in bottles under the tablet count */
+.order-packs {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .par-row-actions {
   display: flex;
   flex-wrap: wrap;

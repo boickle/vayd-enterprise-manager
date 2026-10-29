@@ -41,6 +41,9 @@ const SurveyResultsPage = React.lazy(() => import('./pages/SurveyResults'));
 const InventoryShrinkReportPage = React.lazy(() => import('./pages/InventoryShrinkReportPage'));
 const InventoryCountReportPage = React.lazy(() => import('./pages/InventoryCountReportPage'));
 const InventoryExpiringReportPage = React.lazy(() => import('./pages/InventoryExpiringReportPage'));
+const InventoryControlledReportPage = React.lazy(
+  () => import('./pages/InventoryControlledReportPage')
+);
 const InventoryActivityPage = React.lazy(() => import('./pages/InventoryActivityPage'));
 const InventoryTotalsPage = React.lazy(() => import('./pages/InventoryTotalsPage'));
 const InventoryCostReviewsPage = React.lazy(() => import('./pages/InventoryCostReviewsPage'));
@@ -263,6 +266,15 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     element: <InventoryExpiringReportPage />,
     role: STAFF,
     permissions: ['inventory.expiring.view'],
+  },
+  {
+    path: 'inventory/controlled',
+    label: 'Controlled Drugs',
+    category: 'inventory',
+    description: 'Controlled drugs dispensed, returned and wasted under each doctor.',
+    element: <InventoryControlledReportPage />,
+    role: STAFF,
+    permissions: ['inventory.controlled_report.view'],
   },
   {
     path: 'inventory/activity',

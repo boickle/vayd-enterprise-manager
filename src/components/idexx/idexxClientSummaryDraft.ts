@@ -1,5 +1,6 @@
 import {
   getIdexxResult,
+  idexxResultIsPartial,
   listIdexxResults,
   type IdexxResultDetail,
   type IdexxResultTest,
@@ -44,7 +45,9 @@ function flagWord(t: IdexxResultTest): string {
 function currentResultBlock(r: IdexxResultDetail): string {
   const lines = [
     `IDEXX result to explain (collected ${resultDate(r)}, ${
-      (r.status || '').toUpperCase() === 'COMPLETE' ? 'final' : 'not final yet'
+      (r.status || '').toUpperCase() === 'COMPLETE' && !idexxResultIsPartial(r)
+        ? 'final'
+        : 'partial — some results are still pending'
     }):`,
   ];
   for (const c of r.categories) {
@@ -134,18 +137,18 @@ export async function draftIdexxClientSummary(
     asOfDate: history.today,
     patientId: result.patientId,
     question: [
-      `Write a client-friendly summary of ${patientName}'s IDEXX lab results for the owner${
-        history.owner ? ` (${history.owner}; greet them by first name)` : ''
+      `Write the email the owner will read about ${patientName}'s IDEXX lab results${
+        history.owner ? ` (owner ${history.owner}; greet them by first name)` : ''
       }.`,
-      'Warm, plain language a non-medical reader understands; explain any medical term you use.',
-      'Start with a one- or two-sentence bottom line. Then say briefly what the tests look at.',
-      'List each out-of-range value as a "- " bullet: what it measures, whether it is high or low, and what that can mean.',
-      'Tie the findings to this pet’s history in the chart (conditions, medications, earlier visits) when the chart supports it, and say whether each value is better, worse or about the same as the earlier IDEXX values given.',
-      'Values within range can be grouped into one reassuring sentence; do not list them one by one.',
+      'Succinct and warm, like a short note from the doctor who knows this pet. Plain language. Explain a medical term only when you use one.',
+      'One or two sentences for the bottom line. Then only the values that are out of range, each as a "- " bullet: high or low, what it looks at, and what that can mean for this pet.',
+      'Connect this pet’s history to these results. Use a condition, medication, the reason for this visit, or an earlier value only when it changes what this lab means. Say in a few words whether a repeated value is better, worse, or about the same.',
+      'If the chart has nothing that bears on this panel, one short clause is enough. Do not recap unrelated history or older panels.',
+      'Normal results: one reassuring sentence, not a list.',
       'Do not diagnose or promise anything the chart does not say. If a value is critical, say calmly that the doctor will be in touch or that they should call the practice.',
-      'If the chart states a plan or recheck, end with it as "Next steps:"; otherwise end with "Next steps: [doctor to add]".',
+      'If the chart states a plan or recheck, end with one line, "Next steps:". Otherwise end with "Next steps: [doctor to add]".',
       'Plain text only: no headings, bold, tables, [ref:…] tokens, record IDs or source markers. Do not sign it.',
-      'Under 250 words.',
+      'Under 160 words.',
     ].join(' '),
   });
   const text = stripCitationTokens(answer.trim());

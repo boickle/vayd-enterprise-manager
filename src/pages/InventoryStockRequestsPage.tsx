@@ -11,8 +11,10 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import {
+  formatOrderPacks,
   listPurchaseOrders,
   listStockRequests,
+  orderPacksSoldNote,
   listSuppliers,
   resolveStockRequest,
   type InventoryPurchaseOrder,
@@ -658,7 +660,18 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                           <td>{row.locationName ?? '—'}</td>
                         </>
                       )}
-                      <td>{row.quantity}</td>
+                      <td>
+                        {row.quantity}
+                        {isOrder && row.packs ? (
+                          <div
+                            className="order-packs"
+                            title={orderPacksSoldNote(row.packs) ?? undefined}
+                          >
+                            {formatOrderPacks(row.packs)}
+                            {row.packs.units !== row.quantity ? ` (${row.packs.units})` : ''}
+                          </div>
+                        ) : null}
+                      </td>
                       {isOrder ? (
                         <td>
                           {orderedQtyByItemLoc.get(
@@ -727,6 +740,19 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                 {' → '}
                                 order <strong>{breakdown.quantity}</strong>
                               </div>
+                              {row.packs ? (
+                                <div>
+                                  Buy <strong>{formatOrderPacks(row.packs)}</strong> ={' '}
+                                  {row.packs.units}. Bottles sold whole are replaced with the
+                                  same size; the rest is bought in the largest bottles that fit,
+                                  rounded up to a small one.
+                                  {orderPacksSoldNote(row.packs) ? (
+                                    <div className="settings-muted" style={{ fontSize: 13 }}>
+                                      {orderPacksSoldNote(row.packs)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {breakdown.locationNeeds.length > 0 ? (
                                 <table className="settings-table">
                                   <thead>
@@ -946,6 +972,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             branchLocationId: row.branchLocationId,
             locationName: row.locationName ?? 'Location',
             quantity: row.quantity,
+            packs: row.packs ?? null,
           }))}
           onClose={() => setOrderModalOpen(false)}
           onPlaced={() => {

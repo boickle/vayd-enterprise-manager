@@ -18,7 +18,11 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { appConfirm } from '../utils/appDialog';
 import './Settings.css';
+
+/** Matches the API's warning on a line whose weighed and counted mL disagree. */
+const WEIGH_MISMATCH_WARNING = 'Weighed amount and counted mL disagree';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
 const LOC_STORAGE_PREFIX = 'vayd_inventory_first_count_location:';
@@ -511,6 +515,22 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
 
   async function applyPreview() {
     if (!preview || branchId === '' || locationId === '') return;
+    // Controlled drugs are reconciled against Vet Snap: a weight that disagrees with the count
+    // is never posted without someone saying the count is right (INV-08-7).
+    const disputed = preview.result.items.filter(
+      (row) => row.isControlled && row.warnings.includes(WEIGH_MISMATCH_WARNING)
+    );
+    if (disputed.length) {
+      const ok = await appConfirm({
+        title: 'Weight and count disagree',
+        message: `The weighed amount and the counted mL disagree for ${disputed
+          .map((row) => row.name)
+          .join(', ')}. Post the counted mL anyway? Cancel to recount.`,
+        confirmLabel: 'Post the counted mL',
+        cancelLabel: 'Recount',
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -519,6 +539,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
         countedAt: countedAtIso(),
         dryRun: false,
         mode,
+        confirmWeighMismatch: disputed.length > 0,
       });
       setPreview(null);
       if (preview.source === 'typed') setDrafts({});

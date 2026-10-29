@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { createPurchaseOrder, type InventorySupplier } from '../../api/inventoryOps';
+import {
+  createPurchaseOrder,
+  formatOrderPacks,
+  type InventorySupplier,
+  type OrderPackPlan,
+} from '../../api/inventoryOps';
 
 export type PlaceOrderLine = {
   key: string;
@@ -9,6 +14,8 @@ export type PlaceOrderLine = {
   branchLocationId: number;
   locationName: string;
   quantity: number;
+  /** The need in bottles; the order quantity starts at what those bottles add up to. */
+  packs?: OrderPackPlan | null;
 };
 
 type Props = {
@@ -40,7 +47,7 @@ export default function PlaceOrderModal({
     () => active[0]?.id ?? ''
   );
   const [qtyByKey, setQtyByKey] = useState<Record<string, string>>(() =>
-    Object.fromEntries(lines.map((l) => [l.key, String(l.quantity)]))
+    Object.fromEntries(lines.map((l) => [l.key, String(l.packs?.units ?? l.quantity)]))
   );
   const [include, setInclude] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(lines.map((l) => [l.key, true]))
@@ -71,7 +78,7 @@ export default function PlaceOrderModal({
       .map((l) => ({
         inventoryItemId: l.inventoryItemId,
         branchLocationId: l.branchLocationId,
-        quantity: Number(qtyByKey[l.key] ?? l.quantity),
+        quantity: Number(qtyByKey[l.key] ?? l.packs?.units ?? l.quantity),
       }))
       .filter((l) => Number.isFinite(l.quantity) && l.quantity > 0);
     if (chosen.length === 0) {
@@ -181,6 +188,11 @@ export default function PlaceOrderModal({
                     {line.locationName}
                     {line.quantity > 0 ? ` · need ${line.quantity}` : ''}
                   </div>
+                  {line.packs ? (
+                    <div className="order-packs">
+                      Buy {formatOrderPacks(line.packs)} = {line.packs.units}
+                    </div>
+                  ) : null}
                 </span>
                 <input
                   className="settings-input"

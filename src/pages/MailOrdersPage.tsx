@@ -3397,6 +3397,7 @@ function OrderDetail({
                     className="mail-queue__section mail-queue__lot"
                   >
                     <StockLotPicker
+                      forUse
                       practiceId={practiceId}
                       inventoryItemId={stockItemId}
                       branchId={fillBranchId === '' ? null : Number(fillBranchId)}

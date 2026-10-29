@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ChevronDown, ChevronRight, ExternalLink, FileText, RefreshCw, X } from 'lucide-react';
 import {
@@ -12,6 +12,7 @@ import {
   type IdexxAwaitingLabOrder,
   type IdexxResultSummary,
 } from '../api/idexx';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import IdexxChip from '../components/idexx/IdexxChip';
 import IdexxOrderFrame from '../components/idexx/IdexxOrderFrame';
@@ -23,7 +24,7 @@ import { appConfirm } from '../utils/appDialog';
 type Tab = 'review' | 'ordered' | 'waiting' | 'unmatched' | 'recent';
 
 const TABS: Array<{ id: Tab; label: string; empty: string }> = [
-  { id: 'review', label: 'To review', empty: 'Every IDEXX result has been reviewed.' },
+  { id: 'review', label: 'To review', empty: 'No complete results are waiting for review.' },
   {
     id: 'ordered',
     label: 'Ordered, not at IDEXX yet',
@@ -34,11 +35,12 @@ const TABS: Array<{ id: Tab; label: string; empty: string }> = [
   { id: 'recent', label: 'All recent', empty: 'No IDEXX results yet.' },
 ];
 
-function query(tab: Tab) {
-  if (tab === 'review') return { unreviewed: true, limit: 200 };
-  if (tab === 'waiting') return { status: 'INPROCESS' as const, limit: 200 };
-  if (tab === 'unmatched') return { unmatched: true, limit: 200 };
-  return { limit: 100 };
+function query(tab: Tab, providerEmployeeId?: number) {
+  const provider = providerEmployeeId ? { providerEmployeeId } : {};
+  if (tab === 'review') return { unreviewed: true, incomplete: false, limit: 200, ...provider };
+  if (tab === 'waiting') return { incomplete: true, limit: 200, ...provider };
+  if (tab === 'unmatched') return { unmatched: true, limit: 200, ...provider };
+  return { limit: 100, ...provider };
 }
 
 function when(raw: string | null): string {
@@ -151,7 +153,15 @@ function daysSince(raw: string | null): string {
  * Orders sent from Scout that IDEXX has no result for yet: never finished in VetConnect
  * PLUS, or submitted but the specimen hasn't been received at the lab.
  */
-function OrderedList({ refreshKey }: { refreshKey: number }) {
+function OrderedList({
+  refreshKey,
+  providerId,
+  providerName,
+}: {
+  refreshKey: number;
+  providerId: number | '';
+  providerName: (employeeId: number | null) => string | null;
+}) {
   const [rows, setRows] = useState<IdexxAwaitingLabOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +215,9 @@ function OrderedList({ refreshKey }: { refreshKey: number }) {
   }, [load, refreshKey]);
 
   if (loading) return <p className="idexx-order__note">Loading…</p>;
+  const visible = rows.filter(
+    (o) => providerId === '' || o.veterinarianEmployeeId === providerId
+  );
   return (
     <>
       {error ? (
@@ -212,16 +225,28 @@ function OrderedList({ refreshKey }: { refreshKey: number }) {
           {error}
         </p>
       ) : null}
-      {!rows.length ? (
-        <p className="pending-labs__empty">{TABS.find((t) => t.id === 'ordered')!.empty}</p>
+      {!visible.length ? (
+        <p className="pending-labs__empty">
+          {providerId !== '' && rows.length
+            ? 'No IDEXX orders for this provider.'
+            : TABS.find((t) => t.id === 'ordered')!.empty}
+        </p>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
-          {rows.map((o) => {
+          {visible.map((o) => {
+            const provider = providerName(o.veterinarianEmployeeId);
             const notFinished = o.status === 'CREATED';
             return (
               <div key={o.id} className="idexx-order__result-row" style={{ cursor: 'default' }}>
                 <span className="idexx-order__result-name">
-                  <strong>{o.patientName || `Pet #${o.patientId}`}</strong>
+                  <Link
+                    to={`/schedule/patients?patientId=${o.patientId}`}
+                    className="idexx-result-list__patient"
+                    title={`Open ${o.patientName || 'this pet'}'s chart`}
+                  >
+                    {o.patientName || `Pet #${o.patientId}`}
+                  </Link>
+                  {provider ? ` · ${provider}` : ''}
                   {o.clientLastName ? ` · ${o.clientLastName}` : ''}
                   {o.testNames.length ? ` · ${o.testNames.join(', ')}` : ''}
                 </span>
@@ -266,12 +291,6 @@ function OrderedList({ refreshKey }: { refreshKey: number }) {
                 >
                   <X size={13} aria-hidden /> {cancelling === o.id ? 'Cancelling…' : 'Cancel order'}
                 </button>
-                <Link
-                  to={`/schedule/patients?patientId=${o.patientId}`}
-                  className="idexx-order__meta"
-                >
-                  Chart
-                </Link>
               </div>
             );
           })}
@@ -300,8 +319,47 @@ export default function IdexxResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [orderedKey, setOrderedKey] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
+  const [partialIds, setPartialIds] = useState<ReadonlySet<number>>(() => new Set());
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerId, setProviderId] = useState<number | ''>('');
+  const loadGen = useRef(0);
+
+  useEffect(() => {
+    void fetchPrimaryProviders()
+      .then((rows) =>
+        setProviders(
+          [...rows].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+        )
+      )
+      .catch(() => setProviders([]));
+  }, []);
+
+  const providerName = useCallback(
+    (employeeId: number | null) => {
+      if (employeeId == null) return null;
+      return providers.find((p) => Number(p.id) === employeeId)?.name ?? null;
+    },
+    [providers]
+  );
+
+  const loadReviewCount = useCallback(async () => {
+    try {
+      const res = await listIdexxResults({
+        unreviewed: true,
+        incomplete: false,
+        limit: 1,
+        ...(providerId === '' ? {} : { providerEmployeeId: providerId }),
+      });
+      setReviewCount(res.total ?? res.items?.length ?? 0);
+    } catch {
+      /* The tab still works; the count catches up on the next refresh. */
+    }
+  }, [providerId]);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
+    if (tab !== 'review') void loadReviewCount();
     if (tab === 'ordered') {
       setOrderedKey((k) => k + 1);
       setLoading(false);
@@ -309,7 +367,10 @@ export default function IdexxResultsPage() {
     }
     setLoading(true);
     try {
-      const res = await listIdexxResults(query(tab));
+      const res = await listIdexxResults(
+        query(tab, providerId === '' ? undefined : providerId)
+      );
+      if (gen !== loadGen.current) return;
       // Critical first, then abnormal, newest first within each.
       const rank = (r: IdexxResultSummary) => (r.hasCritical ? 0 : r.hasOutOfRange ? 1 : 2);
       setRows(
@@ -320,13 +381,15 @@ export default function IdexxResultsPage() {
         )
       );
       setError(null);
+      if (tab === 'review') setReviewCount(res.total ?? res.items?.length ?? 0);
     } catch (e) {
+      if (gen !== loadGen.current) return;
       setError(idexxErrorMessage(e, 'Could not load IDEXX results.'));
       setRows([]);
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
-  }, [tab]);
+  }, [tab, providerId, loadReviewCount]);
 
   useEffect(() => {
     void load();
@@ -373,17 +436,40 @@ export default function IdexxResultsPage() {
               }}
             >
               {t.label}
+              {t.id === 'review' && reviewCount > 0 ? (
+                <span className="pending-labs__count">{reviewCount > 99 ? '99+' : reviewCount}</span>
+              ) : null}
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="btn secondary btn-sm"
-          disabled={checking}
-          onClick={() => void checkNow()}
-        >
-          <RefreshCw size={13} aria-hidden /> {checking ? 'Checking…' : 'Check IDEXX now'}
-        </button>
+        <div className="pending-labs__tools">
+          <span className="pending-labs__provider-wrap">
+            <select
+              className="pending-labs__provider"
+              aria-label="Provider"
+              value={providerId}
+              onChange={(e) => {
+                setProviderId(e.target.value ? Number(e.target.value) : '');
+                setOpenId(null);
+              }}
+            >
+              <option value="">All providers</option>
+              {providers.map((p) => (
+                <option key={String(p.id)} value={Number(p.id)}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </span>
+          <button
+            type="button"
+            className="btn secondary btn-sm"
+            disabled={checking}
+            onClick={() => void checkNow()}
+          >
+            <RefreshCw size={13} aria-hidden /> {checking ? 'Checking…' : 'Check IDEXX now'}
+          </button>
+        </div>
       </header>
 
       {error ? (
@@ -393,47 +479,78 @@ export default function IdexxResultsPage() {
       ) : null}
 
       {tab === 'ordered' ? (
-        <OrderedList refreshKey={orderedKey} />
+        <OrderedList
+          refreshKey={orderedKey}
+          providerId={providerId}
+          providerName={providerName}
+        />
       ) : loading ? (
         <p className="idexx-order__note">Loading…</p>
       ) : !rows.length ? (
-        <p className="pending-labs__empty">{current.empty}</p>
+        <p className="pending-labs__empty">
+          {providerId !== '' ? 'No IDEXX results for this provider.' : current.empty}
+        </p>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
           {rows.map((r) => {
             const open = openId === r.id;
+            const pet = r.patientName || 'Unnamed';
+            const shown = partialIds.has(r.id) ? { ...r, hasPending: true } : r;
             return (
               <div key={r.id}>
-                <button
-                  type="button"
-                  className="idexx-order__result-row"
-                  aria-expanded={open}
-                  onClick={() => setOpenId(open ? null : r.id)}
-                >
-                  {open ? (
-                    <ChevronDown size={14} aria-hidden />
-                  ) : (
-                    <ChevronRight size={14} aria-hidden />
-                  )}
-                  <span className="idexx-order__result-name">
-                    <strong>{r.patientName || 'Unnamed'}</strong>
-                    {r.clientLastName ? ` · ${r.clientLastName}` : ''}
-                    {r.testNames.length ? ` · ${r.testNames.join(', ')}` : ''}
-                  </span>
-                  <IdexxChip order={{ status: 'SUBMITTED', results: [r] }} />
-                  <span className="idexx-order__meta">
-                    {idexxResultStatusLabel(r)} · {when(r.receivedAt)}
-                  </span>
-                  {r.patientId ? (
+                <div className="idexx-result-list__row">
+                  <button
+                    type="button"
+                    className="idexx-result-list__chevron"
+                    aria-expanded={open}
+                    aria-label={open ? `Collapse ${pet}` : `Expand ${pet}`}
+                    onClick={() => setOpenId(open ? null : r.id)}
+                  >
+                    {open ? (
+                      <ChevronDown size={14} aria-hidden />
+                    ) : (
+                      <ChevronRight size={14} aria-hidden />
+                    )}
+                  </button>
+                  {open && r.patientId ? (
                     <Link
                       to={`/schedule/patients?patientId=${r.patientId}`}
-                      className="idexx-order__meta"
-                      onClick={(e) => e.stopPropagation()}
+                      className="idexx-result-list__patient"
+                      title={`Open ${pet}'s chart`}
                     >
-                      Chart
+                      {pet}
                     </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      className="idexx-result-list__name"
+                      aria-expanded={open}
+                      onClick={() => setOpenId(open ? null : r.id)}
+                    >
+                      {pet}
+                    </button>
+                  )}
+                  {r.providerName ? (
+                    <span className="idexx-result-list__provider">· {r.providerName}</span>
                   ) : null}
-                </button>
+                  <button
+                    type="button"
+                    className="idexx-result-list__expand"
+                    aria-expanded={open}
+                    onClick={() => setOpenId(open ? null : r.id)}
+                  >
+                    <span className="idexx-order__result-name">
+                      {r.clientLastName || r.testNames.length ? '· ' : ''}
+                      {r.clientLastName ? `${r.clientLastName}` : ''}
+                      {r.clientLastName && r.testNames.length ? ' · ' : ''}
+                      {r.testNames.length ? r.testNames.join(', ') : ''}
+                    </span>
+                    <IdexxChip order={{ status: 'SUBMITTED', results: [shown] }} />
+                    <span className="idexx-order__meta">
+                      {idexxResultStatusLabel(shown)} · {when(r.receivedAt)}
+                    </span>
+                  </button>
+                </div>
                 {open ? (
                   <div style={{ padding: '8px 4px 4px' }}>
                     {!r.patientId ? (
@@ -445,7 +562,19 @@ export default function IdexxResultsPage() {
                         }}
                       />
                     ) : null}
-                    <IdexxResultView resultId={r.id} onReviewedChange={() => void load()} />
+                    <IdexxResultView
+                      resultId={r.id}
+                      onReviewedChange={() => void load()}
+                      onPartialChange={(partial) =>
+                        setPartialIds((prev) => {
+                          if (partial === prev.has(r.id)) return prev;
+                          const next = new Set(prev);
+                          if (partial) next.add(r.id);
+                          else next.delete(r.id);
+                          return next;
+                        })
+                      }
+                    />
                   </div>
                 ) : null}
               </div>

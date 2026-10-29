@@ -41,7 +41,39 @@ type Props = {
   className?: string;
   /** Bump to reload lots (e.g. after editing the inventory item). */
   refreshKey?: number;
+  /**
+   * Stock is being sold, used at a visit or mailed: expired lots are shown but can't be picked
+   * (owner decision D2). Move Items and Waste / Adjust leave this off so expired bottles can go.
+   */
+  forUse?: boolean;
 };
+
+/** "Oct 1" from "2026-10-01". */
+function shortDate(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso.slice(0, 10)
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** Today in Eastern time, YYYY-MM-DD: the calendar lots expire by. */
+function easternToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** The API marks expired lots; older responses without the flag are worked out here. */
+export function lotIsExpired(
+  lot: Pick<InventoryLotBalance, 'expired' | 'expirationDate'>
+): boolean {
+  if (typeof lot.expired === 'boolean') return lot.expired;
+  const exp = lot.expirationDate?.slice(0, 10);
+  return Boolean(exp && /^\d{4}-\d{2}-\d{2}$/.test(exp) && exp < easternToday());
+}
 
 function lotLabel(lot: InventoryLotBalance, showLocation: boolean): string {
   const raw = lot.lotNumber?.trim() ?? '';
@@ -53,9 +85,14 @@ function lotLabel(lot: InventoryLotBalance, showLocation: boolean): string {
         : lot.expirationDate
           ? `Exp ${lot.expirationDate.slice(0, 10)}`
           : 'Dated stock';
+  const expired = lotIsExpired(lot) && lot.expirationDate;
   const parts = [
     lotName,
-    raw && lot.expirationDate ? `exp ${lot.expirationDate.slice(0, 10)}` : null,
+    expired
+      ? `Expired ${shortDate(lot.expirationDate!)}`
+      : raw && lot.expirationDate
+        ? `exp ${lot.expirationDate.slice(0, 10)}`
+        : null,
     `QOH ${lot.quantityOnHand}`,
   ];
   if (showLocation && (lot.locationName || lot.locationCode)) {
@@ -89,6 +126,7 @@ export default function StockLotPicker({
   label = 'Lot / expiration',
   className,
   refreshKey = 0,
+  forUse = false,
 }: Props) {
   const [lots, setLots] = useState<InventoryLotBalance[]>([]);
   const [loading, setLoading] = useState(false);
@@ -129,6 +167,12 @@ export default function StockLotPicker({
     };
   }, [practiceId, inventoryItemId, branchId, locationId, allowNew, refreshKey, reloadTick]);
 
+  /** Lots staff may pick: in use mode, expired ones are left out. */
+  const pickable = useMemo(
+    () => (forUse ? lots.filter((lot) => !lotIsExpired(lot)) : lots),
+    [forUse, lots]
+  );
+
   useEffect(() => {
     if (!allowNew || selectedLotId != null || loading) return;
     if (lots.length === 0 || lotNumber.trim()) setNewLot(true);
@@ -137,7 +181,7 @@ export default function StockLotPicker({
   useEffect(() => {
     if (selectedLotId != null) return;
     if (lotNumber.trim()) {
-      const match = lots.find(
+      const match = pickable.find(
         (lot) => lot.lotNumber.trim().toLowerCase() === lotNumber.trim().toLowerCase()
       );
       if (!match) return;
@@ -151,7 +195,7 @@ export default function StockLotPicker({
     }
     const exp = dateInputValue(expirationDate);
     if (!exp) return;
-    const match = lots.find(
+    const match = pickable.find(
       (lot) => (lot.lotNumber ?? '').trim() === '' && dateInputValue(lot.expirationDate) === exp
     );
     if (!match) return;
@@ -163,19 +207,19 @@ export default function StockLotPicker({
     });
     // Match a typed / invoice lot # or expiration to an existing bottle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lots, lotNumber, expirationDate, selectedLotId]);
+  }, [pickable, lotNumber, expirationDate, selectedLotId]);
 
   useEffect(() => {
-    if (allowNew || selectedLotId != null || lots.length !== 1) return;
-    const only = lots[0];
+    if (allowNew || selectedLotId != null || pickable.length !== 1) return;
+    const only = pickable[0]!;
     onChange({
       lotId: only.id,
       lotNumber: only.lotNumber,
       expirationDate: dateInputValue(only.expirationDate),
     });
-    // One lot at this location — no choice to make.
+    // One usable lot at this location — no choice to make.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowNew, lots, selectedLotId]);
+  }, [allowNew, pickable, selectedLotId]);
 
   const byId = useMemo(() => {
     const map = new Map<number, InventoryLotBalance>();
@@ -275,11 +319,19 @@ export default function StockLotPicker({
                 ? 'Choose the soonest-exp lot…'
                 : 'Select a lot…'}
         </option>
-        {lots.map((lot) => (
-          <option key={lot.id} value={lot.id}>
-            {lotLabel(lot, showLocation)}
-          </option>
-        ))}
+        {lots.map((lot) => {
+          const blocked = forUse && lotIsExpired(lot);
+          return (
+            <option
+              key={lot.id}
+              value={lot.id}
+              disabled={blocked}
+              className={blocked ? 'stock-lot-picker__expired' : undefined}
+            >
+              {lotLabel(lot, showLocation)}
+            </option>
+          );
+        })}
         {shelfLotShown ? (
           <option value={shelfLotId}>Existing stock (no lot recorded)</option>
         ) : offerShelfStock ? (
@@ -335,6 +387,10 @@ export default function StockLotPicker({
       {error ? (
         <p className="settings-muted" style={{ color: '#b45309', margin: '4px 0 0' }}>
           {error}
+        </p>
+      ) : forUse && pickable.length < lots.length ? (
+        <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+          Expired lots can&apos;t be used. Log them on Waste / Adjust as Expired.
         </p>
       ) : lots.length > 1 ? (
         <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>

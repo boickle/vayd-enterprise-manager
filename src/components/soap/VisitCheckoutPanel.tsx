@@ -647,6 +647,7 @@ function CheckoutInvoiceRxFields({
         {line.trackLots && !mailed && !hideLotPicker ? (
           <div className={`client-fin__rx-field client-fin__rx-lot${highlight('lot') ? ' is-missing' : ''}`}>
             <StockLotPicker
+              forUse
               practiceId={VISIT_WORKFLOW_PRACTICE_ID}
               inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
               branchId={invoice.inventoryBranchId ?? null}

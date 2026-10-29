@@ -26,9 +26,12 @@ export type InventoryShipment = {
   defaultToBranchLocationId: number | null;
   receivedByEmployeeId: number | null;
   receivedByName: string | null;
+  /** The login that finalized, when it has no employee link. */
+  receivedByUserId?: number | null;
   finalizedAt: string | null;
   deletedByEmployeeId?: number | null;
   deletedByName?: string | null;
+  deletedByUserId?: number | null;
   deletedAt?: string | null;
   note: string | null;
   invoicePdfKey?: string | null;
@@ -58,6 +61,15 @@ export type InventoryShipmentLine = {
   isNewItem?: boolean;
   itemName?: string | null;
   catalogCost?: number | null;
+  catalogPrice?: number | null;
+  /** The sell price finalizing would set; only when `costAction` is `update`. */
+  newPrice?: number | null;
+  /** What finalizing does with this cost: update prices now, or hold it for a manager. */
+  costAction?: 'none' | 'update' | 'review_lower' | 'review_large' | 'review_new';
+  increasePct?: number | null;
+  /** Largest increase (percent) that updates prices without a manager. */
+  increaseLimitPct?: number;
+  linkedProductCount?: number;
   willUpdatePrice?: boolean;
   willQueueCostReview?: boolean;
 };
@@ -486,8 +498,12 @@ export type InventoryCostReview = {
   costDelta: number | null;
   costDeltaPct: number | null;
   status: 'pending' | 'applied_catalog' | 'applied_branch' | 'dismissed';
-  /** `new_item`: added while receiving, so cost and price need a first look. */
-  reason?: 'lower_cost' | 'new_item';
+  /**
+   * `new_item`: added while receiving, so cost and price need a first look.
+   * `large_increase`: over the auto-apply limit. `new_cost`: no catalog cost to compare with.
+   * Both of those leave prices unchanged until a manager applies them.
+   */
+  reason?: 'lower_cost' | 'new_item' | 'large_increase' | 'new_cost';
   resolutionNote: string | null;
   resolvedAt: string | null;
   resolvedByUserId: number | null;
@@ -547,7 +563,26 @@ export type InventoryStockRequest = {
   requestedByName: string | null;
   created: string;
   resolvedAt: string | null;
+  /** Order list only: the order in bottles, when the item has linked bottle sizes. */
+  packs?: OrderPackPlan | null;
 };
+
+/** `count` bottles of `size` stock units; `replacesSold` of them replace bottles sold whole. */
+export type OrderPackLine = { size: number; count: number; replacesSold: number };
+export type OrderPackPlan = { packs: OrderPackLine[]; units: number };
+
+/** "2 × 180-count + 1 × 30-count" */
+export function formatOrderPacks(plan: OrderPackPlan): string {
+  return plan.packs.map((p) => `${p.count} × ${p.size}-count`).join(' + ');
+}
+
+/** "2 of the 180s replace bottles sold" or null when none were sold whole. */
+export function orderPacksSoldNote(plan: OrderPackPlan): string | null {
+  const sold = plan.packs.filter((p) => p.replacesSold > 0);
+  if (sold.length === 0) return null;
+  const parts = sold.map((p) => `${p.replacesSold} × ${p.size}-count`);
+  return `Replaces bottles sold since the last order: ${parts.join(', ')}`;
+}
 
 export async function listStockRequests(
   practiceId: number,
@@ -667,6 +702,60 @@ export async function resolveCostReview(
   const { data } = await http.post<InventoryCostReview>(
     `/practice/${practiceId}/inventory-cost-reviews/${reviewId}/resolve`,
     body
+  );
+  return data;
+}
+
+export type ControlledLineType = 'dispensed' | 'returned' | 'wasted' | 'adjusted';
+
+export type ControlledReportTotals = {
+  inventoryItemId: number;
+  itemName: string;
+  lotNumber: string;
+  dispensedMl: number;
+  returnedMl: number;
+  wastedMl: number;
+  adjustedMl: number;
+  /** Set for items weighed in grams; null for volume-only items. */
+  dispensedGrams: number | null;
+};
+
+export type ControlledReportLine = {
+  movementId: number;
+  at: string;
+  type: ControlledLineType;
+  inventoryItemId: number;
+  itemName: string;
+  lotNumber: string | null;
+  quantityMl: number;
+  grams: number | null;
+  shelfName: string | null;
+  patientName: string | null;
+  invoiceNumber: string | null;
+  invoiceId: string | null;
+  wasteReason: string | null;
+  /** False when a dose came off a shelf other than the doctor's own. */
+  fromHomeShelf: boolean;
+};
+
+export type ControlledReportDoctor = {
+  employeeId: number | null;
+  name: string;
+  totals: ControlledReportTotals[];
+  lines: ControlledReportLine[];
+};
+
+export type ControlledReport = {
+  fromDate: string;
+  toDate: string;
+  doctors: ControlledReportDoctor[];
+};
+
+/** Controlled drugs dispensed, returned and wasted under each doctor (INV-A14). */
+export async function getControlledReport(practiceId: number, fromDate: string, toDate: string) {
+  const { data } = await http.get<ControlledReport>(
+    `/practice/${practiceId}/inventory-reports/controlled`,
+    { params: { fromDate, toDate } }
   );
   return data;
 }

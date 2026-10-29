@@ -1520,6 +1520,10 @@ export default function PimsPatientDetailView({
     : null;
   const ownerAlert = alertFieldText(client, ['alerts', 'clientAlert', 'alertNotes']);
   const connectionNotes = alertFieldText(client, ['connectionNotes']);
+  /** Who last wrote each note ("Deirdre F."); none for notes imported from eVet. */
+  const patientAlertBy = payload ? pickStr(payload.alertsUpdatedByName) : null;
+  const ownerAlertBy = client ? pickStr(client.alertsUpdatedByName) : null;
+  const connectionNotesBy = client ? pickStr(client.connectionNotesUpdatedByName) : null;
   const addressLine = client ? formatAddressClient(client) : null;
   const ownerZone = zoneLabel(client);
   const badge = payload ? patientActiveBadge(payload) : { label: '—', variant: 'muted' as const };
@@ -2525,6 +2529,11 @@ export default function PimsPatientDetailView({
               <PatientPremedsBanner
                 needsPremeds={payload.needsPremeds === true}
                 note={typeof payload.premedsNote === 'string' ? payload.premedsNote : null}
+                by={
+                  typeof payload.premedsUpdatedByName === 'string'
+                    ? payload.premedsUpdatedByName
+                    : null
+                }
                 onSave={saveFields}
               />
             ) : null}
@@ -2547,18 +2556,27 @@ export default function PimsPatientDetailView({
                   />
                 </div>
                 {patientAlert}
+                {patientAlertBy ? (
+                  <span className="pims-emr-alert-box__by"> — {patientAlertBy}</span>
+                ) : null}
               </div>
               ) : null}
               {ownerAlert ? (
                 <div className="pims-emr-alert-box" role="alert">
                   <span className="pims-emr-alert-box__label">Client alerts</span>
                   {ownerAlert}
+                  {ownerAlertBy ? (
+                    <span className="pims-emr-alert-box__by"> — {ownerAlertBy}</span>
+                  ) : null}
                 </div>
               ) : null}
               {connectionNotes ? (
                 <div className="pims-emr-alert-box pims-emr-alert-box--connection">
                   <span className="pims-emr-alert-box__label">Connection Notes (staff only)</span>
                   {connectionNotes}
+                  {connectionNotesBy ? (
+                    <span className="pims-emr-alert-box__by"> — {connectionNotesBy}</span>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -3233,6 +3251,11 @@ export default function PimsPatientDetailView({
                 rows={chartRows}
                 filteredRows={filteredChartRows}
                 includeRemoved={showRemoved}
+                patientFacts={[
+                  ...signalment,
+                  dob ? `Born ${new Date(dob).toLocaleDateString('en-US', { timeZone: 'UTC' })}` : '',
+                  pickStr(record.microchip) ? `Microchip ${pickStr(record.microchip)}` : '',
+                ].filter(Boolean)}
                 selectedIds={selectedRowIds}
                 dateStart={dateStart}
                 dateEnd={dateEnd}

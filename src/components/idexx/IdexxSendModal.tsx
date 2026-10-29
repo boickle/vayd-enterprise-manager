@@ -60,7 +60,6 @@ export default function IdexxSendModal({
   const [vets, setVets] = useState<Array<{ id: number; name: string }>>([]);
   const [vetId, setVetId] = useState<number | ''>(defaultVeterinarianId ?? '');
   const [collected, setCollected] = useState(todayYmd());
-  const [notes, setNotes] = useState('');
   const [missing, setMissing] = useState<string[] | null>(null);
   const [genderUnknown, setGenderUnknown] = useState(false);
   const [genders, setGenders] = useState<Array<{ code: string; name: string }>>([]);
@@ -117,7 +116,6 @@ export default function IdexxSendModal({
         patientId,
         lineIds: [...selected],
         veterinarianEmployeeId: vetId === '' ? undefined : vetId,
-        notes: notes.trim() || undefined,
         specimenCollectionDate: collected || undefined,
         patientOverrides: Object.keys(overrides).length ? overrides : undefined,
       });
@@ -285,27 +283,15 @@ export default function IdexxSendModal({
               </select>
             </label>
           ) : null}
-          <label className="settings-label">
-            Clinical history / notes for the lab
-            <textarea
-              className="settings-input"
-              rows={3}
-              maxLength={1000}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. Fasted 12h, on phenobarbital, recheck of elevated ALT"
-            />
-          </label>
-
           {error ? (
             <p className="idexx-order__error" role="alert">
               {error}
             </p>
           ) : null}
           <p className="idexx-send__how">
-            IDEXX&rsquo;s order page opens right here. Answer the specimen questions, click{' '}
-            <strong>Order</strong>, and print the requisition for the sample. Tests you add there go
-            on this bill.
+            IDEXX&rsquo;s order page opens next. Type the clinical history there, with the specimen
+            questions, then click <strong>Order</strong> and print the requisition. Tests you add
+            there go on this bill.
           </p>
           <div className="settings-modal-actions">
             <button

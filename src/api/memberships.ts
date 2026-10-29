@@ -797,6 +797,18 @@ export async function resumeMembershipBenefits(
   return data;
 }
 
+/** Ties a membership to a Stripe subscription Scout couldn't match on its own. */
+export async function linkMembershipStripeSubscription(
+  membershipId: number,
+  subscriptionId: string
+): Promise<{ stripeSubscriptionId: string }> {
+  const { data } = await http.post<{ stripeSubscriptionId: string }>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/stripe-subscription`,
+    { practiceId: currentPracticeId(), subscriptionId }
+  );
+  return data;
+}
+
 export async function markMembershipOwnerChangeHandled(
   membershipId: number,
   note?: string | null

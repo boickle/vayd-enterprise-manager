@@ -1266,7 +1266,8 @@ export async function listVisitRefundPeers(
 
 export async function returnVisitInvoiceLines(
   invoiceId: string,
-  items: { lineId: string; qty: number }[],
+  /** `backOnShelf`: stock goes back to the lot it was sold from; false logs it as waste. */
+  items: { lineId: string; qty: number; backOnShelf?: boolean }[],
   opts?: {
     cashierEmployeeId?: number | null;
     refundViaStripe?: boolean;

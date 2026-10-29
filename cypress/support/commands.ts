@@ -223,3 +223,42 @@ Cypress.Commands.add('cleanUp', (refs: Record<string, unknown> = {}) => {
     failOnStatusCode: false,
   });
 });
+
+// ─── H-INV: inventory seed ───────────────────────────────────────────────────
+// Seeds the inventory test world (two offices, one uncounted; lot-tracked carprofen with an
+// expired and a current lot; vaccine; controlled liquids; auto-ship; inventory manager,
+// technician and practice manager employees) and yields it, including bearer tokens in `auth`.
+// See test/integration/inventory.fixtures.ts in vayd-api.
+
+function testSupportUrl(path: string): string {
+  const base = Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000';
+  return `${base}/test-support/${path}`;
+}
+
+Cypress.Commands.add('seedInventory', (options: Record<string, unknown> | true = true) => {
+  const key = Cypress.env('TEST_SUPPORT_KEY') as string | undefined;
+  if (!key) {
+    throw new Error('cy.seedInventory(): TEST_SUPPORT_KEY not set in cypress.env.json.');
+  }
+  return cy
+    .request({
+      method: 'POST',
+      url: testSupportUrl('seed'),
+      headers: { 'x-test-support-key': key },
+      body: { inventory: options },
+      failOnStatusCode: true,
+    })
+    .then((res) => res.body.refs.inventory as Record<string, unknown>);
+});
+
+Cypress.Commands.add('cleanUpInventory', (world: Record<string, unknown>) => {
+  const key = Cypress.env('TEST_SUPPORT_KEY') as string | undefined;
+  if (!key || !world) return;
+  cy.request({
+    method: 'POST',
+    url: testSupportUrl('cleanup'),
+    headers: { 'x-test-support-key': key },
+    body: { inventory: world },
+    failOnStatusCode: false,
+  });
+});

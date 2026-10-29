@@ -7,6 +7,7 @@ import {
 } from '../../api/branchInventory';
 import { fetchEmployeeWorkdayActualByDate } from '../../api/employeeWorkdayActuals';
 import AddInventoryLotModal from '../inventory/AddInventoryLotModal';
+import { lotIsExpired } from '../inventory/StockLotPicker';
 
 type Props = {
   practiceId: number;
@@ -32,10 +33,22 @@ function todayYmd(): string {
   return `${now.getFullYear()}-${m}-${d}`;
 }
 
+/** "Oct 1" from "2026-10-01". */
+function shortDate(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso.slice(0, 10)
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function lotLabel(lot: InventoryLotBalance, showBranch: boolean): string {
   const parts = [
     `Lot ${lot.lotNumber}`,
-    lot.expirationDate ? `exp ${lot.expirationDate.slice(0, 10)}` : null,
+    lot.expirationDate
+      ? lotIsExpired(lot)
+        ? `Expired ${shortDate(lot.expirationDate)}`
+        : `exp ${lot.expirationDate.slice(0, 10)}`
+      : null,
     `QOH ${lot.quantityOnHand}`,
     lot.locationName || lot.locationCode
       ? `${lot.locationName ?? ''}${lot.locationCode ? ` (${lot.locationCode})` : ''}`.trim()
@@ -281,7 +294,7 @@ export default function VaccineLotPicker({
               }
             >
               {branchLots.map((lot) => (
-                <option key={lot.id} value={lot.id}>
+                <option key={lot.id} value={lot.id} disabled={lotIsExpired(lot)}>
                   {lotLabel(lot, false)}
                 </option>
               ))}
@@ -290,7 +303,7 @@ export default function VaccineLotPicker({
           {searchOthers && otherLots.length > 0 && (
             <optgroup label="Other branches">
               {otherLots.map((lot) => (
-                <option key={lot.id} value={lot.id}>
+                <option key={lot.id} value={lot.id} disabled={lotIsExpired(lot)}>
                   {lotLabel(lot, true)}
                 </option>
               ))}
@@ -356,6 +369,11 @@ export default function VaccineLotPicker({
           </button>
         )}
       </div>
+      {[...branchLots, ...otherLots].some((lot) => lotIsExpired(lot)) ? (
+        <p className="soap-dose-lot-picker__note">
+          Expired lots can&apos;t be given. Log them on Waste / Adjust as Expired.
+        </p>
+      ) : null}
       {error && <p className="soap-dose-error">{error}</p>}
       <AddInventoryLotModal
         open={addOpen}

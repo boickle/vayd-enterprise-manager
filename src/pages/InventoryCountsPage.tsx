@@ -411,6 +411,9 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             : 'No items ready. Each item needs a count at every location first.'
       );
       window.setTimeout(() => setToast(null), 3500);
+      if (next.errors?.length) {
+        setError(`Not posted — fix and submit again: ${next.errors.map((e) => e.message).join('; ')}`);
+      }
     } catch (e: unknown) {
       setError(apiErrorMessage(e));
     } finally {

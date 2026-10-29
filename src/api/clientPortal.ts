@@ -438,7 +438,6 @@ export type ClientAppointment = {
     zip?: string | null;
     clientZone?: { id: string | number; name: string | null } | null;
   } | null;
-  clientAlert?: any;
 
   patientName?: string | null;
   patientPimsId?: string | null;
@@ -643,7 +642,6 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
         id: String(a?.id ?? ''),
         clientName,
         clientPimsId,
-        clientAlert: a?.clientAlert ?? a?.client?.alerts ?? null,
 
         patientName,
         patientPimsId,

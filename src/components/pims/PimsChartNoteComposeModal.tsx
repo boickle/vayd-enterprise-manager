@@ -15,6 +15,14 @@ type Props = {
   patientName: string;
   onClose: () => void;
   onWrappedUp: () => void;
+  /**
+   * Start a note for this moment instead of reopening another draft.
+   * Nothing is written to the chart until Wrap up.
+   */
+  seedBody?: string;
+  /** When the documented event happened, if that is not now. */
+  noteDate?: string | null;
+  hint?: string;
 };
 
 export function PimsChartNoteComposeModal({
@@ -23,6 +31,9 @@ export function PimsChartNoteComposeModal({
   patientName,
   onClose,
   onWrappedUp,
+  seedBody,
+  noteDate,
+  hint,
 }: Props) {
   const [note, setNote] = useState<ScoutChartNote | null>(null);
   const [body, setBody] = useState('');
@@ -33,13 +44,20 @@ export function PimsChartNoteComposeModal({
   const bodyRef = useRef(body);
   bodyRef.current = body;
   const noteIdRef = useRef<string | null>(null);
+  const startFresh = seedBody != null;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setNote(null);
+    noteIdRef.current = null;
     void (async () => {
       try {
+        if (startFresh) {
+          if (!cancelled) setBody(seedBody ?? '');
+          return;
+        }
         const drafts = await listScoutChartNotes(patientId, 'draft');
         if (cancelled) return;
         const existing = drafts[0] ?? null;
@@ -69,7 +87,7 @@ export function PimsChartNoteComposeModal({
     return () => {
       cancelled = true;
     };
-  }, [patientId, clientId]);
+  }, [patientId, clientId, seedBody, startFresh]);
 
   useEffect(() => {
     if (!note || note.status !== 'draft') return;
@@ -90,8 +108,7 @@ export function PimsChartNoteComposeModal({
   }, [body, note]);
 
   async function wrapUp() {
-    const id = noteIdRef.current;
-    if (!id || wrapping) return;
+    if (wrapping) return;
     if (!body.trim()) {
       setError('Write the note before wrapping up.');
       return;
@@ -99,6 +116,19 @@ export function PimsChartNoteComposeModal({
     setWrapping(true);
     setError(null);
     try {
+      if (startFresh) {
+        const created = await createScoutChartNote({
+          patientId,
+          clientId,
+          body,
+          noteDate: noteDate ?? undefined,
+        });
+        await finalizeScoutChartNote(created.id);
+        onWrappedUp();
+        return;
+      }
+      const id = noteIdRef.current;
+      if (!id) return;
       if (note && body !== note.body) {
         await updateScoutChartNote(id, body);
       }
@@ -121,7 +151,7 @@ export function PimsChartNoteComposeModal({
           <div>
             <h3 id="pims-chart-note-title">Medical note · {patientName}</h3>
             <p className="pims-chart-compose__hint">
-              Blank note. Wrap up to lock it on the chart — it cannot be edited after that.
+              {hint ?? 'Blank note. Wrap up to lock it on the chart — it cannot be edited after that.'}
             </p>
           </div>
           <button type="button" className="pims-chart-pick__close" onClick={onClose}>
@@ -143,7 +173,13 @@ export function PimsChartNoteComposeModal({
         )}
         <div className="pims-chart-pick__foot pims-chart-compose__foot">
           <span className="pims-chart-compose__meta">
-            {saving ? 'Saving draft…' : note ? 'Draft saved' : ''}
+            {startFresh
+              ? 'Locks onto the chart when you wrap up'
+              : saving
+                ? 'Saving draft…'
+                : note
+                  ? 'Draft saved'
+                  : ''}
           </span>
           <button type="button" className="brief-btn" onClick={onClose}>
             Close

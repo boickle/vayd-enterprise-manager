@@ -34,6 +34,12 @@ import {
   useStockItemGroups,
   type StockItemGroup,
 } from '../hooks/useStockItemGroups';
+import { apiErrorMessage } from '../api/http';
+import ReceiveLineCostHint, { finalizeToastMessage } from '../components/inventory/ReceiveLineCostHint';
+import {
+  deletedShipmentText,
+  receivedShipmentSummary,
+} from '../components/inventory/receivedShipmentSummary';
 import { appConfirm } from '../utils/appDialog';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import {
@@ -363,7 +369,7 @@ export default function ReceiveShipmentPage() {
           if (def) setBranchId(def.id);
         }
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
+        if (!cancelled) setError(apiErrorMessage(e));
       } finally {
         if (!cancelled) setDraftReady(true);
       }
@@ -525,7 +531,7 @@ export default function ReceiveShipmentPage() {
       setLotId(null);
       setExp('');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not load item');
+      setError(apiErrorMessage(err));
     }
   }
 
@@ -662,7 +668,7 @@ export default function ReceiveShipmentPage() {
       setToast('Receive deleted. Stock reversed.');
       window.setTimeout(() => setToast(null), 3000);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not delete shipment');
+      setError(apiErrorMessage(e));
     } finally {
       setReceivedBusy(false);
     }
@@ -691,7 +697,7 @@ export default function ReceiveShipmentPage() {
         receivedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not load shipment');
+      setError(apiErrorMessage(err));
     } finally {
       setReceivedBusy(false);
     }
@@ -771,7 +777,7 @@ export default function ReceiveShipmentPage() {
       setToast('Added to shipment');
       window.setTimeout(() => setToast(null), 2000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not add line');
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -827,7 +833,7 @@ export default function ReceiveShipmentPage() {
       storeFile = pageFiles.length === 1 ? pageFiles[0] : await imagesToInvoicePdf(pageFiles);
     } catch (err: unknown) {
       setParsing(false);
-      setError(err instanceof Error ? err.message : 'Could not prepare invoice pages');
+      setError(apiErrorMessage(err));
       return;
     }
     await onInvoiceFile(pageFiles, storeFile);
@@ -922,7 +928,7 @@ export default function ReceiveShipmentPage() {
           'Invoice reading is not on the API that is running. Restart vayd-api (the parse route is new) and try again.'
         );
       } else {
-        setError(detail || (err instanceof Error ? err.message : 'Could not read invoice'));
+        setError(detail || apiErrorMessage(err));
       }
     } finally {
       setParsing(false);
@@ -971,7 +977,7 @@ export default function ReceiveShipmentPage() {
       setMatchSearchQ('');
       setMatchSearchResults([]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not save match');
+      setError(apiErrorMessage(err));
     }
   }
 
@@ -995,7 +1001,7 @@ export default function ReceiveShipmentPage() {
         )
       );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not ignore line');
+      setError(apiErrorMessage(err));
     }
   }
 
@@ -1073,7 +1079,7 @@ export default function ReceiveShipmentPage() {
       scrollToShipment();
       window.setTimeout(() => setToast(null), 4000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not add invoice lines');
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -1089,7 +1095,7 @@ export default function ReceiveShipmentPage() {
       setAddingSupplier(false);
       setNewSupplierName('');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not add supplier');
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -1110,18 +1116,17 @@ export default function ReceiveShipmentPage() {
         defaultToBranchLocationId: Number(defaultLocId),
       });
       await persistInvoiceOnShipment(patched);
+      const toastMessage = finalizeToastMessage(lines);
       await finalizeShipment(practiceId, shipment.id);
       resetReceiveForm();
       await reloadReceived();
-      setToast(
-        'Shipment finalized — stock updated. You can upload another invoice. Lower costs go to Cost Reviews.'
-      );
+      setToast(toastMessage);
       window.setTimeout(() => setToast(null), 5000);
       window.requestAnimationFrame(() => {
         receivedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Finalize failed');
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -1132,7 +1137,7 @@ export default function ReceiveShipmentPage() {
       const { url } = await getShipmentInvoiceFile(practiceId, shipmentId);
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not open invoice');
+      setError(apiErrorMessage(err));
     }
   }
 
@@ -1316,7 +1321,7 @@ export default function ReceiveShipmentPage() {
       setToast('Line updated');
       window.setTimeout(() => setToast(null), 2000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not update line');
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -2366,22 +2371,7 @@ export default function ReceiveShipmentPage() {
                             ? ` · $${Number(l.costPerUnit).toFixed(4)}/unit`
                             : ''}
                         </div>
-                        {l.isNewItem ? (
-                          <div style={{ marginTop: 2, fontSize: 13, color: '#075985' }}>
-                            New item — practice manager will review on Cost Reviews
-                          </div>
-                        ) : l.willUpdatePrice ? (
-                          <div style={{ marginTop: 2, fontSize: 13, fontWeight: 600, color: '#2e7d32' }}>
-                            Will update price
-                            {l.catalogCost != null
-                              ? ` (catalog $${Number(l.catalogCost).toFixed(4)} → $${Number(l.costPerUnit).toFixed(4)})`
-                              : ''}
-                          </div>
-                        ) : l.willQueueCostReview ? (
-                          <div style={{ marginTop: 2, fontSize: 13, color: '#9a3412' }}>
-                            Lower than catalog — manager will review on Cost Reviews
-                          </div>
-                        ) : null}
+                        <ReceiveLineCostHint line={l} />
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                         {editing ? (
@@ -2633,13 +2623,7 @@ export default function ReceiveShipmentPage() {
             {receivedPageRows.map((row) => {
               const office = branches.find((b) => b.id === row.branchId)?.name;
               const supplier = suppliers.find((s) => s.id === row.supplierId)?.name;
-              const when = row.finalizedAt
-                ? new Date(row.finalizedAt).toLocaleString()
-                : null;
               const deleted = row.status === 'deleted';
-              const deletedWhen = row.deletedAt
-                ? new Date(row.deletedAt).toLocaleString()
-                : null;
               const open = receivedOpenId === row.id;
               return (
                 <li
@@ -2671,18 +2655,7 @@ export default function ReceiveShipmentPage() {
                         {deleted ? ' · Deleted' : ''}
                       </span>
                       <span style={{ display: 'block', fontSize: 13, opacity: 0.8 }}>
-                        {[
-                          supplier,
-                          office,
-                          row.receivedByName
-                            ? `Received by ${row.receivedByName}`
-                            : row.receivedByEmployeeId != null
-                              ? `Received by staff #${row.receivedByEmployeeId}`
-                              : null,
-                          when,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                        {receivedShipmentSummary(row, { supplier, office })}
                       </span>
                       {deleted ? (
                         <span
@@ -2694,14 +2667,7 @@ export default function ReceiveShipmentPage() {
                             marginTop: 4,
                           }}
                         >
-                          {[
-                            row.deletedByName
-                              ? `Deleted by ${row.deletedByName}`
-                              : 'Deleted',
-                            deletedWhen,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
+                          {deletedShipmentText(row)}
                         </span>
                       ) : null}
                       {row.shipToMismatch ? (

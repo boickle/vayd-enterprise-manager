@@ -349,6 +349,16 @@
   cursor: pointer;
 }
 
+.pmp-link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .pmp-allowance__coverage {
   font-size: 11.5px;
   color: var(--muted);

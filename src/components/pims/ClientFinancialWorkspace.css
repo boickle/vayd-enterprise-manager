@@ -1453,6 +1453,23 @@
   overscroll-behavior: contain;
 }
 
+.client-fin__hits--float {
+  position: fixed;
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+
+.client-fin__hits-empty {
+  padding: 8px 10px;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .client-fin__hits > li {
   flex: 0 0 auto;
 }
@@ -1939,4 +1956,14 @@
   border-color: #dc2626;
   box-shadow: 0 0 0 1px #fecaca;
   background: #fef2f2;
+}
+
+/* Return: does the item go back on the shelf (unopened) or is it a loss (INV-A1). */
+.client-fin__return-shelf {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+  white-space: nowrap;
 }

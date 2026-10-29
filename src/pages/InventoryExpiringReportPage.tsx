@@ -107,6 +107,36 @@ export default function InventoryExpiringReportPage() {
     };
   }, [practiceId, openId]);
 
+  // Expired bottles still on a shelf get their own list; the table below is what's coming due.
+  const expiredOnShelf = useMemo(
+    () =>
+      rows.flatMap((row) =>
+        row.locations
+          .filter((loc) => loc.expired)
+          .map((loc) => ({ ...loc, itemName: row.name, inventoryItemId: row.inventoryItemId }))
+      ),
+    [rows]
+  );
+  const expiringRows = useMemo(
+    () =>
+      rows
+        .map((row) => {
+          const locations = row.locations.filter((loc) => !loc.expired);
+          if (locations.length === row.locations.length) return row;
+          return {
+            ...row,
+            locations,
+            totalQty: locations.reduce((sum, loc) => sum + loc.quantityOnHand, 0),
+            soonestExpiration: locations.reduce(
+              (min, loc) => (loc.expirationDate < min ? loc.expirationDate : min),
+              locations[0]?.expirationDate ?? row.soonestExpiration
+            ),
+          };
+        })
+        .filter((row) => row.locations.length > 0),
+    [rows]
+  );
+
   return (
     <div className="settings-section">
       <p className="settings-section-description">
@@ -168,14 +198,50 @@ export default function InventoryExpiringReportPage() {
       </div>
       {meta ? (
         <p className="settings-muted" style={{ marginTop: 0 }}>
-          {busy ? 'Loading…' : `${rows.length} product${rows.length === 1 ? '' : 's'}`}
+          {busy ? 'Loading…' : `${expiringRows.length} product${expiringRows.length === 1 ? '' : 's'}`}
           {' · '}
           {meta.fromDate} → {meta.toDate}
         </p>
       ) : null}
+      {expiredOnShelf.length > 0 ? (
+        <section className="expiring-report__expired" aria-label="Expired on shelf">
+          <h3 style={{ margin: '0 0 4px', color: '#9a3412' }}>Expired on shelf</h3>
+          <p className="settings-muted" style={{ marginTop: 0 }}>
+            These can&apos;t be sold, used at a visit or mailed.{' '}
+            <Link to="/schedule/inventory/waste">Log them on Waste / Adjust</Link> with the reason
+            Expired.
+          </p>
+          <div className="settings-table-container" style={{ marginBottom: 20 }}>
+            <table className="settings-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Lot</th>
+                  <th>Expired</th>
+                  <th>Where</th>
+                  <th>Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expiredOnShelf.map((loc) => (
+                  <tr key={loc.lotId}>
+                    <td style={{ fontWeight: 600 }}>{loc.itemName ?? `Item #${loc.inventoryItemId}`}</td>
+                    <td>{loc.lotNumber || '—'}</td>
+                    <td>{loc.expirationDate}</td>
+                    <td>
+                      {[loc.branchName, loc.locationName].filter(Boolean).join(' · ') || '—'}
+                    </td>
+                    <td>{loc.quantityOnHand}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
       {busy && rows.length === 0 ? (
         <p className="settings-muted">Loading…</p>
-      ) : rows.length === 0 ? (
+      ) : expiringRows.length === 0 ? (
         <p className="settings-muted">Nothing expiring in this window.</p>
       ) : (
         <div className="settings-table-container">
@@ -191,7 +257,7 @@ export default function InventoryExpiringReportPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {expiringRows.map((row) => {
                 const open = openId === row.inventoryItemId;
                 const days = daysUntil(row.soonestExpiration);
                 return (

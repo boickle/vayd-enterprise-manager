@@ -3077,3 +3077,13 @@
   color: #b91c1c;
   font-weight: 500;
 }
+.pims-emr-premeds__by {
+  font-weight: 500;
+  opacity: 0.8;
+}
+/* "— Deirdre F." after a staff note: who last wrote it. */
+.pims-emr-alert-box__by {
+  font-weight: 500;
+  opacity: 0.75;
+  white-space: nowrap;
+}

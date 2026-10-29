@@ -11,6 +11,8 @@ export type IdexxResultBrief = {
   modality: string | null;
   hasOutOfRange: boolean;
   hasCritical: boolean;
+  /** Panel is released but some analytes still read PENDING. */
+  hasPending?: boolean;
   reviewedAt: string | null;
   receivedAt: string | null;
 };
@@ -91,8 +93,13 @@ export type IdexxResultSummary = {
   veterinarian: string | null;
   patientName: string | null;
   clientLastName: string | null;
+  /** Ordering veterinarian. IDEXX often leaves its own veterinarian field blank. */
+  providerEmployeeId?: number | null;
+  providerName?: string | null;
   hasOutOfRange: boolean;
   hasCritical: boolean;
+  /** Panel is released but some analytes still read PENDING. */
+  hasPending?: boolean;
   delayed: boolean;
   testNames: string[];
   specimenCollectionDate: string | null;
@@ -262,6 +269,13 @@ export async function listIdexxResults(query: {
   patientId?: number;
   orderId?: number;
   status?: 'INPROCESS' | 'COMPLETE' | 'CANCELLED';
+  /**
+   * True: still at IDEXX, including a released panel with analytes still PENDING.
+   * False: every analyte is back.
+   */
+  incomplete?: boolean;
+  /** Ordering veterinarian on the Scout IDEXX order. */
+  providerEmployeeId?: number;
   unreviewed?: boolean;
   unmatched?: boolean;
   limit?: number;
@@ -315,10 +329,15 @@ export async function syncIdexxResults() {
   return data;
 }
 
+/** IDEXX's official report PDF. */
+export async function fetchIdexxResultPdf(id: number): Promise<Blob> {
+  const res = await http.get<Blob>(`/idexx/results/${id}/pdf`, { responseType: 'blob' });
+  return new Blob([res.data], { type: 'application/pdf' });
+}
+
 /** IDEXX's official report PDF, as an object URL to open in a new tab. */
 export async function idexxResultPdfUrl(id: number): Promise<string> {
-  const res = await http.get<Blob>(`/idexx/results/${id}/pdf`, { responseType: 'blob' });
-  return URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+  return URL.createObjectURL(await fetchIdexxResultPdf(id));
 }
 
 /** Single-use, signed-in link to the result in VetConnect PLUS. Ask right before opening. */
@@ -341,6 +360,24 @@ export async function idexxSpecies() {
   return data ?? [];
 }
 
+/**
+ * IDEXX can mark a panel COMPLETE (and leave statusDetail blank) while
+ * chemistry, T4, or other analytes still read PENDING. Those are partial.
+ */
+export function idexxResultIsPartial(r: {
+  status?: string | null;
+  statusDetail?: string | null;
+  hasPending?: boolean;
+  categories?: Array<{ tests?: Array<{ result?: string | null }> }>;
+}): boolean {
+  if ((r.status || '').toUpperCase() === 'CANCELLED') return false;
+  if ((r.statusDetail || '').toUpperCase() === 'PARTIAL') return true;
+  if (r.hasPending) return true;
+  return (r.categories ?? []).some((category) =>
+    (category.tests ?? []).some((test) => /^pending$/i.test((test.result ?? '').trim()))
+  );
+}
+
 /** Where an order or result stands, in words staff use. */
 export function idexxStatusLabel(order: Pick<IdexxOrder, 'status' | 'results'> | null): {
   label: string;
@@ -354,7 +391,9 @@ export function idexxStatusLabel(order: Pick<IdexxOrder, 'status' | 'results'> |
   if (!results.length) return { label: 'Not at IDEXX yet', tone: 'wait' };
   const critical = results.some((r) => r.hasCritical);
   const abnormal = results.some((r) => r.hasOutOfRange);
-  const complete = results.every((r) => r.status === 'COMPLETE');
+  const complete = results.every(
+    (r) => (r.status || '').toUpperCase() === 'COMPLETE' && !idexxResultIsPartial(r)
+  );
   const base = complete ? 'Final' : 'Partial';
   if (critical) return { label: `${base} · critical`, tone: 'alert' };
   if (abnormal) return { label: `${base} · abnormal`, tone: 'warn' };

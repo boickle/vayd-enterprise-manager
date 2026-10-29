@@ -8,6 +8,7 @@ import {
   resultedByLabel,
   type LabResult,
 } from '../api/inHouseLabs';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import LabResultForm from '../components/labs/LabResultForm';
 import '../components/labs/LabResultsPanel.css';
 import './PendingLabsPage.css';
@@ -44,6 +45,18 @@ export default function PendingLabsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<LabResult | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerId, setProviderId] = useState<number | ''>('');
+
+  useEffect(() => {
+    void fetchPrimaryProviders()
+      .then((list) =>
+        setProviders(
+          [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+        )
+      )
+      .catch(() => setProviders([]));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,13 +76,20 @@ export default function PendingLabsPage() {
 
   // The worklist returns both states, so "recent" lets whoever ran a lab
   // double-check what they just saved without going chart by chart.
-  const pending = useMemo(() => rows.filter((r) => r.status === 'pending'), [rows]);
+  const forProvider = useMemo(
+    () =>
+      providerId === ''
+        ? rows
+        : rows.filter((r) => r.providerEmployeeId === providerId),
+    [rows, providerId]
+  );
+  const pending = useMemo(() => forProvider.filter((r) => r.status === 'pending'), [forProvider]);
   const recent = useMemo(
     () =>
-      rows
+      forProvider
         .filter((r) => r.status === 'complete')
         .sort((a, b) => String(b.resultedAt ?? '').localeCompare(String(a.resultedAt ?? ''))),
-    [rows]
+    [forProvider]
   );
 
   const shown = filter === 'pending' ? pending : recent;
@@ -107,6 +127,23 @@ export default function PendingLabsPage() {
             Recently resulted
           </button>
         </div>
+        <div className="pending-labs__tools">
+          <span className="pending-labs__provider-wrap">
+            <select
+              className="pending-labs__provider"
+              aria-label="Provider"
+              value={providerId}
+              onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">All providers</option>
+              {providers.map((p) => (
+                <option key={String(p.id)} value={Number(p.id)}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </div>
       </header>
 
       {error ? (
@@ -119,9 +156,11 @@ export default function PendingLabsPage() {
         <p className="lab-panel__muted">Loading…</p>
       ) : !shown.length ? (
         <p className="pending-labs__empty">
-          {filter === 'pending'
-            ? 'Nothing waiting — every in-house lab that was ordered has been run.'
-            : 'Nothing resulted yet.'}
+          {providerId !== ''
+            ? 'No in-house labs for this provider.'
+            : filter === 'pending'
+              ? 'Nothing waiting — every in-house lab that was ordered has been run.'
+              : 'Nothing resulted yet.'}
         </p>
       ) : (
         grouped.map(([day, group]) => (
@@ -144,8 +183,13 @@ export default function PendingLabsPage() {
                             {r.templateName}
                           </span>
                           <span className="lab-panel__row-meta">
-                            {/* Once it is run, who ran it matters more than where it was ordered. */}
-                            {resultedByLabel(r) || r.lab?.name || 'Entered by hand'}
+                            {[
+                              r.providerName,
+                              resultedByLabel(r),
+                              r.lab?.name,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ') || 'Entered by hand'}
                           </span>
                         </span>
                         {r.status === 'pending' ? (

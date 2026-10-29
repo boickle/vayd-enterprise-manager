@@ -112,3 +112,8 @@
   padding: 4px 8px;
   white-space: nowrap;
 }
+
+/* Past its date: listed so staff know it's there, but greyed and not selectable. */
+.stock-lot-picker__expired {
+  color: #9ca3af;
+}

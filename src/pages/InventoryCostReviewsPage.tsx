@@ -300,6 +300,21 @@ export default function InventoryCostReviewsPage() {
                       New item
                     </span>
                   ) : null}
+                  {row.reason === 'large_increase' || row.reason === 'new_cost' ? (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        background: '#ffedd5',
+                        color: '#9a3412',
+                      }}
+                      title="Held when the shipment was finalized, so the sell price was not changed."
+                    >
+                      {row.reason === 'large_increase' ? 'Large increase, held' : 'No previous cost, held'}
+                    </span>
+                  ) : null}
                   <time className="settings-muted">
                     {row.created ? new Date(row.created).toLocaleString() : ''}
                   </time>

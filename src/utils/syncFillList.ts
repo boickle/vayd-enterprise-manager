@@ -121,6 +121,9 @@ export function planStockLists(
     const needLines = new Map<number, OrderNeedLine>();
     for (const loc of locs) {
       if (loc.branchLocationId === defaultLoc.branchLocationId) continue;
+      // An uncounted shelf's 0 or negative isn't real stock; nothing is sent there until its
+      // first count (INV-A15).
+      if (loc.notCounted) continue;
       const need = shortBy(loc.quantityOnHand, loc.parLevel);
       if (need != null) {
         remaining.set(loc.branchLocationId, need);
@@ -135,6 +138,8 @@ export function planStockLists(
       }
     }
     const pushOrder = (defaultOut: number) => {
+      // Nothing is ordered on an uncounted main shelf's numbers (INV-A15).
+      if (defaultLoc.notCounted) return;
       const effectiveOnHand = Number(defaultLoc.quantityOnHand) - defaultOut;
       const orderQty = orderQtyForDefault({
         effectiveOnHand,

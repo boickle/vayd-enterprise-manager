@@ -1690,18 +1690,21 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         await postInventoryMovement(practiceId, forBranchId, body);
       }
 
-      const updated = await upsertInventoryBranchStock(
-        practiceId,
-        forBranchId,
-        stockItemId,
-        {
-          reorderPoint,
-          locations: locations.map((l) => ({
-            branchLocationId: l.loc.branchLocationId,
-            parLevel: l.locPar ?? null,
-          })),
-        }
-      );
+      // Re-order point and pars need par permission; someone fixing only on-hand doesn't (INV-A10).
+      const sameNumber = (a: unknown, b: number | null) =>
+        (a == null || a === '' ? null : Number(a)) === (b == null ? null : Number(b));
+      const parsChanged =
+        !sameNumber(stock?.reorderPoint, reorderPoint ?? null) ||
+        locations.some((l) => !sameNumber(l.loc.parLevel, l.locPar ?? null));
+      const updated = parsChanged
+        ? await upsertInventoryBranchStock(practiceId, forBranchId, stockItemId, {
+            reorderPoint,
+            locations: locations.map((l) => ({
+              branchLocationId: l.loc.branchLocationId,
+              parLevel: l.locPar ?? null,
+            })),
+          })
+        : await getInventoryBranchStock(practiceId, forBranchId, stockItemId);
       setStockByBranchId((prev) => ({
         ...prev,
         [forBranchId]: { ...prev[forBranchId], ...updated },

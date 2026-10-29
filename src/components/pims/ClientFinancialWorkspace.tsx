@@ -1,4 +1,16 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router';
 import { DateTime } from 'luxon';
 import { Check, ChevronDown, ChevronRight, Pencil, Plus, Search, X } from 'lucide-react';
@@ -908,6 +920,68 @@ function groupInvoiceBlocksByPet(
 
 const DRAFT_INVOICE_ID = 'draft';
 
+/**
+ * Charge matches have to float over the page. The invoice table scrolls inside a
+ * fixed-height box, so a list drawn under the search field is clipped and looks empty.
+ */
+function ChargeSearchMenu({
+  anchorRef,
+  open,
+  children,
+}: {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  open: boolean;
+  children: ReactNode;
+}) {
+  const [box, setBox] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      const gap = 4;
+      const below = window.innerHeight - r.bottom - 8;
+      const above = r.top - 8;
+      const openUp = below < 160 && above > below;
+      const maxHeight = Math.max(96, Math.min(360, openUp ? above : below));
+      setBox({
+        top: openUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap,
+        left: r.left,
+        width: Math.max(r.width, 280),
+        maxHeight,
+      });
+    };
+    place();
+    const wrap = el.closest('.client-fin__table-wrap');
+    wrap?.addEventListener('scroll', place, { passive: true });
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      wrap?.removeEventListener('scroll', place);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchorRef, open]);
+
+  if (!open || !box) return null;
+  return createPortal(
+    <ul
+      className="client-fin__hits client-fin__hits--float"
+      style={{ top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight }}
+    >
+      {children}
+    </ul>,
+    document.body,
+  );
+}
+
 function isUnsavedInvoice(invoice: VisitInvoice | null | undefined): boolean {
   return invoice?.id === DRAFT_INVOICE_ID;
 }
@@ -929,6 +1003,36 @@ function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
     invoice.isDeleted !== true &&
     activeLines(invoice).length === 0 &&
     Number(invoice.amountPaid) <= 0.005
+  );
+}
+
+/** The bill to show on the right when the client page opens. */
+function chooseOpenInvoice(
+  rows: VisitInvoice[],
+  patientId?: number | null,
+): VisitInvoice | null {
+  const openRows = rows
+    .filter(
+      (inv) => inv.isDeleted !== true && inv.status === 'open' && !isEmptyOpenInvoice(inv),
+    )
+    .sort(
+      (a, b) =>
+        ledgerTime(b.paidAt ?? b.finalizedAt ?? b.created) -
+        ledgerTime(a.paidAt ?? a.finalizedAt ?? a.created),
+    );
+  const forPatient =
+    patientId != null
+      ? openRows.filter(
+          (inv) =>
+            inv.patientId === patientId ||
+            (inv.lines ?? []).some((l) => l.patientId === patientId),
+        )
+      : [];
+  return (
+    forPatient.find((inv) => dueOf(inv) > 0.009) ??
+    openRows.find((inv) => dueOf(inv) > 0.009) ??
+    forPatient[0] ??
+    null
   );
 }
 
@@ -1347,6 +1451,10 @@ export default function ClientFinancialWorkspace({
   const [evetLoaded, setEvetLoaded] = useState<NormalizedInvoice[]>(evetInvoices);
   const [filter, setFilter] = useState<LedgerFilter>('all');
   const [loading, setLoading] = useState(true);
+  /** Bumps when the user picks another invoice, so a slower load cannot overwrite it. */
+  const showGen = useRef(0);
+  /** Invoices already loaded with lines, tenders, and catalog detail. */
+  const hydratedInvoiceIds = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1357,6 +1465,8 @@ export default function ClientFinancialWorkspace({
   const [coveragePrompt, setCoveragePrompt] = useState<CoverageChoicePrompt | null>(null);
   const coverageChoiceResolveRef = useRef<((id: number | null) => void) | null>(null);
   const [searching, setSearching] = useState(false);
+  /** Query the last search finished for, so "No matches" doesn't flash before it starts. */
+  const [settledQuery, setSettledQuery] = useState('');
   const [linePatientId, setLinePatientId] = useState<number | null>(() =>
     defaultChargePatientId(pets, initialPatientId),
   );
@@ -1368,6 +1478,8 @@ export default function ClientFinancialWorkspace({
   const [cashReceived, setCashReceived] = useState('');
   const [checkNumber, setCheckNumber] = useState('');
   const [returnQty, setReturnQty] = useState<Record<string, string>>({});
+  /** Returned stock items going back on the shelf (unopened); unchecked are logged as waste. */
+  const [returnToShelf, setReturnToShelf] = useState<Record<string, boolean>>({});
   const [returning, setReturning] = useState(false);
   const [refundDraft, setRefundDraft] = useState<null | {
     tenderId: string;
@@ -1439,6 +1551,9 @@ export default function ClientFinancialWorkspace({
   const splitRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
   const catalogSearchRef = useRef<HTMLInputElement>(null);
+  const chargeSearchBoxRef = useRef<HTMLDivElement>(null);
+  /** Pet just picked from "Add charges for another pet", so we scroll to that box. */
+  const revealPetIdRef = useRef<number | null>(null);
   const rxLineWatchRef = useRef<{ invoiceId: string | null; lineIds: Set<string> }>({
     invoiceId: null,
     lineIds: new Set(),
@@ -1624,15 +1739,49 @@ export default function ClientFinancialWorkspace({
   }
 
   async function refreshList(preferId?: string | null) {
-    const rows = await listClientVisitInvoices(clientId);
+    const keep = preferId ?? selected?.id;
+    const hydrate =
+      keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)
+        ? getInvoice(keep).catch(() => null)
+        : Promise.resolve(null);
+    const [rows, full] = await Promise.all([
+      listClientVisitInvoices(clientId, { lite: true }),
+      hydrate,
+    ]);
+    if (full) {
+      hydratedInvoiceIds.current.add(full.id);
+      const idx = rows.findIndex((r) => r.id === full.id);
+      if (idx >= 0) rows[idx] = full;
+      else rows.unshift(full);
+    }
     setScoutInvoices(rows);
     void refreshEstimates().catch(() => undefined);
-    const keep = preferId ?? selected?.id;
-    if (keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)) {
+    if (full) setSelected(full);
+    else if (keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)) {
       const found = rows.find((r) => r.id === keep);
       if (found) setSelected(found);
     }
     return rows;
+  }
+
+  /** Show a ledger row on the right, then fill in tenders and catalog detail. */
+  function openScoutInvoice(inv: VisitInvoice) {
+    const gen = ++showGen.current;
+    setLedgerCreditKey(null);
+    setEvetSelected(null);
+    setSelected(inv);
+    setReturning(false);
+    setEditing(false);
+    if (!isUnsavedInvoice(inv)) onSelectInvoice?.(inv.id);
+    if (isUnsavedInvoice(inv) || hydratedInvoiceIds.current.has(inv.id)) return;
+    void getInvoice(inv.id)
+      .then((full) => {
+        if (showGen.current !== gen) return;
+        hydratedInvoiceIds.current.add(full.id);
+        setSelected(full);
+        setScoutInvoices((rows) => rows.map((r) => (r.id === full.id ? full : r)));
+      })
+      .catch(() => undefined);
   }
 
   useEffect(() => {
@@ -1710,64 +1859,95 @@ export default function ClientFinancialWorkspace({
 
   useEffect(() => {
     let cancelled = false;
+    const gen = ++showGen.current;
+    hydratedInvoiceIds.current = new Set();
     setLoading(true);
     setError(null);
+    setScoutInvoices([]);
+    setSelected(null);
+    setEvetSelected(null);
+
+    // Estimates are not needed to draw the open invoice.
+    void listClientEstimates(clientId, { includeClosed: true })
+      .then((rows) => {
+        if (!cancelled) setEstimates(rows);
+      })
+      .catch(() => undefined);
+
     void (async () => {
       try {
-        const [rows, quoteRows] = await Promise.all([
-          listClientVisitInvoices(clientId),
-          listClientEstimates(clientId, { includeClosed: true }).catch(() => [] as VisitEstimate[]),
-        ]);
-        if (cancelled) return;
-        setScoutInvoices(rows);
-        setEstimates(quoteRows);
-        setEvetSelected(null);
-        let next: VisitInvoice | null = null;
-        if (initialInvoiceId && initialInvoiceId !== 'new') {
-          next = rows.find((r) => r.id === initialInvoiceId) ?? (await getInvoice(initialInvoiceId));
-        } else if (openNew || initialInvoiceId === 'new') {
-          next = emptyDraftInvoice({
-            clientId,
-            patientId: initialPatientId,
-            appointmentId: initialAppointmentId,
-          });
+        if (openNew || initialInvoiceId === 'new') {
+          if (cancelled || showGen.current !== gen) return;
+          setSelected(
+            emptyDraftInvoice({
+              clientId,
+              patientId: initialPatientId,
+              appointmentId: initialAppointmentId,
+            }),
+          );
           onSelectInvoice?.('new');
-        } else {
-          const openRows = rows
-            .filter(
-              (inv) =>
-                inv.isDeleted !== true &&
-                inv.status === 'open' &&
-                !isEmptyOpenInvoice(inv),
-            )
-            .sort(
-              (a, b) =>
-                ledgerTime(b.paidAt ?? b.finalizedAt ?? b.created) -
-                ledgerTime(a.paidAt ?? a.finalizedAt ?? a.created),
-            );
-          const forPatient =
-            initialPatientId != null
-              ? openRows.filter(
-                  (inv) =>
-                    inv.patientId === initialPatientId ||
-                    (inv.lines ?? []).some((l) => l.patientId === initialPatientId),
-                )
-              : [];
-          next =
-            forPatient.find((inv) => dueOf(inv) > 0.009) ??
-            openRows.find((inv) => dueOf(inv) > 0.009) ??
-            forPatient[0] ??
-            null;
-          if (next) onSelectInvoice?.(next.id);
+          return;
         }
-        if (!cancelled) {
-          setSelected(next);
-          if (next && !isUnsavedInvoice(next) && !rows.some((r) => r.id === next!.id)) {
-            setScoutInvoices([next, ...rows]);
+
+        // One invoice, in parallel with the ledger. The full history hydrates every
+        // past bill before returning, which is what left this pane blank.
+        const directPromise =
+          initialInvoiceId && initialInvoiceId !== 'new'
+            ? getInvoice(initialInvoiceId).catch(() => null)
+            : null;
+        const litePromise = listClientVisitInvoices(clientId, { lite: true });
+
+        if (directPromise) {
+          const direct = await directPromise;
+          if (!cancelled && showGen.current === gen && direct) {
+            hydratedInvoiceIds.current.add(direct.id);
+            setSelected(direct);
+            onSelectInvoice?.(direct.id);
+            setLoading(false);
+          }
+        }
+
+        const lite = await litePromise;
+        if (cancelled) return;
+        setScoutInvoices((rows) =>
+          lite.map((row) => {
+            const richer = rows.find(
+              (r) => r.id === row.id && hydratedInvoiceIds.current.has(r.id),
+            );
+            return richer ?? row;
+          }),
+        );
+        setLoading(false);
+        if (showGen.current !== gen) return;
+
+        if (!directPromise) {
+          const pick = chooseOpenInvoice(lite, initialPatientId);
+          if (pick) {
+            // Draw the bill from the light list, then fill tenders and catalog detail.
+            setSelected(pick);
+            onSelectInvoice?.(pick.id);
+            const full = await getInvoice(pick.id);
+            if (cancelled || showGen.current !== gen) return;
+            hydratedInvoiceIds.current.add(full.id);
+            setSelected(full);
+            setScoutInvoices((rows) => rows.map((r) => (r.id === full.id ? full : r)));
+          }
+        } else {
+          const direct = await directPromise;
+          if (direct && !cancelled && showGen.current === gen) {
+            hydratedInvoiceIds.current.add(direct.id);
+            setSelected(direct);
+            setScoutInvoices((rows) => {
+              const base = rows.length ? rows : lite;
+              if (base.some((r) => r.id === direct.id)) {
+                return base.map((r) => (r.id === direct.id ? direct : r));
+              }
+              return [direct, ...base];
+            });
           }
         }
       } catch (e: unknown) {
-        if (!cancelled) setError(apiErr(e));
+        if (!cancelled && showGen.current === gen) setError(apiErr(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1949,6 +2129,7 @@ export default function ClientFinancialWorkspace({
     setPendingDeleteIds([]);
     setPendingDeleteReasons({});
     setReturnQty({});
+    setReturnToShelf({});
   }, [selected?.id]);
 
   useEffect(() => {
@@ -2216,6 +2397,7 @@ export default function ClientFinancialWorkspace({
     if (q.length < 2) {
       setHits([]);
       setBundleHits([]);
+      setSettledQuery('');
       return;
     }
     let cancelled = false;
@@ -2253,7 +2435,10 @@ export default function ClientFinancialWorkspace({
           }
         })
         .finally(() => {
-          if (!cancelled) setSearching(false);
+          if (!cancelled) {
+            setSearching(false);
+            setSettledQuery(q);
+          }
         });
     }, 220);
     return () => {
@@ -2873,13 +3058,26 @@ export default function ClientFinancialWorkspace({
     setQuery('');
     setHits([]);
     setBundleHits([]);
+    setSettledQuery('');
   };
+
+  useEffect(() => {
+    const id = revealPetIdRef.current;
+    if (id == null || id !== linePatientId) return;
+    revealPetIdRef.current = null;
+    const el = document.querySelector(`[data-charge-pet="${id}"]`);
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    focusChargeSearch();
+  }, [linePatientId, addedSectionPetIds]);
 
   const renderPetChargeSearch = (petId: number, petName: string) => {
     const active = petId === linePatientId;
     return (
       <div className="client-fin__pet-add">
-        <div className="client-fin__search client-fin__search--add client-fin__search--pet">
+        <div
+          className="client-fin__search client-fin__search--add client-fin__search--pet"
+          ref={active ? chargeSearchBoxRef : undefined}
+        >
           <Search size={15} aria-hidden />
           <input
             ref={active ? catalogSearchRef : undefined}
@@ -2892,10 +3090,27 @@ export default function ClientFinancialWorkspace({
             }}
             placeholder={`Add a charge for ${petName}`}
           />
-          {active && searching ? <span className="client-fin__muted">Searching…</span> : null}
         </div>
-        {active && (bundleHits.length || hits.length) ? (
-          <ul className="client-fin__hits">
+        {active ? (
+          <ChargeSearchMenu
+            anchorRef={chargeSearchBoxRef}
+            open={
+              query.trim().length >= 2 &&
+              (searching ||
+                hits.length > 0 ||
+                bundleHits.length > 0 ||
+                settledQuery === query.trim())
+            }
+          >
+            {searching && !hits.length && !bundleHits.length ? (
+              <li className="client-fin__hits-empty">Searching…</li>
+            ) : null}
+            {!searching &&
+            settledQuery === query.trim() &&
+            !hits.length &&
+            !bundleHits.length ? (
+              <li className="client-fin__hits-empty">No matches</li>
+            ) : null}
             {bundleHits.map((bundle) => {
               const choiceCount = bundle.groups.filter(
                 (g) => g.selectionMode === 'choice' || g.selectionMode === 'any',
@@ -2940,7 +3155,7 @@ export default function ClientFinancialWorkspace({
                 </button>
               </li>
             ))}
-          </ul>
+          </ChargeSearchMenu>
         ) : null}
       </div>
     );
@@ -4393,6 +4608,7 @@ export default function ClientFinancialWorkspace({
       setEditing(mode === 'edit');
       setReturning(mode === 'return');
       setReturnQty({});
+      setReturnToShelf({});
       onSelectInvoice?.(next.id);
       await refreshList(next.id);
       setNote(
@@ -4452,7 +4668,7 @@ export default function ClientFinancialWorkspace({
       await discardVisitInvoice(removedId, { deletedByEmployeeId: cashierEmployeeId });
       setSelected(null);
       onSelectInvoice?.(null);
-      const rows = await listClientVisitInvoices(clientId);
+      const rows = await listClientVisitInvoices(clientId, { lite: true });
       setScoutInvoices(rows);
       setNote('Invoice deleted.');
     } catch (e: unknown) {
@@ -4498,7 +4714,9 @@ export default function ClientFinancialWorkspace({
     const items = lines
       .map((line) => {
         const qty = Number(returnQty[line.id] || 0);
-        return { lineId: line.id, qty };
+        return line.catalogItemType === 'inventory'
+          ? { lineId: line.id, qty, backOnShelf: returnToShelf[line.id] !== false }
+          : { lineId: line.id, qty };
       })
       .filter((item) => item.qty > 0);
     if (!items.length) {
@@ -4537,6 +4755,7 @@ export default function ClientFinancialWorkspace({
       );
       if (!next) return;
       setReturnQty({});
+      setReturnToShelf({});
       setReturning(false);
       setSelected(next);
       onSelectInvoice?.(next.id);
@@ -4705,12 +4924,7 @@ export default function ClientFinancialWorkspace({
                               });
                               return;
                             }
-                            setLedgerCreditKey(null);
-                            setSelected(row.scout);
-                            setEvetSelected(null);
-                            setReturning(false);
-                            setEditing(false);
-                            onSelectInvoice?.(row.scout.id);
+                            openScoutInvoice(row.scout);
                           } else if (row.evet) {
                             if (hasDirtySigs) {
                               void appAlert({
@@ -5274,6 +5488,7 @@ export default function ClientFinancialWorkspace({
                       onClick={() => {
                         setReturning(false);
                         setReturnQty({});
+                        setReturnToShelf({});
                         setNote(null);
                       }}
                     >
@@ -5391,8 +5606,22 @@ export default function ClientFinancialWorkspace({
                             aria-label="Add charges for another pet"
                             onChange={(e) => {
                               const next = Number(e.target.value);
-                              if (!next) return;
-                              setAddedSectionPetIds((ids) => (ids.includes(next) ? ids : [...ids, next]));
+                              if (!Number.isFinite(next) || next <= 0) return;
+                              setAddedSectionPetIds((ids) => {
+                                const keep =
+                                  linePatientId != null && !ids.includes(linePatientId)
+                                    ? [linePatientId]
+                                    : [];
+                                return ids.includes(next) ? [...new Set([...keep, ...ids])] : [...keep, ...ids, next];
+                              });
+                              revealPetIdRef.current = next;
+                              if (next === linePatientId) {
+                                document
+                                  .querySelector(`[data-charge-pet="${next}"]`)
+                                  ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                                focusChargeSearch();
+                                return;
+                              }
                               switchChargePet(next);
                             }}
                           >
@@ -5473,7 +5702,11 @@ export default function ClientFinancialWorkspace({
                       </tr>
                     </thead>
                       {displayPetSections.map((section) => (
-                      <tbody key={section.key} className="client-fin__pet-group">
+                      <tbody
+                        key={section.key}
+                        className="client-fin__pet-group"
+                        data-charge-pet={section.patientId ?? undefined}
+                      >
                         {displayPetSections.length > 1 || canEdit ? (
                           <tr className="client-fin__pet-gap" aria-hidden>
                             <td colSpan={invoiceMetaCols + (canRemoveLines ? 1 : 0)} />
@@ -5999,6 +6232,7 @@ export default function ClientFinancialWorkspace({
                             {/* Non-Rx / non-vax inventory: lot stays on the row. Expandable lines keep lots inside. */}
                             {line.trackLots && !mailedLineOrder && !showMeta && !linkedStock.linked ? (
                               <StockLotPicker
+                                forUse
                                 practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                 inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                 branchId={selected?.inventoryBranchId ?? null}
@@ -6134,6 +6368,18 @@ export default function ClientFinancialWorkspace({
                                 }
                                 placeholder={`≤ ${Math.abs(Number(line.qty) || 0)}`}
                               />
+                              {line.catalogItemType === 'inventory' && Number(returnQty[line.id] || 0) > 0 ? (
+                                <label className="client-fin__return-shelf">
+                                  <input
+                                    type="checkbox"
+                                    checked={returnToShelf[line.id] !== false}
+                                    onChange={(e) =>
+                                      setReturnToShelf((prev) => ({ ...prev, [line.id]: e.target.checked }))
+                                    }
+                                  />
+                                  Back on the shelf
+                                </label>
+                              ) : null}
                             </td>
                           ) : null}
                           {canRemoveLines ? (
@@ -6361,6 +6607,7 @@ export default function ClientFinancialWorkspace({
                                 ) : line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
                                   <div className={`client-fin__rx-field client-fin__rx-lot${rxMissing('lot') ? ' is-missing' : ''}`}>
                                     <StockLotPicker
+                                      forUse
                                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                       inventoryItemId={
                                         line.stockInventoryItemId ?? line.catalogItemId ?? null
@@ -7498,6 +7745,7 @@ export default function ClientFinancialWorkspace({
                           onClick={() => {
                             setReturning(false);
                             setReturnQty({});
+                            setReturnToShelf({});
                             setNote(null);
                           }}
                         >

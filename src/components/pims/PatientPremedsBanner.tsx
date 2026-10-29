@@ -5,6 +5,8 @@ import type { ScoutPatientWrite } from '../../api/patients';
 type Props = {
   needsPremeds: boolean;
   note: string | null;
+  /** Who last set it, e.g. "Deirdre F." */
+  by?: string | null;
   onSave: (body: ScoutPatientWrite) => Promise<void>;
 };
 
@@ -12,7 +14,7 @@ type Props = {
  * Top-of-chart "Needs pre-meds for visits". When on, booking a visit for this pet starts
  * with "Needs pre-meds" checked.
  */
-export default function PatientPremedsBanner({ needsPremeds, note, onSave }: Props) {
+export default function PatientPremedsBanner({ needsPremeds, note, by, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note ?? '');
   const [busy, setBusy] = useState(false);
@@ -119,7 +121,16 @@ export default function PatientPremedsBanner({ needsPremeds, note, onSave }: Pro
           </span>
         ) : null}
       </div>
-      {editing ? form : note ? <div className="pims-emr-premeds__note">{note}</div> : null}
+      {editing ? (
+        form
+      ) : note || by ? (
+        <div className="pims-emr-premeds__note">
+          {note}
+          {by ? (
+            <span className="pims-emr-premeds__by">{note ? ` — ${by}` : `Set by ${by}`}</span>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <span className="pims-emr-premeds__error">{error}</span> : null}
     </div>
   );

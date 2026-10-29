@@ -1566,6 +1566,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const isActive = record.isActive === true;
   const alerts = pickStr(record.alerts);
   const connectionNotes = pickStr(record.connectionNotes);
+  const alertsBy = pickStr(record.alertsUpdatedByName);
+  const connectionNotesBy = pickStr(record.connectionNotesUpdatedByName);
   const emailRows = contactEmailRows(record);
   const phoneRows = contactPhoneRows(record);
   const portalAccounts = portalAccountsFromRecord(record);
@@ -1976,6 +1978,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   />
                 </div>
                 {alerts}
+                {alertsBy ? <span className="pims-emr-alert-box__by"> — {alertsBy}</span> : null}
               </div>
             ) : (
               <button
@@ -1996,6 +1999,9 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   />
                 </div>
                 {connectionNotes}
+                {connectionNotesBy ? (
+                  <span className="pims-emr-alert-box__by"> — {connectionNotesBy}</span>
+                ) : null}
               </div>
             ) : (
               <button

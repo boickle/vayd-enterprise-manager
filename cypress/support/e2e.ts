@@ -65,6 +65,12 @@ declare global {
        * Safe to call even when TEST_SUPPORT_KEY is missing.
        */
       cleanUp(refs?: Record<string, unknown>): Chainable<void>;
+
+      /** H-INV: seed the inventory world; yields its ids, lot numbers and employee bearer headers. */
+      seedInventory(options?: Record<string, unknown> | true): Chainable<Record<string, any>>;
+
+      /** H-INV: remove a world returned by seedInventory(). */
+      cleanUpInventory(world: Record<string, unknown>): Chainable<void>;
     }
   }
 }

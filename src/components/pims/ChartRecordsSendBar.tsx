@@ -2,14 +2,19 @@ import { useState } from 'react';
 import { CalendarRange, Mail, Mails, Printer } from 'lucide-react';
 import { ClientEmailComposeModal, type EmailRecipientChoice } from '../ClientEmailComposeModal';
 import { fetchPatientChartDocumentFile } from '../../api/patients';
+import { getIdexxResult } from '../../api/idexx';
 import { listOutsideHospitals, type OutsideHospital } from '../../api/outsideHospitals';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import {
   buildChartRecordsPdf,
+  withoutHandlingSection,
   chartRecordRows,
   htmlToText,
   isFileRow,
+  labReportFromIdexx,
+  recordDetailText,
+  recordProvider,
   recordsPdfFilename,
   type RecordPdfEntry,
 } from '../../utils/chartRecordsPdf';
@@ -31,6 +36,8 @@ type Props = {
   dateEnd: string;
   /** "Show removed entries" is on — removed rows go out too, labelled as removed. */
   includeRemoved?: boolean;
+  /** Signalment, date of birth, microchip — printed under the pet's name. Never alerts. */
+  patientFacts?: string[];
 };
 
 function removedLabel(row: ChartRow): string {
@@ -92,9 +99,11 @@ function rowDate(row: ChartRow): string {
 }
 
 function rowDetail(row: ChartRow): string {
-  if (row.printText) return row.printText;
+  if (row.printText) return recordDetailText(withoutHandlingSection(row.printText));
   const html = row.detailHtml ? htmlToText(row.detailHtml) : '';
-  return [row.detailText?.trim(), html].filter(Boolean).join('\n\n');
+  return recordDetailText(
+    withoutHandlingSection([row.detailText?.trim(), html].filter(Boolean).join('\n\n'))
+  );
 }
 
 function openPdf(blob: Blob, filename: string) {
@@ -129,6 +138,7 @@ export default function ChartRecordsSendBar({
   dateStart,
   dateEnd,
   includeRemoved = false,
+  patientFacts = [],
 }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -184,12 +194,15 @@ export default function ChartRecordsSendBar({
     const notStored: string[] = [];
     const files = picked.filter(isFileRow).length;
     let opened = 0;
-    const textEntry = (row: ChartRow, detail: string): RecordPdfEntry => ({
+    const textEntry = (
+      row: ChartRow,
+      detail: string
+    ): Extract<RecordPdfEntry, { kind: 'text' }> => ({
       kind: 'text',
       date: rowDate(row),
       typeLabel: row.typeLabel,
       description: rowName(row),
-      provider: row.provider,
+      provider: recordProvider(row.provider),
       detail,
     });
     try {
@@ -199,6 +212,16 @@ export default function ChartRecordsSendBar({
             ...textEntry(row, [removedLabel(row), rowDetail(row)].filter(Boolean).join('\n')),
             typeLabel: `${row.typeLabel} — REMOVED`,
           } as RecordPdfEntry);
+          continue;
+        }
+        if (row.idexxResult) {
+          setStatus(`Adding IDEXX results from ${rowDate(row) || 'IDEXX'}`);
+          const result = await getIdexxResult(row.idexxResult.id).catch(() => null);
+          entries.push(
+            result?.categories?.length
+              ? { ...textEntry(row, ''), lab: labReportFromIdexx(result) }
+              : textEntry(row, 'Results are on file at the practice.')
+          );
           continue;
         }
         if (!isFileRow(row)) {
@@ -236,10 +259,24 @@ export default function ChartRecordsSendBar({
           skipped.length ? `Could not open: ${skipped.join('; ')}.` : 'Nothing to include.'
         );
       }
-      const header = `${who} · medical record · printed ${new Date().toLocaleDateString('en-US')}${
-        removedCount > 0 ? ' · includes removed entries' : ''
-      }`;
-      const built = await buildChartRecordsPdf(entries, header, (_done, _total, name) => {
+      const cover = {
+        practice: 'Vet At Your Door',
+        patientName: who,
+        facts: patientFacts,
+        owner: clientLabel && clientLabel !== 'Client' ? clientLabel : '',
+        printedOn: new Date().toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        }),
+        note: [
+          scope === 'range' ? `Entries from ${rangeLabel}` : null,
+          removedCount > 0 ? 'Includes entries marked REMOVED' : null,
+        ]
+          .filter(Boolean)
+          .join('  |  '),
+      };
+      const built = await buildChartRecordsPdf(entries, cover, (_done, _total, name) => {
         setStatus(`Adding ${name}`);
       });
       const missed = [...skipped, ...built.skipped];
