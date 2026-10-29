@@ -33,7 +33,18 @@ type Props = {
   onOpenMessagesHistory?: () => void;
   onOpenEmailHistory?: () => void;
   smsFromLine?: string | null;
-  /** Mark Quo/OpenPhone conversation done after send (forward booking outreach). */
+  /**
+   * Send from this provider's Quo line (practice/VAYD main when they have none).
+   * Prefer this over the shared reminders OpenPhone line for provider-owned outreach.
+   */
+  smsPrimaryProviderId?: number;
+  /** Explicit OpenPhone `from` (e.g. practice main) when there is no provider line. */
+  smsFrom?: string | null;
+  /**
+   * Mark Quo/OpenPhone conversation done after send (non-HOLD outreach such as
+   * care-outreach text offers). Omit for HOLD flows (forward booking, holds,
+   * reschedule / explore alternatives) so the thread stays Open.
+   */
   markInboxDone?: boolean;
   /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
   smsSource?: string;
@@ -63,6 +74,8 @@ export function ClientContactComposeModal({
   onOpenMessagesHistory,
   onOpenEmailHistory,
   smsFromLine,
+  smsPrimaryProviderId,
+  smsFrom,
   markInboxDone,
   smsSource,
   onSent,
@@ -142,9 +155,17 @@ export function ClientContactComposeModal({
     setSending(true);
     setSendError(null);
     try {
+      const explicitFrom = smsFrom?.trim() || undefined;
+      const hasProvider =
+        smsPrimaryProviderId != null && Number.isFinite(smsPrimaryProviderId);
       await sendClientSms(clientId, {
         message: smsMessage.trim(),
-        useRemindersFrom: true,
+        // Provider / practice main when known; otherwise keep prior reminders-line behavior.
+        ...(hasProvider
+          ? { primaryProviderId: smsPrimaryProviderId }
+          : explicitFrom
+            ? { from: explicitFrom }
+            : { useRemindersFrom: true }),
         ...(markInboxDone ? { markInboxDone: true } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
         ...(smsSource ? { source: smsSource } : {}),

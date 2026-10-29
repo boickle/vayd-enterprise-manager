@@ -18,11 +18,14 @@ import { ClientContactComposeModal } from '../components/ClientContactComposeMod
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientEmailHistoryModal } from '../components/ClientEmailHistoryModal';
 import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
+import { fetchAppointmentById } from '../api/appointments';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   CareOutreachPetDetailsButton,
   PatientMembershipHeart,
   type CareOutreachPetDetailsReminderLine,
 } from '../components/CareOutreachPetDetailsButton';
+import { resolveOnMyWaySmsFromLine } from '../utils/onMyWaySmsFromLine';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -551,7 +554,15 @@ export default function CareOutreachPage() {
   const [contactSmsMessage, setContactSmsMessage] = useState('');
   const [contactProviderLastName, setContactProviderLastName] = useState<string | null>(null);
   const [contactCanText, setContactCanText] = useState(false);
+  const [contactSmsPrimaryProviderId, setContactSmsPrimaryProviderId] = useState<
+    number | undefined
+  >(undefined);
+  const [contactSmsFrom, setContactSmsFrom] = useState<string | null>(null);
+  /** HOLD care-outreach follow-up stays Open in Quo; non-HOLD text offers mark Done. */
+  const [contactMarkInboxDone, setContactMarkInboxDone] = useState(false);
   const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
+  const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
+  const [remindersFromLine, setRemindersFromLine] = useState<string | null>(null);
   const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
   const [messagesClientLabel, setMessagesClientLabel] = useState('');
   const [emailHistoryClientId, setEmailHistoryClientId] = useState<number | null>(null);
@@ -672,9 +683,15 @@ export default function CareOutreachPage() {
   }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz, refreshLastOutreach]);
 
   useEffect(() => {
-    void fetchSchedulingOutreachSmsFrom().then((phone) => {
-      if (phone) setSmsFromLine(phone);
-    });
+    void Promise.all([fetchSchedulingOutreachSmsFrom(), fetchPracticeMainPhone(PRACTICE_ID)]).then(
+      ([reminders, main]) => {
+        if (reminders) {
+          setRemindersFromLine(reminders);
+          setSmsFromLine((prev) => prev ?? reminders);
+        }
+        if (main) setPracticeMainPhone(main);
+      },
+    );
   }, []);
 
   const beginClientExit = useCallback((clientKey: string) => {
@@ -929,11 +946,48 @@ export default function CareOutreachPage() {
           ),
         }),
       );
+
+      // HOLD follow-up: appointment provider's Quo line; leave Quo Open.
+      let apptProviderId: number | undefined;
+      let apptQuo: string | null = null;
+      let apptPhone1: string | null = null;
+      try {
+        const appt = await fetchAppointmentById(pending.bookedAppointmentId, {
+          practiceId: PRACTICE_ID,
+        });
+        if (appt?.primaryProvider?.id != null && Number.isFinite(Number(appt.primaryProvider.id))) {
+          apptProviderId = Number(appt.primaryProvider.id);
+        }
+        apptQuo = resolveQuoFromLine({ appointmentPrimaryProvider: appt?.primaryProvider });
+        apptPhone1 = appt?.primaryProvider?.phone1?.trim() || null;
+      } catch {
+        /* keep last-name-only compose; from-line falls back to practice main */
+      }
+      const routing = resolveOnMyWaySmsFromLine({
+        primaryProviderId: apptProviderId,
+        quoFromLine: apptQuo,
+        employeePhone1: apptPhone1,
+        practiceMainPhone,
+        remindersFrom: remindersFromLine,
+      });
+      setContactSmsPrimaryProviderId(routing.payload.primaryProviderId);
+      setContactSmsFrom(routing.payload.from ?? null);
+      setContactMarkInboxDone(false);
+      if (routing.fromLineLabel) setSmsFromLine(routing.fromLineLabel);
+
       setContactClientId(clientId);
       setContactClientLabel(pending.careOutreachClientDisplayName?.trim() || 'Client');
       setContactOpen(true);
     })();
-  }, [postHoldReturn, loading, beginClientExit, practiceTz, canAccessGmailInbox]);
+  }, [
+    postHoldReturn,
+    loading,
+    beginClientExit,
+    practiceTz,
+    canAccessGmailInbox,
+    practiceMainPhone,
+    remindersFromLine,
+  ]);
 
   const listTotalPages = useMemo(
     () => schedulingToolsListTotalPages(grouped.length),
@@ -1004,7 +1058,11 @@ export default function CareOutreachPage() {
     setContactSmsMessage('');
     setContactProviderLastName(null);
     setContactCanText(false);
-  }, []);
+    setContactSmsPrimaryProviderId(undefined);
+    setContactSmsFrom(null);
+    setContactMarkInboxDone(false);
+    if (remindersFromLine) setSmsFromLine(remindersFromLine);
+  }, [remindersFromLine]);
 
   const listPaginationBar = (
     <SchedulingToolsListPagination
@@ -1735,6 +1793,9 @@ export default function CareOutreachPage() {
           onClose={closeContactModal}
           onSent={refreshLastOutreach}
           smsFromLine={smsFromLine}
+          smsPrimaryProviderId={contactSmsPrimaryProviderId}
+          smsFrom={contactSmsFrom}
+          markInboxDone={contactMarkInboxDone}
           smsSource="care_outreach"
           onOpenMessagesHistory={() => {
             setMessagesClientId(contactClientId);

@@ -11,7 +11,8 @@ import {
   type SlotOfferListTab,
   type SlotOfferStatus,
 } from '../api/slotOffers';
-import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
+import { sendClientSms } from '../api/clientSms';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { CareOutreachPetDetailsButton } from '../components/CareOutreachPetDetailsButton';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
@@ -374,7 +375,6 @@ function resolveSlotOfferSmsFromLine(
 ): string | null {
   const fromApi = detail.smsFrom?.trim();
   if (fromApi) return fromApi;
-  if (practiceMainPhone?.trim()) return practiceMainPhone.trim();
   const doctorId = detail.doctorId;
   if (doctorId != null && Number.isFinite(Number(doctorId))) {
     const fromDoctor = resolveQuoFromLine({
@@ -383,6 +383,8 @@ function resolveSlotOfferSmsFromLine(
     });
     if (fromDoctor) return fromDoctor;
   }
+  // Tech team / no Quo line → practice main (not the shared reminders inbox).
+  if (practiceMainPhone?.trim()) return practiceMainPhone.trim();
   return null;
 }
 
@@ -688,6 +690,7 @@ export default function TextedOffersPage() {
     clientId: number;
     clientLabel: string;
     fromLine: string | null;
+    doctorId?: number;
   } | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
@@ -826,7 +829,7 @@ export default function TextedOffersPage() {
   );
 
   useEffect(() => {
-    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
       if (phone) setPracticeMainPhone(phone);
     });
     void fetchPrimaryProviders()
@@ -848,7 +851,15 @@ export default function TextedOffersPage() {
         (detail.clientId != null ? `Client #${detail.clientId}` : 'client');
       setSmsError(null);
       setSmsMessage('');
-      setSmsTarget({ clientId: detail.clientId, clientLabel, fromLine });
+      setSmsTarget({
+        clientId: detail.clientId,
+        clientLabel,
+        fromLine,
+        doctorId:
+          detail.doctorId != null && Number.isFinite(Number(detail.doctorId))
+            ? Number(detail.doctorId)
+            : undefined,
+      });
     },
     []
   );
@@ -859,10 +870,19 @@ export default function TextedOffersPage() {
       setSmsSending(true);
       setSmsError(null);
       try {
+        const explicitFrom = smsTarget.fromLine?.trim() || undefined;
+        const hasDoctor =
+          smsTarget.doctorId != null && Number.isFinite(smsTarget.doctorId);
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
-          useRemindersFrom: true,
           source: 'slot_offer',
+          // Continue on the offer's provider line (not shared reminders); mark Done.
+          ...(explicitFrom
+            ? { from: explicitFrom }
+            : hasDoctor
+              ? { primaryProviderId: smsTarget.doctorId }
+              : { useRemindersFrom: true }),
+          markInboxDone: true,
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });
         closeSmsModal();
