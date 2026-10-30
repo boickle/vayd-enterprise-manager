@@ -46,5 +46,13 @@ assert(
   /\(inactive\)/.test(src),
   'Inactive search hits should be labeled (inactive)'
 );
+assert(
+  /resolveClientIdForPatient/.test(src),
+  'Must resolve client for inactive / no-visit ash drop-offs (search pick, profile, or visits)'
+);
+assert(
+  /clientIdFromPatientPayload/.test(src),
+  'Patient search picks must carry clientId from the search row'
+);
 
 console.log('forwardBookingIncludeInactiveSmoke: ok');

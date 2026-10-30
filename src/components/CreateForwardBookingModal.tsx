@@ -37,12 +37,43 @@ type Props = {
   onCreated: (entry: ForwardBookingEntry) => void;
 };
 
-type PatientPick = { id: number; label: string };
+type PatientPick = { id: number; label: string; clientId?: number };
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+/** First linked owner id from a patient search / profile payload. */
+function clientIdFromPatientPayload(data: unknown): number | undefined {
+  const owners = clientsForPatientSearchRow(data as PatientSearchRow);
+  const raw = owners[0]?.id;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Prefer search-row client, then GET /patients/:id, then any loaded visit. */
+async function resolveClientIdForPatient(args: {
+  selectedPatient: PatientPick;
+  appointments: Appointment[];
+}): Promise<number | null> {
+  const fromPick = args.selectedPatient.clientId;
+  if (fromPick != null && Number.isFinite(fromPick) && fromPick > 0) {
+    return fromPick;
+  }
+  try {
+    const patientData = await fetchPatientByIdStaff(args.selectedPatient.id);
+    const fromProfile = clientIdFromPatientPayload(patientData);
+    if (fromProfile != null) return fromProfile;
+  } catch {
+    /* inactive pets used to 404 on GET; fall through to visits */
+  }
+  for (const a of args.appointments) {
+    const cid = Number(clientIdFromAppointment(a));
+    if (Number.isFinite(cid) && cid > 0) return cid;
+  }
+  return null;
 }
 
 function patientSearchLabel(row: Record<string, unknown>): string {
@@ -208,9 +239,11 @@ export function CreateForwardBookingModal({
               const idRaw = row.id ?? row.patientId;
               const base = patientSearchLabel(row);
               const inactive = !isPatientRowActiveForListing(row);
+              const clientId = clientIdFromPatientPayload(row);
               return {
                 id: Number(idRaw),
                 label: inactive ? `${base} (inactive)` : base,
+                ...(clientId != null ? { clientId } : {}),
               };
             })
             .filter((x) => Number.isFinite(x.id) && x.id > 0)
@@ -283,19 +316,23 @@ export function CreateForwardBookingModal({
     let cancelled = false;
     void (async () => {
       let label = prefill.patientLabel?.trim() || '';
-      if (!label) {
-        try {
-          const data = await fetchPatientByIdStaff(prefill.patientId);
-          if (data && typeof data === 'object') {
-            label = patientSearchLabel(data as Record<string, unknown>);
-          }
-        } catch {
-          /* ignore */
+      let clientId: number | undefined;
+      try {
+        const data = await fetchPatientByIdStaff(prefill.patientId);
+        clientId = clientIdFromPatientPayload(data);
+        if (!label && data && typeof data === 'object') {
+          label = patientSearchLabel(data as Record<string, unknown>);
         }
+      } catch {
+        /* ignore — pick still works; submit may resolve client from visits */
       }
       if (!label) label = `Patient #${prefill.patientId}`;
       if (cancelled) return;
-      const pick = { id: prefill.patientId, label };
+      const pick: PatientPick = {
+        id: prefill.patientId,
+        label,
+        ...(clientId != null ? { clientId } : {}),
+      };
       setSelectedPatient(pick);
       setPatientQuery(label);
       await loadAppointments(
@@ -341,17 +378,12 @@ export function CreateForwardBookingModal({
     setBusy(true);
     setError(null);
     try {
-      let clientId = NaN;
       if (noAssociatedVisit) {
-        try {
-          const patientData = await fetchPatientByIdStaff(selectedPatient.id);
-          const owners = clientsForPatientSearchRow(patientData as PatientSearchRow);
-          const ownerId = owners[0]?.id;
-          if (ownerId != null) clientId = Number(ownerId);
-        } catch {
-          /* ignore */
-        }
-        if (!Number.isFinite(clientId)) {
+        const clientId = await resolveClientIdForPatient({
+          selectedPatient,
+          appointments,
+        });
+        if (clientId == null) {
           setError('Could not resolve the client for this patient.');
           return;
         }
@@ -385,16 +417,13 @@ export function CreateForwardBookingModal({
         (await fetchAppointmentById(selectedAppointment!.id, { practiceId })) ?? selectedAppointment!;
       const apptForPayload: Appointment = { ...selectedAppointment!, ...fullAppt };
 
-      clientId = Number(clientIdFromAppointment(apptForPayload));
-      if (!Number.isFinite(clientId)) {
-        try {
-          const patientData = await fetchPatientByIdStaff(selectedPatient.id);
-          const owners = clientsForPatientSearchRow(patientData as PatientSearchRow);
-          const ownerId = owners[0]?.id;
-          if (ownerId != null) clientId = Number(ownerId);
-        } catch {
-          /* ignore */
-        }
+      let clientId = Number(clientIdFromAppointment(apptForPayload));
+      if (!Number.isFinite(clientId) || clientId <= 0) {
+        const resolved = await resolveClientIdForPatient({
+          selectedPatient,
+          appointments,
+        });
+        if (resolved != null) clientId = resolved;
       }
 
       const providerId = Number(forwardBookingProviderId);
@@ -406,7 +435,7 @@ export function CreateForwardBookingModal({
           bookingNotes: bookingNotes.trim() || null,
           appointmentTypes,
           patientId: selectedPatient.id,
-          clientId: Number.isFinite(clientId) ? clientId : undefined,
+          clientId: Number.isFinite(clientId) && clientId > 0 ? clientId : undefined,
           ...(Number.isFinite(providerId) && providerId > 0
             ? { primaryProviderId: providerId }
             : {}),
