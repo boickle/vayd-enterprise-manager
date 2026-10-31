@@ -144,12 +144,28 @@ export type VisitInvoiceLine = {
   catalogIsDispensable?: boolean;
   /** Catalog Vaccine flag — hide mail-order. */
   catalogIsVaccine?: boolean;
+  /** Catalog Controlled flag — used in hospital, so no mail-order. */
+  catalogIsControlled?: boolean;
+  /** Catalog grams per mL for a controlled drug weighed by bottle. */
+  catalogGramsPerMl?: number | null;
+  /** Catalog unit the bottle is weighed in. */
+  catalogWeightUnit?: 'g' | 'oz' | null;
+  /** Catalog sell unit shown next to the quantity (mL, tablet, …). */
+  catalogSellUnit?: string | null;
+  /** mL of this controlled dose recorded as wasted (drawn up, not given). */
+  controlledWastedMl?: number;
+  /** The charge's doctor's controlled drug location (their safe): where its lot is picked from. */
+  controlledLocation?: { branchId: number; locationId: number; name: string } | null;
   /** Catalog “Allow price change”. Missing/non-catalog lines stay editable. */
   catalogAllowPriceChange?: boolean;
   /** Encounter for the linked order — vaccine dose save path. */
   encounterId?: string | null;
   catalogChangePatientStatusTo?: string | null;
   catalogChangePatientSex?: boolean;
+  /** Acuity already stored on this counter line's prescription. */
+  writtenAcuity?: 'acute' | 'chronic' | null;
+  /** Refill-through date on that prescription, YYYY-MM-DD. */
+  writtenRefillExpiration?: string | null;
   catalogItemId?: number | null;
   catalogItemType?: string | null;
   /** eVet "Show on Invoice" is off: staff see the charge, the client's copy does not. */
@@ -230,6 +246,8 @@ export type VisitInvoice = {
   paidAt: string | null;
   created?: string;
   evetInvoiceId?: number | null;
+  /** Quick list only: charges taken off this bill with a reason. */
+  removedChargeCount?: number;
   evetInvoiceNumber?: number | null;
   /** Practice-scoped Scout invoice number. */
   scoutInvoiceNumber?: number | null;
@@ -1270,7 +1288,7 @@ export async function listVisitRefundPeers(
 export async function returnVisitInvoiceLines(
   invoiceId: string,
   /** `backOnShelf`: stock goes back to the lot it was sold from; false logs it as waste. */
-  items: { lineId: string; qty: number; backOnShelf?: boolean }[],
+  items: { lineId: string; qty: number; backOnShelf?: boolean; returnToLocationId?: number }[],
   opts?: {
     cashierEmployeeId?: number | null;
     refundViaStripe?: boolean;
@@ -1289,6 +1307,56 @@ export async function returnVisitInvoiceLines(
       reason: opts?.reason,
       ...removeDoseParams(opts?.removeDose),
     }
+  );
+  return data;
+}
+
+type RepriceSide = {
+  unitPrice: number;
+  amount: number;
+  tax: number;
+  covered: boolean;
+  /** "$12.00", "covered", or "1 covered + $12.00". */
+  label: string;
+};
+
+/** One line of the Reprice preview: today's membership / discount price for it. */
+export type RepriceRow = {
+  lineId: string;
+  description: string;
+  patientId: number | null;
+  qty: number;
+  current: RepriceSide;
+  next: RepriceSide & { coveredQty: number; listUnit: number };
+  /** kept = priced by hand, left alone. */
+  change: 'lower' | 'higher' | 'same' | 'kept';
+  reason: string;
+  /** Ticked by default: price drops yes, raises no. */
+  selected: boolean;
+};
+
+export type RepricePreview = {
+  invoiceId: string;
+  rows: RepriceRow[];
+  total: number;
+  amountPaid: number;
+};
+
+export async function previewInvoiceReprice(invoiceId: string): Promise<RepricePreview> {
+  const { data } = await http.get<RepricePreview>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/reprice`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function applyInvoiceReprice(
+  invoiceId: string,
+  lineIds: string[]
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/reprice`,
+    { practiceId: pid(), lineIds }
   );
   return data;
 }
@@ -1831,6 +1899,20 @@ export async function startTerminalCheckout(
       targetDeviceId: opts?.targetDeviceId,
       saveCard: opts?.saveCard === true,
     }
+  );
+  return data;
+}
+
+/**
+ * While waiting on the reader: the server checks the payment with Stripe (a slow or missed
+ * webhook would otherwise leave it looking unpaid) and returns the invoice.
+ */
+export async function syncTerminalCheckout(
+  invoiceId: string
+): Promise<{ paid: boolean; invoice: VisitInvoice }> {
+  const { data } = await http.post<{ paid: boolean; invoice: VisitInvoice }>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/checkout/sync`,
+    { practiceId: pid() }
   );
   return data;
 }

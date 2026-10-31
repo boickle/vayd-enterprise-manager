@@ -11,6 +11,7 @@ import {
   type InventoryLotBalance,
   type PracticeBranch,
 } from '../api/branchInventory';
+import { fetchMyOffices } from '../api/permissions';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
@@ -38,8 +39,16 @@ export default function InventoryExpiringReportPage() {
   const [elsewhereBusy, setElsewhereBusy] = useState(false);
 
   useEffect(() => {
-    void listPracticeBranches(practiceId)
-      .then((list) => setBranches(list.filter((b) => b.isActive !== false)))
+    // An inventory manager for her own location sees that office only.
+    void Promise.all([
+      listPracticeBranches(practiceId),
+      fetchMyOffices(practiceId, 'inventory.expiring.view').catch(() => 'all' as const),
+    ])
+      .then(([list, offices]) =>
+        setBranches(
+          list.filter((b) => b.isActive !== false && (offices === 'all' || offices.includes(b.id)))
+        )
+      )
       .catch(() => setBranches([]));
   }, [practiceId]);
 

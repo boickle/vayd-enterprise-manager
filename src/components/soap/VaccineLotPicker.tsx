@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getEmployeeBranches,
+  getUncountedShelfLot,
   listInventoryLots,
   listPracticeBranches,
   type InventoryLotBalance,
@@ -24,7 +25,16 @@ type Props = {
   /** Reason when using a lot with QOH ≤ 0. */
   zeroOverrideReason?: string;
   onZeroOverrideReasonChange?: (reason: string) => void;
+  /**
+   * Offer "Existing stock — shelf not counted yet" when the shelf has no lots (before its first
+   * count). The API refuses it for items that need a real lot # or are controlled.
+   */
+  offerUncountedShelf?: boolean;
+  /** Lot # of the selected lot, so the "no lot recorded" row can be shown once picked. */
+  selectedLotNumber?: string | null;
 };
+
+const SHELF_VALUE = 'shelf';
 
 function todayYmd(): string {
   const now = new Date();
@@ -80,7 +90,11 @@ export default function VaccineLotPicker({
   onSelectLot,
   zeroOverrideReason = '',
   onZeroOverrideReasonChange,
+  offerUncountedShelf = false,
+  selectedLotNumber = null,
 }: Props) {
+  const [shelfLotId, setShelfLotId] = useState<number | null>(null);
+  const [shelfError, setShelfError] = useState<string | null>(null);
   const [providerBranchId, setProviderBranchId] = useState<number | null>(null);
   const [branchLots, setBranchLots] = useState<InventoryLotBalance[]>([]);
   const [otherLots, setOtherLots] = useState<InventoryLotBalance[]>([]);
@@ -249,6 +263,17 @@ export default function VaccineLotPicker({
 
   const selectedLot = selectedLotId != null ? allKnown.get(selectedLotId) ?? null : null;
   const selectedIsZero = selectedLot != null && Number(selectedLot.quantityOnHand) <= 0;
+  // The "no lot recorded" row sits at 0 or below, so the on-hand list leaves it out.
+  const shelfLotShown =
+    selectedLotId != null &&
+    !allKnown.has(selectedLotId) &&
+    (selectedLotId === shelfLotId || selectedLotNumber === 'UNASSIGNED');
+  const offerShelf =
+    offerUncountedShelf &&
+    !shelfLotShown &&
+    preferredLocationId != null &&
+    !loading &&
+    branchLots.length === 0;
 
   return (
     <div className="soap-dose-lot-picker">
@@ -259,12 +284,32 @@ export default function VaccineLotPicker({
           value={selectValue}
           disabled={disabled || loading}
           onChange={(e) => {
+            setShelfError(null);
+            if (e.target.value === SHELF_VALUE) {
+              if (preferredLocationId == null) return;
+              void getUncountedShelfLot(practiceId, inventoryItemId, preferredLocationId)
+                .then((lot) => {
+                  setShelfLotId(lot.id);
+                  onSelectLot({
+                    ...lot,
+                    inventoryItemId,
+                    branchLocationId: preferredLocationId,
+                  } as unknown as InventoryLotBalance);
+                  onZeroOverrideReasonChange?.('');
+                })
+                .catch((err: unknown) =>
+                  setShelfError(err instanceof Error ? err.message : 'Could not use shelf stock')
+                );
+              return;
+            }
             const id = e.target.value ? Number(e.target.value) : null;
             if (id == null || !Number.isFinite(id)) {
               onSelectLot(null);
               onZeroOverrideReasonChange?.('');
               return;
             }
+            // Already on the "no lot recorded" row, which isn't in the on-hand list.
+            if (shelfLotShown && id === selectedLotId) return;
             const lot = allKnown.get(id) ?? null;
             onSelectLot(lot);
             if (!lot || Number(lot.quantityOnHand) > 0) {
@@ -300,6 +345,11 @@ export default function VaccineLotPicker({
               ))}
             </optgroup>
           )}
+          {shelfLotShown ? (
+            <option value={String(selectedLotId)}>Existing stock (no lot recorded)</option>
+          ) : offerShelf ? (
+            <option value={SHELF_VALUE}>Existing stock — shelf not counted yet</option>
+          ) : null}
           {searchOthers && otherLots.length > 0 && (
             <optgroup label="Other branches">
               {otherLots.map((lot) => (
@@ -375,6 +425,7 @@ export default function VaccineLotPicker({
         </p>
       ) : null}
       {error && <p className="soap-dose-error">{error}</p>}
+      {shelfError && <p className="soap-dose-error">{shelfError}</p>}
       <AddInventoryLotModal
         open={addOpen}
         practiceId={practiceId}

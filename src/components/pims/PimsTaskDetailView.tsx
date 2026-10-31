@@ -49,6 +49,7 @@ import { soapPathFromTaskLinks } from '../../utils/soapTask';
 import OrderListTaskPanel from './OrderListTaskPanel';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
 import CallbackJotPanel from './CallbackJotPanel';
+import VisitRefundTaskPanel from './VisitRefundTaskPanel';
 import { taskPanelKind } from '../../utils/taskPanelKind';
 import TaskReassignModal from './TaskReassignModal';
 import TaskRemoveModal from './TaskRemoveModal';
@@ -529,7 +530,11 @@ export default function PimsTaskDetailView({
                 {i > 0 ? <span className="pims-task-detail__subject-sep">·</span> : null}
                 <a
                   className="pims-task-detail__subject-link"
-                  href={linkHref('patient', pet.id) ?? '#'}
+                  href={
+                    panelKind === 'visit_refund'
+                      ? `${linkHref('patient', pet.id)}&focus=membership`
+                      : (linkHref('patient', pet.id) ?? '#')
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -597,13 +602,19 @@ export default function PimsTaskDetailView({
           )}
         </div>
         <p className="pims-task-detail__schedule">
-          <span>
-            <strong>Start</strong> {formatTaskIso(taskStartIso(task))}
-          </span>
-          <span className="pims-task-detail__subject-sep">·</span>
-          <span>
-            <strong>Due</strong> {formatTaskIso(task.dueAt)}
-          </span>
+          {panelKind === 'visit_refund' ? (
+            <span>No deadline — this refund has to happen.</span>
+          ) : (
+            <>
+              <span>
+                <strong>Start</strong> {formatTaskIso(taskStartIso(task))}
+              </span>
+              <span className="pims-task-detail__subject-sep">·</span>
+              <span>
+                <strong>Due</strong> {formatTaskIso(task.dueAt)}
+              </span>
+            </>
+          )}
         </p>
         {task.status === 'done' && task.resolutionNote ? (
           <p className="pims-task-detail__resolution">
@@ -719,6 +730,14 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
+      {panelKind === 'visit_refund' && task.status !== 'done' ? (
+        <VisitRefundTaskPanel
+          task={task}
+          patientId={patientLinks[0]?.entityId ?? null}
+          patientName={patientName}
+        />
+      ) : null}
+
       {panelKind === 'invoice' ? (
         <InvoiceTaskPanel
           task={task}
@@ -739,7 +758,9 @@ export default function PimsTaskDetailView({
 
       {/* Callbacks stay jot-first. Invoice and booking keep charting off the main path. */}
       {showJot ? (
-        panelKind === 'forward_booking' || panelKind === 'invoice' ? (
+        panelKind === 'forward_booking' ||
+        panelKind === 'invoice' ||
+        panelKind === 'visit_refund' ? (
           <details className="pims-fb-task-note">
             <summary>Leave a chart note, reassign, or remove</summary>
             <CallbackJotPanel

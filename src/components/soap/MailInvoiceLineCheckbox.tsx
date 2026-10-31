@@ -46,6 +46,16 @@ export function mailStageLabel(order: MailOrder): string {
   }
 }
 
+/**
+ * The doctor declined every unit of this item on the mail order. The mail team refunds declined
+ * items from the mail queue, so there is nothing to cancel for it.
+ */
+export function mailItemDeclined(order: MailOrder, itemId?: number | null): boolean {
+  if (itemId == null) return false;
+  const forItem = (order.lines || []).filter((l) => l.inventoryItemId === itemId);
+  return forItem.length > 0 && forItem.every((l) => l.lineStatus === 'rejected');
+}
+
 /** Which part of the mail flow this item is sitting in, for the pill color. */
 export function mailStageTone(order: MailOrder): 'wait' | 'go' | 'done' {
   if (isMailOrderShipped(order)) return 'done';
@@ -394,8 +404,8 @@ export default function MailInvoiceLineCheckbox({
   }, [invoiceId, line.id, line.catalogItemId, line.catalogItemType]);
 
   if (!isInventoryLine(line)) return null;
-  // Vaccines are given in clinic — never offer mail-order.
-  if (line.catalogIsVaccine === true) return null;
+  // Vaccines are given in clinic and controlled drugs are used in hospital — never offer mail-order.
+  if (line.catalogIsVaccine === true || line.catalogIsControlled === true) return null;
 
   const on = order != null;
   const shipped = order ? isMailOrderShipped(order) : false;
@@ -502,7 +512,9 @@ export default function MailInvoiceLineCheckbox({
                 {order.cancelResolvedByName ? ` (${order.cancelResolvedByName})` : ''}
               </span>
             ) : null}
-            {!pending && !canWithdraw && order.status !== 'picked_up' ? (
+            {!pending && mailItemDeclined(order, line.catalogItemId) ? (
+              <span className="mail-mode__detail">Refunded by the mail team — nothing to cancel</span>
+            ) : !pending && !canWithdraw && order.status !== 'picked_up' ? (
               <button
                 type="button"
                 className="mail-mode__link"
@@ -529,10 +541,11 @@ export default function MailInvoiceLineCheckbox({
           onClose={() => setAskCancel(false)}
           onSubmit={async (reason, note) => {
             try {
+              // Just this item: on a multi-item order it is split off and cancelled alone.
               const next = await requestMailOrderCancellation(
                 VISIT_WORKFLOW_PRACTICE_ID,
                 order.id,
-                { reason, note }
+                { reason, note, inventoryItemId: line.catalogItemId ?? null }
               );
               setOrder(next);
               setAskCancel(false);

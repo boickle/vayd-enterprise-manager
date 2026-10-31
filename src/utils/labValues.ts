@@ -59,6 +59,32 @@ export function formatLabRange(element: LabFormElement): string {
   return element.units ? `${range} ${element.units}` : range;
 }
 
+/** A row is answered when it has a value or a comment. Whitespace does not count. */
+export function labRowHasAnswer(
+  value: string | null | undefined,
+  comments: string | null | undefined,
+): boolean {
+  return Boolean(value?.trim() || comments?.trim());
+}
+
+/** Rows still blank when someone tries to mark the panel done. */
+export function missingLabResultRows(
+  elements: LabFormElement[],
+  draft: Record<string, { value?: string | null; comments?: string | null } | undefined>,
+): LabFormElement[] {
+  return elements.filter(
+    (el) => !labRowHasAnswer(draft[el.key]?.value, draft[el.key]?.comments),
+  );
+}
+
+/** Summary forms store rich text. An empty editor is still a paragraph of markup. */
+export function labSummaryHasText(summary: string | null | undefined): boolean {
+  return (summary ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .trim().length > 0;
+}
+
 /** Name of whoever ran the lab, or '' when it has not been resulted yet. */
 export function resultedByLabel(result: {
   resultedBy?: { firstName?: string | null; lastName?: string | null } | null;

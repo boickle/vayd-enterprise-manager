@@ -32,7 +32,7 @@ import { getEuthanasiaConsentStatus } from '../api/consent';
 import { isEuthanasiaAppointment } from '../utils/euthanasiaFutureAppointments';
 import {
   deathWrapUpAlreadyAccepted,
-  deathWrapUpHasWork,
+  deathWrapUpTriggeredByInvoice,
   markDeathWrapUpAccepted,
   previewDeathWrapUp,
   type DeathWrapUpPreview,
@@ -78,6 +78,8 @@ export default function VisitCheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [deathWrapUp, setDeathWrapUp] = useState<DeathWrapUpPreview | null>(null);
   const deathWrapUpRequestedRef = useRef(false);
+  /** Euthanasia appointment or consent on file; null until checked. */
+  const [isDeathVisit, setIsDeathVisit] = useState<boolean | null>(null);
   const soapPath = `/schedule/soap/${appointmentId}/${patientId}${
     clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
   }`;
@@ -181,11 +183,7 @@ export default function VisitCheckoutPage() {
     invoice?.status === 'paid' || invoice?.status === 'finalized';
 
   useEffect(() => {
-    if (!invoiceIsPaid || !Number.isFinite(appointmentId) || !Number.isFinite(patientId)) {
-      return;
-    }
-    if (deathWrapUpAlreadyAccepted(appointmentId, patientId)) return;
-    if (deathWrapUpRequestedRef.current) return;
+    if (!Number.isFinite(appointmentId) || !Number.isFinite(patientId)) return;
     let cancelled = false;
     void (async () => {
       const [appt, consent] = await Promise.all([
@@ -194,14 +192,32 @@ export default function VisitCheckoutPage() {
         }).catch(() => null),
         getEuthanasiaConsentStatus(appointmentId, patientId).catch(() => null),
       ]);
-      const isDeathVisit =
-        Boolean(invoice?.isEuthanasiaPrepay) ||
-        isEuthanasiaAppointment(appt) ||
-        Boolean(consent?.isEuthanasia) ||
-        Boolean(consent?.invite) ||
-        Boolean(consent?.response);
       if (cancelled) return;
-      if (!isDeathVisit) {
+      setIsDeathVisit(
+        isEuthanasiaAppointment(appt) ||
+          Boolean(consent?.isEuthanasia) ||
+          Boolean(consent?.invite) ||
+          Boolean(consent?.response)
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appointmentId, patientId]);
+
+  useEffect(() => {
+    if (!invoiceIsPaid || !Number.isFinite(appointmentId) || !Number.isFinite(patientId)) {
+      return;
+    }
+    if (deathWrapUpAlreadyAccepted(appointmentId, patientId)) return;
+    if (deathWrapUpRequestedRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      // Only a charge that changes this pet's status (e.g. Euthanized) means the pet is gone. A
+      // euthanasia visit can end without one, so the visit type alone never asks to stop the
+      // pet's memberships and reminders (owner decision, Oct 30, 2026).
+      const invoiceMakesInactive = deathWrapUpTriggeredByInvoice(invoice, patientId);
+      if (!invoiceMakesInactive) {
         deathWrapUpRequestedRef.current = true;
         return;
       }
@@ -218,15 +234,14 @@ export default function VisitCheckoutPage() {
       }).catch(() => null);
       if (cancelled) return;
       deathWrapUpRequestedRef.current = true;
-      if (!deathWrapUpHasWork(preview)) return;
       setDeathWrapUp(preview);
     })();
     return () => {
       cancelled = true;
     };
   }, [
+    invoice,
     invoiceIsPaid,
-    invoice?.isEuthanasiaPrepay,
     appointmentId,
     patientId,
     roster,
@@ -319,6 +334,7 @@ export default function VisitCheckoutPage() {
             onInvoiceShouldRefresh={() => void refreshInvoice()}
             onOrderRemoved={() => void refreshInvoice()}
             onOpenEuthanasiaPrepay={() => navigate(soapPath)}
+            membershipEndsPatientIds={isDeathVisit ? [patientId] : undefined}
             focusOrderId={focusOrderId}
             rxLabel={{
               patientId,

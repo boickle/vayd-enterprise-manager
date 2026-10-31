@@ -185,17 +185,24 @@ export default function NavbarScheduleHorizontalNav() {
     [roles]
   );
   const canManageMembershipPlans = useCan('membership.plan.manage');
+  // The catalog is for staff who use the price list; the mail order roles don't (owner decision,
+  // Oct 30, 2026).
+  const holdsCatalog = useCan('catalog.view');
+  const canSeeCatalog = showAdminTab || holdsCatalog;
 
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
     keys.push('scheduling');
-    if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory', 'labs');
+    if (SHOW_NAV_CATALOG) {
+      if (canSeeCatalog) keys.push('catalog');
+      keys.push('inventory', 'labs');
+    }
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
     else if (canManageMembershipPlans) keys.push('settings');
     return keys;
-  }, [homeTab, showAdminTab, canManageMembershipPlans]);
+  }, [homeTab, showAdminTab, canManageMembershipPlans, canSeeCatalog]);
 
   const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);

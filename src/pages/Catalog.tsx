@@ -57,6 +57,7 @@ import RecommendedAbcInfo from '../components/inventory/RecommendedAbcInfo';
 import { listPatientStatuses, type PatientStatusRow } from '../api/patientStatuses';
 import {
   listPracticeBranches,
+  listBranchPriceOverrides,
   getInventoryBranchStock,
   upsertInventoryBranchStock,
   postInventoryMovement,
@@ -86,6 +87,7 @@ import TaxLevelSelect, {
 } from '../components/catalog/TaxLevelSelect';
 import CategorySelect from '../components/catalog/CategorySelect';
 import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
+import { clientUnitPrice, priceVariants, type PriceVariant } from '../utils/catalogPriceList';
 import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './Catalog.css';
@@ -443,9 +445,18 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const { can } = usePermissions();
   const canCreateItem = can('catalog.item.create');
   const canEditItem = can('catalog.item.edit');
+  /**
+   * Anyone who can't edit the catalog gets the price list: client prices only, no cost, markup,
+   * fee, vendor or item details (owner decision, Oct 30, 2026).
+   */
+  const priceListOnly = !canEditItem;
   const practiceId = useMemo(() => resolvePracticeId(token), [token]);
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  /** Branch prices by `${entityType}:${id}`, for the "differs at…" notes in the list. */
+  const [branchOverridesByItem, setBranchOverridesByItem] = useState<
+    Map<string, Array<{ branchName: string; override: BranchPriceOverride }>>
+  >(new Map());
   const [branchId, setBranchId] = useState<number | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -774,6 +785,30 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [itemImageVersion, setItemImageVersion] = useState(0);
   const [imageUploading, setImageUploading] = useState(false);
   const itemImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Every branch's own prices, so the list can say where an item costs something different.
+  useEffect(() => {
+    if (!branches.length) return;
+    let cancelled = false;
+    void Promise.all(
+      branches.map((b) =>
+        listBranchPriceOverrides(practiceId, b.id)
+          .then((rows) => rows.map((override) => ({ branchName: b.name, override })))
+          .catch(() => [])
+      )
+    ).then((perBranch) => {
+      if (cancelled) return;
+      const map = new Map<string, Array<{ branchName: string; override: BranchPriceOverride }>>();
+      for (const row of perBranch.flat()) {
+        const key = `${row.override.entityType}:${row.override.entityId}`;
+        map.set(key, [...(map.get(key) ?? []), row]);
+      }
+      setBranchOverridesByItem(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [branches, practiceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1166,7 +1201,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
 
   useEffect(() => {
     const q = searchQuery.trim();
-    if ((!q && !showAllItems) || typeFilter === 'bundle') {
+    // Price-list users see bundles in this list; editors open the bundle view instead.
+    if ((!q && !showAllItems) || (typeFilter === 'bundle' && !priceListOnly)) {
       setSearchResults([]);
       setBundleHits([]);
       setSearchError(null);
@@ -1179,8 +1215,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setSearchError(null);
       try {
         const [rows, bundles] = await Promise.all([
-          fetchCatalogPage(0, CATALOG_PAGE_SIZE),
-          typeFilter === 'all'
+          typeFilter === 'bundle'
+            ? Promise.resolve([] as Awaited<ReturnType<typeof fetchCatalogPage>>)
+            : fetchCatalogPage(0, CATALOG_PAGE_SIZE),
+          typeFilter === 'all' || typeFilter === 'bundle'
             ? listBundles({
                 kind: 'bundle',
                 includeArchived: showArchived,
@@ -1217,7 +1255,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       }
     }, 300);
     return () => window.clearTimeout(t);
-  }, [searchQuery, showAllItems, showArchived, typeFilter, fetchCatalogPage]);
+  }, [searchQuery, showAllItems, showArchived, typeFilter, fetchCatalogPage, priceListOnly]);
 
   async function loadMoreCatalogRows() {
     const seq = searchSeq.current;
@@ -2406,7 +2444,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   );
 
   // Bundles are their own store rather than rows in the item search, so they get their own view.
-  if (typeFilter === 'bundle') {
+  if (typeFilter === 'bundle' && !priceListOnly) {
     return (
       <div className="settings-section">
         <div className="settings-form-group" style={{ marginBottom: 24 }}>
@@ -2530,7 +2568,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 onClick={() => {
                   setCreateError(null);
                   setCreateForm(EMPTY_INVENTORY_CREATE);
-                  setCreateType(typeFilter === 'all' ? 'inventory' : typeFilter);
+                  setCreateType(typeFilter === 'all' || typeFilter === 'bundle' ? 'inventory' : typeFilter);
                   setCreateOpen(true);
                 }}
               >
@@ -2593,14 +2631,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 <tr>
                   {bulkSelectMode && <th className="inv-catalog-results__th-narrow" />}
                   <th>Item</th>
-                  <th>Manufacturer</th>
-                  <th>Vendor</th>
-                  <th className="inv-catalog-results__th-num">Cost</th>
-                  <th className="inv-catalog-results__th-num">Markup</th>
-                  <th className="inv-catalog-results__th-num">Price</th>
-                  <th className="inv-catalog-results__th-num" title="Service fee">
-                    Fee
-                  </th>
+                  {priceListOnly ? (
+                    <th className="inv-catalog-results__th-num">Client price</th>
+                  ) : (
+                    <>
+                      <th>Manufacturer</th>
+                      <th>Vendor</th>
+                      <th className="inv-catalog-results__th-num">Cost</th>
+                      <th className="inv-catalog-results__th-num">Markup</th>
+                      <th className="inv-catalog-results__th-num">Price</th>
+                      <th className="inv-catalog-results__th-num" title="Service fee">
+                        Fee
+                      </th>
+                    </>
+                  )}
                   <th>Unit</th>
                   <th>Status</th>
                   <th className="inv-catalog-results__th-actions">
@@ -2612,10 +2656,15 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 {bundleHits.map((bundle) => (
                   <tr
                     key={`bundle-${bundle.id}`}
-                    onClick={() => {
-                      setFocusBundleId(bundle.id);
-                      setTypeFilter('bundle');
-                    }}
+                    onClick={
+                      priceListOnly
+                        ? undefined
+                        : () => {
+                            setFocusBundleId(bundle.id);
+                            setTypeFilter('bundle');
+                          }
+                    }
+                    style={priceListOnly ? { cursor: 'default' } : undefined}
                   >
                     {bulkSelectMode ? <td /> : null}
                     <td>
@@ -2634,14 +2683,24 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         </div>
                       </div>
                     </td>
-                    <td className="inv-catalog-results__empty">—</td>
-                    <td className="inv-catalog-results__empty">—</td>
-                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
-                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
-                    <td className="inv-catalog-results__td-num">
-                      {bundle.price != null ? formatUsd(bundle.price) : '—'}
-                    </td>
-                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                    {priceListOnly ? (
+                      <td className="inv-catalog-results__td-num">
+                        {bundle.price != null && Number(bundle.price) > 0
+                          ? formatUsd(bundle.price)
+                          : 'Priced by item'}
+                      </td>
+                    ) : (
+                      <>
+                        <td className="inv-catalog-results__empty">—</td>
+                        <td className="inv-catalog-results__empty">—</td>
+                        <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                        <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                        <td className="inv-catalog-results__td-num">
+                          {bundle.price != null ? formatUsd(bundle.price) : '—'}
+                        </td>
+                        <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                      </>
+                    )}
                     <td className="inv-catalog-results__empty">—</td>
                     <td>
                       <span
@@ -2676,6 +2735,34 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       ? (row.inventoryItem as InventoryItem | undefined)?.vendorName
                       : null;
                   const price = Number(row.price);
+                  const entity = catalogEntity(row) as Record<string, unknown> | null;
+                  const baseMoney = {
+                    price: Number.isFinite(price) ? price : 0,
+                    cost,
+                    serviceFee: catalogServiceFee(row),
+                    minimumPrice:
+                      itemType === 'inventory' ? toMoneyNumber(entity?.minimumPrice) : 0,
+                  };
+                  const variants: PriceVariant[] =
+                    itemId != null
+                      ? priceVariants({
+                          itemType,
+                          base: baseMoney,
+                          onlineStorePrice:
+                            itemType === 'inventory'
+                              ? (entity?.onlineStorePrice as number | string | null | undefined)
+                              : null,
+                          branchOverrides:
+                            branchOverridesByItem.get(
+                              `${itemTypeToEntityType(itemType)}:${itemId}`
+                            ) ?? [],
+                        })
+                      : [];
+                  const variantNote = variants.length ? (
+                    <span className="inv-catalog-results__code" style={{ display: 'block' }}>
+                      {variants.map((v) => `${v.label} ${formatUsd(v.price)}`).join(' · ')}
+                    </span>
+                  ) : null;
                   return (
                     <tr
                       key={`${itemType}-${itemId}-${i}`}
@@ -2686,11 +2773,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           : undefined
                       }
                       onClick={(e) => {
+                        if (priceListOnly) return;
                         const el = e.target as HTMLElement;
                         if (el.closest('button, input, label')) return;
                         if (itemId == null) return;
                         setSelected({ itemType, itemId, label: row.name });
                       }}
+                      style={priceListOnly ? { cursor: 'default' } : undefined}
                     >
                       {bulkSelectMode && (
                         <td>
@@ -2719,26 +2808,36 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           </div>
                         </div>
                       </td>
-                      <td className={manufacturer ? undefined : 'inv-catalog-results__empty'}>
-                        {manufacturer || '—'}
-                      </td>
-                      <td className={vendor ? undefined : 'inv-catalog-results__empty'}>
-                        {vendor || '—'}
-                      </td>
-                      <td className="inv-catalog-results__td-num">{formatUsd(cost)}</td>
-                      <td className="inv-catalog-results__td-num">{catalogMarkupPct(row.price, cost)}</td>
-                      <td
-                        className={`inv-catalog-results__td-num${
-                          Number.isFinite(price) && price < 0
-                            ? ' inv-catalog-results__td-num--neg'
-                            : ''
-                        }`}
-                      >
-                        {formatUsd(price)}
-                      </td>
-                      <td className="inv-catalog-results__td-num">
-                        {formatUsd(catalogServiceFee(row))}
-                      </td>
+                      {priceListOnly ? (
+                        <td className="inv-catalog-results__td-num">
+                          {formatUsd(clientUnitPrice(itemType, baseMoney))}
+                          {variantNote}
+                        </td>
+                      ) : (
+                        <>
+                          <td className={manufacturer ? undefined : 'inv-catalog-results__empty'}>
+                            {manufacturer || '—'}
+                          </td>
+                          <td className={vendor ? undefined : 'inv-catalog-results__empty'}>
+                            {vendor || '—'}
+                          </td>
+                          <td className="inv-catalog-results__td-num">{formatUsd(cost)}</td>
+                          <td className="inv-catalog-results__td-num">{catalogMarkupPct(row.price, cost)}</td>
+                          <td
+                            className={`inv-catalog-results__td-num${
+                              Number.isFinite(price) && price < 0
+                                ? ' inv-catalog-results__td-num--neg'
+                                : ''
+                            }`}
+                          >
+                            {formatUsd(price)}
+                            {variantNote}
+                          </td>
+                          <td className="inv-catalog-results__td-num">
+                            {formatUsd(catalogServiceFee(row))}
+                          </td>
+                        </>
+                      )}
                       <td className="inv-catalog-results__unit">{catalogSellUnit(row)}</td>
                       <td>
                         <span

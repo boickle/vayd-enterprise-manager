@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Camera,
   ClipboardCheck,
   Eye,
   EyeOff,
@@ -26,6 +27,7 @@ import {
 } from '../../api/soapScribe';
 import { useAuth } from '../../auth/useAuth';
 import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
+import { useCameraCaptureAvailable } from '../../utils/cameraCapture';
 import { extractTextFromUpload } from '../../utils/extractUploadText';
 import RecordReviewWorkspace from './RecordReviewWorkspace';
 import './RecordDocumentsReview.css';
@@ -108,6 +110,47 @@ function kindOf(
   return 'other';
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  md: 'text/plain',
+  html: 'text/html',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+/** iPhone photos often arrive with a blank type. The API rejects those. */
+function withMime(file: File): File {
+  const ext = file.name.toLowerCase().split('.').pop() ?? '';
+  const mime = MIME_BY_EXT[ext];
+  if (!mime) return file;
+  if (file.type && file.type !== 'application/octet-stream') return file;
+  return new File([file], file.name, { type: mime, lastModified: file.lastModified });
+}
+
+function nameCameraFile(file: File): File {
+  const stamp = new Date().toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const ext = (file.name.toLowerCase().split('.').pop() ?? 'jpg').replace(/[^a-z0-9]/g, '');
+  const safeExt = ext.length >= 2 && ext.length <= 5 ? ext : 'jpg';
+  const typed = file.type && file.type !== 'application/octet-stream' ? file.type : '';
+  return withMime(new File([file], `Photo ${stamp}.${safeExt}`, { type: typed }));
+}
+
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -151,6 +194,8 @@ export default function RecordDocumentsReview({
   const existingMode = documentIds != null;
   const pid = Number(patientId);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const canTakePhoto = useCameraCaptureAvailable();
   const urlsRef = useRef<Set<string>>(new Set());
   const [items, setItems] = useState<DocItem[]>([]);
   const [summary, setSummary] = useState('');
@@ -261,7 +306,8 @@ export default function RecordDocumentsReview({
     setFlash(null);
     const tooBig: string[] = [];
     const added: DocItem[] = [];
-    for (const file of Array.from(list)) {
+    for (const raw of Array.from(list)) {
+      const file = withMime(raw);
       if (file.size > MAX_FILE_BYTES) {
         tooBig.push(file.name);
         continue;
@@ -286,6 +332,7 @@ export default function RecordDocumentsReview({
     }
     if (tooBig.length) setError(`Larger than 25 MB, not added: ${tooBig.join(', ')}.`);
     if (inputRef.current) inputRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
   };
 
   const removeItem = (item: DocItem) => {
@@ -600,41 +647,65 @@ export default function RecordDocumentsReview({
       </div>
 
       {existingMode ? null : (
-        <label
-          className={`rdr__drop${dragOver ? ' is-drop' : ''}${disabled ? ' is-disabled' : ''}`}
-          onDragEnter={(e) => {
-            e.preventDefault();
-            if (!disabled) setDragOver(true);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            if (!disabled) setDragOver(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            if (!disabled) addFiles(e.dataTransfer.files);
-          }}
-        >
-          <Upload size={16} aria-hidden />
-          <span>
-            {dragOver ? 'Drop to add' : items.length ? 'Add more files' : 'Choose files'}
-            <em> or drag them here · PDF, images, text, or Word · up to 25 MB each</em>
-          </span>
-          <input
-            ref={inputRef}
-            type="file"
-            hidden
-            multiple
-            accept={ACCEPT}
-            disabled={disabled}
-            onChange={(e) => addFiles(e.currentTarget.files)}
-          />
-        </label>
+        <div className="rdr__sources">
+          <label
+            className={`rdr__drop${dragOver ? ' is-drop' : ''}${disabled ? ' is-disabled' : ''}`}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              if (!disabled) setDragOver(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (!disabled) setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (!disabled) addFiles(e.dataTransfer.files);
+            }}
+          >
+            <Upload size={16} aria-hidden />
+            <span>
+              {dragOver ? 'Drop to add' : items.length ? 'Add more files' : 'Choose files'}
+              <em>
+                {canTakePhoto ? '' : ' or drag them here'}
+                {' · PDF, images, text, or Word · up to 25 MB each'}
+              </em>
+            </span>
+            <input
+              ref={inputRef}
+              type="file"
+              hidden
+              multiple
+              accept={ACCEPT}
+              disabled={disabled}
+              onChange={(e) => addFiles(e.currentTarget.files)}
+            />
+          </label>
+          {canTakePhoto ? (
+            <label className={`rdr__camera${disabled ? ' is-disabled' : ''}`}>
+              <Camera size={16} aria-hidden />
+              Take a photo
+              <input
+                ref={cameraRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+                disabled={disabled}
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  if (file) addFiles([nameCameraFile(file)]);
+                  else if (cameraRef.current) cameraRef.current.value = '';
+                }}
+              />
+            </label>
+          ) : null}
+        </div>
       )}
 
       {error ? <p className="rdr__error">{error}</p> : null}

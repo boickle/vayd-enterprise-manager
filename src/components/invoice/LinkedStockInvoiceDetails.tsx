@@ -13,6 +13,8 @@ type Props = {
   locationId?: number | null;
   disabled?: boolean;
   onSelectLot: (lot: InventoryLotBalance | null) => void;
+  /** Offer "Existing stock — shelf not counted yet" before the shelf's first count (not for vaccines). */
+  offerUncountedShelf?: boolean;
 };
 
 /** Lot picker for the inventory SKU that actually decrements — not the billed service. */
@@ -25,6 +27,7 @@ export default function LinkedStockInvoiceDetails({
   locationId,
   disabled,
   onSelectLot,
+  offerUncountedShelf = false,
 }: Props) {
   const stock = linkedStockFromLine(line, stockDraw);
   if (!stock.linked || stock.stockId == null) return null;
@@ -47,7 +50,9 @@ export default function LinkedStockInvoiceDetails({
         locationId={locationId}
         disabled={disabled}
         selectedLotId={line.inventoryLotBalanceId ?? null}
+        selectedLotNumber={line.lotNumber ?? null}
         onSelectLot={onSelectLot}
+        offerUncountedShelf={offerUncountedShelf}
       />
     </div>
   );

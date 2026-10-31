@@ -7,6 +7,7 @@ import {
   saveLabResult,
   type LabResult,
 } from '../../api/inHouseLabs';
+import { labSummaryHasText, missingLabResultRows } from '../../utils/labValues';
 import './LabResultForm.css';
 
 type Draft = Record<string, { value: string; comments: string }>;
@@ -37,6 +38,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
   const [summary, setSummary] = useState(result.summary ?? '');
   const [saving, setSaving] = useState<'complete' | 'pending' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
 
   const elements = useMemo(() => result.elementsSnapshot ?? [], [result.elementsSnapshot]);
   const isSummary = result.templateMode === 'summary';
@@ -47,15 +49,47 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
   );
 
   function setCell(key: string, field: 'value' | 'comments', next: string) {
-    setDraft((prev) => ({
-      ...prev,
-      [key]: { ...(prev[key] ?? { value: '', comments: '' }), [field]: next },
-    }));
+    const nextDraft: Draft = {
+      ...draft,
+      [key]: { ...(draft[key] ?? { value: '', comments: '' }), [field]: next },
+    };
+    setDraft(nextDraft);
+    if (!missingKeys.length) return;
+    const missing = missingLabResultRows(elements, nextDraft);
+    setMissingKeys(missing.map((el) => el.key));
+    setError(
+      missing.length
+        ? `Enter a value or a comment on each row. Still blank: ${missing.map((el) => el.name).join(', ')}.`
+        : null,
+    );
+  }
+
+  function incompleteMessage(): string | null {
+    if (isSummary) {
+      return labSummaryHasText(summary)
+        ? null
+        : 'Write what you saw before saving the results.';
+    }
+    const missing = missingLabResultRows(elements, draft);
+    if (!missing.length) return null;
+    const names = missing.map((el) => el.name).join(', ');
+    return `Enter a value or a comment on each row. Still blank: ${names}.`;
   }
 
   async function save(status: 'complete' | 'pending') {
+    if (status === 'complete') {
+      const blocked = incompleteMessage();
+      if (blocked) {
+        setError(blocked);
+        setMissingKeys(
+          isSummary ? [] : missingLabResultRows(elements, draft).map((el) => el.key),
+        );
+        return;
+      }
+    }
     setSaving(status);
     setError(null);
+    setMissingKeys([]);
     try {
       const saved = await saveLabResult(result.id, {
         status,
@@ -109,7 +143,10 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
         <div className="lab-result-form__summary">
           <SoapRichTextField
             value={summary}
-            onChange={setSummary}
+            onChange={(next) => {
+              setSummary(next);
+              setError(null);
+            }}
             onBlur={setSummary}
             disabled={readOnly}
             minHeightPx={220}
@@ -131,9 +168,17 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               {elements.map((el) => {
                 const cell = draft[el.key] ?? { value: '', comments: '' };
                 const abnormal = isLabValueAbnormal(el, cell.value);
+                const missing = missingKeys.includes(el.key);
                 const range = formatLabRange(el);
                 return (
-                  <tr key={el.key} className={abnormal ? 'is-abnormal' : undefined}>
+                  <tr
+                    key={el.key}
+                    className={
+                      [abnormal ? 'is-abnormal' : '', missing ? 'is-missing' : '']
+                        .filter(Boolean)
+                        .join(' ') || undefined
+                    }
+                  >
                     <th scope="row">{el.name}</th>
                     <td>
                       {el.valueType === 'select' ? (
@@ -142,6 +187,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                           value={cell.value}
                           disabled={readOnly}
                           aria-label={`${el.name} value`}
+                          aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
                         >
                           <option value="">—</option>
@@ -159,6 +205,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                           value={cell.value}
                           disabled={readOnly}
                           aria-label={`${el.name} value`}
+                          aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
                         />
                       )}
@@ -178,6 +225,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                         value={cell.comments}
                         disabled={readOnly}
                         aria-label={`${el.name} comments`}
+                        aria-invalid={missing || undefined}
                         onChange={(e) => setCell(el.key, 'comments', e.target.value)}
                       />
                     </td>

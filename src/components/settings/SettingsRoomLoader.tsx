@@ -827,6 +827,14 @@ function SettingsRoomLoaderEditor({ practiceId, onMessage }: Props) {
           value={outdoor.pitchCautionHtml}
           onChange={(pitchCautionHtml) => patchOutdoor({ pitchCautionHtml })}
         />
+        <ItemRefList
+          practiceId={practiceId}
+          title="Also counts as already covered"
+          note="Other FeLV products (1-year, 2-year, clinic codes). The pitch is skipped when one of these is on the estimate or in the pet's history."
+          items={outdoor.equivalentItems ?? []}
+          addLabel="Add an item"
+          onChange={(equivalentItems) => patchOutdoor({ equivalentItems })}
+        />
         <HistoryGateEditor
           value={outdoor.history}
           onChange={(history) => patchOutdoor({ history })}
@@ -2159,6 +2167,21 @@ function PanelRuleEditor({
               })),
             ]}
             onChange={(next) => onChange({ alignPackageId: next ? Number(next) : null })}
+          />
+          <NumberField
+            label="Don’t offer if this panel was done in the last ___ months"
+            value={rule.suppressIfDoneWithinMonths ?? null}
+            hint="Declined or voided lines don’t count. Staff answering “labs would be helpful = yes” always shows the panels. Leave blank to always offer."
+            placeholder="always offer"
+            onChange={(suppressIfDoneWithinMonths) => onChange({ suppressIfDoneWithinMonths })}
+          />
+          <ItemRefList
+            practiceId={practiceId}
+            title="Also counts as this panel being done"
+            note="The same panel under another code. The panel’s own choices already count."
+            items={rule.equivalentItems ?? []}
+            addLabel="Add an item"
+            onChange={(equivalentItems) => onChange({ equivalentItems })}
           />
           {canSnap && aligned ? (
             <div className="rl-cfg__snaps">

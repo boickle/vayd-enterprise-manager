@@ -1,10 +1,23 @@
 .renewal-review {
-  max-width: 560px;
+  max-width: 1040px;
   margin: 40px auto;
   padding: 0 20px 64px;
   color: #1b4d3e;
   font-family: inherit;
   line-height: 1.55;
+}
+
+.renewal-review__back {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: #0f766e;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.renewal-review__back:hover {
+  text-decoration: underline;
 }
 
 .renewal-review__logo {
@@ -130,12 +143,13 @@
 
 .renewal-review__move {
   margin: 18px 0;
-  padding: 18px;
-  border: 1px solid #d5e4db;
-  border-radius: 14px;
-  background: #f7fbf8;
+  padding: 22px;
+  border: 1px solid #dbeee6;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(16, 59, 46, 0.06);
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 
 .renewal-review__move label {
@@ -155,13 +169,123 @@
   border: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 8px;
 }
 
 .renewal-review__plans legend {
-  font-weight: 650;
-  margin-bottom: 6px;
+  font-weight: 750;
+  font-size: 1.05rem;
+  margin-bottom: 12px;
+}
+
+.renewal-review__picker {
+  display: grid;
+  gap: 18px;
+}
+
+.renewal-review__billing-kicker {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4b7c6a;
+}
+
+.renewal-review__member-perks {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #e6f7f5;
+  border: 1px solid #b8e8e0;
+  font-size: 14px;
+  color: #0f4a42;
+}
+
+.renewal-review__member-perks strong {
+  color: #0b5d57;
+}
+
+.renewal-review__plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.renewal-review__plan-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 16px 16px;
+  border: 2px solid #dbeee6;
+  border-radius: 16px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  min-height: 100%;
+}
+
+.renewal-review__plan-card:hover {
+  border-color: #0f766e;
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.12);
+}
+
+.renewal-review__plan-card.is-selected {
+  border-color: #0f766e;
+  background: #e6f7f5;
+  box-shadow: 0 12px 28px rgba(15, 118, 110, 0.18);
+  transform: translateY(-2px);
+}
+
+.renewal-review__plan-card.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.renewal-review__plan-card input[type='radio'] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.renewal-review__plan-card-name {
+  display: block;
+  font-weight: 800;
+  font-size: 1.02rem;
+  color: #103b2e;
+  padding-right: 8px;
+}
+
+.renewal-review__plan-card-price {
+  display: block;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #0f766e;
+}
+
+.renewal-review__plan-alt-price {
+  display: block;
+  font-size: 13px;
+  color: #5b7468;
+}
+
+.renewal-review__plan-card-perks {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+  font-size: 13px;
+  color: #4b7c6a;
+  line-height: 1.45;
+}
+
+.renewal-review__plan-card-perks li {
+  margin-bottom: 4px;
+}
+
+.renewal-review__badge--card {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  margin-left: 0;
 }
 
 .renewal-review__move .renewal-review__plan {
@@ -204,23 +328,71 @@
 
 .renewal-review__interval {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+}
+
+.renewal-review__interval--prominent {
+  flex-direction: column;
+}
+
+@media (min-width: 520px) {
+  .renewal-review__interval--prominent {
+    flex-direction: row;
+  }
 }
 
 .renewal-review__interval button {
   flex: 1;
-  padding: 10px;
-  border: 1px solid #c9d8cf;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border: 2px solid #dbeee6;
+  border-radius: 14px;
   background: #fff;
   font: inherit;
   cursor: pointer;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  position: relative;
+}
+
+.renewal-review__interval-title {
+  font-weight: 800;
+  font-size: 1rem;
+  color: #103b2e;
+}
+
+.renewal-review__interval-sub {
+  font-size: 13px;
+  color: #5b7468;
+  font-weight: 500;
+}
+
+.renewal-review__interval-yearly .renewal-review__save-pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.renewal-review__save-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #4fb128;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .renewal-review__interval button.is-selected {
-  border-color: #4fb128;
-  background: #e3f4da;
-  font-weight: 650;
+  border-color: #0f766e;
+  background: #e6f7f5;
+  box-shadow: 0 6px 18px rgba(15, 118, 110, 0.14);
+}
+
+.renewal-review__interval button.is-selected .renewal-review__interval-title {
+  color: #0b5d57;
 }
 
 .renewal-review__interval button:disabled {
@@ -236,14 +408,15 @@
 }
 
 .renewal-review__primary {
-  padding: 12px 18px;
+  padding: 14px 20px;
   border: none;
-  border-radius: 8px;
-  background: #4fb128;
+  border-radius: 12px;
+  background: #0f766e;
   color: #fff;
   font: inherit;
-  font-weight: 650;
+  font-weight: 750;
   cursor: pointer;
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
 }
 
 .renewal-review__primary:disabled {
@@ -272,4 +445,129 @@
 .renewal-review__comparison ul {
   margin: 0 0 0.75rem;
   padding-left: 1.25rem;
+}
+
+/* Same plan cards as portal membership signup. */
+.renewal-review .cp-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  background: #fff;
+}
+.renewal-review .cp-muted {
+  color: rgba(0, 0, 0, 0.62);
+}
+.renewal-review .renewal-plan-card {
+  border: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+  position: relative;
+  overflow: hidden;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.renewal-review .renewal-plan-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.renewal-review .renewal-plan-card:hover {
+  border-color: #0f766e;
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.15);
+}
+.renewal-review .renewal-plan-card.selected {
+  border-color: #0f766e;
+  background: #e6f7f5;
+  box-shadow: 0 14px 32px rgba(15, 118, 110, 0.22);
+}
+.renewal-review .renewal-plan-card.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.renewal-review .cp-card-head {
+  text-align: center;
+  border-radius: 14px;
+  padding: 18px 14px 14px;
+  background: linear-gradient(180deg, #1f2937 0%, #0f172a 100%);
+  color: #fff;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.renewal-review .cp-card-head h3 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.3px;
+  line-height: 1.3;
+}
+.renewal-review .cp-card-head .cp-card-sub {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+}
+.renewal-review .cp-card-price {
+  background: #fff7ed;
+  border-radius: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  padding: 16px;
+  text-align: center;
+  margin-top: 16px;
+}
+.renewal-review .cp-card-price-main {
+  font-size: 28px;
+  font-weight: 800;
+  color: #111827;
+}
+.renewal-review .cp-card-price-main span {
+  font-size: 18px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+.renewal-review .cp-card-price-note {
+  margin-top: 4px;
+  font-size: 13px;
+  color: rgba(17, 24, 39, 0.7);
+}
+.renewal-review .cp-card-includes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.renewal-review .cp-card-includes strong {
+  font-size: 14px;
+}
+.renewal-review .cp-card-includes ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.renewal-review .cp-card-includes li {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.renewal-review .cp-recommended-badge {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: #4fb128;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  box-shadow: 0 4px 12px rgba(79, 177, 40, 0.25);
+  pointer-events: none;
+  z-index: 3;
+}
+.renewal-review .renewal-plan-card:has(.cp-recommended-badge) {
+  padding-top: 42px;
 }

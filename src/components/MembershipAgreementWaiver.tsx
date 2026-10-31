@@ -22,6 +22,11 @@ type Props = {
   onSignatureChange: (signature: string) => void;
   onSignatureDrawingChange: (dataUrl: string) => void;
   disabled?: boolean;
+  /** Fixed agreement text (an emailed agreement shows exactly what was sent). */
+  text?: string;
+  title?: string;
+  /** Instructions above the agreement; null hides them. */
+  hint?: string | null;
 };
 
 export default function MembershipAgreementWaiver({
@@ -33,17 +38,17 @@ export default function MembershipAgreementWaiver({
   onSignatureChange,
   onSignatureDrawingChange,
   disabled = false,
+  text: fixedText,
+  title = 'Membership agreement — client must sign',
+  hint = 'Hand this screen to the owner. They need to read the waiver, check the box, draw their signature, and type their name before we can enroll and charge them ongoing.',
 }: Props) {
-  const text = buildMembershipAgreementText(hours ?? defaultChatHoursOfOperation());
+  const text = fixedText ?? buildMembershipAgreementText(hours ?? defaultChatHoursOfOperation());
   const paragraphs = text.split('\n\n').filter((p) => p.trim());
 
   return (
     <section className="membership-waiver" aria-labelledby="membership-waiver-title">
-      <h3 id="membership-waiver-title">Membership agreement — client must sign</h3>
-      <p className="membership-waiver__hint">
-        Hand this screen to the owner. They need to read the waiver, check the box, draw their
-        signature, and type their name before we can enroll and charge them ongoing.
-      </p>
+      <h3 id="membership-waiver-title">{title}</h3>
+      {hint ? <p className="membership-waiver__hint">{hint}</p> : null}
       <div className="membership-waiver__scroll" tabIndex={0}>
         {paragraphs.map((paragraph, index) => {
           const isHeading =

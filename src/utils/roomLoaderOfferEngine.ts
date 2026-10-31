@@ -243,6 +243,25 @@ export function medicalConcernPanelRules(
   return twoPanel.length > 0 ? [twoPanel[0]] : [];
 }
 
+/** Items that count as "this panel was done": every option's item plus the rule's equivalents. */
+export function panelRuleDoneRefs(rule: RoomLoaderPanelRule): RoomLoaderItemRef[] {
+  return [...(rule.options ?? []).map((o) => o.item), ...(rule.equivalentItems ?? [])].filter(
+    (ref) => !!ref && (ref.itemId != null || !!ref.code)
+  );
+}
+
+/** False when the pet had this panel (or an equivalent) recently enough to skip it. */
+function panelRuleHistoryAllows(rule: RoomLoaderPanelRule, ctx: EngineContext): boolean {
+  const months = rule.suppressIfDoneWithinMonths;
+  if (months == null || ctx.medicalConcern) return true;
+  // History dates are whole days, so count from the start of today: a service exactly N
+  // months ago is inside the window whatever the time of day.
+  const asOf = now(ctx).startOf('day');
+  return !panelRuleDoneRefs(rule).some((ref) =>
+    hadItemWithinMonths(ref, ctx.history, months, asOf)
+  );
+}
+
 /** Panel rules that apply to this pet, in ask order. */
 export function selectPanelRules(
   config: Pick<RoomLoaderConfig, 'panelRules' | 'medicalConcern'>,
@@ -254,6 +273,7 @@ export function selectPanelRules(
   }
   return enabledSpeciesRules(config, ctx.species)
     .filter((rule) => ageWindowMatches(rule.age, ctx.ageMonths))
+    .filter((rule) => panelRuleHistoryAllows(rule, ctx))
     .slice()
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
@@ -411,8 +431,9 @@ export function outdoorPitchFor(
   if (ctx.outdoorAccess !== true) return null;
   const item = outdoor.pitchItem;
   if (!item) return null;
-  if (estimateHasItem(item, ctx.estimateLines)) return null;
-  if (!historyGateAllows(outdoor.history, item, ctx)) return null;
+  const refs = [item, ...(outdoor.equivalentItems ?? [])];
+  if (refs.some((ref) => estimateHasItem(ref, ctx.estimateLines))) return null;
+  if (!refs.every((ref) => historyGateAllows(outdoor.history, ref, ctx))) return null;
   return {
     id: `outdoor_${item.itemType}_${item.itemId}`,
     displayName: outdoor.pitchDisplayName || item.name,

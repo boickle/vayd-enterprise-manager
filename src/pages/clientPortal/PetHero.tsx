@@ -40,6 +40,7 @@ export default function PetHero({
   onCertificate,
   onShop,
   onExploreMembership,
+  onMembershipDetails,
   onLove,
   onProviderBio,
   onEditNickname,
@@ -63,6 +64,8 @@ export default function PetHero({
   onShop: () => void;
   /** Non-members only: opens membership plans. */
   onExploreMembership?: () => void;
+  /** Members: the plan name opens what's included and what's left. */
+  onMembershipDetails?: () => void;
   /** Toggle the owner's "love" on this pet's snapshot. */
   onLove?: () => void;
   onProviderBio: () => void;
@@ -334,11 +337,24 @@ export default function PetHero({
               </button>
             ) : null}
             {membership.planText ? (
-              <span className={`pp-chip ${membership.state === 'active' ? 'pp-chip--soft' : 'pp-chip--sun'}`}>
-                <span className="pp-chip-icon">{membership.state === 'active' ? '💚' : '⏳'}</span>
-                {membership.planText}
-                {membership.state === 'processing' ? ' · processing' : ''}
-              </span>
+              onMembershipDetails ? (
+                <button
+                  type="button"
+                  className={`pp-chip pp-chip--button ${membership.state === 'active' ? 'pp-chip--soft' : 'pp-chip--sun'}`}
+                  onClick={onMembershipDetails}
+                  aria-label={`${membership.planText}. See what's included and what's left.`}
+                >
+                  <span className="pp-chip-icon">{membership.state === 'active' ? '💚' : '⏳'}</span>
+                  {membership.planText}
+                  {membership.state === 'processing' ? ' · processing' : ''}
+                </button>
+              ) : (
+                <span className={`pp-chip ${membership.state === 'active' ? 'pp-chip--soft' : 'pp-chip--sun'}`}>
+                  <span className="pp-chip-icon">{membership.state === 'active' ? '💚' : '⏳'}</span>
+                  {membership.planText}
+                  {membership.state === 'processing' ? ' · processing' : ''}
+                </span>
+              )
             ) : null}
           </div>
         </div>

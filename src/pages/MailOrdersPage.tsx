@@ -1300,7 +1300,7 @@ function MailCancelDecision({
           clientId: String(result.refund.clientId),
           tab: 'financial',
           invoice: result.refund.invoiceId,
-          returnLine: result.refund.lineId,
+          returnLine: (result.refund.lineIds?.length ? result.refund.lineIds : [result.refund.lineId]).join(','),
         });
         if (result.refund.shippingLineId) {
           params.set('returnShipping', result.refund.shippingLineId);

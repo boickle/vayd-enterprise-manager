@@ -16,7 +16,25 @@ import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
 import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
 import StockLotPicker from '../components/inventory/StockLotPicker';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { appPrompt } from '../utils/appDialog';
 import './Settings.css';
+
+/** Need a written explanation, kept on the waste record (owner decision, Oct 30, 2026). */
+export const OTHER_CORRECTION_REASON = 'other_correction';
+export const OTHER_DISPOSAL_METHOD = 'other';
+/** Only for an expired controlled drug. */
+export const REVERSE_DISTRIBUTION_METHOD = 'reverse_distribution';
+
+/** Disposal methods offered for this reason and item. Exported for tests. */
+export function disposalMethodsFor<T extends { code: string }>(
+  methods: T[],
+  reasonCode: string,
+  isControlled: boolean
+): T[] {
+  return methods.filter(
+    (m) => m.code !== REVERSE_DISTRIBUTION_METHOD || (reasonCode === 'expired' && isControlled)
+  );
+}
 
 export default function WasteAdjustPage() {
   const { token } = useAuth() as { token: string | null };
@@ -31,7 +49,15 @@ export default function WasteAdjustPage() {
   const [disposalCode, setDisposalCode] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [results, setResults] = useState<SearchResultItem[]>([]);
-  const [item, setItem] = useState<{ id: number; name: string; trackLots?: boolean } | null>(null);
+  const [item, setItem] = useState<{
+    id: number;
+    name: string;
+    trackLots?: boolean;
+    isControlled?: boolean;
+  } | null>(null);
+  /** Why, for "Other Correction" or an "Other" disposal. */
+  const [reasonExplanation, setReasonExplanation] = useState('');
+  const [disposalExplanation, setDisposalExplanation] = useState('');
   const [qty, setQty] = useState('1');
   const [notes, setNotes] = useState('');
   const [lot, setLot] = useState('');
@@ -80,6 +106,53 @@ export default function WasteAdjustPage() {
   const searchGroups = useStockItemGroups(results, practiceId);
 
   const selectedReason = reasons.find((r) => r.code === reasonCode);
+  const shownMethods = disposalMethodsFor(methods, reasonCode, item?.isControlled === true);
+
+  async function explain(kind: 'reason' | 'disposal', current: string): Promise<string | null> {
+    const text = await appPrompt({
+      title: kind === 'reason' ? 'Explain the other correction' : 'Explain how it was disposed of',
+      message:
+        kind === 'reason'
+          ? 'Say what this correction is for. It is saved with the adjustment and shows in the inventory reports.'
+          : 'Say how this was disposed of. It is saved with the adjustment and shows in the inventory reports.',
+      placeholder: kind === 'reason' ? 'e.g. Count was entered on the wrong shelf' : 'How and where',
+      defaultValue: current,
+      confirmLabel: 'Save explanation',
+      requireReason: true,
+    });
+    const trimmed = text?.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  async function chooseReason(code: string) {
+    if (code === OTHER_CORRECTION_REASON) {
+      const why = await explain('reason', reasonExplanation);
+      if (!why) return;
+      setReasonExplanation(why);
+    }
+    setReasonCode(code);
+  }
+
+  async function chooseDisposal(code: string) {
+    if (code === OTHER_DISPOSAL_METHOD) {
+      const why = await explain('disposal', disposalExplanation);
+      if (!why) return;
+      setDisposalExplanation(why);
+    }
+    setDisposalCode(code);
+  }
+
+  // A choice that's no longer offered (reason or item changed) is cleared.
+  useEffect(() => {
+    if (disposalCode && !shownMethods.some((m) => m.code === disposalCode)) setDisposalCode('');
+  }, [disposalCode, shownMethods]);
+
+  const explanation = [
+    reasonCode === OTHER_CORRECTION_REASON ? reasonExplanation.trim() : '',
+    disposalCode === OTHER_DISPOSAL_METHOD ? disposalExplanation.trim() : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const needsDisposal =
     selectedReason?.requiresDisposalMethod === 'yes' ||
     (selectedReason?.requiresDisposalMethod === 'optional' && !!disposalCode);
@@ -102,6 +175,14 @@ export default function WasteAdjustPage() {
       setError('Choose the lot you are adjusting');
       return;
     }
+    if (reasonCode === OTHER_CORRECTION_REASON && !reasonExplanation.trim()) {
+      setError('Explain the other correction');
+      return;
+    }
+    if (disposalCode === OTHER_DISPOSAL_METHOD && !disposalExplanation.trim()) {
+      setError('Explain how it was disposed of');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -115,6 +196,7 @@ export default function WasteAdjustPage() {
         notes: notes.trim() || null,
         lotNumber: lot.trim() || null,
         inventoryLotBalanceId: lotId,
+        explanation: explanation || null,
       });
       setToast(
         saved?.negativeWarning
@@ -126,6 +208,10 @@ export default function WasteAdjustPage() {
       setNotes('');
       setLot('');
       setLotId(null);
+      setReasonExplanation('');
+      setDisposalExplanation('');
+      if (reasonCode === OTHER_CORRECTION_REASON && reasons[0]) setReasonCode(reasons[0].code);
+      if (disposalCode === OTHER_DISPOSAL_METHOD) setDisposalCode('');
       window.setTimeout(() => setToast(null), saved?.negativeWarning ? 10000 : 2500);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to record');
@@ -164,19 +250,29 @@ export default function WasteAdjustPage() {
             className="btn secondary"
             style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}
             onClick={() => {
-              const apply = (trackLots: boolean, name = g.label) => {
-                setItem({ id: g.stockItemId, name, trackLots });
+              const apply = (trackLots: boolean, name = g.label, isControlled = false) => {
+                setItem({ id: g.stockItemId, name, trackLots, isControlled });
                 setLot('');
                 setLotId(null);
                 setResults([]);
                 setSearchQ('');
               };
               if (g.item) {
-                apply(g.item.trackLots === true, String(g.item.name ?? g.label));
+                apply(
+                  g.item.trackLots === true,
+                  String(g.item.name ?? g.label),
+                  (g.item as { isControlled?: boolean }).isControlled === true
+                );
                 return;
               }
               void loadInventoryItem(practiceId, g.stockItemId)
-                .then((inv) => apply(inv.trackLots === true, String(inv.name ?? g.label)))
+                .then((inv) =>
+                  apply(
+                    inv.trackLots === true,
+                    String(inv.name ?? g.label),
+                    (inv as { isControlled?: boolean }).isControlled === true
+                  )
+                )
                 .catch(() => apply(false));
             }}
           >
@@ -245,27 +341,43 @@ export default function WasteAdjustPage() {
               type="radio"
               name="reason"
               checked={reasonCode === r.code}
-              onChange={() => setReasonCode(r.code)}
+              onChange={() => void chooseReason(r.code)}
             />
             <span>{r.label}</span>
           </label>
         ))}
+        {reasonCode === OTHER_CORRECTION_REASON && reasonExplanation ? (
+          <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+            Why: {reasonExplanation}{' '}
+            <button type="button" style={{ background: "none", border: 0, padding: 0, color: "#0f766e", fontWeight: 600, cursor: "pointer" }} onClick={() => void chooseReason(reasonCode)}>
+              Edit
+            </button>
+          </p>
+        ) : null}
       </fieldset>
 
       {(needsDisposal || selectedReason?.requiresDisposalMethod !== 'no') && (
         <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginTop: 12 }}>
           <legend>Disposal method</legend>
-          {methods.map((m) => (
+          {shownMethods.map((m) => (
             <label key={m.code} className="settings-checkbox-item">
               <input
                 type="radio"
                 name="disposal"
                 checked={disposalCode === m.code}
-                onChange={() => setDisposalCode(m.code)}
+                onChange={() => void chooseDisposal(m.code)}
               />
               <span>{m.label}</span>
             </label>
           ))}
+          {disposalCode === OTHER_DISPOSAL_METHOD && disposalExplanation ? (
+            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+              How: {disposalExplanation}{' '}
+              <button type="button" style={{ background: "none", border: 0, padding: 0, color: "#0f766e", fontWeight: 600, cursor: "pointer" }} onClick={() => void chooseDisposal(disposalCode)}>
+                Edit
+              </button>
+            </p>
+          ) : null}
         </fieldset>
       )}
 

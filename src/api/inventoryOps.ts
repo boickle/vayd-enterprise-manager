@@ -469,6 +469,10 @@ export async function recordWaste(
     notes?: string | null;
     lotNumber?: string | null;
     inventoryLotBalanceId?: number | null;
+    /** Invoice line the dose was drawn for; the controlled log then shows it under that charge. */
+    invoiceLineId?: string | null;
+    /** Required for "Other Correction" and for disposal "Other". */
+    explanation?: string | null;
   }
 ) {
   const { data } = await http.post<{ id: number; negativeWarning?: string | null }>(
@@ -730,17 +734,33 @@ export type ControlledReportLine = {
   quantityMl: number;
   grams: number | null;
   shelfName: string | null;
+  patientId: number | null;
   patientName: string | null;
+  clientId: number | null;
+  clientName: string | null;
+  /** Who entered the charge (or recorded the waste), like Vet Snap's "Log Created By". */
+  loggedByName: string | null;
   invoiceNumber: string | null;
   invoiceId: string | null;
   wasteReason: string | null;
+  /** Disposal method code for waste (e.g. reverse_distribution). */
+  wasteDisposal?: string | null;
+  /** The written why for "Other Correction" or an "Other" disposal. */
+  wasteExplanation?: string | null;
   /** False when a dose came off a shelf other than the doctor's own. */
   fromHomeShelf: boolean;
+  /** The item is a medication (sent home: dispensed); otherwise a dose given is administered. */
+  isMedication?: boolean;
+  /** Set once someone has matched this entry in Vet Snap. */
+  reconciledAt?: string | null;
+  reconciledByName?: string | null;
 };
 
 export type ControlledReportDoctor = {
   employeeId: number | null;
   name: string;
+  /** False when the doctor has no home shelf set, so no dose can be flagged off-shelf. */
+  hasHomeShelf?: boolean;
   totals: ControlledReportTotals[];
   lines: ControlledReportLine[];
 };
@@ -756,6 +776,48 @@ export async function getControlledReport(practiceId: number, fromDate: string, 
   const { data } = await http.get<ControlledReport>(
     `/practice/${practiceId}/inventory-reports/controlled`,
     { params: { fromDate, toDate } }
+  );
+  return data;
+}
+
+/** Mark controlled-log entries as matched in Vet Snap, or undo it. */
+export async function setControlledReconciled(
+  practiceId: number,
+  movementIds: number[],
+  reconciled: boolean
+) {
+  const { data } = await http.post<{ updated: number }>(
+    `/practice/${practiceId}/inventory-reports/controlled/reconciled`,
+    { movementIds, reconciled }
+  );
+  return data;
+}
+
+export type VetSnapPatientRow = {
+  patientId: number;
+  patientName: string;
+  species: string;
+  breed: string;
+  clientId: number | null;
+  clientFirstName: string;
+  clientLastName: string;
+  clientAddress1: string;
+  clientAddress2: string;
+  clientCity: string;
+  clientState: string;
+  clientZipCode: string;
+};
+
+export type VetSnapPatientExport = {
+  fromDate: string;
+  toDate: string;
+  rows: VetSnapPatientRow[];
+};
+
+/** Patients and clients given a controlled drug in the last 14 days, for the Vet Snap import. */
+export async function getVetSnapPatientExport(practiceId: number) {
+  const { data } = await http.get<VetSnapPatientExport>(
+    `/practice/${practiceId}/inventory-reports/controlled/vet-snap-patients`
   );
   return data;
 }

@@ -1,0 +1,174 @@
+/* Laid out like Vet Snap's controlled log so the two can be checked side by side. */
+
+.vs-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 0;
+  border-bottom: 2px solid #7cc4c4;
+}
+
+.vs-tab {
+  appearance: none;
+  border: 1.5px solid #7cc4c4;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #fff;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 10px 22px;
+  cursor: pointer;
+}
+
+.vs-tab.is-on {
+  background: #7cc4c4;
+  color: #fff;
+}
+
+.vs-selectall {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #1e293b;
+}
+
+.vs-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.vs-card {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.vs-card.is-done {
+  background: #f8fafc;
+}
+
+.vs-card input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+}
+
+.vs-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #7cc4c4;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vs-pill.is-done {
+  background: #15803d;
+}
+
+.vs-pill.is-waste {
+  background: #b45309;
+}
+
+.vs-title {
+  margin: 6px 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e3a5f;
+}
+
+.vs-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 6px 24px;
+}
+
+.vs-k {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.vs-v {
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.vs-flag {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9a3412;
+}
+
+.vs-actions {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  min-width: 170px;
+}
+
+.vs-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
+  background: #7cc4c4;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 12px 22px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+  cursor: pointer;
+}
+
+.vs-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vs-done {
+  font-size: 12px;
+  color: #475569;
+  text-align: right;
+}
+
+.vs-undo {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #0f766e;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .vs-card {
+    grid-template-columns: 24px 1fr;
+  }
+  .vs-actions {
+    grid-column: 2;
+    justify-items: start;
+  }
+  .vs-fields {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}

@@ -34,6 +34,13 @@ import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
 } from '../utils/roomLoaderSharps';
+import {
+  EmailNotSentWarning,
+  emailNotSentReasonFromSend,
+  InactivePetNotice,
+  isInactiveCheckInPet,
+  type EmailNotSentReason,
+} from './roomLoader/roomLoaderSendNotices';
 import './RoomLoader.css';
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
@@ -488,6 +495,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   /** True when Update (save without email) request is in progress. */
   const [updatingToClient, setUpdatingToClient] = useState(false);
   /** Send-to-client confirmation modal: email vs SMS, offered on every send including the first. */
+  const [emailNotSent, setEmailNotSent] = useState<EmailNotSentReason | null>(null);
   const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
 
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
@@ -2085,7 +2093,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   function packageDataForClient(): any {
     if (!selectedRoomLoader) return null;
 
-    const patientData = petsWithAppointments.map((item) => {
+    const patientData = sendablePets.map((item) => {
       const { patient, appointments, reminders, client } = item;
       const firstAppt = appointments[0];
       
@@ -2290,7 +2298,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
-    petsWithAppointments.forEach((item) => {
+    sendablePets.forEach((item) => {
       const pid = item.patient.id;
       const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean } = {};
       if (!(appointmentReasons[pid] || '').trim()) {
@@ -2328,7 +2336,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     }
 
     const reminderErrorIds = new Set<number>();
-    petsWithAppointments.forEach((item) => {
+    sendablePets.forEach((item) => {
       (item.reminders || []).forEach((reminderWithPrice) => {
         const reminderId = reminderWithPrice.reminder.id;
         if (!reminderId || removedReminders.has(reminderId)) return;
@@ -2616,12 +2624,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       if (skipEmail) payload.skipEmail = true;
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
-      await http.post('/room-loader/send-to-client', payload);
+      const sendRes = await http.post('/room-loader/send-to-client', payload);
       notifyRoomLoaderSentStatusChanged();
       if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
+      // RL-14: the API answers emailSent:false (with a reason) when no email went out
+      const sendData = sendRes?.data;
+      const notSentReason = emailNotSentReasonFromSend(sendData, { skipEmail, sendViaSms: options?.sendViaSms });
+      if (notSentReason) {
+        setEmailNotSent(notSentReason);
+        return;
+      }
+      setEmailNotSent(null);
       handleCloseModal();
     } catch (error: any) {
       console.error('Error sending to client:', error);
@@ -2909,6 +2925,12 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
   const hasClientWithReceptionEmail = useMemo(
     () => petsWithAppointments.some((item) => isReceptionEmail(item.client?.email)),
+    [petsWithAppointments]
+  );
+
+  // RL-07: inactive pets / cancelled visits are shown on screen but left out of the send
+  const sendablePets = useMemo(
+    () => petsWithAppointments.filter((item) => !isInactiveCheckInPet(item)),
     [petsWithAppointments]
   );
 
@@ -3534,6 +3556,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   borderRadius: '8px',
                 }}
               >
+                {isInactiveCheckInPet(item) && (
+                  <InactivePetNotice petName={displayPatient.name || 'This pet'} />
+                )}
                 <div
                   style={{
                     marginBottom: '25px',
@@ -5349,6 +5374,26 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             </div>
           )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {emailNotSent && (
+        <div className="room-loader-modal-overlay" style={{ zIndex: 10001 }}>
+          <div style={{ background: '#fff', padding: 20, borderRadius: 8, maxWidth: 480, margin: 'auto' }}>
+        <EmailNotSentWarning
+          reason={emailNotSent}
+          canSendBySms={canSendBySms}
+          sending={sendingToClient}
+          onSendBySms={() => {
+            setEmailNotSent(null);
+            void executeSendToClient(false, { sendViaSms: true });
+          }}
+          onDismiss={() => {
+            setEmailNotSent(null);
+            handleCloseModal();
+          }}
+        />
           </div>
         </div>
       )}

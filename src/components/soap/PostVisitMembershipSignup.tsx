@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import {
   executePostVisitSignup,
+  sendPostVisitAgreement,
+  type MembershipAgreementRequest,
   listBundles,
   listPatientMemberships,
   planBillingCadence,
@@ -22,13 +24,12 @@ import {
   type PostVisitSignupPreview,
   type PostVisitSignupResult,
 } from '../../api/memberships';
-import { listClientVisitInvoices, adoptEvetInvoice, VISIT_WORKFLOW_PRACTICE_ID, type VisitInvoice } from '../../api/visitWorkflow';
+import { listClientVisitInvoices, adoptEvetInvoice, type VisitInvoice } from '../../api/visitWorkflow';
 import { fetchClientBillingStaff } from '../../api/clientsStaff';
 import { normalizeInvoicesFromClient, type NormalizedInvoice } from '../../utils/pimsInvoices';
 import { apiErrorMessage } from '../../api/http';
 import { fetchChatHoursOfOperation } from '../../api/chatHoursOfOperation';
 import {
-  businessHoursElapsed,
   cutoffAfterBusinessHoursAgo,
   invoiceInLookback,
 } from '../../utils/businessHoursLookback';
@@ -41,14 +42,11 @@ import {
 import { pickRecommendedPlan, planFitsPet } from '../../utils/membershipAge';
 import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { fetchPatientByIdStaff } from '../../api/patients';
+import { fetchClientInfo } from '../../api/clientPortal';
 import PostVisitCardEntry from './PostVisitCardEntry';
 import MembershipAgreementWaiver, {
   hasDrawnMembershipSignature,
 } from '../MembershipAgreementWaiver';
-import {
-  getPracticeSettings,
-  membershipPostVisitSignupWindowHours,
-} from '../../api/practiceSettings';
 import './PostVisitMembershipSignup.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import { useCan } from '../../permissions/PermissionContext';
@@ -331,10 +329,28 @@ export default function PostVisitMembershipSignup({
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [agreementSignature, setAgreementSignature] = useState('');
   const [agreementSignatureDrawing, setAgreementSignatureDrawing] = useState('');
+  /** Owner at the visit signs here; otherwise the agreement is emailed and signing runs the signup. */
+  const [signMode, setSignMode] = useState<'here' | 'email'>('here');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  /** Past the window (override): staff choose when the link stops working. */
+  const [linkExpires, setLinkExpires] = useState(() => localDateTimeInput(new Date(Date.now() + 24 * 3600 * 1000)));
+  const [sentRequest, setSentRequest] = useState<MembershipAgreementRequest | null>(null);
   const previewSeq = useRef(0);
   const subKeyRef = useRef<string | null>(null);
   /** Blocks double-submit before React re-renders with `running` (FE-PVS-010). */
   const executeLockRef = useRef(false);
+
+  useEffect(() => {
+    if (clientId == null) return;
+    let cancelled = false;
+    void fetchClientInfo(clientId).then((c) => {
+      const email = typeof c?.email === 'string' ? c.email.trim() : '';
+      if (!cancelled && email) setOwnerEmail((prev) => prev || email);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   useEffect(() => {
     if (choosePet) return;
@@ -399,26 +415,16 @@ export default function PostVisitMembershipSignup({
     let cancelled = false;
     void (async () => {
       try {
-        const [rows, settings, hours] = await Promise.all([
-          listPatientMemberships({ patientId: enrollPatientId }),
-          getPracticeSettings(VISIT_WORKFLOW_PRACTICE_ID).catch(() => null),
-          fetchChatHoursOfOperation(currentPracticeId()).catch(() => null),
-        ]);
+        const rows = await listPatientMemberships({ patientId: enrollPatientId });
         if (cancelled) return;
-        const windowHours = membershipPostVisitSignupWindowHours(settings);
         const paid = rows.find((row) => {
           if (row.status !== 'active') return false;
+          if (row.visitRefund) return false;
           if (!row.stripeSubscriptionId?.startsWith('sub_')) return false;
           if (!row.startDate) return false;
           const startedMs = Date.parse(row.startDate);
           if (!Number.isFinite(startedMs)) return false;
-          if (startedMs - Date.now() > 3_600_000) return false;
-          const ageHours = businessHoursElapsed({
-            from: new Date(startedMs),
-            hoursOfOperation: hours,
-            timeZone: DEFAULT_PRACTICE_TIMEZONE,
-          });
-          return ageHours <= windowHours + 1;
+          return startedMs - Date.now() <= 3_600_000;
         });
         if (!paid) {
           setOwnerPaidPlan(null);
@@ -664,10 +670,60 @@ export default function PostVisitMembershipSignup({
     substitutions,
   ]);
 
+  /** The signup as staff set it up (no signature): run now, or saved until the owner signs. */
+  const buildSignupRequest = useCallback(async () => {
+    if (!packageId || !preview) return null;
+    let paymentMethodId: string | undefined;
+    if (preview.needsCard && !preview.ownerAlreadyPaid) {
+      if (!createCardRef.current) {
+        setError('Enter a card to start the membership.');
+        return null;
+      }
+      paymentMethodId = await createCardRef.current();
+    }
+    const visitInvoiceIds = await materializeInvoices(selectedInvoiceIds);
+    return {
+      visitInvoiceIds,
+      packageId,
+      billingInterval,
+      confirmRefundAmount: preview.refundDue,
+      confirmChargeAmount: preview.balanceDue,
+      confirmSubscriptionAmount: preview.subscriptionAmount ?? 0,
+      skipRefund,
+      ...(paymentMethodId ? { paymentMethodId } : {}),
+      ...(enrollPatientId != null ? { patientId: enrollPatientId } : {}),
+      ...(Object.keys(substitutions).length
+        ? { substitutions: substitutionPayload(substitutions) }
+        : {}),
+      ...(note.trim() ? { note: note.trim() } : {}),
+      ...(preview.outsideWindow && !preview.ownerAlreadyPaid
+        ? {
+            overrideWindow: true,
+            overrideWindowReason: overrideReason.trim(),
+          }
+        : {}),
+    };
+  }, [
+    billingInterval,
+    enrollPatientId,
+    materializeInvoices,
+    note,
+    overrideReason,
+    packageId,
+    preview,
+    selectedInvoiceIds,
+    skipRefund,
+    substitutions,
+  ]);
+
   const runExecute = useCallback(async () => {
     if (executeLockRef.current || running) return;
     if (!packageId || !preview || selectedInvoiceIds.length === 0) return;
-    if (preview.outsideWindow && (!overrideWindow || !overrideReason.trim())) {
+    if (
+      preview.outsideWindow &&
+      !preview.ownerAlreadyPaid &&
+      (!overrideWindow || !overrideReason.trim())
+    ) {
       setError('Confirm the window override and add a short reason before continuing.');
       return;
     }
@@ -687,35 +743,10 @@ export default function PostVisitMembershipSignup({
     setRunning(true);
     setError(null);
     try {
-      let paymentMethodId: string | undefined;
-      if (preview.needsCard && !preview.ownerAlreadyPaid) {
-        if (!createCardRef.current) {
-          setError('Enter a card to start the membership.');
-          return;
-        }
-        paymentMethodId = await createCardRef.current();
-      }
-      const visitInvoiceIds = await materializeInvoices(selectedInvoiceIds);
+      const request = await buildSignupRequest();
+      if (!request) return;
       const res = await executePostVisitSignup({
-        visitInvoiceIds,
-        packageId,
-        billingInterval,
-        confirmRefundAmount: preview.refundDue,
-        confirmChargeAmount: preview.balanceDue,
-        confirmSubscriptionAmount: preview.subscriptionAmount ?? 0,
-        skipRefund,
-        ...(paymentMethodId ? { paymentMethodId } : {}),
-        ...(enrollPatientId != null ? { patientId: enrollPatientId } : {}),
-        ...(Object.keys(substitutions).length
-          ? { substitutions: substitutionPayload(substitutions) }
-          : {}),
-        ...(note.trim() ? { note: note.trim() } : {}),
-        ...(preview.outsideWindow
-          ? {
-              overrideWindow: true,
-              overrideWindowReason: overrideReason.trim(),
-            }
-          : {}),
+        ...request,
         ...(!preview.ownerAlreadyPaid
           ? {
               agreementAccepted: true,
@@ -737,22 +768,69 @@ export default function PostVisitMembershipSignup({
       setRunning(false);
     }
   }, [
-    enrollPatientId,
-    note,
+    buildSignupRequest,
     onCompleted,
     overrideReason,
     overrideWindow,
-    materializeInvoices,
     packageId,
     preview,
+    running,
     selectedInvoiceIds,
-    skipRefund,
-    substitutions,
-    billingInterval,
     agreementAccepted,
     agreementSignature,
     agreementSignatureDrawing,
     hoursOfOperation,
+  ]);
+
+  /** Owner not present: email the agreement; nothing happens until they sign. */
+  const runSendAgreement = useCallback(async () => {
+    if (executeLockRef.current || running) return;
+    if (!packageId || !preview || selectedInvoiceIds.length === 0) return;
+    if (preview.outsideWindow && (!overrideWindow || !overrideReason.trim())) {
+      setError('Confirm the window override and add a short reason before continuing.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail.trim())) {
+      setError('Enter the owner’s email address.');
+      return;
+    }
+    executeLockRef.current = true;
+    setRunning(true);
+    setError(null);
+    try {
+      const request = await buildSignupRequest();
+      if (!request) return;
+      const customExpiry = preview.outsideWindow && linkExpires ? new Date(linkExpires) : null;
+      if (customExpiry && !Number.isFinite(customExpiry.getTime())) {
+        setError('Enter when the link should expire.');
+        return;
+      }
+      const sent = await sendPostVisitAgreement({
+        ...request,
+        ...(customExpiry ? { linkExpiresAt: customExpiry.toISOString() } : {}),
+        toEmail: ownerEmail.trim(),
+        agreementText: buildMembershipAgreementText(
+          hoursOfOperation ?? defaultChatHoursOfOperation(),
+        ),
+      });
+      setSentRequest(sent);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      executeLockRef.current = false;
+      setRunning(false);
+    }
+  }, [
+    buildSignupRequest,
+    hoursOfOperation,
+    linkExpires,
+    overrideReason,
+    overrideWindow,
+    ownerEmail,
+    packageId,
+    preview,
+    running,
+    selectedInvoiceIds,
   ]);
 
   const substitutionKey = useMemo(
@@ -885,11 +963,16 @@ export default function PostVisitMembershipSignup({
     !running &&
     !previewing &&
     (!choosePet || enrollPatientId != null) &&
-    (!preview?.outsideWindow || (overrideWindow && Boolean(overrideReason.trim()))) &&
+    (!preview?.outsideWindow ||
+      Boolean(preview.ownerAlreadyPaid) ||
+      (overrideWindow && Boolean(overrideReason.trim()))) &&
     (Boolean(preview?.ownerAlreadyPaid) ||
-      (agreementAccepted &&
-        Boolean(agreementSignature.trim()) &&
-        hasDrawnMembershipSignature(agreementSignatureDrawing)));
+      (signMode === 'email'
+        ? Boolean(ownerEmail.trim())
+        : agreementAccepted &&
+          Boolean(agreementSignature.trim()) &&
+          hasDrawnMembershipSignature(agreementSignatureDrawing)));
+  const emailing = signMode === 'email' && !preview?.ownerAlreadyPaid;
   const planStep = 1 + (choosePet ? 1 : 0) + (needsPicker ? 1 : 0);
   const numbersStep = planStep + 1;
   const ownerAlreadyPaid = preview
@@ -937,7 +1020,9 @@ export default function PostVisitMembershipSignup({
             </div>
           )}
 
-          {result ? (
+          {sentRequest ? (
+            <AgreementSentReceipt request={sentRequest} />
+          ) : result ? (
             <SignupReceipt result={result} />
           ) : (
             <>
@@ -1191,20 +1276,20 @@ export default function PostVisitMembershipSignup({
                     {visitAge && (
                       <p className="pvms-muted pvms-agenote">
                         Oldest selected invoice was billed {visitAge}
-                        {preview.windowHours != null
+                        {preview.windowHours != null && !preview.ownerAlreadyPaid
                           ? ` (limit ${preview.windowHours})`
                           : ''}
                         .
                       </p>
                     )}
 
-                    {preview.outsideWindow && !canOverrideWindow ? (
+                    {preview.outsideWindow && !preview.ownerAlreadyPaid && !canOverrideWindow ? (
                       <p className="pvms-muted">
                         This visit is outside the post-visit window. Ask a manager or lead client
                         liaison to override it.
                       </p>
                     ) : null}
-                    {preview.outsideWindow && canOverrideWindow ? (
+                    {preview.outsideWindow && !preview.ownerAlreadyPaid && canOverrideWindow ? (
                       <div className="pvms-override">
                         <label className="pvms-check">
                           <input
@@ -1370,16 +1455,75 @@ export default function PostVisitMembershipSignup({
                         They already signed the membership agreement when they enrolled online.
                       </p>
                     ) : (
-                      <MembershipAgreementWaiver
-                        hours={hoursOfOperation}
-                        accepted={agreementAccepted}
-                        signature={agreementSignature}
-                        signatureDrawing={agreementSignatureDrawing}
-                        onAcceptedChange={setAgreementAccepted}
-                        onSignatureChange={setAgreementSignature}
-                        onSignatureDrawingChange={setAgreementSignatureDrawing}
-                        disabled={running}
-                      />
+                      <>
+                        <div className="pvms-sign-mode" role="radiogroup" aria-label="Who signs the agreement">
+                          <label>
+                            <input
+                              type="radio"
+                              name="pvms-sign-mode"
+                              checked={signMode === 'here'}
+                              onChange={() => setSignMode('here')}
+                              disabled={running}
+                            />{' '}
+                            Owner is here — sign now
+                          </label>
+                          <label>
+                            <input
+                              type="radio"
+                              name="pvms-sign-mode"
+                              checked={signMode === 'email'}
+                              onChange={() => setSignMode('email')}
+                              disabled={running}
+                            />{' '}
+                            Email the agreement to sign
+                          </label>
+                        </div>
+                        {signMode === 'email' ? (
+                          <div className="pvms-email-sign">
+                            <label>
+                              Owner&apos;s email
+                              <input
+                                type="email"
+                                value={ownerEmail}
+                                onChange={(e) => setOwnerEmail(e.target.value)}
+                                placeholder="owner@example.com"
+                                disabled={running}
+                              />
+                            </label>
+                            {preview?.outsideWindow ? (
+                              <label>
+                                Link expires
+                                <input
+                                  type="datetime-local"
+                                  value={linkExpires}
+                                  onChange={(e) => setLinkExpires(e.target.value)}
+                                  disabled={running}
+                                />
+                              </label>
+                            ) : null}
+                            <p className="pvms-muted">
+                              They get a link to read and sign the agreement. Nothing is enrolled,
+                              refunded or charged until they sign; signing does all of it as shown
+                              above.{' '}
+                              {preview?.outsideWindow
+                                ? 'Past the signup window, you choose when the link expires (up to 30 days).'
+                                : 'The link lasts 24 hours.'}{' '}
+                              You get a task if it isn&apos;t signed 2 hours before it expires.
+                            </p>
+                          </div>
+                        ) : (
+                          <MembershipAgreementWaiver
+                            hours={hoursOfOperation}
+                            accepted={agreementAccepted}
+                            signature={agreementSignature}
+                            signatureDrawing={agreementSignatureDrawing}
+                            onAcceptedChange={setAgreementAccepted}
+                            onSignatureChange={setAgreementSignature}
+                            onSignatureDrawingChange={setAgreementSignatureDrawing}
+                            disabled={running}
+                          />
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -1389,7 +1533,7 @@ export default function PostVisitMembershipSignup({
         </div>
 
         <footer className="pvms-foot">
-          {result ? (
+          {result || sentRequest ? (
             <button type="button" className="btn primary" onClick={onClose}>
               Done
             </button>
@@ -1401,14 +1545,15 @@ export default function PostVisitMembershipSignup({
               <button
                 type="button"
                 className="btn primary"
-                onClick={() => void runExecute()}
+                onClick={() => void (emailing ? runSendAgreement() : runExecute())}
                 disabled={!canExecute || running}
                 title={
                   !preview
                     ? 'Calculate the refund first'
-                    : preview.outsideWindow && !overrideWindow
+                    : preview.outsideWindow && !preview.ownerAlreadyPaid && !overrideWindow
                       ? 'Override the window to continue'
                       : !preview.ownerAlreadyPaid &&
+                          !emailing &&
                           (!agreementAccepted ||
                             !agreementSignature.trim() ||
                             !hasDrawnMembershipSignature(agreementSignatureDrawing))
@@ -1422,7 +1567,9 @@ export default function PostVisitMembershipSignup({
                     up…
                   </>
                 ) : (
-                  signupActionLabel(preview, skipRefund, billingInterval)
+                  emailing
+                    ? 'Email agreement to sign'
+                    : signupActionLabel(preview, skipRefund, billingInterval)
                 )}
               </button>
             </>
@@ -1625,6 +1772,52 @@ function LineTable({
         </table>
       )}
     </div>
+  );
+}
+
+/** `YYYY-MM-DDTHH:mm` in local time, for a datetime-local input. */
+function localDateTimeInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** After emailing the agreement: what happens next, and the link to text them. */
+function AgreementSentReceipt({ request }: { request: MembershipAgreementRequest }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <section className="pvms-section" role="status">
+      <h3 className="pvms-section__title">Agreement sent to {request.sentToEmail}</h3>
+      <p>
+        Nothing has been enrolled, refunded or charged. When the owner signs, the membership starts
+        and the refund and billing go through as shown.
+      </p>
+      <p className="pvms-muted">
+        The link expires{' '}
+        {new Date(request.expiresAt).toLocaleString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })}
+        . You&apos;ll get a task if it isn&apos;t signed by{' '}
+        {new Date(request.remindAt).toLocaleString(undefined, {
+          weekday: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+        })}
+        .
+      </p>
+      <button
+        type="button"
+        className="btn secondary"
+        onClick={() => {
+          void navigator.clipboard?.writeText(request.link).then(() => setCopied(true));
+        }}
+      >
+        {copied ? 'Link copied' : 'Copy link to text them'}
+      </button>
+    </section>
   );
 }
 

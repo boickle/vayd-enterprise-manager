@@ -50,6 +50,7 @@ import PreferencesModal from './clientPortal/PreferencesModal';
 import AutoshipManageModal from './clientPortal/AutoshipManageModal';
 import RememberedPetsCard from './clientPortal/RememberedPetsCard';
 import RenewalBanner from './clientPortal/RenewalBanner';
+import PostVisitSignupBanner from './clientPortal/PostVisitSignupBanner';
 import PortalAccountCard from './clientPortal/PortalAccountCard';
 import MembershipBenefitsModal, { membershipPerkLines } from './clientPortal/MembershipBenefitsModal';
 import { PortalModal } from './clientPortal/PortalPrimitives';
@@ -72,7 +73,6 @@ import {
   groupApptsByDay,
   petImg,
   petMatchesId,
-  planIsActive,
   possessive,
   providerEmailFromName,
   relativeDay,
@@ -721,6 +721,7 @@ export default function ClientPortal() {
 
         {error ? <div className="pp-error">{error}</div> : null}
 
+        {!loading ? <PostVisitSignupBanner /> : null}
         {!loading ? <RenewalBanner /> : null}
 
         {loading ? (
@@ -752,7 +753,9 @@ export default function ClientPortal() {
             {/* ---------- pet switcher ---------- */}
             {petsWithProvider.length > 1 ? (
               <nav className="pp-switcher" aria-label="Your pets">
-                {petsWithProvider.map((p) => (
+                {petsWithProvider.map((p) => {
+                  const member = computeMembershipView(p).state !== 'none';
+                  return (
                   <button
                     key={p.id}
                     type="button"
@@ -781,9 +784,17 @@ export default function ClientPortal() {
                         </span>
                       );
                     })()}
-                    <span className="pp-switch-name">{p.name}</span>
+                    <span className="pp-switch-name">
+                      {member ? (
+                        <span className="pp-switch-member" title="Member" aria-label="Member">
+                          ♥
+                        </span>
+                      ) : null}
+                      <span className="pp-switch-name-text">{p.name}</span>
+                    </span>
                   </button>
-                ))}
+                  );
+                })}
               </nav>
             ) : null}
 
@@ -812,6 +823,9 @@ export default function ClientPortal() {
               onCertificate={() => setCertificatePet(selectedPet)}
               onShop={() => goToStore()}
               onExploreMembership={membership.state === 'none' ? () => handleEnrollMembership(selectedPet) : undefined}
+              onMembershipDetails={
+                membership.state !== 'none' ? () => setBenefitsPet(selectedPet) : undefined
+              }
               onLove={() => void toggleLove(selectedPet)}
               onProviderBio={() => setShowProviderBio(true)}
               onEditNickname={() => {
@@ -839,9 +853,7 @@ export default function ClientPortal() {
               </div>
             ) : null}
 
-            {petsWithProvider.some(
-              (p) => p.membershipPlanName == null && !(p.wellnessPlans || []).some((plan) => planIsActive(plan)),
-            ) ? (
+            {membership.state === 'none' ? (
               <div className="pp-notice">
                 <div>
                   <strong>See what One-Team Membership would cover.</strong> An item-by-item look at your savings, based on

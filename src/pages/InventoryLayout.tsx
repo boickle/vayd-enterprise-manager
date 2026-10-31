@@ -108,18 +108,41 @@ export default function InventoryLayout({
   // Opening a gated page directly (a link, a refresh) mounts before permissions load; deciding
   // then would send a practice manager away from Cost Reviews. Wait for them first.
   const permissionsReady = isAdmin || effective != null || permissionsError != null;
-  const canSetup =
-    isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
-  const canManage =
-    isAdmin || hasRole('practice_admin', 'practice_manager', 'inventory_manager');
+  // Manage and Setup: practice manager and admin only (owner decision, Oct 30, 2026).
+  const canSetup = isAdmin || hasRole('practice_admin', 'practice_manager');
+  const canManage = isAdmin || hasRole('practice_admin', 'practice_manager');
+  // Store, mail order queue and auto-ships by permission: practice management and the mail
+  // order roles; not inventory managers (owner decision, Oct 30, 2026).
+  const holdsStoreListings = useCan('store.listing.manage');
+  const holdsStoreCategories = useCan('store.category.manage');
+  const holdsAbandonedCarts = useCan('store.abandoned_cart.resend');
+  const holdsGiftCardAdmin = useCan('gift_card.issue');
+  const holdsMailQueue = useCan('mail_order.fulfill');
+  const holdsAutoships = useCan('store.subscription.manage');
+  const canStoreListings = isAdmin || holdsStoreListings;
+  const canStoreCategories = isAdmin || holdsStoreCategories;
+  const canAbandonedCarts = isAdmin || holdsAbandonedCarts;
+  const canMailQueue = isAdmin || holdsMailQueue;
+  const canAutoships = isAdmin || holdsAutoships;
   const holdsCostReview = useCan('inventory.cost_review.manage');
   const canCostReview = isAdmin || holdsCostReview;
-  const canSeeGiftCards = useCan('gift_card.redeem');
+  const canSeeGiftCards = isAdmin || holdsGiftCardAdmin;
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
 
   const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
-  const gated = ['par-review', 'cost-reviews', 'par-seed', 'store-import', 'autoship-import'];
+  const gated = [
+    'par-review',
+    'cost-reviews',
+    'par-seed',
+    'store-import',
+    'autoship-import',
+    'online-store',
+    'store-categories',
+    'abandoned-carts',
+    'gift-cards',
+    'auto-ships',
+  ];
   if (!permissionsReady && gated.some(onPath)) {
     return <p className="settings-muted">Loading…</p>;
   }
@@ -133,6 +156,15 @@ export default function InventoryLayout({
     return <Navigate to={`${basePath}/counts`} replace />;
   }
   if (!canSetup && ['par-seed', 'store-import', 'autoship-import'].some(onPath)) {
+    return <Navigate to={`${basePath}/counts`} replace />;
+  }
+  if (
+    (!canStoreListings && onPath('online-store')) ||
+    (!canStoreCategories && onPath('store-categories')) ||
+    (!canAbandonedCarts && onPath('abandoned-carts')) ||
+    (!canSeeGiftCards && onPath('gift-cards')) ||
+    (!canAutoships && onPath('auto-ships'))
+  ) {
     return <Navigate to={`${basePath}/counts`} replace />;
   }
   if (location.pathname.startsWith('/schedule/inventory/mail-orders')) {
@@ -149,9 +181,9 @@ export default function InventoryLayout({
     ...(isAdmin ? [{ to: `${basePath}/suppliers`, label: 'Suppliers' }] : []),
   ];
   const storeItems: NavItem[] = [
-    { to: `${basePath}/online-store`, label: 'Store items' },
-    { to: `${basePath}/store-categories`, label: 'Categories' },
-    { to: `${basePath}/abandoned-carts`, label: 'Abandoned carts' },
+    ...(canStoreListings ? [{ to: `${basePath}/online-store`, label: 'Store items' }] : []),
+    ...(canStoreCategories ? [{ to: `${basePath}/store-categories`, label: 'Categories' }] : []),
+    ...(canAbandonedCarts ? [{ to: `${basePath}/abandoned-carts`, label: 'Abandoned carts' }] : []),
     ...(canSeeGiftCards ? [{ to: `${basePath}/gift-cards`, label: 'Gift cards' }] : []),
   ];
   const mailOrdersTo = '/schedule/mail-orders';
@@ -198,19 +230,23 @@ export default function InventoryLayout({
               items={moveOrderItems}
               alsoActiveFor={[`${basePath}/full-count`]}
             />
-            <InventoryNavGroup label="Store" items={storeItems} />
-            <NavLink
-              to={mailOrdersTo}
-              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-            >
-              Mail Order Queue
-            </NavLink>
-            <NavLink
-              to={autoShipsTo}
-              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-            >
-              Auto-ships
-            </NavLink>
+            {storeItems.length ? <InventoryNavGroup label="Store" items={storeItems} /> : null}
+            {canMailQueue ? (
+              <NavLink
+                to={mailOrdersTo}
+                className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+              >
+                Mail Order Queue
+              </NavLink>
+            ) : null}
+            {canAutoships ? (
+              <NavLink
+                to={autoShipsTo}
+                className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+              >
+                Auto-ships
+              </NavLink>
+            ) : null}
             {canManage ? <InventoryNavGroup label="Manage" items={manageItems} /> : null}
             {canSetup ? (
               <InventoryNavGroup

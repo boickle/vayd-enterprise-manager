@@ -152,12 +152,18 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     combo: StripeCatalogCombo,
     productId: string,
     priceId: string,
+    offered: boolean,
   ) => {
     if (!out[planKey]) out[planKey] = {} as SubscriptionPlanSpecies;
     const plan = out[planKey]!;
     const specNode = ((plan as Record<string, unknown>)[species] ??= {}) as SubscriptionPlanCadence;
     const cad = (specNode[cadence] ??= {}) as SubscriptionPlanCombination;
-    (cad as Record<string, SubscriptionPlanEntry>)[combo] = entry(productId, priceId);
+    const slot = cad as Record<string, SubscriptionPlanEntry & { offered?: boolean }>;
+    const existing = slot[combo];
+    // A legacy Stripe product (for example "Foundations Only - Cat") can share a
+    // slot with the plan we actually sell. Keep the price that is on that plan.
+    if (existing?.offered && !offered) return;
+    slot[combo] = { ...entry(productId, priceId), offered };
   };
 
   const setAddon = (
@@ -200,9 +206,11 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
 
     const planKey: 'foundations' | 'golden' = nameRaw.includes('golden') ? 'golden' : 'foundations';
 
+    const offered = r.offered === true;
+
     let species: 'cat' | 'dog' | null = null;
-    if (/\bcat\b/i.test(nameRaw)) species = 'cat';
-    else if (/\bdog\b/i.test(nameRaw)) species = 'dog';
+    if (/\b(cat|feline)\b/i.test(nameRaw)) species = 'cat';
+    else if (/\b(dog|canine)\b/i.test(nameRaw)) species = 'dog';
     if (!species) continue;
 
     // Starter wellness was renamed to "Puppy/Kitten"; accept both so the base
@@ -219,7 +227,7 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     else if (isPlus) combo = 'plus';
     else combo = 'base';
 
-    setSpecies(planKey, species, cadence, combo, productId, priceId);
+    setSpecies(planKey, species, cadence, combo, productId, priceId, offered);
   }
 
   return out;

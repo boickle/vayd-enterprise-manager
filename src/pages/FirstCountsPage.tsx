@@ -169,7 +169,7 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
   const groups: Array<{ title: string; items: FirstCountSheetItem[] }> = [];
   for (const item of sorted) {
     const title = item.isControlled
-      ? 'Controlled substances — required before go-live'
+      ? 'Controlled substances'
       : item.categoryName || 'Uncategorized';
     const last = groups[groups.length - 1];
     if (last && last.title === title) last.items.push(item);
@@ -615,8 +615,10 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
               <>
                 Each shelf starts as <strong>not counted</strong>. Its first count sets the opening
                 balance and replaces whatever was there (old eVet numbers, negatives from usage). It
-                is not reported as shrink. Shelves can be counted whenever the team gets to them;
-                only controlled substances need counting before go-live.
+                is not reported as shrink. Shelves can be counted whenever the team gets to them,
+                controlled substances included. Until a shelf is counted, doses come from
+                &ldquo;Existing stock (no lot recorded)&rdquo;; once it is counted, each dose needs
+                the bottle&rsquo;s lot.
               </>
             )}
           </p>

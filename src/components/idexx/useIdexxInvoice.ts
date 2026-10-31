@@ -95,7 +95,12 @@ export function useIdexxInvoice(
     [state, orderById]
   );
 
-  /** Asks before removing a line on a live IDEXX order; removing it cancels the order. */
+  /**
+   * Asks before removing a line on a live IDEXX order. Before results, removing it cancels the
+   * order. Once IDEXX has sent results it ran the test: removing only takes the charge off,
+   * needs a reason, and the results stay on the chart (owner decision, Oct 30, 2026).
+   * Returns false to stop, or the reason and whether IDEXX already ran it.
+   */
   const confirmRemove = useCallback(
     async (
       lineId: string,
@@ -104,18 +109,38 @@ export function useIdexxInvoice(
         message: string;
         confirmLabel: string;
         cancelLabel: string;
-      }) => Promise<boolean>
-    ) => {
+      }) => Promise<boolean>,
+      prompt?: (opts: {
+        title: string;
+        message: string;
+        placeholder?: string;
+        confirmLabel?: string;
+        requireReason?: boolean;
+      }) => Promise<string | null>
+    ): Promise<false | { reason: string | null; ranAtIdexx: boolean }> => {
       const order = lineOrder(lineId);
-      if (!order || order.status === 'CANCELLED') return true;
-      return confirm({
+      if (!order || order.status === 'CANCELLED') return { reason: null, ranAtIdexx: false };
+      if ((order.results ?? []).length > 0) {
+        if (!prompt) return false;
+        const reason = await prompt({
+          title: 'Remove a test IDEXX already ran?',
+          message: `IDEXX already ran this test (order #${order.idexxOrderId}) and sent results. Removing the charge doesn’t cancel anything with IDEXX, and the results stay on the chart. The practice still pays IDEXX for it. If a membership covered it, the benefit stays used.`,
+          placeholder: 'Why is the charge coming off?',
+          confirmLabel: 'Remove charge',
+          requireReason: true,
+        });
+        const trimmed = reason?.trim();
+        return trimmed ? { reason: trimmed, ranAtIdexx: true } : false;
+      }
+      const ok = await confirm({
         title: 'Cancel the IDEXX order?',
         message: `This test is on IDEXX order #${order.idexxOrderId}. Removing it cancels the order with IDEXX${
           order.status === 'SUBMITTED' ? ', so don’t send the sample' : ''
-        }. If IDEXX already has the sample or sent results, the charge stays.`,
+        }. If IDEXX already has the sample, it may not cancel, and the charge stays.`,
         confirmLabel: 'Remove and cancel order',
         cancelLabel: 'Keep',
       });
+      return ok ? { reason: null, ranAtIdexx: false } : false;
     },
     [lineOrder]
   );

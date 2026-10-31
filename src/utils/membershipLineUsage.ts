@@ -21,6 +21,19 @@ function usedDates(
   return [...new Set(dates)];
 }
 
+/** Active membership for this pet with benefits paused (checkout / invoice headers). */
+export function membershipBenefitsPausedForPatient(
+  memberships: PatientMembership[],
+  patientId: number | null | undefined,
+): PatientMembership['benefitsPaused'] {
+  if (patientId == null) return null;
+  for (const m of memberships) {
+    if (m.patientId !== patientId || m.status !== 'active') continue;
+    if (m.benefitsPaused) return m.benefitsPaused;
+  }
+  return null;
+}
+
 /**
  * For a charged (not covered) line whose item is a used-up membership benefit:
  * "Membership: used 1 of 1 on 6/3/2026".

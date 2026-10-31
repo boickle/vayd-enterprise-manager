@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '../auth/useAuth';
 import { getShrinkSummary, type ShrinkItemRow, type ShrinkSummary } from '../api/inventoryCounts';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
-import { formatUsd, useCountReviewBranches } from '../utils/useCountReviewBranches';
+import { formatUsd } from '../utils/useCountReviewBranches';
+import { useOfficeBranches } from '../utils/useOfficeBranches';
 import './Settings.css';
 
 const iso = (d: Date) =>
@@ -97,7 +98,12 @@ function ItemTable({ rows, empty }: { rows: ShrinkItemRow[]; empty: string }) {
 export default function InventoryShrinkReportPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
-  const { branches, allowAll, loaded } = useCountReviewBranches(practiceId);
+  // Count reviewers (practice manager, admin) see everything; the Controlled Substances Director
+  // sees controlled drugs at every office (owner decision, Oct 30, 2026).
+  const { branches, allowAll, loaded } = useOfficeBranches(practiceId, [
+    'inventory.count.review',
+    'inventory.count.review_controlled',
+  ]);
   const [branchId, setBranchId] = useState<number | ''>('');
   const [preset, setPreset] = useState('90');
   const [data, setData] = useState<ShrinkSummary | null>(null);
@@ -152,6 +158,9 @@ export default function InventoryShrinkReportPage() {
   return (
     <div className="settings-section">
       <p className="settings-section-description" style={{ marginBottom: 12 }}>
+        {data?.controlledOnly ? (
+          <strong style={{ display: 'block', marginBottom: 6 }}>Controlled drugs only.</strong>
+        ) : null}
         How much inventory is going missing and how reliable your counts are. Shrink is counts
         that came up short plus logged waste, at item cost. Count accuracy is the share of counts
         within your alert thresholds (Settings → Inventory). Good targets: accuracy 95%+, shrink

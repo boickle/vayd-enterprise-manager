@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import ViewAsButton from '../components/ViewAsButton';
 import { useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { useAuth } from '../auth/useAuth';
@@ -643,6 +644,13 @@ export default function AdminUsers() {
                         >
                           {resettingId === user.id ? 'Sending…' : 'Reset password'}
                         </button>
+                        {user.isActive ? (
+                          <ViewAsButton
+                            userId={user.id}
+                            name={user.employeeName || user.clientName || user.email || 'this user'}
+                            className="btn secondary btn-sm"
+                          />
+                        ) : null}
                       </div>
                     </td>
                   </tr>

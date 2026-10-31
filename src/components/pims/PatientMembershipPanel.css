@@ -65,6 +65,20 @@
   color: #b91c1c;
 }
 
+.pmp-head-paused {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #b91c1c;
+}
+
 .pmp-empty {
   display: flex;
   flex-wrap: wrap;
@@ -191,6 +205,78 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.pmp-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.pmp-confirm {
+  width: min(440px, 100%);
+  padding: 20px 20px 16px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+}
+
+.pmp-confirm__title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pmp-confirm__body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.pmp-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pmp-confirm__cancel,
+.pmp-confirm__go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.pmp-confirm__cancel {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+}
+
+.pmp-confirm__go {
+  border: 1px solid #15803d;
+  background: #16a34a;
+  color: #fff;
+}
+
+.pmp-confirm__go:hover {
+  background: #15803d;
 }
 
 /* The owner's "one click, not Stripe" action, so it reads as the primary move on the card. */
@@ -902,7 +988,7 @@
 
 .pmp-paused {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   margin: 10px 0;
   padding: 10px 12px;
@@ -910,6 +996,18 @@
   border-radius: 8px;
   font-size: 13px;
   color: var(--error);
+}
+
+.pmp-paused__copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pmp-paused__copy p {
+  margin: 0;
+  line-height: 1.45;
 }
 
 .pmp-paused p {

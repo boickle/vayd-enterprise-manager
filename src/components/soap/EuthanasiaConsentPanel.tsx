@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   getEuthanasiaConsentStatus,
   parseMemorialItems,
+  recordEuthanasiaWitnessConsent,
   type EuthanasiaConsentStatus,
 } from '../../api/consent';
+import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { createOrder } from '../../api/visitWorkflow';
 import { apiErrorMessage } from '../../api/http';
 import ConsentAnswersView from '../consent/ConsentAnswersView';
@@ -33,6 +35,10 @@ export default function EuthanasiaConsentPanel({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [estimateOpen, setEstimateOpen] = useState(false);
+  const [oralPick, setOralPick] = useState(false);
+  const [staff, setStaff] = useState<Employee[]>([]);
+  const [witnessA, setWitnessA] = useState('');
+  const [witnessB, setWitnessB] = useState('');
 
   const refresh = useCallback(async () => {
     const next = await getEuthanasiaConsentStatus(appointmentId, patientId);
@@ -61,6 +67,74 @@ export default function EuthanasiaConsentPanel({
 
   /** Sending runs through the estimate modal — the form quotes the total. */
   const send = () => setEstimateOpen(true);
+
+  const openOral = () => {
+    setOralPick(true);
+    setWitnessA('');
+    setWitnessB('');
+    setError(null);
+    if (staff.length) return;
+    void fetchAllEmployees()
+      .then((rows) => {
+        setStaff(
+          rows
+            .filter((row) => row.isActive !== false && row.isDeleted !== true)
+            .sort((a, b) =>
+              `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`),
+            ),
+        );
+      })
+      .catch((err) => setError(apiErrorMessage(err)));
+  };
+
+  const recordPrinted = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await recordEuthanasiaWitnessConsent({
+        appointmentId,
+        patientId,
+        method: 'printed',
+      });
+      setStatus(next);
+      setOralPick(false);
+      onWeightAlert?.(parseConsentWeightChange(next.response?.answers ?? null));
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recordOral = async () => {
+    const first = Number(witnessA);
+    const second = Number(witnessB);
+    if (!Number.isFinite(first) || !Number.isFinite(second) || first <= 0 || second <= 0) {
+      setError('Choose two staff members who heard this.');
+      return;
+    }
+    if (first === second) {
+      setError('Choose two different staff members.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await recordEuthanasiaWitnessConsent({
+        appointmentId,
+        patientId,
+        method: 'oral',
+        witnessEmployeeIds: [first, second],
+      });
+      setStatus(next);
+      setOralPick(false);
+      onWeightAlert?.(parseConsentWeightChange(next.response?.answers ?? null));
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const copyLink = async () => {
     if (!status?.invite?.formUrl) return;
@@ -124,12 +198,23 @@ export default function EuthanasiaConsentPanel({
   };
 
   const answers = status.response?.answers ?? {};
+  const witnessMethodOnFile =
+    answers.consentMethod === 'printed' || answers.consentMethod === 'oral'
+      ? answers.consentMethod
+      : null;
+  const witnessNames = Array.isArray(answers.witnessNames)
+    ? answers.witnessNames.map((name) => String(name)).filter(Boolean)
+    : [];
 
   return (
     <div className="soap-checkout" style={{ marginBottom: 14 }}>
       <div className="soap-checkout-head">
         <span>Euthanasia consent</span>
-        {status.response ? (
+        {witnessMethodOnFile === 'printed' ? (
+          <span className="soap-invoice-badge">printed</span>
+        ) : witnessMethodOnFile === 'oral' ? (
+          <span className="soap-invoice-badge">oral</span>
+        ) : status.response ? (
           <span className="soap-invoice-badge">signed</span>
         ) : status.invite ? (
           <span className="soap-invoice-badge">sent</span>
@@ -137,8 +222,8 @@ export default function EuthanasiaConsentPanel({
           <span className="soap-invoice-badge">needed</span>
         )}
       </div>
-      {error ? <p className="soap-empty">{error}</p> : null}
-      {!status.invite && (
+      {error ? <p className="soap-error">{error}</p> : null}
+      {!status.invite && !oralPick && (
         <p className="soap-empty">Send the Scout consent form to the client.</p>
       )}
       {status.invite && !status.response && (
@@ -147,9 +232,54 @@ export default function EuthanasiaConsentPanel({
           to sign.
         </p>
       )}
-      {status.response ? (
+      {witnessMethodOnFile ? (
+        <p className="soap-empty">
+          {witnessMethodOnFile === 'printed'
+            ? 'Signed printed consent.'
+            : `Gave oral consent. Heard by ${witnessNames.join(' and ') || 'two staff members'}.`}
+        </p>
+      ) : status.response ? (
         <div style={{ padding: '0 2px 8px' }}>
           <ConsentAnswersView response={status.response} />
+        </div>
+      ) : null}
+      {oralPick ? (
+        <div className="soap-witness-pick">
+          <p className="soap-empty" style={{ margin: 0 }}>
+            Gave oral consent. Choose two staff members who heard this.
+          </p>
+          <label>
+            First staff member
+            <select
+              className="soap-input"
+              value={witnessA}
+              disabled={busy}
+              onChange={(e) => setWitnessA(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {staff.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {[row.firstName, row.lastName].filter(Boolean).join(' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Second staff member
+            <select
+              className="soap-input"
+              value={witnessB}
+              disabled={busy}
+              onChange={(e) => setWitnessB(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {staff.map((row) => (
+                <option key={row.id} value={row.id} disabled={String(row.id) === witnessA}>
+                  {[row.firstName, row.lastName].filter(Boolean).join(' ')}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       ) : null}
       {estimateOpen && (
@@ -167,9 +297,52 @@ export default function EuthanasiaConsentPanel({
         />
       )}
       <div className="soap-checkout-actions">
-        <button type="button" className="soap-btn" disabled={busy} onClick={send}>
-          {status.invite && !status.response ? 'Resend form' : 'Send consent form'}
-        </button>
+        {oralPick ? (
+          <>
+            <button
+              type="button"
+              className="soap-btn"
+              disabled={busy || !witnessA || !witnessB || witnessA === witnessB}
+              onClick={() => void recordOral()}
+            >
+              {busy ? 'Saving…' : 'Record consent'}
+            </button>
+            <button
+              type="button"
+              className="soap-btn ghost"
+              disabled={busy}
+              onClick={() => setOralPick(false)}
+            >
+              Cancel
+            </button>
+          </>
+        ) : !status.response ? (
+          <>
+            <button type="button" className="soap-btn" disabled={busy} onClick={send}>
+              {status.invite && !status.response ? 'Resend form' : 'Send consent form'}
+            </button>
+            <button
+              type="button"
+              className="soap-btn ghost"
+              disabled={busy}
+              onClick={() => void recordPrinted()}
+            >
+              {busy ? 'Saving…' : 'Signed printed consent'}
+            </button>
+            <button
+              type="button"
+              className="soap-btn ghost"
+              disabled={busy}
+              onClick={openOral}
+            >
+              Gave oral consent
+            </button>
+          </>
+        ) : witnessMethodOnFile ? null : (
+          <button type="button" className="soap-btn" disabled={busy} onClick={send}>
+            Send consent form
+          </button>
+        )}
         {status.invite?.formUrl && !status.response && (
           <button type="button" className="soap-btn ghost" onClick={() => void copyLink()}>
             {copied ? 'Link copied' : 'Copy link'}

@@ -353,6 +353,8 @@ export async function listInventoryMovements(
     search?: string;
     movementType?: string;
     exceptionsOnly?: boolean;
+    /** Controlled drugs only. */
+    controlledOnly?: boolean;
     limit?: number;
     offset?: number;
   }
@@ -483,6 +485,31 @@ export async function getEmployeeBranches(
     `/practice/${practiceId}/employees/${employeeId}/branches`
   );
   return Array.isArray(data) ? data : [];
+}
+
+/** Where a veterinarian's controlled drugs live (their safe); null when not set. */
+export type ControlledDrugLocation = { branchId: number; locationId: number; name: string };
+
+export async function getControlledDrugLocation(
+  practiceId: number,
+  employeeId: number
+): Promise<ControlledDrugLocation | null> {
+  const { data } = await http.get<{ location: ControlledDrugLocation | null }>(
+    `/practice/${practiceId}/employees/${employeeId}/controlled-location`
+  );
+  return data?.location ?? null;
+}
+
+export async function setControlledDrugLocation(
+  practiceId: number,
+  employeeId: number,
+  locationId: number | null
+): Promise<ControlledDrugLocation | null> {
+  const { data } = await http.put<{ location: ControlledDrugLocation | null }>(
+    `/practice/${practiceId}/employees/${employeeId}/controlled-location`,
+    { locationId }
+  );
+  return data?.location ?? null;
 }
 
 export async function setEmployeeBranches(

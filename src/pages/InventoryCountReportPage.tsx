@@ -8,7 +8,8 @@ import {
   type ItemMovementRow,
 } from '../api/inventoryCounts';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
-import { formatUsd, useCountReviewBranches } from '../utils/useCountReviewBranches';
+import { formatUsd } from '../utils/useCountReviewBranches';
+import { useOfficeBranches } from '../utils/useOfficeBranches';
 import {
   AttentionBadge,
   refreshInventoryAttention,
@@ -19,7 +20,13 @@ import './Settings.css';
 export default function InventoryCountReportPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
-  const { branches, allowAll, loaded } = useCountReviewBranches(practiceId);
+  // Practice manager and admin see every count; the Controlled Substances Director sees and
+  // reviews controlled drugs at every office (owner decisions, Oct 30, 2026).
+  const { branches, allowAll, loaded } = useOfficeBranches(practiceId, [
+    'inventory.count.review',
+    'inventory.count.review_controlled',
+  ]);
+  const [controlledOnly, setControlledOnly] = useState(false);
   const [branchId, setBranchId] = useState<number | ''>('');
   const [abc, setAbc] = useState('');
   const [offOnly, setOffOnly] = useState(true);
@@ -87,6 +94,7 @@ export default function InventoryCountReportPage() {
         if (cancelled) return;
         setRows(data.rows);
         setTotal(data.total);
+        setControlledOnly(data.controlledOnly === true);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load count report');
@@ -128,9 +136,12 @@ export default function InventoryCountReportPage() {
   return (
     <div className="settings-section">
       <p className="settings-section-description">
+        {controlledOnly ? (
+          <strong style={{ display: 'block', marginBottom: 6 }}>Controlled drugs only.</strong>
+        ) : null}
         Submitted cycle counts. Off counts are where counted quantity did not match the
         system; $ is the difference at item cost (negative is a loss). ⚑ means it was over your
-        alert threshold and a task went to the inventory manager. Open a row for location detail
+        alert threshold and a task went to the practice manager (and the controlled substances director for a controlled drug). Open a row for location detail
         and the item’s movement trail across offices.
       </p>
       {error && (

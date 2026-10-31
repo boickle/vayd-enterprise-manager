@@ -17,6 +17,8 @@ import {
 } from '../../api/employeesMutations';
 import {
   getEmployeeBranches,
+  getControlledDrugLocation,
+  setControlledDrugLocation,
   listInventoryBranchLocations,
   listPracticeBranches,
   setEmployeeBranches,
@@ -198,6 +200,15 @@ export default function SettingsEmployeeDirectory({
   const [bioText, setBioText] = useState('');
   const [branchOptions, setBranchOptions] = useState<PracticeBranch[]>([]);
   const [locationOptions, setLocationOptions] = useState<InventoryBranchLocation[]>([]);
+  /**
+   * Controlled drug location (their safe): licensed veterinarian providers only (owner decisions,
+   * Oct 30, 2026). Their controlled charges take lots from it and need it to be set.
+   */
+  const [vetLicensed, setVetLicensed] = useState(false);
+  const [controlledLocationId, setControlledLocationId] = useState<number | null>(null);
+  const [controlledLocationOptions, setControlledLocationOptions] = useState<
+    Array<{ id: number; label: string }>
+  >([]);
   const [defaultBranchId, setDefaultBranchId] = useState<number | null>(null);
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
   const [practiceWide, setPracticeWide] = useState(false);
@@ -316,6 +327,9 @@ export default function SettingsEmployeeDirectory({
     setPimsUserId(str(r.pimsUserId));
     setPimsType(str(r.pimsType) || 'EVET');
     setIsProvider(full.isProvider === true);
+    setVetLicensed(
+      r.isLicensed === true && String(r.licenseType ?? '').toLowerCase() === 'veterinarian'
+    );
     setAddress1(str(r.address1));
     setAddress2(str(r.address2));
     setAddress3(str(r.address3));
@@ -380,6 +394,22 @@ export default function SettingsEmployeeDirectory({
         null;
       setDefaultBranchId(seedBranch);
       setDefaultLocationId(primary?.defaultInventoryLocationId ?? null);
+      void getControlledDrugLocation(DEFAULT_PRACTICE_ID, id)
+        .then((loc) => setControlledLocationId(loc?.locationId ?? null))
+        .catch(() => setControlledLocationId(null));
+      void Promise.all(
+        branchList
+          .filter((b) => b.isActive !== false)
+          .map((b) =>
+            listInventoryBranchLocations(DEFAULT_PRACTICE_ID, b.id)
+              .then((locs) =>
+                locs
+                  .filter((l) => l.isActive !== false)
+                  .map((l) => ({ id: l.id, label: `${b.name} → ${l.name}` }))
+              )
+              .catch(() => [])
+          )
+      ).then((lists) => setControlledLocationOptions(lists.flat()));
       const linked = await fetchAdminUsers({ employeeId: id }).catch(() => []);
       setLoginUser(linked.find((u) => u.employeeId === id) ?? linked[0] ?? null);
       if (seedBranch != null) {
@@ -528,6 +558,9 @@ export default function SettingsEmployeeDirectory({
       throw new Error(`Bio must be ${EMPLOYEE_BIO_MAX_LENGTH} characters or fewer.`);
     }
     await updateEmployeeBio(id, trimmedBio === '' ? null : trimmedBio);
+    if (isProvider && vetLicensed) {
+      await setControlledDrugLocation(DEFAULT_PRACTICE_ID, id, controlledLocationId);
+    }
     if (practiceWide) {
       await setEmployeeBranches(DEFAULT_PRACTICE_ID, id, {
         branchIds: branchOptions.map((b) => b.id),
@@ -950,6 +983,42 @@ export default function SettingsEmployeeDirectory({
                     </div>
                   </fieldset>
 
+                  {isProvider && !vetLicensed ? (
+                    <p className="muted" style={{ fontSize: 12, margin: '-4px 0 12px' }}>
+                      A veterinarian’s controlled drug location is set here once they’re marked as
+                      a licensed veterinarian on the Access tab.
+                    </p>
+                  ) : null}
+                  {isProvider && vetLicensed ? (
+                    <fieldset className="settings-employee-modal__fieldset">
+                      <legend className="settings-employee-modal__legend">Controlled drug location</legend>
+                      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                        Where this doctor’s controlled drugs live (their safe). Checkout picks
+                        their controlled drug lots from here, and the Controlled Drugs report checks
+                        their doses against it. Controlled drugs can’t be charged under them until
+                        it’s set.
+                      </p>
+                      <label>
+                        <span className="label">Location</span>
+                        <select
+                          className="input"
+                          value={controlledLocationId ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value === '' ? null : Number(e.target.value);
+                            setControlledLocationId(v != null && Number.isFinite(v) ? v : null);
+                          }}
+                        >
+                          <option value="">Not set — can’t charge controlled drugs</option>
+                          {controlledLocationOptions.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {loc.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </fieldset>
+                  ) : null}
+
                   <fieldset className="settings-employee-modal__fieldset">
                     <legend className="settings-employee-modal__legend">Name</legend>
                     <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }} title={ownership.title}>
@@ -1132,6 +1201,9 @@ export default function SettingsEmployeeDirectory({
                           .map((e) => employeeDisplayName(e))[0]
                       }
                       onMessage={onMessage}
+                      onLicenseChange={(lic) =>
+                        setVetLicensed(lic.isLicensed && lic.licenseType === 'veterinarian')
+                      }
                     />
                   ) : null}
                 </>

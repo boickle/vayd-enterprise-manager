@@ -88,3 +88,37 @@ describe('INV-04-7: lot picker in use mode', () => {
     expect(expired).not.toBeDisabled();
   });
 });
+
+/**
+ * Owner decisions (Oct 30, 2026): a controlled drug's lot comes from the doctor's controlled drug
+ * location (their safe); staff can take one from another shelf, which the report flags.
+ */
+describe('controlled drug: the doctor’s safe first, another shelf if needed', () => {
+  it('lists the safe’s lots, then every shelf on "Another shelf…", and back', async () => {
+    const api = await import('../../api/branchInventory');
+    const list = vi.mocked(api.listInventoryLots);
+    list.mockClear();
+    render(
+      <StockLotPicker
+        forUse
+        practiceId={1}
+        inventoryItemId={9}
+        branchId={1}
+        locationId={5}
+        otherShelvesFrom="HC home → Main"
+        selectedLotId={2}
+        onChange={() => undefined}
+      />
+    );
+    expect(await screen.findByText(/From HC home → Main/)).toBeInTheDocument();
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(1, 9, expect.objectContaining({ locationId: 5 })));
+
+    (await screen.findByRole('button', { name: 'Another shelf…' })).click();
+    await waitFor(() =>
+      expect(list).toHaveBeenLastCalledWith(1, 9, expect.not.objectContaining({ locationId: 5 }))
+    );
+    expect(await screen.findByText(/Every shelf/)).toBeInTheDocument();
+    (await screen.findByRole('button', { name: 'Back to HC home → Main' })).click();
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(1, 9, expect.objectContaining({ locationId: 5 })));
+  });
+});

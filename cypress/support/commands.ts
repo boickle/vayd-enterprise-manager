@@ -135,7 +135,7 @@ Cypress.Commands.add(
 
     cy.request({
       method: 'POST',
-      url: `${Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000'}/auth/login`,
+      url: `${(Cypress.env('API_URL') || Cypress.config('baseUrl')?.replace(':5173', ':3000') || 'http://localhost:3000')}/auth/login`,
       body: { email, password },
       failOnStatusCode: false,
     }).then((resp) => {
@@ -205,7 +205,7 @@ Cypress.Commands.add('seed', (fixture: Record<string, unknown>) => {
   }
   cy.request({
     method: 'POST',
-    url: `${Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000'}/test-support/seed`,
+    url: `${(Cypress.env('API_URL') || Cypress.config('baseUrl')?.replace(':5173', ':3000') || 'http://localhost:3000')}/test-support/seed`,
     headers: { 'x-test-support-key': key },
     body: fixture,
     failOnStatusCode: true,
@@ -217,7 +217,7 @@ Cypress.Commands.add('cleanUp', (refs: Record<string, unknown> = {}) => {
   if (!key) return;
   cy.request({
     method: 'POST',
-    url: `${Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000'}/test-support/cleanup`,
+    url: `${(Cypress.env('API_URL') || Cypress.config('baseUrl')?.replace(':5173', ':3000') || 'http://localhost:3000')}/test-support/cleanup`,
     headers: { 'x-test-support-key': key },
     body: refs,
     failOnStatusCode: false,
@@ -231,7 +231,7 @@ Cypress.Commands.add('cleanUp', (refs: Record<string, unknown> = {}) => {
 // See test/integration/inventory.fixtures.ts in vayd-api.
 
 function testSupportUrl(path: string): string {
-  const base = Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000';
+  const base = (Cypress.env('API_URL') || Cypress.config('baseUrl')?.replace(':5173', ':3000') || 'http://localhost:3000');
   return `${base}/test-support/${path}`;
 }
 

@@ -42,6 +42,7 @@ import {
   clientReachPhones,
 } from '../../utils/clientReachContacts';
 import { formatClientDisplayName } from '../../utils/clientNamePrefix';
+import { sexWordOf } from '../../utils/patientSexNeuter';
 import { patchReminder } from '../../api/careOutreach';
 import {
   declineReminder,
@@ -2240,7 +2241,7 @@ export default function PimsPatientDetailView({
     speciesId: pickStr(record.speciesId) ?? '',
     breed: pickStr(record.breed) ?? pickStr(record.breedDescription) ?? '',
     breedId: pickStr(record.breedId) ?? '',
-    sex: pickStr(record.sex) ?? '',
+    sex: sexWordOf(record.sex) ?? '',
     neuterStatus: pickStr(record.neuterStatus) ?? '',
     color: pickStr(record.color) ?? '',
   };

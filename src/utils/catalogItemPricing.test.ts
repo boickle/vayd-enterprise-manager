@@ -118,4 +118,32 @@ describe('bundle line pricing', () => {
     expect(priced.totalFinal).toBe(0);
     expect(priced.isCovered).toBe(true);
   });
+
+  describe("the bundle's own price for an item (eVet package item price; owner request, Oct 30, 2026)", () => {
+    const telazol = { listUnitPrice: 24.38, quantity: 0.8, priceOverride: 0 };
+
+    it('charges $0 when the bundle prices the item at $0, whatever the catalog says', () => {
+      expect(getBundleLinePrice(telazol)).toEqual({ unitFinal: 0, totalFinal: 0, isCovered: false });
+    });
+
+    it('uses the bundle price per unit, with no client discount on top', () => {
+      const librela = { listUnitPrice: 111.3, quantity: 2, priceOverride: 85.75 };
+      const checked = { adjustedPrice: 100.17, originalPrice: 111.3 };
+      expect(getBundleLinePrice(librela, checked, 10)).toEqual({
+        unitFinal: 85.75,
+        totalFinal: 171.5,
+        isCovered: false,
+      });
+    });
+
+    it('a membership benefit that covers the item still makes it free', () => {
+      const librela = { listUnitPrice: 111.3, quantity: 1, priceOverride: 85.75 };
+      const checked = {
+        adjustedPrice: 0,
+        originalPrice: 111.3,
+        wellnessPlanPricing: { hasCoverage: true, isWithinLimit: true },
+      } as Parameters<typeof getBundleLinePrice>[1];
+      expect(getBundleLinePrice(librela, checked).isCovered).toBe(true);
+    });
+  });
 });

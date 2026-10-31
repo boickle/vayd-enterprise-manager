@@ -138,6 +138,18 @@ export function estimateLinesFromPatient(
   return out;
 }
 
+/**
+ * Birthdates arrive as midnight UTC of the stored calendar date, which is the evening
+ * before in Eastern time. Age is counted between calendar days (stored date vs. today's
+ * date), so a pet turns 6 months old on the day, not the evening before (CP-11).
+ */
+export function ageMonthsOnCalendarDay(dob: unknown, asOf: DateTime): number | null {
+  const raw = typeof dob === 'string' ? dob.trim() : '';
+  const dateOnly = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : raw;
+  const today = DateTime.fromObject({ year: asOf.year, month: asOf.month, day: asOf.day });
+  return patientAgeMonths(dateOnly || null, today);
+}
+
 /** The appointment row carrying species and date of birth for this pet. */
 export function appointmentPatientFor(
   data: AnyRecord | null | undefined,
@@ -189,7 +201,7 @@ export function buildPlanContext({
 
   return {
     species,
-    ageMonths: patientAgeMonths(dob, asOf ?? DateTime.now()),
+    ageMonths: ageMonthsOnCalendarDay(dob, asOf ?? DateTime.now()),
     history: historyFromTreatments(history),
     reminders: remindersFromPatient(patient, data, patientId),
     estimateLines: estimateLinesFromPatient(patient),

@@ -129,7 +129,7 @@ export default function MembershipRenewalCard({
         To keep {preview.petName}&apos;s benefits going without a break, please add your card below.
         Nothing is charged today: your first charge is on your renewal date,{' '}
         {formatDay(preview.termEnd)}, and we stop your old billing so you&apos;re never charged
-        twice.
+        twice. Every plan includes 50% off extra exam fees and 10% off in our online store.
       </p>
 
       <RenewalPlanPicker

@@ -165,6 +165,19 @@ export async function startCountSession(
   return data;
 }
 
+/** The open sheet without starting or topping one up; null when none is open (view-as is read-only). */
+export async function getOpenCountSession(
+  practiceId: number,
+  branchId: number,
+  kind: 'weekly' | 'full' = 'weekly'
+): Promise<StaffCountSession | null> {
+  const { data } = await http.get<StaffCountSession | null | ''>(
+    `/practice/${practiceId}/branches/${branchId}/inventory-counts/open`,
+    { params: { kind } }
+  );
+  return data || null;
+}
+
 export async function patchCountLine(
   practiceId: number,
   sessionId: number,
@@ -221,8 +234,8 @@ export async function listCountReport(
     limit?: number;
     offset?: number;
   }
-): Promise<{ total: number; rows: CountReportRow[] }> {
-  const { data } = await http.get<{ total: number; rows: CountReportRow[] }>(
+): Promise<{ total: number; rows: CountReportRow[]; controlledOnly?: boolean }> {
+  const { data } = await http.get<{ total: number; rows: CountReportRow[]; controlledOnly?: boolean }>(
     `/practice/${practiceId}/inventory-counts/report`,
     {
       params: {
@@ -309,6 +322,8 @@ export type ShrinkItemRow = {
 };
 
 export type ShrinkSummary = {
+  /** True when the report covers controlled drugs only (the Controlled Substances Director). */
+  controlledOnly?: boolean;
   fromDate: string;
   toDate: string;
   branchId: number | null;

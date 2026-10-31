@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { createPortal } from 'react-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   ArrowLeftRight,
   ChevronDown,
@@ -24,6 +25,7 @@ import {
   cancelMembership,
   previewMembershipCancel,
   changeMembershipPlan,
+  previewMembershipPlanChange,
   createPatientMembership,
   getPatientMembership,
   getPatientMembershipAudit,
@@ -66,6 +68,7 @@ import {
 import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
 import { useCan } from '../../permissions/PermissionContext';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
+import MembershipAgreementRequests from './MembershipAgreementRequests';
 import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
 import MembershipCardUpdate from '../MembershipCardUpdate';
 import MembershipAgreementWaiver, {
@@ -111,6 +114,14 @@ function shortDate(iso: string | null): string {
   });
 }
 
+function benefitsPausedForPastDue(
+  paused: PatientMembership['benefitsPaused'],
+): boolean {
+  if (!paused) return false;
+  const reason = paused.reason ?? '';
+  return reason === 'Membership payment past due' || /payment past due/i.test(reason);
+}
+
 function ownerNames(owners: MembershipOwnerRef[]): string {
   return owners.length ? owners.map((o) => o.name).join(', ') : 'no owner';
 }
@@ -134,6 +145,15 @@ function dateTime(iso: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/** Within a month of the membership starting or renewing. */
+export function inFirstMonthOfTerm(termStartDate: string | null | undefined, now = new Date()): boolean {
+  if (!termStartDate) return false;
+  const until = new Date(termStartDate);
+  if (Number.isNaN(until.getTime())) return false;
+  until.setUTCMonth(until.getUTCMonth() + 1);
+  return now < until;
 }
 
 function coverageLabel(b: {
@@ -293,7 +313,10 @@ export default function PatientMembershipPanel({
 }: Props) {
   const navigate = useNavigate();
   const { userId } = useAuth() as { userId?: string | null };
-  const canChangePlan = useCan('membership.plan.change');
+  // Lead CLs, PMs and admins change plans any time; doctors, techs and CLs only in the
+  // first month of the membership year (the API checks the same).
+  const canChangePlanAnyTime = useCan('membership.plan.change');
+  const canChangePlanFirstMonth = useCan('membership.plan.change_first_month');
   const canEnroll = useCan('membership.enroll');
   const canEditBenefits = useCan('membership.benefit.override');
   const canCancel = useCan('membership.cancel');
@@ -304,14 +327,33 @@ export default function PatientMembershipPanel({
   const canViewStripe = useCan('membership.stripe.view');
   const canLinkStripe = useCan('membership.stripe.link');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
-  const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
+  const [searchParams] = useSearchParams();
+  const focusMembership = searchParams.get('focus') === 'membership';
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [open, setOpen] = useState(
+    () => focusMembership || readStaffPatientLayout(userId).membership,
+  );
 
   useEffect(() => {
-    const sync = () => setOpen(readStaffPatientLayout(userId).membership);
+    const sync = () => {
+      if (focusMembership) {
+        setOpen(true);
+        return;
+      }
+      setOpen(readStaffPatientLayout(userId).membership);
+    };
     sync();
     window.addEventListener(STAFF_UI_PREFS_EVENT, sync);
     return () => window.removeEventListener(STAFF_UI_PREFS_EVENT, sync);
-  }, [userId]);
+  }, [focusMembership, userId]);
+
+  useEffect(() => {
+    if (!focusMembership) return;
+    const id = window.setTimeout(() => {
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    return () => window.clearTimeout(id);
+  }, [focusMembership]);
 
   const toggleOpen = useCallback(() => {
     setOpen((v) => {
@@ -332,6 +374,9 @@ export default function PatientMembershipPanel({
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [postVisitOpen, setPostVisitOpen] = useState(false);
+  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
+  /** Reloads emailed agreements after the post-visit signup modal closes. */
+  const [agreementsKey, setAgreementsKey] = useState(0);
   const [postVisitWindowHours, setPostVisitWindowHours] = useState(24);
   const [postVisitHoursLeft, setPostVisitHoursLeft] = useState<number | null>(null);
   const [postVisitInvoiceIds, setPostVisitInvoiceIds] = useState<string[]>([]);
@@ -713,11 +758,13 @@ export default function PatientMembershipPanel({
 
   async function resumeBenefits() {
     if (!membership) return;
+    const pastDuePause = benefitsPausedForPastDue(membership.benefitsPaused);
     const note = await appPrompt({
       title: 'Resume membership benefits',
-      message:
-        'Member pricing and covered services will work again for this pet. How was the dispute settled? The note is stored on the audit trail.',
-      placeholder: 'e.g. owner withdrew the dispute',
+      message: pastDuePause
+        ? 'Member pricing and covered services will work again for this pet. This does not charge the card or confirm that Stripe is paid — use this only after payment is collected or billing is fixed. Scout will also turn benefits back on automatically once Stripe shows the subscription as active. How was this resolved? The note is stored on the audit trail.'
+        : 'Member pricing and covered services will work again for this pet. This does not verify the card dispute outcome in Stripe — use this only after you have settled it with the owner. How was the dispute settled? The note is stored on the audit trail.',
+      placeholder: pastDuePause ? 'e.g. owner paid by check; card updated in Stripe' : 'e.g. owner withdrew the dispute',
       confirmLabel: 'Resume benefits',
     });
     if (note == null) return;
@@ -802,6 +849,20 @@ export default function PatientMembershipPanel({
   async function switchToPlan(plan: Bundle) {
     if (!membership) return;
     const interval = intervalFor(plan, membership.billingInterval);
+    // Stripe or Square, and how much moving now charges or credits.
+    let billing: string;
+    setBusy(true);
+    try {
+      const preview = await previewMembershipPlanChange(membership.id, {
+        packageId: plan.id,
+        billingInterval: interval,
+      });
+      billing = `• Billing: ${preview.note}`;
+    } catch {
+      billing = `• Billing: Scout couldn’t check how this membership is billed. If it’s on Stripe, the difference for the rest of this billing period is charged or credited when you move it (a credit comes off their next bills). If it’s on Square, change it in Square by hand.`;
+    } finally {
+      setBusy(false);
+    }
     const bullets = [
       carryOverUsage
         ? '• Usage carries over: visits already given on the current plan stay counted, so the new plan cannot hand the same service back a second time.'
@@ -809,7 +870,7 @@ export default function PatientMembershipPanel({
       keepCustomItems
         ? `• Staff-added benefits are kept: the ${customCount} benefit${customCount === 1 ? '' : 's'} added to this pet specifically stay on the membership.`
         : '• Staff-added benefits are dropped: anything added to this pet specifically will be removed.',
-      `• Billing: if they pay through Stripe, it moves to ${plan.name} at ${interval === 'annual' ? 'the annual rate' : 'the monthly rate'} now, and the difference for the rest of this billing period is charged or credited to their card. If they still pay through Square, you'll need to change it in Square by hand.`,
+      billing,
       '• Use this to fix a wrong plan. Owners choose a different plan at renewal, not mid-year.',
     ];
     const ok = await appConfirm({
@@ -1005,12 +1066,16 @@ export default function PatientMembershipPanel({
   const groupOptions = membership?.groups ?? [];
   /** A cancelled membership still shows its history, but the pet can be put on a plan again. */
   const canEnrol = !loading && (!membership || membership.status !== 'active');
-  const ownerPaidRecently = (() => {
+  const ownerPaidOnline = (() => {
     if (membership?.status !== 'active') return false;
+    // A post-visit signup already re-priced and refunded the visit (in person or emailed).
+    if (membership.visitRefund) return false;
     if (!membership.stripeSubscriptionId?.startsWith('sub_')) return false;
     if (!membership.startDate) return false;
-    const ageHours = (Date.now() - Date.parse(membership.startDate)) / 3_600_000;
-    return ageHours >= -1 && ageHours <= postVisitWindowHours + 1;
+    const started = Date.parse(membership.startDate);
+    if (!Number.isFinite(started)) return false;
+    // A future-dated plan is not an enrollment we can refund yet.
+    return started - Date.now() <= 3_600_000;
   })();
 
   function renderBenefitRow(benefit: MembershipBenefit, group: MembershipGroup) {
@@ -1296,6 +1361,11 @@ export default function PatientMembershipPanel({
   const headerBadge = membership ? (
     <>
       <span className="pmp-head-plan">{membership.planName}</span>
+      {membership.benefitsPaused ? (
+        <span className="pmp-head-paused" aria-label="Benefits paused">
+          Benefits paused
+        </span>
+      ) : null}
       {membership.status === 'inactive' ? (
         <span className="pmp-head-inactive" aria-label="Membership inactive">
           Inactive
@@ -1309,7 +1379,11 @@ export default function PatientMembershipPanel({
   ) : null;
 
   return (
-    <section className="pims-emr-story__card pmp" aria-labelledby="pims-emr-membership">
+    <section
+      ref={sectionRef}
+      className="pims-emr-story__card pmp"
+      aria-labelledby="pims-emr-membership"
+    >
       <div className="pims-emr-story__collapse-row">
         <button
           type="button"
@@ -1536,34 +1610,32 @@ export default function PatientMembershipPanel({
                     ) : null}
                   </div>
                   <div className="pmp-summary__actions">
-                    {ownerPaidRecently && clientId && canPostVisitSignup ? (
+                    {ownerPaidOnline && clientId && canPostVisitSignup ? (
                       <button
                         type="button"
-                        className="pims-detail__btn-ghost"
+                        className="pims-detail__btn-secondary"
                         disabled={busy}
-                        title={
-                          postVisitHoursLeft == null
-                            ? 'Owner already paid in Stripe. Refund the covered visit only.'
-                            : postVisitHoursLeft <= 0
-                              ? `Outside the ${postVisitWindowHours}h post-visit window — override required`
-                              : `Owner already paid. ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left to refund the visit.`
-                        }
-                        onClick={() => setPostVisitOpen(true)}
+                        title="Owner already paid in Stripe. Review the visit, then confirm the refund."
+                        onClick={() => setRefundConfirmOpen(true)}
                       >
                         <ShieldCheck size={15} aria-hidden />
                         Owner paid — refund visit
-                        {postVisitHoursLeft == null
-                          ? null
-                          : postVisitHoursLeft <= 0
-                            ? ' · EXPIRED'
-                            : ` · ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
                       </button>
                     ) : null}
-                    {canChangePlan ? (
+                    {canChangePlanAnyTime || canChangePlanFirstMonth ? (
                       <button
                         type="button"
                         className="pmp-btn-change"
-                        disabled={busy || membership.status !== 'active'}
+                        disabled={
+                          busy ||
+                          membership.status !== 'active' ||
+                          (!canChangePlanAnyTime && !inFirstMonthOfTerm(membership.termStartDate))
+                        }
+                        title={
+                          !canChangePlanAnyTime && !inFirstMonthOfTerm(membership.termStartDate)
+                            ? 'More than a month into this membership year. Ask a lead client liaison, practice manager or admin to change the plan.'
+                            : undefined
+                        }
                         onClick={() => {
                           setFormError(null);
                           setMode(mode === 'change' ? 'none' : 'change');
@@ -1602,12 +1674,38 @@ export default function PatientMembershipPanel({
                 </div>
                 {membership.benefitsPaused ? (
                   <div className="pmp-paused" role="status">
-                    <p>
-                      <strong>Benefits paused since {shortDate(membership.benefitsPaused.since)}.</strong>{' '}
-                      {membership.benefitsPaused.reason ?? 'Card dispute'}. Charge this pet at regular
-                      prices; covered services are blocked until the dispute is resolved. Scout resumes
-                      benefits on its own if the practice wins.
-                    </p>
+                    <div className="pmp-paused__copy">
+                      <p>
+                        <strong>Benefits paused since {shortDate(membership.benefitsPaused.since)}.</strong>{' '}
+                        {membership.benefitsPaused.reason ?? 'Card dispute'}. Charge this pet at regular
+                        prices until this is settled.
+                      </p>
+                      {benefitsPausedForPastDue(membership.benefitsPaused) ? (
+                        membership.stripeSubscriptionId?.startsWith('sub_') ? (
+                          <p>
+                            <strong>Resume benefits</strong> when you already collected the missed
+                            payment another way (check, cash, or the Financial tab) and only need
+                            member pricing turned back on. It does not charge a card. If Stripe
+                            collects the payment itself, benefits come back on their own.
+                          </p>
+                        ) : (
+                          <p>
+                            <strong>Enter a card</strong> under Billing card when the owner gives you
+                            a card to charge. Stripe charges it today, benefits come back if the
+                            charge goes through, and Scout cancels Square.{' '}
+                            <strong>Resume benefits</strong> when you already collected the payment
+                            another way and only need member pricing turned back on. It does not
+                            charge a card.
+                          </p>
+                        )
+                      ) : (
+                        <p>
+                          <strong>Resume benefits</strong> after you have settled the dispute with
+                          the owner and want member pricing back on now. It does not check Stripe.
+                          If the practice wins the dispute, Scout turns benefits back on by itself.
+                        </p>
+                      )}
+                    </div>
                     {canResumeBenefits ? (
                       <button
                         type="button"
@@ -1701,6 +1799,7 @@ export default function PatientMembershipPanel({
                     <MembershipCardUpdate
                       membershipId={membership.id}
                       buttonClassName="pims-detail__btn-secondary"
+                      onSaved={() => void load()}
                     />
                   </div>
                 ) : null}
@@ -2170,6 +2269,61 @@ export default function PatientMembershipPanel({
           ) : null}
         </div>
       ) : null}
+      {open ? (
+        <MembershipAgreementRequests
+          patientId={patientId}
+          clientId={clientId}
+          membershipId={membership?.id ?? null}
+          refreshKey={agreementsKey}
+        />
+      ) : null}
+      {refundConfirmOpen
+        ? createPortal(
+            <div
+              className="pmp-confirm-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pmp-refund-confirm-title"
+            >
+              <div className="pmp-confirm">
+                <h3 id="pmp-refund-confirm-title" className="pmp-confirm__title">
+                  {`Refund ${patientName ?? 'this pet'}'s visit?`}
+                </h3>
+                <p className="pmp-confirm__body">
+                  The owner already paid for {membership?.planName ?? 'this membership'}
+                  {membership?.billingInterval === 'annual'
+                    ? ' annually'
+                    : membership?.billingInterval === 'monthly'
+                      ? ' monthly'
+                      : ''}{' '}
+                  online. This reviews the visit at member prices and refunds what the membership
+                  covers. The membership fee is not charged again. Nothing is refunded until you
+                  confirm the amount on the next screen.
+                </p>
+                <div className="pmp-confirm__actions">
+                  <button
+                    type="button"
+                    className="pmp-confirm__cancel"
+                    onClick={() => setRefundConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="pmp-confirm__go"
+                    onClick={() => {
+                      setRefundConfirmOpen(false);
+                      setPostVisitOpen(true);
+                    }}
+                  >
+                    Review the refund
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       {postVisitOpen && clientId ? (
         <PostVisitMembershipSignup
           clientId={clientId}
@@ -2179,9 +2333,13 @@ export default function PatientMembershipPanel({
           patientAgeYears={patientAgeYears}
           initialInvoiceIds={postVisitInvoiceIds}
           seedInvoices={postVisitSeedInvoices}
-          onClose={() => setPostVisitOpen(false)}
+          onClose={() => {
+            setPostVisitOpen(false);
+            setAgreementsKey((k) => k + 1);
+          }}
           onCompleted={() => {
             setPostVisitOpen(false);
+            setAgreementsKey((k) => k + 1);
             void load();
           }}
         />

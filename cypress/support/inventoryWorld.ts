@@ -42,7 +42,7 @@ export function inventoryWorld(): InventoryWorld {
 }
 
 export const apiBase = () =>
-  Cypress.config('baseUrl')?.replace(':5173', ':3000') ?? 'http://localhost:3000';
+  (Cypress.env('API_URL') || Cypress.config('baseUrl')?.replace(':5173', ':3000') || 'http://localhost:3000');
 
 /** Calls the API as one of the seeded staff; yields the response body. */
 export function api<T = any>(

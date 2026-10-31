@@ -96,6 +96,7 @@ import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import EuthanasiaConsentForm from './pages/EuthanasiaConsentForm';
 import FormSignPage from './pages/FormSignPage';
+import MembershipAgreementSignPage from './pages/MembershipAgreementSignPage';
 import RecordsUploadPage from './pages/RecordsUploadPage';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import SlotOfferConfirmPage from './pages/SlotOfferConfirmPage';
@@ -680,6 +681,7 @@ export default function App() {
           <Route path="/consent/euthanasia" element={<EuthanasiaConsentForm />} />
           {/* Generic signed forms — public, token-based, no login required */}
           <Route path="/forms/:token" element={<FormSignPage />} />
+          <Route path="/membership-agreement/:token" element={<MembershipAgreementSignPage />} />
           {/* Outside hospital uploads previous records from an emailed link */}
           <Route path="/records/upload" element={<RecordsUploadPage />} />
           <Route path="/share" element={<PublicReferAFriend />} />

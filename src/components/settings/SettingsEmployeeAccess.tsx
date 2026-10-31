@@ -27,6 +27,8 @@ type Props = {
   employeeId: number;
   employeeName?: string;
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
+  /** Told when the license changes, so the Profile tab can show the controlled drug location. */
+  onLicenseChange?: (license: { isLicensed: boolean; licenseType: LicenseType }) => void;
 };
 
 type LicenseType = 'veterinarian' | 'technician' | null;
@@ -36,7 +38,12 @@ const LICENSE_LABEL: Record<string, string> = {
   technician: 'Licensed technician',
 };
 
-export default function SettingsEmployeeAccess({ employeeId, employeeName, onMessage }: Props) {
+export default function SettingsEmployeeAccess({
+  employeeId,
+  employeeName,
+  onMessage,
+  onLicenseChange,
+}: Props) {
   const practiceId = currentPracticeId();
   const { reload: reloadOwnPermissions, effective: myPermissions } = usePermissions();
 
@@ -115,6 +122,7 @@ export default function SettingsEmployeeAccess({ employeeId, employeeName, onMes
     try {
       await saveEmployeeLicense(practiceId, employeeId, { isLicensed, licenseType });
       onMessage?.('License updated', 'success');
+      onLicenseChange?.({ isLicensed, licenseType });
       if (isSelf) reloadOwnPermissions();
       load();
     } catch (err) {

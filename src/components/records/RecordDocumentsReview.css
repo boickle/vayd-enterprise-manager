@@ -29,6 +29,12 @@
   color: var(--rdr-muted);
 }
 
+.rdr__sources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .rdr__drop {
   display: flex;
   align-items: center;
@@ -39,6 +45,25 @@
   color: var(--rdr-ink);
   font-weight: 650;
   cursor: pointer;
+}
+
+.rdr__camera {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--rdr-ink);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--rdr-ink);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.rdr__camera.is-disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .rdr__drop em {

@@ -94,6 +94,10 @@
 .lab-result-form__table tbody tr.is-abnormal {
   background: #fff7f7;
 }
+.lab-result-form__table tbody tr.is-missing .lab-result-form__input,
+.lab-result-form__table tbody tr.is-missing .lab-result-form__notes {
+  border-color: #f0a3a3;
+}
 
 .lab-result-form__input {
   width: 100%;

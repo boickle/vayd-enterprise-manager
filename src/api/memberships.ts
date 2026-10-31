@@ -262,6 +262,8 @@ export type PatientMembership = {
   /** Set on enrolment only: species or age mismatches staff should check. */
   warnings?: string[];
   startDate: string | null;
+  /** Start of the current membership year (the start date until it first renews). */
+  termStartDate?: string | null;
   expirationDate: string | null;
   billingInterval: string | null;
   price: number | null;
@@ -271,6 +273,13 @@ export type PatientMembership = {
   notes: string | null;
   createdByEmployeeId: number | null;
   isScoutManaged: boolean;
+  /** The visit was already re-priced and refunded by a post-visit signup (in person or emailed). */
+  visitRefund?: {
+    at: string;
+    amount: number;
+    status: string;
+    viaEmailedAgreement: boolean;
+  } | null;
   /** True once the membership fee was collected (agreement on chart for Scout enrolments). */
   membershipFeePaid: boolean;
   /** Set while a card dispute is open: no member pricing or covered services. */
@@ -393,6 +402,8 @@ export type BundleSaleLine = {
   quantity: number;
   unitPrice: number;
   listUnitPrice: number;
+  /** The bundle's own per-unit price for this item ($0 is a real price); null = catalog price. */
+  priceOverride?: number | null;
   note: string | null;
 };
 
@@ -735,6 +746,36 @@ export async function removeMembershipItem(
 }
 
 /** Staff fix for a wrong plan; Stripe billing follows (Square is changed by hand). */
+/** What moving to another plan does to billing; nothing is changed. */
+export type MembershipPlanChangePreview = {
+  billing: 'stripe' | 'square';
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  newPrice: number | null;
+  currentPrice: number | null;
+  intervalChanges: boolean;
+  /** Monthly billing: months already billed this membership year, the current one included. */
+  monthsBilled: number | null;
+  /** New price minus current price, per billing period. */
+  priceDifference: number | null;
+  /** Dollars now for the whole membership year so far: positive is charged, negative is credited or refunded. */
+  adjustment: number | null;
+  error: string | null;
+  /** The sentence to show staff, the same wording as the note after the change. */
+  note: string;
+};
+
+export async function previewMembershipPlanChange(
+  membershipId: number,
+  input: { packageId: number; billingInterval?: MembershipBillingInterval }
+): Promise<MembershipPlanChangePreview> {
+  const { data } = await http.get<MembershipPlanChangePreview>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/change-plan/preview`,
+    { params: { practiceId: currentPracticeId(), ...input } }
+  );
+  return data;
+}
+
 export async function changeMembershipPlan(
   membershipId: number,
   input: {
@@ -755,8 +796,33 @@ export async function changeMembershipPlan(
 export type MembershipBillingCard = {
   card: { brand: string; last4: string; expMonth: number | null; expYear: number | null } | null;
   canUpdate: boolean;
+  /** Staff only: still billed on Square, so a new card moves billing to Stripe. */
+  canMoveToStripe?: boolean;
   reason: string | null;
 };
+
+export type MembershipStripeMoveResult = {
+  ok: true;
+  chargedNow: boolean;
+  firstChargeDate: string | null;
+  benefitsResumed: boolean;
+  squareSubscriptionId: string | null;
+  squareCanceled: boolean;
+  squareActionNeeded: string | null;
+  membership: PatientMembership;
+};
+
+/** Staff: bill a Square membership through Stripe on this card, and cancel Square. */
+export async function moveMembershipToStripe(
+  membershipId: number,
+  paymentMethodId: string
+): Promise<MembershipStripeMoveResult> {
+  const { data } = await http.post<MembershipStripeMoveResult>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/move-to-stripe`,
+    { practiceId: currentPracticeId(), paymentMethodId }
+  );
+  return data;
+}
 
 function membershipCardPath(membershipId: number, mine: boolean) {
   return `/memberships/patient-memberships/${mine ? 'mine/' : ''}${encodeURIComponent(membershipId)}/card`;
@@ -837,6 +903,8 @@ export type MembershipCancelPreview = {
   chargeAmount: number;
   refundAmount: number;
   hasCard: boolean;
+  /** No payment record was found, so the amount paid is estimated from the listed price. */
+  paymentUnknown?: boolean;
   coveredLines: MembershipCancelLine[];
   paidLines: MembershipCancelLine[];
   ownerWillSee: string;
@@ -1105,6 +1173,58 @@ export type UpcomingMembershipRenewal = MembershipRenewalPreview & {
   reviewToken: string;
 };
 
+export type PostVisitOpenWindow = {
+  patientId: number;
+  patientName: string;
+  /** Business hours remaining in the signup window (always > 0). */
+  hoursLeft: number;
+  windowHours: number;
+};
+
+/** Client portal: pets with a recent visit still inside the post-visit signup window. */
+export async function listMyPostVisitWindows(): Promise<PostVisitOpenWindow[]> {
+  const { data } = await http.get<PostVisitOpenWindow[]>(
+    '/memberships/post-visit-signup/mine/open-windows',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+/** Client portal: what joining on a plan refunds from the pet's recent visit. */
+export type OwnerVisitRefundOutline = {
+  planName: string;
+  refundDue: number;
+  paidTotal: number;
+  newTotal: number;
+  hoursLeft: number | null;
+  visits: Array<{ visitAt: string | null; total: number; paid: number }>;
+  lines: Array<{
+    description: string;
+    qty: number;
+    was: number;
+    now: number;
+    covered: boolean;
+    note: string;
+  }>;
+  unchangedCount: number;
+};
+
+/** Null when there's no recent visit in the window for this pet. */
+export async function previewMyVisitRefund(body: {
+  patientId: number;
+  planId: string;
+  planName?: string;
+  pricingOption: 'monthly' | 'annual';
+  addOns?: string[];
+  species?: string;
+}): Promise<OwnerVisitRefundOutline | null> {
+  const { data } = await http.post<OwnerVisitRefundOutline | null | ''>(
+    '/memberships/post-visit-signup/mine/visit-refund-preview',
+    { practiceId: currentPracticeId(), ...body },
+  );
+  return data || null;
+}
+
 /** Client portal: the logged-in client's pets whose membership renews soon. */
 export async function listMyUpcomingRenewals(): Promise<UpcomingMembershipRenewal[]> {
   const { data } = await http.get<UpcomingMembershipRenewal[]>(
@@ -1118,6 +1238,8 @@ export type MembershipRenewalPlanOption = {
   packageId: number;
   name: string;
   summary: string | null;
+  cardTagLine?: string | null;
+  cardBullets?: string[] | null;
   monthlyPrice: number | null;
   annualPrice: number | null;
   monthlyAvailable: boolean;
@@ -1190,6 +1312,141 @@ export async function chooseMembershipRenewalPlan(
     '/public/membership-renewal/plan-choice',
     body,
     { params: { token } },
+  );
+  return data;
+}
+
+/* ── Membership agreement emailed to the owner to sign ─────────────────── */
+
+export type MembershipAgreementRequestStatus =
+  | 'pending'
+  | 'signing'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+export type MembershipAgreementSummary = {
+  petName: string | null;
+  planName: string | null;
+  billingInterval: MembershipBillingInterval | null;
+  price: number | null;
+  refundDue: number;
+  balanceDue: number;
+  subscriptionAmount: number;
+};
+
+export type MembershipAgreementRequest = {
+  id: string;
+  kind: 'post_visit_signup' | 'agreement_only';
+  status: MembershipAgreementRequestStatus;
+  patientId: number;
+  membershipId: number | null;
+  planName: string | null;
+  sentToEmail: string;
+  sentByEmployeeId: number | null;
+  sentAt: string;
+  expiresAt: string;
+  remindAt: string;
+  signedName: string | null;
+  signedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  summary: MembershipAgreementSummary | null;
+  link: string;
+};
+
+/**
+ * Post-visit signup with the owner absent: emails the agreement. Nothing is enrolled,
+ * refunded or charged until they sign; signing runs this exact signup.
+ */
+export async function sendPostVisitAgreement(
+  input: Omit<
+    Parameters<typeof executePostVisitSignup>[0],
+    'agreementAccepted' | 'agreementSignature' | 'agreementSignatureData' | 'agreementSignedAt'
+  > & {
+    toEmail: string;
+    agreementText: string;
+    /** Only with a window override; otherwise the link lasts 24 hours. */
+    linkExpiresAt?: string;
+  }
+): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    '/memberships/agreement-requests/post-visit',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+/** The agreement alone, for an existing membership (re-send, or none on file). */
+export async function sendMembershipAgreement(input: {
+  membershipId: number;
+  toEmail: string;
+  agreementText: string;
+}): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    '/memberships/agreement-requests/agreement-only',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export async function listMembershipAgreementRequests(
+  patientId: number
+): Promise<MembershipAgreementRequest[]> {
+  const { data } = await http.get<MembershipAgreementRequest[]>(
+    '/memberships/agreement-requests',
+    { params: { practiceId: currentPracticeId(), patientId } }
+  );
+  return data;
+}
+
+export async function resendMembershipAgreement(
+  id: string,
+  toEmail?: string
+): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    `/memberships/agreement-requests/${encodeURIComponent(id)}/resend`,
+    { practiceId: currentPracticeId(), ...(toEmail ? { toEmail } : {}) }
+  );
+  return data;
+}
+
+export async function cancelMembershipAgreement(id: string): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    `/memberships/agreement-requests/${encodeURIComponent(id)}/cancel`,
+    { practiceId: currentPracticeId() }
+  );
+  return data;
+}
+
+export type PublicMembershipAgreement = {
+  status: MembershipAgreementRequestStatus;
+  kind: 'post_visit_signup' | 'agreement_only';
+  practiceName: string;
+  petName: string | null;
+  planName: string | null;
+  summary: MembershipAgreementSummary | null;
+  agreementText: string;
+  expiresAt: string;
+  signedName: string | null;
+  signedAt: string | null;
+};
+
+export async function getPublicMembershipAgreement(token: string): Promise<PublicMembershipAgreement> {
+  const { data } = await http.get<PublicMembershipAgreement>(
+    `/public/membership-agreements/${encodeURIComponent(token)}`
+  );
+  return data;
+}
+
+export async function signPublicMembershipAgreement(
+  token: string,
+  body: { accepted: boolean; signedName: string; signatureDataUrl: string }
+): Promise<{ status: MembershipAgreementRequestStatus }> {
+  const { data } = await http.post<{ status: MembershipAgreementRequestStatus }>(
+    `/public/membership-agreements/${encodeURIComponent(token)}/sign`,
+    body
   );
   return data;
 }

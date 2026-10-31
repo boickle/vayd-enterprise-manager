@@ -55,8 +55,8 @@ export function cutoffAfterBusinessHoursAgo(args: {
   if (!cursor.isValid) cursor = DateTime.now().setZone(zone);
   let remaining = needed;
 
-  // Cap at ~90 calendar days so a misconfigured schedule cannot hang.
-  for (let guard = 0; guard < 90 * 24 * 60 && remaining > 0; guard += 1) {
+  // One pass per calendar day; cap at ~90 days so a misconfigured schedule cannot hang.
+  for (let guard = 0; guard < 90 && remaining > 0; guard += 1) {
     // Luxon weekday: 1=Mon … 7=Sun. CHAT_DAY_NAMES[0]=Sunday.
     const luxonToChat = cursor.weekday === 7 ? 0 : cursor.weekday;
     const name = CHAT_DAY_NAMES[luxonToChat];
@@ -73,15 +73,19 @@ export function cutoffAfterBusinessHoursAgo(args: {
     const dayStart = cursor.startOf('day');
     const openAt = dayStart.plus({ minutes: openMin });
     const closeAt = dayStart.plus({ minutes: closeMin });
+    // Done with this day (before it opened, or its open time used up): go to the end of the
+    // previous day. Stepping to a minute before opening kept the cursor on the same day, so
+    // the loop spun ~130k times (a 5–10 s freeze) and returned this morning as the cutoff.
+    const previousDay = dayStart.minus({ minutes: 1 });
     const windowEnd = cursor < closeAt ? cursor : closeAt;
     if (windowEnd <= openAt) {
-      cursor = openAt.minus({ minutes: 1 });
+      cursor = previousDay;
       continue;
     }
 
     const available = Math.floor(windowEnd.diff(openAt, 'minutes').minutes);
     if (available <= 0) {
-      cursor = openAt.minus({ minutes: 1 });
+      cursor = previousDay;
       continue;
     }
 
@@ -89,7 +93,7 @@ export function cutoffAfterBusinessHoursAgo(args: {
       return windowEnd.minus({ minutes: remaining }).toUTC().toJSDate();
     }
     remaining -= available;
-    cursor = openAt.minus({ minutes: 1 });
+    cursor = previousDay;
   }
 
   return cursor.toUTC().toJSDate();

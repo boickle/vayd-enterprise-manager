@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import {
   fetchMembershipRenewalPreview,
   requestMembershipRenewalCancel,
@@ -118,6 +118,9 @@ export default function MembershipRenewalReview() {
 
   return (
     <main className="renewal-review">
+      <Link className="renewal-review__back" to="/client-portal">
+        ← Back to portal
+      </Link>
       <img
         className="renewal-review__logo"
         src="/final_thick_lines_cropped.jpeg"

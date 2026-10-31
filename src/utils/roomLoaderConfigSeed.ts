@@ -50,8 +50,13 @@ function annualVaccineGate(): RoomLoaderHistoryGate {
     suppressIfDoneWithinMonths: 15,
     suppressIfReminderDueBeyondMonths: 0,
     showEvenIfPreviouslyDeclined: true,
-    reofferDeclinedAfterMonths: null,
+    reofferDeclinedAfterMonths: 10,
   });
+}
+
+/** Owner decision D2: every decline is re-offered 10 months after the latest decline. */
+function declineWindowGate(): RoomLoaderHistoryGate {
+  return gate({ showEvenIfPreviouslyDeclined: true, reofferDeclinedAfterMonths: 10 });
 }
 
 /** Vaccines offered by the care plan, with every product form that means "already covered". */
@@ -285,6 +290,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         closingHtml: '',
         concernClosingHtml: '',
         alignPackageId: null,
+        suppressIfDoneWithinMonths: 10,
         sortOrder: 0,
         options: [
           option('o_fecal', FECAL_COMP, {
@@ -308,6 +314,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
           '<p>Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.</p>',
         concernClosingHtml: '',
         alignPackageId: 1289,
+        suppressIfDoneWithinMonths: 10,
         sortOrder: 1,
         options: [
           option('o_ed', EARLY_DOG, {
@@ -345,6 +352,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
           '<p>Most families choose to include this screening so we have baseline information available if {petName} ever becomes sick.</p>',
         concernClosingHtml: '',
         alignPackageId: 1309,
+        suppressIfDoneWithinMonths: 10,
         sortOrder: 2,
         options: [
           option('o_edf', EARLY_CAT, {
@@ -358,7 +366,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
                   suppressIfDoneWithinMonths: 10,
                   suppressIfReminderDueBeyondMonths: 6,
                   showEvenIfPreviouslyDeclined: true,
-                  reofferDeclinedAfterMonths: 11,
+                  reofferDeclinedAfterMonths: 10,
                 }),
               }),
               subAsk('ask_mur7o1p4i05nwj', FELINE_3DX, {
@@ -367,7 +375,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
                   suppressIfDoneWithinMonths: 10,
                   suppressIfReminderDueBeyondMonths: 6,
                   showEvenIfPreviouslyDeclined: true,
-                  reofferDeclinedAfterMonths: 11,
+                  reofferDeclinedAfterMonths: 10,
                 }),
               }),
             ],
@@ -389,6 +397,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         concernClosingHtml:
           "<p>Lab work can help identify underlying causes of {petName}'s symptoms and guide the doctor in choosing the most appropriate treatment plan.</p>",
         alignPackageId: 1167,
+        suppressIfDoneWithinMonths: 10,
         sortOrder: 3,
         options: [
           option('opt_senior_basic', SENIOR_STD, {
@@ -406,11 +415,13 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
             ],
             subAsks: [
               subAsk('ask_s_4dx', item('lab', 132, 'Heartworm/Tick 4Dx', 'F4DX'), {
+                history: declineWindowGate(),
                 displayName: 'Heartworm & tick screen (4Dx)',
                 cautionHtml:
                   '<p>Heartworm is spread by mosquitoes and is far cheaper to prevent than to treat. Ticks in our area also carry Lyme and anaplasmosis.</p>',
               }),
               subAsk('ask_s_fecal', item('lab', 139, 'Comprehensive Fecal', 'FIL24639'), {
+                history: declineWindowGate(),
                 displayName: 'Intestinal parasite screen',
                 cautionHtml:
                   '<p>Giardia and other intestinal parasites often cause no visible signs, and some can spread to people in the household.</p>',
@@ -433,6 +444,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         concernClosingHtml:
           "<p>Lab work can help identify underlying causes of {petName}'s symptoms and guide the doctor in choosing the most appropriate treatment plan.</p>",
         alignPackageId: 1165,
+        suppressIfDoneWithinMonths: 10,
         sortOrder: 4,
         options: [
           option('opt_senior_cat_std', SENIOR_STD, {
@@ -447,6 +459,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
             replacesItems: [item('lab', 139, 'Comprehensive Fecal', 'FIL24639')],
             subAsks: [
               subAsk('ask_cat_fecal', item('lab', 139, 'Comprehensive Fecal', 'FIL24639'), {
+                history: declineWindowGate(),
                 displayName: 'Intestinal parasite screen',
                 cautionHtml:
                   '<p>Giardia and other intestinal parasites often cause no visible signs, and some can spread to people in the household.</p>',
@@ -474,7 +487,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         id: 'u_chip',
         enabled: true,
         displayName: 'Microchip',
-        species: ['any'],
+        species: ['dog', 'cat'],
         descriptionHtml: '<p>Permanent identification if your pet ever goes missing.</p>',
         item: item('procedure', 96, 'HomeAgain Microchip', 'MICROCHIP'),
         itemBySpecies: { dog: null, cat: null },
@@ -563,7 +576,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
           suppressIfDoneWithinMonths: 240,
           suppressIfReminderDueBeyondMonths: 0,
           showEvenIfPreviouslyDeclined: true,
-          reofferDeclinedAfterMonths: null,
+          reofferDeclinedAfterMonths: 10,
         }),
         requiresOutdoorAccess: false,
         descriptionHtml:
@@ -630,7 +643,12 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
       pitchItem: item('inventory', 76, 'FeLV (Leukemia) Vaccine - 1 year', 'FELV1'),
       pitchDisplayName: '',
       pitchCautionHtml: '',
-      history: gate({ suppressIfDoneWithinMonths: 24 }),
+      equivalentItems: [FELV_INITIAL, ...FELV_EQUIVALENTS],
+      history: gate({
+        suppressIfDoneWithinMonths: 24,
+        showEvenIfPreviouslyDeclined: true,
+        reofferDeclinedAfterMonths: 10,
+      }),
     },
     medicalConcern: {
       enabled: false,

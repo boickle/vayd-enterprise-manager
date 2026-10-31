@@ -37,6 +37,7 @@ import {
   type PatientMembership,
 } from '../../api/memberships';
 import { usedUpMembershipNote } from '../../utils/membershipLineUsage';
+import MembershipBenefitsPausedTag from './MembershipBenefitsPausedTag';
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
 import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
 import {
@@ -71,6 +72,7 @@ import {
   ensureCounterInvoice,
   finalizeInvoice,
   getInvoice,
+  syncTerminalCheckout,
   listClientVisitInvoices,
   patchVisitInvoice,
   postAccountAdjustment,
@@ -141,8 +143,19 @@ import {
   type NormalizedInvoice,
 } from '../../utils/pimsInvoices';
 import { appAccountCredit, appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
+import {
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  type InventoryBranchLocation,
+} from '../../api/branchInventory';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import CheckoutReminders from '../soap/CheckoutReminders';
+import DeathWrapUpModal from '../soap/DeathWrapUpModal';
+import { listPatientStatuses } from '../../api/patientStatuses';
+import {
+  previewDeathWrapUpForPatients,
+  type DeathWrapUpPreview,
+} from '../../utils/deathWrapUp';
 import {
   INVOICE_DIRECTIONS_LEAVE_MESSAGE,
   registerInvoiceDirectionsLeaveSave,
@@ -169,6 +182,7 @@ import {
   type PracticePaymentType,
 } from '../../api/paymentTypes';
 import CheckoutInventoryBranchField from '../soap/CheckoutInventoryBranchField';
+import ControlledDoseFields from '../soap/ControlledDoseFields';
 import SendRxLabelButton, { type SendRxLabelSource } from '../soap/SendRxLabelButton';
 import MailInvoiceLineCheckbox, {
   approveMailOrderFromInvoice,
@@ -197,6 +211,10 @@ import {
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
+import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { lotShelf } from '../../utils/lotShelf';
+// A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
+// invoice's office / shelf fields aren't shown on it (owner request, Oct 30, 2026).
 import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
 import InvoiceVaccineDoseEditor, {
   loadClinicalForInvoiceLines,
@@ -929,11 +947,32 @@ function ChargeSearchMenu({
   anchorRef,
   open,
   children,
+  onDismiss,
 }: {
   anchorRef: RefObject<HTMLDivElement | null>;
   open: boolean;
   children: ReactNode;
+  /** A click outside the search box and menu, or Escape, closes the menu. */
+  onDismiss?: () => void;
 }) {
+  const menuRef = useRef<HTMLUListElement | null>(null);
+  useEffect(() => {
+    if (!open || !onDismiss) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (anchorRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      onDismiss();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onDismiss();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, onDismiss, anchorRef]);
   const [box, setBox] = useState<{
     top: number;
     left: number;
@@ -974,6 +1013,7 @@ function ChargeSearchMenu({
   if (!open || !box) return null;
   return createPortal(
     <ul
+      ref={menuRef}
       className="client-fin__hits client-fin__hits--float"
       style={{ top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight }}
     >
@@ -998,12 +1038,19 @@ function invoicePricingVisit(
   return { invoiceId: invoice.id };
 }
 
-function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
+/**
+ * A blank draft: open, nothing on it, nothing paid, and nothing ever recorded. A bill emptied
+ * by removing charges with a reason, or taken over from eVet, still shows on the ledger.
+ */
+export function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
   return (
     invoice.status === 'open' &&
     invoice.isDeleted !== true &&
     activeLines(invoice).length === 0 &&
-    Number(invoice.amountPaid) <= 0.005
+    Number(invoice.amountPaid) <= 0.005 &&
+    !(Number(invoice.removedChargeCount) > 0) &&
+    invoice.evetInvoiceId == null &&
+    !(invoice.lines ?? []).some((line) => line.isDeleted && line.removedAt)
   );
 }
 
@@ -1014,7 +1061,8 @@ function chooseOpenInvoice(
 ): VisitInvoice | null {
   const openRows = rows
     .filter(
-      (inv) => inv.isDeleted !== true && inv.status === 'open' && !isEmptyOpenInvoice(inv),
+      // A bill with charges on it; an emptied one stays on the ledger but isn't opened for you.
+      (inv) => inv.isDeleted !== true && inv.status === 'open' && activeLines(inv).length > 0,
     )
     .sort(
       (a, b) =>
@@ -1151,16 +1199,18 @@ function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'direct' {
   return 'direct';
 }
 
-/** How a paid invoice was settled, from its live tenders. */
-function paidHowLabel(inv: VisitInvoice): string | null {
-  const names = [
-    ...new Set(
-      (inv.tenders ?? [])
-        .filter((tender) => !tender.voidedAt && (Number(tender.amount) || 0) > 0.009)
-        .map((tender) => tenderPayLabel(tender)),
-    ),
-  ];
-  if (names.length) return names.join(', ');
+/** How a paid invoice was settled, from its live tenders, and what went back to the card. */
+export function paidHowLabel(inv: VisitInvoice): string | null {
+  const live = (inv.tenders ?? []).filter(
+    (tender) => !tender.voidedAt && (Number(tender.amount) || 0) > 0.009,
+  );
+  const names = [...new Set(live.map((tender) => tenderPayLabel(tender)))];
+  // A refund (e.g. a post-visit membership signup re-pricing the visit) leaves Paid at $0;
+  // say so instead of "No charge".
+  const refunded = live.reduce((sum, tender) => sum + (Number(tender.refundedAmount) || 0), 0);
+  if (names.length) {
+    return refunded > 0.009 ? `${names.join(', ')} · Refunded ${money(refunded)}` : names.join(', ');
+  }
   if ((Number(inv.amountPaid) || 0) <= 0.009 && Math.abs(Number(inv.total) || 0) <= 0.009) {
     return inv.status === 'paid' ? 'No charge' : null;
   }
@@ -1464,8 +1514,13 @@ export default function ClientFinancialWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [repricing, setRepricing] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchableItem[]>([]);
+  /** The charge menu was closed (clicked away, Escape, or a charge couldn't be added). */
+  const [chargeMenuClosed, setChargeMenuClosed] = useState(false);
+  /** Why a charge couldn't be added, shown under the charge search on the invoice. */
+  const [chargeError, setChargeError] = useState<string | null>(null);
   const [bundleHits, setBundleHits] = useState<Bundle[]>([]);
   const [bundlePicker, setBundlePicker] = useState<Bundle | null>(null);
   const [coveragePrompt, setCoveragePrompt] = useState<CoverageChoicePrompt | null>(null);
@@ -1486,6 +1541,9 @@ export default function ClientFinancialWorkspace({
   const [returnQty, setReturnQty] = useState<Record<string, string>>({});
   /** Returned stock items going back on the shelf (unopened); unchecked are logged as waste. */
   const [returnToShelf, setReturnToShelf] = useState<Record<string, boolean>>({});
+  /** Back on the shelf: which shelf ('' = the one it was sold from). */
+  const [returnShelfLoc, setReturnShelfLoc] = useState<Record<string, number | ''>>({});
+  const [returnLocations, setReturnLocations] = useState<InventoryBranchLocation[]>([]);
   const [returning, setReturning] = useState(false);
   const [refundDraft, setRefundDraft] = useState<null | {
     tenderId: string;
@@ -1516,6 +1574,7 @@ export default function ClientFinancialWorkspace({
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [printedLineId, setPrintedLineId] = useState<string | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
+  const petLookupsTried = useRef<Set<number>>(new Set());
   const [staffById, setStaffById] = useState<Map<number, Employee>>(new Map());
   const [providers, setProviders] = useState<Provider[]>([]);
   const staffTriedRef = useRef<Set<number>>(new Set());
@@ -1546,6 +1605,15 @@ export default function ClientFinancialWorkspace({
   /** Virtual terminal: key in a card the owner reads out over the phone. */
   const [payByPhone, setPayByPhone] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
+  /** Shown after this invoice's payment makes a pet inactive. */
+  const [invoiceWrapUp, setInvoiceWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
+  const prevInvoiceStatusRef = useRef<{ id: string; status: string } | null>(null);
+  const shownWrapUpForRef = useRef<string | null>(null);
+  const wrapPreviewRef = useRef<{
+    invoiceId: string;
+    promise: Promise<DeathWrapUpPreview[] | null>;
+  } | null>(null);
+  const inactiveStatusNamesRef = useRef<Set<string> | null>(null);
   const [cardOnFile, setCardOnFile] = useState<InvoiceCardOnFile | null>(null);
   const [discountTypeNames, setDiscountTypeNames] = useState<Set<string>>(new Set());
   const appliedPrefill = useRef(false);
@@ -1749,6 +1817,80 @@ export default function ClientFinancialWorkspace({
       </Link>
     );
   };
+
+  /** Pets a catalog line on this invoice will mark inactive when it is paid. */
+  async function inactivationPreview(invoice: VisitInvoice): Promise<DeathWrapUpPreview[] | null> {
+    if (isUnsavedInvoice(invoice)) return null;
+    if (!inactiveStatusNamesRef.current) {
+      const rows = await listPatientStatuses().catch(() => []);
+      inactiveStatusNamesRef.current = new Set(
+        rows.filter((row) => row.marksInactive).map((row) => row.name.trim().toLowerCase()),
+      );
+    }
+    const names = inactiveStatusNamesRef.current;
+    const returned = new Set((invoice.lines ?? []).map((line) => line.returnOfLineId).filter(Boolean));
+    const patients = new Map<number, string>();
+    for (const line of invoice.lines ?? []) {
+      if (line.isDeleted || line.returnOfLineId || returned.has(line.id)) continue;
+      const status = line.catalogChangePatientStatusTo?.trim().toLowerCase();
+      if (!status || !names.has(status)) continue;
+      const patientId = Number(line.patientId ?? invoice.patientId);
+      if (!Number.isFinite(patientId) || patientId <= 0 || patients.has(patientId)) continue;
+      patients.set(patientId, petName(patientId, line.patientName));
+    }
+    if (!patients.size) return null;
+    const previews = await previewDeathWrapUpForPatients({
+      patients: [...patients.entries()].map(([patientId, patientName]) => ({
+        patientId,
+        patientName,
+      })),
+      appointmentId: invoice.appointmentId,
+      clientId: invoice.clientId ?? clientId,
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      practiceTz: PRACTICE_TZ,
+    }).catch(() => [] as DeathWrapUpPreview[]);
+    return previews.length ? previews : null;
+  }
+
+  /** Snapshot the wrap-up before payment, while memberships and reminders are still active. */
+  function armWrapUp(invoice: VisitInvoice) {
+    wrapPreviewRef.current = { invoiceId: invoice.id, promise: inactivationPreview(invoice) };
+  }
+
+  useEffect(() => {
+    const invoice = selected;
+    if (!invoice || isUnsavedInvoice(invoice)) {
+      prevInvoiceStatusRef.current = null;
+      return;
+    }
+    const prev = prevInvoiceStatusRef.current;
+    prevInvoiceStatusRef.current = { id: invoice.id, status: invoice.status };
+    if (invoice.status === 'open') shownWrapUpForRef.current = null;
+    const settledNow =
+      prev?.id === invoice.id &&
+      prev.status === 'open' &&
+      (invoice.status === 'paid' || invoice.status === 'finalized');
+    if (!settledNow || shownWrapUpForRef.current === invoice.id) return;
+    shownWrapUpForRef.current = invoice.id;
+    const armed =
+      wrapPreviewRef.current?.invoiceId === invoice.id ? wrapPreviewRef.current.promise : null;
+    void (async () => {
+      try {
+        const previews = armed ? await armed : await inactivationPreview(invoice);
+        if (wrapPreviewRef.current?.invoiceId === invoice.id) wrapPreviewRef.current = null;
+        if (previews?.length) setInvoiceWrapUp(previews);
+      } catch {
+        /* Payment already succeeded. The chart's deactivate action can still open this. */
+      }
+    })();
+  }, [selected]);
+
+  useEffect(() => {
+    if (!payingByGiftCard || !selected || selected.status !== 'open' || isUnsavedInvoice(selected)) {
+      return;
+    }
+    armWrapUp(selected);
+  }, [payingByGiftCard, selected]);
 
   async function refreshEstimates() {
     const rows = await listClientEstimates(clientId, { includeClosed: true });
@@ -2152,6 +2294,7 @@ export default function ClientFinancialWorkspace({
     setPendingDeleteReasons({});
     setReturnQty({});
     setReturnToShelf({});
+    setReturnShelfLoc({});
   }, [selected?.id]);
 
   useEffect(() => {
@@ -2160,6 +2303,9 @@ export default function ClientFinancialWorkspace({
         .filter((p) => !isPlaceholderPetName(p.name))
         .map((p) => p.id)
     );
+    // Asked for once each: a pet the API can't return (e.g. deleted) would otherwise be
+    // looked up again on every render.
+    for (const id of petLookupsTried.current) known.add(id);
     const seeded: FinancialPet[] = [];
     const consider = (id: number | null | undefined, name?: string | null) => {
       if (id == null || known.has(id)) return;
@@ -2202,7 +2348,7 @@ export default function ClientFinancialWorkspace({
       }
     }
     if (!missing.size) return;
-    let cancelled = false;
+    for (const id of missing) petLookupsTried.current.add(id);
     void Promise.all(
       [...missing].map(async (id) => {
         try {
@@ -2229,7 +2375,8 @@ export default function ClientFinancialWorkspace({
         }
       })
     ).then((rows) => {
-      if (!cancelled) {
+      {
+        // Kept even if this effect re-ran meanwhile: each pet is only looked up once.
         setExtraPets((prev) => {
           const byId = new Map(prev.map((p) => [p.id, p]));
           for (const row of rows) {
@@ -2240,9 +2387,6 @@ export default function ClientFinancialWorkspace({
         });
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, [scoutInvoices, evetInvoices, pets, extraPets]);
 
   useEffect(() => {
@@ -2474,7 +2618,8 @@ export default function ClientFinancialWorkspace({
     let stopped = false;
     const timer = window.setInterval(async () => {
       try {
-        const fresh = await getInvoice(selected.id);
+        // Asks Stripe too, so a missed webhook can't leave a paid invoice looking open.
+        const { invoice: fresh } = await syncTerminalCheckout(selected.id);
         if (stopped || fresh.status !== 'paid') return;
         window.clearInterval(timer);
         setTerminalJob(null);
@@ -3047,11 +3192,15 @@ export default function ClientFinancialWorkspace({
     [invoiceLineBlocks, allPets, lineGroups, tagalongGroups]
   );
   /**
-   * Lines always sit under their pet. The pet being charged, and any pet added with
-   * "Add charges for another pet", get a section even before their first charge.
+   * Lines always sit under their pet. On an open invoice, the pet being charged and any pet
+   * added with "Add charges for another pet" get a section even before their first charge.
+   * Closed invoices only show pets who actually have lines — the charge-target pet (often
+   * whoever's chart you opened) must not appear as an empty $0 box on every receipt.
    */
   const displayPetSections = useMemo(() => {
     const out = [...invoicePetSections];
+    const open = selected?.status === 'open' && selected.isDeleted !== true;
+    if (!open) return out;
     const wanted = [...addedSectionPetIds];
     if (linePatientId != null) wanted.push(linePatientId);
     for (const id of wanted) {
@@ -3066,7 +3215,7 @@ export default function ClientFinancialWorkspace({
       });
     }
     return out;
-  }, [invoicePetSections, addedSectionPetIds, linePatientId, allPets]);
+  }, [invoicePetSections, addedSectionPetIds, linePatientId, allPets, selected?.status, selected?.isDeleted]);
   const petsWithoutSection = chargePets.filter(
     (p) => !displayPetSections.some((s) => s.patientId === p.id),
   );
@@ -3105,10 +3254,15 @@ export default function ClientFinancialWorkspace({
             ref={active ? catalogSearchRef : undefined}
             autoFocus={active && isUnsavedInvoice(selected)}
             value={active ? query : ''}
-            onFocus={() => switchChargePet(petId)}
+            onFocus={() => {
+              switchChargePet(petId);
+              setChargeMenuClosed(false);
+            }}
             onChange={(e) => {
               switchChargePet(petId);
               setQuery(e.target.value);
+              setChargeMenuClosed(false);
+              setChargeError(null);
             }}
             placeholder={`Add a charge for ${petName}`}
           />
@@ -3116,7 +3270,9 @@ export default function ClientFinancialWorkspace({
         {active ? (
           <ChargeSearchMenu
             anchorRef={chargeSearchBoxRef}
+            onDismiss={() => setChargeMenuClosed(true)}
             open={
+              !chargeMenuClosed &&
               query.trim().length >= 2 &&
               (searching ||
                 hits.length > 0 ||
@@ -3178,6 +3334,11 @@ export default function ClientFinancialWorkspace({
               </li>
             ))}
           </ChargeSearchMenu>
+        ) : null}
+        {active && chargeError ? (
+          <p className="client-fin__err" role="alert" style={{ margin: '6px 0 0' }}>
+            {chargeError}
+          </p>
         ) : null}
       </div>
     );
@@ -3573,14 +3734,15 @@ export default function ClientFinancialWorkspace({
     }
     setBusy(true);
     setError(null);
+    setChargeError(null);
     try {
       if (linePatientId == null) {
-        setError('Pick a pet before adding a charge.');
+        setChargeError('Pick a pet before adding a charge.');
         return;
       }
       const providerEmployeeId = requiredProviderIdFor(linePatientId);
       if (providerEmployeeId == null) {
-        setError('Provider is required before adding invoice line items.');
+        setChargeError('Choose the provider before adding a charge.');
         return;
       }
       const wasDraft = isUnsavedInvoice(selected);
@@ -3624,7 +3786,8 @@ export default function ClientFinancialWorkspace({
         throw err;
       }
     } catch (e: unknown) {
-      setError(apiErr(e));
+      setChargeError(apiErr(e));
+      setChargeMenuClosed(true);
     } finally {
       setBusy(false);
     }
@@ -3633,16 +3796,17 @@ export default function ClientFinancialWorkspace({
   async function addBundleSaleLines(resolution: BundleSaleResolution) {
     if (!selected) return;
     if (linePatientId == null) {
-      setError('Pick a pet before adding a charge.');
+      setChargeError('Pick a pet before adding a charge.');
       return;
     }
     const providerEmployeeId = requiredProviderIdFor(linePatientId);
     if (providerEmployeeId == null) {
-      setError('Provider is required before adding invoice line items.');
+      setChargeError('Choose the provider before adding a charge.');
       return;
     }
     setBusy(true);
     setError(null);
+    setChargeError(null);
     try {
       const wasDraft = isUnsavedInvoice(selected);
       const invoice = await persistDraftIfNeeded();
@@ -3738,7 +3902,8 @@ export default function ClientFinancialWorkspace({
       );
       focusChargeSearch();
     } catch (e: unknown) {
-      setError(apiErr(e));
+      setChargeError(apiErr(e));
+      setChargeMenuClosed(true);
     } finally {
       setBusy(false);
     }
@@ -3747,6 +3912,7 @@ export default function ClientFinancialWorkspace({
   async function pickBundle(bundleHit: Bundle) {
     if (!selected || busy) return;
     setError(null);
+    setChargeError(null);
     try {
       const full = await getBundle(bundleHit.id);
       const needsPick = full.groups.some(
@@ -3762,7 +3928,8 @@ export default function ClientFinancialWorkspace({
       const resolution = await resolveBundleForSale(full.id, []);
       await addBundleSaleLines(resolution);
     } catch (e: unknown) {
-      setError(apiErr(e));
+      setChargeError(apiErr(e));
+      setChargeMenuClosed(true);
     }
   }
 
@@ -4040,6 +4207,15 @@ export default function ClientFinancialWorkspace({
     }
   }
 
+  /**
+   * A mail order still in the queue. Returning (refunding) it would leave it to be filled and
+   * shipped anyway, so it is cancelled first ("Request cancellation"), which opens the return.
+   */
+  const unshippedMailForLine = (line: VisitInvoiceLine): MailOrder | null => {
+    const match = mailOrderForLine(line);
+    return match && !isMailOrderShipped(match) ? match : null;
+  };
+
   const shippedMailForLine = (line: VisitInvoiceLine): MailOrder | null => {
     if (!selected) return null;
     const match = matchingMailOrderForLine(mailOrders, selected.id, line);
@@ -4052,8 +4228,10 @@ export default function ClientFinancialWorkspace({
     line: VisitInvoiceLine,
     reason?: string | null
   ): Promise<VisitInvoice | null> {
+    // IDEXX already ran it: take the charge off with the reason; don't decline the order.
+    const ranAtIdexx = (idexx.lineOrder(line.id)?.results ?? []).length > 0;
     return removeWithRecordedDose(async (removeDose) => {
-      if (line.orderId && line.encounterId && !line.tagalongOfLineId) {
+      if (line.orderId && line.encounterId && !line.tagalongOfLineId && !ranAtIdexx) {
         await deleteOrder(line.encounterId, line.orderId, removeDose);
         return getInvoice(invoice.id);
       }
@@ -4091,9 +4269,10 @@ export default function ClientFinancialWorkspace({
       setError(shippedMailMessage(shipped));
       return;
     }
-    if (!(await idexx.confirmRemove(line.id, appConfirm))) return;
-    let reason: string | null = null;
-    if (removalNeedsReason(selected)) {
+    const idexxCheck = await idexx.confirmRemove(line.id, appConfirm, appPrompt);
+    if (!idexxCheck) return;
+    let reason: string | null = idexxCheck.reason;
+    if (!reason && removalNeedsReason(selected)) {
       reason = await askRemovalReason(`“${line.description}”`);
       if (!reason) return;
     }
@@ -4284,6 +4463,7 @@ export default function ClientFinancialWorkspace({
     setBusy(true);
     setError(null);
     try {
+      armWrapUp(selected);
       const next = await finalizeInvoice(selected.id);
       setSelected(next);
       await refreshList(next.id);
@@ -4346,6 +4526,7 @@ export default function ClientFinancialWorkspace({
       received > amount + 0.009
         ? received - amount
         : null;
+    if (amount + 0.009 >= remaining) armWrapUp(selected);
     setBusy(true);
     setError(null);
     try {
@@ -4382,6 +4563,7 @@ export default function ClientFinancialWorkspace({
     setBusy(true);
     setError(null);
     try {
+      armWrapUp(selected);
       const next = await chargeSavedCard(selected.id);
       setSelected(next);
       await refreshList(next.id);
@@ -4402,6 +4584,7 @@ export default function ClientFinancialWorkspace({
     setBusy(true);
     setError(null);
     try {
+      armWrapUp(selected);
       const session = await startTerminalCheckout(selected.id);
       setTerminalJob(session.checkoutId);
       if (session.invoice) setSelected(session.invoice);
@@ -4625,12 +4808,16 @@ export default function ClientFinancialWorkspace({
           voidedByEmployeeId: cashierEmployeeId,
         });
       }
+      // An unpaid bill comes over open; there's nothing to return, so edit it instead.
+      const returnable = next.status === 'paid' || next.status === 'finalized';
+      const asReturn = mode === 'return' && returnable;
       setEvetSelected(null);
       setSelected(next);
-      setEditing(mode === 'edit');
-      setReturning(mode === 'return');
+      setEditing(mode === 'edit' || (mode === 'return' && !returnable));
+      setReturning(asReturn);
       setReturnQty({});
       setReturnToShelf({});
+      setReturnShelfLoc({});
       onSelectInvoice?.(next.id);
       await refreshList(next.id);
       setNote(
@@ -4638,7 +4825,9 @@ export default function ClientFinancialWorkspace({
           ? 'Invoice voided. Scout owns this bill now.'
           : mode === 'edit'
             ? 'Scout owns this bill. Remove lines, then save.'
-            : 'Taken over in Scout. Enter return quantities below.'
+            : asReturn
+              ? 'Taken over in Scout. Enter return quantities below.'
+              : 'This invoice was never paid, so there is nothing to refund. Remove the charges you don’t want (with a reason), or void the invoice.'
       );
     } catch (e: unknown) {
       setError(apiErr(e));
@@ -4731,16 +4920,62 @@ export default function ClientFinancialWorkspace({
     }
   }
 
+  // Every office's shelves for "Back on the shelf → which shelf" (the invoice's office first).
+  // A mail order or store invoice has no office of its own, so all of them are offered.
+  const returnBranchId = selected?.inventoryBranchId ?? null;
+  useEffect(() => {
+    if (!returning) {
+      setReturnLocations([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const branches = (await listPracticeBranches(VISIT_WORKFLOW_PRACTICE_ID)).filter(
+          (b) => b.isActive !== false,
+        );
+        branches.sort((a, b) => Number(b.id === returnBranchId) - Number(a.id === returnBranchId));
+        const all: InventoryBranchLocation[] = [];
+        for (const branch of branches) {
+          const locs = await listInventoryBranchLocations(VISIT_WORKFLOW_PRACTICE_ID, branch.id);
+          for (const loc of locs) {
+            if (loc.isActive === false) continue;
+            all.push({
+              ...loc,
+              name: branches.length > 1 ? `${branch.name} · ${loc.name}` : loc.name,
+            });
+          }
+        }
+        if (!cancelled) setReturnLocations(all);
+      } catch {
+        if (!cancelled) setReturnLocations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [returning, returnBranchId]);
+
   async function submitReturns(refundViaStripe: boolean) {
     if (!selected) return;
     const items = lines
       .map((line) => {
         const qty = Number(returnQty[line.id] || 0);
-        return line.catalogItemType === 'inventory'
-          ? { lineId: line.id, qty, backOnShelf: returnToShelf[line.id] !== false }
-          : { lineId: line.id, qty };
+        if (line.catalogItemType !== 'inventory') return { lineId: line.id, qty };
+        const backOnShelf = returnToShelf[line.id] !== false;
+        const loc = returnShelfLoc[line.id];
+        return {
+          lineId: line.id,
+          qty,
+          backOnShelf,
+          ...(backOnShelf && typeof loc === 'number' ? { returnToLocationId: loc } : {}),
+        };
       })
-      .filter((item) => item.qty > 0);
+      .filter((item) => item.qty > 0)
+      .filter((item) => {
+        const line = lines.find((l) => l.id === item.lineId);
+        return !(line && unshippedMailForLine(line));
+      });
     if (!items.length) {
       setError('Enter a quantity to return on at least one line.');
       return;
@@ -4778,6 +5013,7 @@ export default function ClientFinancialWorkspace({
       if (!next) return;
       setReturnQty({});
       setReturnToShelf({});
+      setReturnShelfLoc({});
       setReturning(false);
       setSelected(next);
       onSelectInvoice?.(next.id);
@@ -4809,8 +5045,9 @@ export default function ClientFinancialWorkspace({
 
   return (
     <div className="client-fin">
-      {error ? <p className="client-fin__err">{error}</p> : null}
-      {note ? <p className="client-fin__note">{note}</p> : null}
+      {/* With an invoice open, its messages show on the invoice (owner request, Oct 30, 2026). */}
+      {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
+      {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
 
       <div
         ref={splitRef}
@@ -5130,6 +5367,12 @@ export default function ClientFinancialWorkspace({
 
         {hasDetail ? (
         <section className="client-fin__pane">
+          {error ? (
+            <p className="client-fin__err" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {note ? <p className="client-fin__note">{note}</p> : null}
           {ledgerCreditDetail ? (
             <>
               <div className="client-fin__pane-head">
@@ -5439,14 +5682,17 @@ export default function ClientFinancialWorkspace({
                 <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeOverEvet('edit')}>
                   Edit in Scout
                 </button>
-                <button
-                  type="button"
-                  className="client-fin__btn-ghost"
-                  disabled={busy}
-                  onClick={() => void takeOverEvet('return')}
-                >
-                  Return items
-                </button>
+                {/* Nothing to return on a bill nobody paid: remove the charge (Edit) or void it. */}
+                {(Number(evetSelected.paid) || 0) > 0.009 ? (
+                  <button
+                    type="button"
+                    className="client-fin__btn-ghost"
+                    disabled={busy}
+                    onClick={() => void takeOverEvet('return')}
+                  >
+                    Return items
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="client-fin__btn-ghost"
@@ -5511,6 +5757,7 @@ export default function ClientFinancialWorkspace({
                         setReturning(false);
                         setReturnQty({});
                         setReturnToShelf({});
+                        setReturnShelfLoc({});
                         setNote(null);
                       }}
                     >
@@ -5581,6 +5828,21 @@ export default function ClientFinancialWorkspace({
                       {isUnsavedInvoice(selected) ? 'Cancel' : 'Delete invoice'}
                     </button>
                   ) : null}
+                  {canEdit &&
+                  !returning &&
+                  !hasUnsavedEdits &&
+                  !isUnsavedInvoice(selected) &&
+                  visibleLines.some((l) => l.catalogItemId != null) ? (
+                    <button
+                      type="button"
+                      className="client-fin__btn-ghost"
+                      disabled={busy}
+                      title="Apply today's membership and discount prices to this bill"
+                      onClick={() => setRepricing(true)}
+                    >
+                      Reprice
+                    </button>
+                  ) : null}
                   {canReturn && !returning ? (
                     <button
                       type="button"
@@ -5593,6 +5855,25 @@ export default function ClientFinancialWorkspace({
                     >
                       Return items
                     </button>
+                  ) : null}
+                  {repricing ? (
+                    <RepriceInvoiceModal
+                      invoiceId={selected.id}
+                      petNames={
+                        new Map(
+                          (selected.lines ?? [])
+                            .filter((l) => l.patientId != null && l.patientName)
+                            .map((l) => [l.patientId as number, String(l.patientName)])
+                        )
+                      }
+                      onClose={() => setRepricing(false)}
+                      onApplied={(next) => {
+                        setRepricing(false);
+                        setError(null);
+                        setSelected(next);
+                        void refreshList(next.id);
+                      }}
+                    />
                   ) : null}
                   <button type="button" className="client-fin__btn-ghost" onClick={() => window.print()}>
                     Print
@@ -5737,30 +6018,37 @@ export default function ClientFinancialWorkspace({
                         <tr className="client-fin__pet-head">
                           <td className="client-fin__col-item" colSpan={2}>
                             <span className="client-fin__pet-head-name">
-                              {canEdit && canSwapFirstPet && section.patientId != null && chargePets.length > 1 ? (
-                                <select
-                                  className="client-fin__pet-head-select"
-                                  value={section.patientId}
-                                  aria-label="Pet for this charge"
-                                  onChange={(e) => {
-                                    const next = Number(e.target.value);
-                                    if (!next) return;
-                                    setAddedSectionPetIds([]);
-                                    switchChargePet(next);
-                                  }}
-                                >
-                                  {chargePets.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name}
-                                      {isFinancialPetActive(p) ? '' : ' (inactive)'}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : section.patientId != null ? (
-                                patientChartName(section.patientId, section.label)
-                              ) : (
-                                section.label
-                              )}
+                              <span className="client-fin__pet-head-kicker">Patient</span>
+                              <span className="client-fin__pet-head-label">
+                                {canEdit && canSwapFirstPet && section.patientId != null && chargePets.length > 1 ? (
+                                  <select
+                                    className="client-fin__pet-head-select"
+                                    value={section.patientId}
+                                    aria-label="Pet for this charge"
+                                    onChange={(e) => {
+                                      const next = Number(e.target.value);
+                                      if (!next) return;
+                                      setAddedSectionPetIds([]);
+                                      switchChargePet(next);
+                                    }}
+                                  >
+                                    {chargePets.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name}
+                                        {isFinancialPetActive(p) ? '' : ' (inactive)'}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : section.patientId != null ? (
+                                  patientChartName(section.patientId, section.label)
+                                ) : (
+                                  section.label
+                                )}
+                              </span>
+                              <MembershipBenefitsPausedTag
+                                memberships={clientMemberships}
+                                patientId={section.patientId}
+                              />
                             </span>
                           </td>
                           <td className="client-fin__col-qty" />
@@ -5855,6 +6143,11 @@ export default function ClientFinancialWorkspace({
                           ? stockDrawsByOrderId[line.orderId] ?? null
                           : null;
                         const linkedStock = linkedStockFromLine(line, stockDraw);
+                        /** A lab or procedure that uses up a lot-tracked kit (a 4dx test): pick the kit's lot. */
+                        const isLinkedKit =
+                          linkedStock.linked &&
+                          Boolean(line.trackLots) &&
+                          (line.catalogItemType === 'lab' || line.catalogItemType === 'procedure');
                         const showLotOnly =
                           Boolean(line.trackLots) &&
                           !showVaxMeta &&
@@ -5911,6 +6204,13 @@ export default function ClientFinancialWorkspace({
                               delete next[line.id];
                               return next;
                             }
+                            window.requestAnimationFrame(() => {
+                              window.requestAnimationFrame(() => {
+                                document
+                                  .getElementById(`client-fin-rx-foot-${line.id}`)
+                                  ?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+                              });
+                            });
                             return { ...prev, [line.id]: true };
                           });
                         };
@@ -5953,7 +6253,8 @@ export default function ClientFinancialWorkspace({
                               lotReady
                             : showLabMeta
                               ? (noProviderLine || line.providerEmployeeId != null) &&
-                                labState !== 'waiting'
+                                labState !== 'waiting' &&
+                                lotReady
                               : (noProviderLine || line.providerEmployeeId != null) && lotReady;
                         const lineStateClass = lineReady
                           ? 'client-fin__line--ready'
@@ -6137,6 +6438,26 @@ export default function ClientFinancialWorkspace({
                                 : ''}
                             </span>
                           ) : null;
+                        const inventoryBranchFields =
+                          selected &&
+                          !invoiceGone &&
+                          selected.status !== 'void' &&
+                          !mailedLineOrder &&
+                          !(line.catalogIsControlled && line.controlledLocation) ? (
+                            <CheckoutInventoryBranchField
+                              invoice={selected}
+                              persist={!isUnsavedInvoice(selected)}
+                              disabled={busy || selected.status !== 'open'}
+                              onInvoiceChange={(next) => {
+                                setSelected(next);
+                                if (!isUnsavedInvoice(next)) void refreshList(next.id);
+                              }}
+                              className="client-fin__fulfill-fields"
+                              fieldClassName="client-fin__rx-field"
+                              highlightBranch={showRxMeta ? rxMissing('branch') : false}
+                              highlightLocation={showRxMeta ? rxMissing('location') : false}
+                            />
+                          ) : null;
                         const sigEnteredBy = staffShortName(
                           line.instructionsEnteredByEmployeeId != null
                             ? staffById.get(line.instructionsEnteredByEmployeeId)
@@ -6240,7 +6561,7 @@ export default function ClientFinancialWorkspace({
                             !rxOpen &&
                             ((showVaxMeta && !vaccineRecorded) ||
                               (line.trackLots &&
-                                !linkedStock.linked &&
+                                (!linkedStock.linked || isLinkedKit) &&
                                 !mailedLineOrder &&
                                 line.inventoryLotBalanceId == null)) ? (
                               <div className="client-fin__item-by">
@@ -6252,13 +6573,14 @@ export default function ClientFinancialWorkspace({
                               </div>
                             ) : null}
                             {/* Non-Rx / non-vax inventory: lot stays on the row. Expandable lines keep lots inside. */}
-                            {line.trackLots && !mailedLineOrder && !showMeta && !linkedStock.linked ? (
+                            {line.trackLots && !mailedLineOrder && !showMeta && (!linkedStock.linked || isLinkedKit) ? (
                               <StockLotPicker
                                 forUse
                                 practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                 inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
-                                branchId={selected?.inventoryBranchId ?? null}
-                                locationId={selected?.inventoryLocationId ?? null}
+                                branchId={lotShelf(line, selected).branchId}
+                                locationId={lotShelf(line, selected).locationId}
+                                otherShelvesFrom={lotShelf(line, selected).safeName}
                                 itemName={line.description}
                                 disabled={!canEdit || busy}
                                 selectedLotId={line.inventoryLotBalanceId ?? null}
@@ -6346,26 +6668,36 @@ export default function ClientFinancialWorkspace({
                             )}
                           </td>
                           <td className="client-fin__col-qty client-fin__num">
-                            {canEdit ? (
-                              <input
-                                // Uncontrolled, so React only reads defaultValue on
-                                // mount. Splitting a line changes qty behind the
-                                // input's back; keying on it forces the remount that
-                                // shows the new number.
-                                key={`qty-${line.id}-${line.qty}`}
-                                className="client-fin__qty"
-                                inputMode="decimal"
-                                defaultValue={String(line.qty)}
-                                onBlur={(e) => {
-                                  const qty = Number(e.target.value);
-                                  if (Number.isFinite(qty) && qty !== Number(line.qty)) {
-                                    void patchLine(line, { qty });
+                            <span className="client-fin__qty-wrap">
+                              {canEdit ? (
+                                <input
+                                  // Uncontrolled, so React only reads defaultValue on
+                                  // mount. Splitting a line changes qty behind the
+                                  // input's back; keying on it forces the remount that
+                                  // shows the new number.
+                                  key={`qty-${line.id}-${line.qty}`}
+                                  className="client-fin__qty"
+                                  inputMode="decimal"
+                                  aria-label={
+                                    line.catalogSellUnit
+                                      ? `Quantity, ${line.catalogSellUnit}`
+                                      : 'Quantity'
                                   }
-                                }}
-                              />
-                            ) : (
-                              line.qty
-                            )}
+                                  defaultValue={String(line.qty)}
+                                  onBlur={(e) => {
+                                    const qty = Number(e.target.value);
+                                    if (Number.isFinite(qty) && qty !== Number(line.qty)) {
+                                      void patchLine(line, { qty });
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                line.qty
+                              )}
+                              {line.catalogSellUnit ? (
+                                <span className="client-fin__unit">{line.catalogSellUnit}</span>
+                              ) : null}
+                            </span>
                           </td>
                           <td className="client-fin__col-price client-fin__num">
                             <EditableUnitPrice
@@ -6381,7 +6713,13 @@ export default function ClientFinancialWorkspace({
                           <td className="client-fin__col-amount client-fin__num">
                             {line.isCovered ? 'covered' : money(line.amount)}
                           </td>
-                          {returning && canReturn ? (
+                          {returning && canReturn && unshippedMailForLine(line) ? (
+                            <td>
+                              <span className="client-fin__muted client-fin__return-blocked">
+                                Not shipped yet — use Request cancellation
+                              </span>
+                            </td>
+                          ) : returning && canReturn ? (
                             <td>
                               <input
                                 value={returnQty[line.id] ?? ''}
@@ -6400,6 +6738,30 @@ export default function ClientFinancialWorkspace({
                                     }
                                   />
                                   Back on the shelf
+                                </label>
+                              ) : null}
+                              {line.catalogItemType === 'inventory' &&
+                              Number(returnQty[line.id] || 0) > 0 &&
+                              returnToShelf[line.id] !== false &&
+                              returnLocations.length > 0 ? (
+                                <label className="client-fin__return-shelf">
+                                  Shelf
+                                  <select
+                                    value={returnShelfLoc[line.id] ?? ''}
+                                    onChange={(e) =>
+                                      setReturnShelfLoc((prev) => ({
+                                        ...prev,
+                                        [line.id]: e.target.value ? Number(e.target.value) : '',
+                                      }))
+                                    }
+                                  >
+                                    <option value="">Where it was sold from</option>
+                                    {returnLocations.map((loc) => (
+                                      <option key={loc.id} value={loc.id}>
+                                        {loc.name}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
                               ) : null}
                             </td>
@@ -6456,6 +6818,28 @@ export default function ClientFinancialWorkspace({
                           ) : showLabMeta ? (
                           <tr className={`client-fin__line-meta ${lineStateClass}`}>
                             <td colSpan={invoiceMetaCols}>
+                              {isLinkedKit && !mailedLineOrder ? (
+                                <div className="client-fin__rx-field client-fin__rx-lot">
+                                  <StockLotPicker
+                                    forUse
+                                    practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                    inventoryItemId={line.stockInventoryItemId ?? null}
+                                    branchId={lotShelf(line, selected).branchId}
+                                    locationId={lotShelf(line, selected).locationId}
+                                    otherShelvesFrom={lotShelf(line, selected).safeName}
+                                    itemName={linkedStock.stockName}
+                                    disabled={!canEdit || busy}
+                                    selectedLotId={line.inventoryLotBalanceId ?? null}
+                                    lotNumber={line.lotNumber ?? ''}
+                                    onChange={(pick) => {
+                                      void patchLine(line, {
+                                        inventoryLotBalanceId: pick.lotId,
+                                        lotNumber: pick.lotNumber || null,
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
                               <InvoiceLineLabResults
                                 results={lineLabResults ?? []}
                                 readOnly={invoiceGone || selected?.status === 'void'}
@@ -6473,8 +6857,8 @@ export default function ClientFinancialWorkspace({
                                   stockDraw={stockDraw}
                                   practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                   providerId={line.providerEmployeeId}
-                                  branchId={selected?.inventoryBranchId}
-                                  locationId={selected?.inventoryLocationId}
+                                  branchId={lotShelf(line, selected).branchId ?? undefined}
+                                  locationId={lotShelf(line, selected).locationId ?? undefined}
                                   disabled={!canEdit || busy}
                                   onSelectLot={(lot) => {
                                     void patchLine(line, {
@@ -6488,8 +6872,8 @@ export default function ClientFinancialWorkspace({
                                 line={line}
                                 disabled={!canEdit || busy}
                                 hideLotPicker={linkedStock.linked}
-                                branchId={selected?.inventoryBranchId}
-                                locationId={selected?.inventoryLocationId}
+                                branchId={lotShelf(line, selected).branchId ?? undefined}
+                                locationId={lotShelf(line, selected).locationId ?? undefined}
                                 recorded={recordedVaccine}
                                 onSaved={(saved) => {
                                   if (saved.encounterOrderId) {
@@ -6532,7 +6916,7 @@ export default function ClientFinancialWorkspace({
                                   });
                                 }}
                               />
-                              {selected && !invoiceGone && selected.status !== 'void' ? (
+                              {selected && !invoiceGone && selected.status !== 'void' && !(line.catalogIsControlled && line.controlledLocation) ? (
                                 <div className="client-fin__rx-fulfill">
                                   <CheckoutInventoryBranchField
                                     invoice={selected}
@@ -6546,6 +6930,65 @@ export default function ClientFinancialWorkspace({
                                     fieldClassName="client-fin__rx-field"
                                   />
                                 </div>
+                              ) : null}
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          ) : showLotOnly ? (
+                          <tr className={`client-fin__line-meta ${lineStateClass}`}>
+                            <td colSpan={invoiceMetaCols}>
+                              {!mailedLineOrder ? (
+                                <div className="client-fin__rx-field client-fin__rx-lot">
+                                  <StockLotPicker
+                                    forUse
+                                    practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                    inventoryItemId={
+                                      line.stockInventoryItemId ?? line.catalogItemId ?? null
+                                    }
+                                    branchId={lotShelf(line, selected).branchId}
+                                    locationId={lotShelf(line, selected).locationId}
+                                    otherShelvesFrom={lotShelf(line, selected).safeName}
+                                    itemName={line.description}
+                                    disabled={!canEdit || busy}
+                                    selectedLotId={line.inventoryLotBalanceId ?? null}
+                                    lotNumber={line.lotNumber ?? ''}
+                                    onChange={(pick) => {
+                                      void patchLine(line, {
+                                        inventoryLotBalanceId: pick.lotId,
+                                        lotNumber: pick.lotNumber || null,
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
+                              {selected && !invoiceGone && selected.status !== 'void' && !mailedLineOrder && !(line.catalogIsControlled && line.controlledLocation) ? (
+                                <div className="client-fin__rx-fulfill">
+                                  <CheckoutInventoryBranchField
+                                    invoice={selected}
+                                    persist={!isUnsavedInvoice(selected)}
+                                    disabled={busy || selected.status !== 'open'}
+                                    onInvoiceChange={(next) => {
+                                      setSelected(next);
+                                      if (!isUnsavedInvoice(next)) void refreshList(next.id);
+                                    }}
+                                    className="client-fin__fulfill-fields"
+                                    fieldClassName="client-fin__rx-field"
+                                  />
+                                </div>
+                              ) : null}
+                              {line.catalogIsControlled === true &&
+                              selected &&
+                              !isUnsavedInvoice(selected) ? (
+                                <ControlledDoseFields
+                                  invoice={selected}
+                                  line={line}
+                                  practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                  disabled={!canEdit || busy}
+                                  onInvoiceChange={(next) => {
+                                    setSelected(next);
+                                    void refreshList(next.id);
+                                  }}
+                                />
                               ) : null}
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
@@ -6581,12 +7024,11 @@ export default function ClientFinancialWorkspace({
                                     ) : sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
-                                    {approveButton}
                                     {rxPrintButton}
                                   </span>
                                   <textarea
                                     value={directions}
-                                    rows={4}
+                                    rows={3}
                                     maxLength={directionsMaxLength()}
                                     onChange={(e) => patchSigDraft(line, { instructions: e.target.value })}
                                   />
@@ -6599,7 +7041,6 @@ export default function ClientFinancialWorkspace({
                                     {sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
-                                    {approveButton}
                                     {rxPrintButton}
                                   </span>
                                   <div>{directions || 'No written directions yet.'}</div>
@@ -6611,12 +7052,13 @@ export default function ClientFinancialWorkspace({
                                 {linkedStock.linked && !mailedLineOrder ? (
                                   <div className={`client-fin__rx-field client-fin__rx-lot${rxMissing('lot') ? ' is-missing' : ''}`}>
                                     <LinkedStockInvoiceDetails
+                                      offerUncountedShelf={!showVaxMeta}
                                       line={line}
                                       stockDraw={stockDraw}
                                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                       providerId={line.providerEmployeeId}
-                                      branchId={selected?.inventoryBranchId}
-                                      locationId={selected?.inventoryLocationId}
+                                      branchId={lotShelf(line, selected).branchId ?? undefined}
+                                      locationId={lotShelf(line, selected).locationId ?? undefined}
                                       disabled={!canEdit || busy}
                                       onSelectLot={(lot) => {
                                         void patchLine(line, {
@@ -6634,8 +7076,9 @@ export default function ClientFinancialWorkspace({
                                       inventoryItemId={
                                         line.stockInventoryItemId ?? line.catalogItemId ?? null
                                       }
-                                      branchId={selected?.inventoryBranchId ?? null}
-                                      locationId={selected?.inventoryLocationId ?? null}
+                                      branchId={lotShelf(line, selected).branchId}
+                                      locationId={lotShelf(line, selected).locationId}
+                                      otherShelvesFrom={lotShelf(line, selected).safeName}
                                       itemName={line.description}
                                       disabled={!canEdit || busy}
                                       selectedLotId={line.inventoryLotBalanceId ?? null}
@@ -6796,41 +7239,24 @@ export default function ClientFinancialWorkspace({
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
-                          {mailedLineOrder ? null : (
-                          <tr className={`client-fin__line-fulfill ${lineStateClass}`}>
-                            <td colSpan={invoiceMetaCols}>
-                              <div className="client-fin__rx-fulfill">
-                                {selected && !invoiceGone && selected.status !== 'void' ? (
-                                  <CheckoutInventoryBranchField
-                                    invoice={selected}
-                                    persist={!isUnsavedInvoice(selected)}
-                                    disabled={busy || selected.status !== 'open'}
-                                    onInvoiceChange={(next) => {
-                                      setSelected(next);
-                                      if (!isUnsavedInvoice(next)) void refreshList(next.id);
-                                    }}
-                                    className="client-fin__fulfill-fields"
-                                    fieldClassName="client-fin__rx-field"
-                                    highlightBranch={rxMissing('branch')}
-                                    highlightLocation={rxMissing('location')}
-                                  />
-                                ) : null}
-                              </div>
-                            </td>
-                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
-                          </tr>
-                          )}
                           </>
                           )
                         ) : null}
                         {showRxMeta ? (
                           <tr
+                            id={`client-fin-rx-foot-${line.id}`}
                             className={`client-fin__line-fulfill ${lineStateClass}${
                               nestedUnderBundle ? ' client-fin__bundle-child' : ''
                             }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}
                           >
                             <td colSpan={invoiceMetaCols}>
-                              <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
+                              <div className="client-fin__rx-fulfill client-fin__rx-fulfill--foot">
+                                {inventoryBranchFields}
+                                {mailCheckbox}
+                                {approveButton ? (
+                                  <div className="client-fin__rx-approve">{approveButton}</div>
+                                ) : null}
+                              </div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
@@ -7151,20 +7577,21 @@ export default function ClientFinancialWorkspace({
                             ? `Refunded ${money(Number(t.refundedAmount))} after post-visit sign-up`
                             : null,
                         onVoid:
-                          canVoidPayment && selected.status !== 'void' && !tenderCanStripeRefund(t)
+                          canVoidPayment && !returning && selected.status !== 'void' && !tenderCanStripeRefund(t)
                             ? () => {
                                 void voidPayment(t.id);
                               }
                             : undefined,
+                        // While returning items, the return's own refund is the only one on screen.
                         onRefund:
-                          canRefundPayment && selected.status !== 'void' && tenderCanStripeRefund(t)
+                          canRefundPayment && !returning && selected.status !== 'void' && tenderCanStripeRefund(t)
                             ? () => {
                                 openRefund(t.id);
                               }
                             : undefined,
                       };
                       const canEditThisPayment =
-                        canEditPostedPayment && selected.status !== 'void';
+                        canEditPostedPayment && !returning && selected.status !== 'void';
                       const showRefundPanel = refundDraft?.tenderId === t.id;
                       const peerTotal = (refundDraft?.peers ?? []).reduce(
                         (s, p) => s + p.refundable,
@@ -7592,7 +8019,10 @@ export default function ClientFinancialWorkspace({
                         className="client-fin__btn"
                         disabled={busy || rxBlocksPay}
                         title={rxBlocksPay ? 'Approve each prescription before taking payment' : undefined}
-                        onClick={() => setPhoneCardOpen(true)}
+                        onClick={() => {
+                          if (selected) armWrapUp(selected);
+                          setPhoneCardOpen(true);
+                        }}
                       >
                         Enter card · {money(remaining)}
                       </button>
@@ -7638,7 +8068,10 @@ export default function ClientFinancialWorkspace({
                         type="button"
                         className="client-fin__btn-ghost"
                         disabled={busy || rxBlocksPay}
-                        onClick={() => setPhoneCardOpen(true)}
+                        onClick={() => {
+                          if (selected) armWrapUp(selected);
+                          setPhoneCardOpen(true);
+                        }}
                       >
                         Key in card instead
                       </button>
@@ -7753,24 +8186,45 @@ export default function ClientFinancialWorkspace({
                   {(() => {
                     const estimated = estimateReturnRefund(lines, returnQty);
                     const cardAvail = invoiceCardRefundable(selected);
+                    const cardTenders = (selected.tenders ?? []).filter(tenderCanStripeRefund);
                     return (
                       <>
-                        {estimated > 0.009 ? (
-                          <p className="client-fin__muted">
-                            Return total {money(estimated)}
-                            {cardAvail > 0.009
-                              ? ` · ${money(cardAvail)} refundable on card`
-                              : ' · no card payment to refund (will open account credit)'}
+                        {/* The refund total stands alone; the original payment is shown apart, so
+                            "refundable on card" isn't read as the refund. */}
+                        <p className="client-fin__return-total">
+                          Refund total: <strong>{money(estimated)}</strong>
+                          {estimated <= 0.009 ? (
+                            <span className="client-fin__muted"> — enter quantities above</span>
+                          ) : null}
+                        </p>
+                        {cardTenders.length ? (
+                          <p className="client-fin__muted client-fin__return-paid">
+                            Paid on this invoice:{' '}
+                            {cardTenders
+                              .map((t) => `${tenderPayLabel(t)} ${money(Number(t.amount) || 0)}`)
+                              .join(', ')}
+                            {' · '}
+                            {money(cardAvail)} can still go back to the card
                           </p>
-                        ) : null}
+                        ) : (
+                          <p className="client-fin__muted client-fin__return-paid">
+                            No card payment through Scout on this invoice, so the refund goes on the
+                            account as credit.
+                          </p>
+                        )}
                         {cardAvail > 0.009 ? (
                           <button
                             type="button"
                             className="client-fin__btn"
-                            disabled={busy || estimated <= 0.009}
+                            disabled={busy || estimated <= 0.009 || estimated > cardAvail + 0.009}
+                            title={
+                              estimated > cardAvail + 0.009
+                                ? `More than the ${money(cardAvail)} that can go back to the card. Return as account credit instead.`
+                                : undefined
+                            }
                             onClick={() => void submitReturns(true)}
                           >
-                            Return &amp; refund {estimated > 0.009 ? money(estimated) : ''}
+                            Refund {money(estimated)} to card
                           </button>
                         ) : null}
                         <button
@@ -7779,7 +8233,7 @@ export default function ClientFinancialWorkspace({
                           disabled={busy || estimated <= 0.009}
                           onClick={() => void submitReturns(false)}
                         >
-                          Return as account credit
+                          Keep {money(estimated)} as account credit
                         </button>
                         <button
                           type="button"
@@ -7789,6 +8243,7 @@ export default function ClientFinancialWorkspace({
                             setReturning(false);
                             setReturnQty({});
                             setReturnToShelf({});
+                            setReturnShelfLoc({});
                             setNote(null);
                           }}
                         >
@@ -8000,6 +8455,17 @@ export default function ClientFinancialWorkspace({
           );
         }}
       />
+      {invoiceWrapUp ? (
+        <DeathWrapUpModal
+          previews={invoiceWrapUp}
+          kind="invoice"
+          lead={`${invoiceWrapUp.map((pet) => pet.patientName).join(', ')} ${
+            invoiceWrapUp.length > 1 ? 'are' : 'is'
+          } now inactive because this invoice was paid. Accept cancels the items below.`}
+          onClose={() => setInvoiceWrapUp(null)}
+          onAccepted={() => setInvoiceWrapUp(null)}
+        />
+      ) : null}
       {phoneCardOpen && selected ? (
         <VirtualTerminalModal
           invoiceId={selected.id}

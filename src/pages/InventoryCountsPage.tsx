@@ -5,6 +5,7 @@ import { listPracticeBranches, type PracticeBranch } from '../api/branchInventor
 import {
   patchCountLine,
   startCountSession,
+  getOpenCountSession,
   submitCountLine,
   submitCountSession,
   type StaffCountLine,
@@ -14,6 +15,7 @@ import {
 import { ExpirationDateField } from '../components/inventory/ExpirationDateField';
 import { apiErrorMessage } from '../api/http';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { readImpersonation } from '../auth/impersonationSession';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
@@ -180,6 +182,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const [filter, setFilter] = useState('');
   const [showPosted, setShowPosted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Viewing as someone, and no sheet has been started for this office yet. */
+  const [noOpenSheet, setNoOpenSheet] = useState(false);
   const errorRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (error) errorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -227,9 +231,20 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     setError(null);
     setFilter('');
     setEditingLineId(null);
-    void startCountSession(practiceId, branchId, kind)
+    // Viewing as someone is read-only: show their open sheet as it is instead of starting one.
+    const viewingAs = readImpersonation() != null;
+    setNoOpenSheet(false);
+    void (viewingAs
+      ? getOpenCountSession(practiceId, branchId, kind)
+      : startCountSession(practiceId, branchId, kind)
+    )
       .then((next) => {
         if (cancelled) return;
+        if (!next) {
+          setSession(null);
+          setNoOpenSheet(true);
+          return;
+        }
         setSession(next);
         const nextDrafts: Record<number, DraftCell[]> = {};
         for (const line of next.lines) {
@@ -501,6 +516,14 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
           {error}
         </div>
       )}
+      {noOpenSheet ? (
+        <p className="settings-muted" style={{ margin: '0 0 8px' }}>
+          No {isFull ? 'full' : 'weekly'} count sheet is open for this office yet.
+          {isFull
+            ? ' It starts when someone opens the full count.'
+            : ' It starts Monday at 7 am, or when someone at this office opens the weekly count.'}
+        </p>
+      ) : null}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10, alignItems: 'end' }}>
         <label className="settings-label">
           Office

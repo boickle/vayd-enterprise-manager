@@ -37,11 +37,9 @@
 
 .death-wrapup-section h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: #475569;
+  color: #334155;
 }
 
 .death-wrapup-section ul {

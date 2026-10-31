@@ -186,7 +186,7 @@ export function getCatalogLinePrice(item: CatalogPricingItem, quantity: number):
  * from check-item as the adjusted ÷ original ratio.
  */
 export function getBundleLinePrice(
-  line: { listUnitPrice: number; quantity: number },
+  line: { listUnitPrice: number; quantity: number; priceOverride?: number | null },
   checked?: Pick<
     CheckItemPricingResponse,
     'adjustedPrice' | 'originalPrice' | 'wellnessPlanPricing' | 'perUnitPrice'
@@ -195,6 +195,18 @@ export function getBundleLinePrice(
   bundleDiscountPercent?: number | null
 ): CatalogLinePrice {
   const q = Math.max(1, Number(line.quantity) || 1);
+  const coveredByPlan = Boolean(
+    checked?.wellnessPlanPricing?.hasCoverage &&
+      checked.wellnessPlanPricing.isWithinLimit &&
+      Number(checked.adjustedPrice) === 0
+  );
+  // The bundle's own price for this item wins over catalog and discounts; only a membership
+  // benefit that covers it does better (owner request, Oct 30, 2026).
+  if (line.priceOverride != null && Number.isFinite(Number(line.priceOverride))) {
+    if (coveredByPlan) return { unitFinal: 0, totalFinal: 0, isCovered: true };
+    const unitFinal = Math.max(0, Number(line.priceOverride));
+    return { unitFinal, totalFinal: Math.round(unitFinal * q * 100) / 100, isCovered: false };
+  }
   const original = Number(checked?.originalPrice ?? 0);
   const adjusted = Number(checked?.adjustedPrice ?? original);
   const ratio = original > 0 ? adjusted / original : 1;

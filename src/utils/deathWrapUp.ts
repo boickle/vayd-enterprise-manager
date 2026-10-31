@@ -28,6 +28,7 @@ import {
   listPatientPrescriptions,
   updatePatientPrescription,
   type PatientPrescription,
+  type VisitInvoice,
 } from '../api/visitWorkflow';
 import { membershipCancelLineDescription } from './membershipCancelEstimateLine';
 import {
@@ -35,6 +36,26 @@ import {
   findFutureAppointmentsForPatients,
   type EuthanasiaFutureAppointmentRow,
 } from './euthanasiaFutureAppointments';
+
+/**
+ * True when a charge on this invoice changes this pet's status (e.g. "Euthanized"), which is what
+ * makes the pet inactive when the invoice is paid. Only that, not the visit type, opens the
+ * passed-away wrap-up: a euthanasia visit can end without euthanasia (owner decision, Oct 30, 2026).
+ */
+export function deathWrapUpTriggeredByInvoice(
+  invoice: Pick<VisitInvoice, 'patientId' | 'lines'> | null | undefined,
+  patientId: number
+): boolean {
+  const returned = new Set((invoice?.lines ?? []).map((l) => l.returnOfLineId).filter(Boolean));
+  return (invoice?.lines ?? []).some(
+    (line) =>
+      !line.isDeleted &&
+      !line.returnOfLineId &&
+      !returned.has(line.id) &&
+      Boolean(line.catalogChangePatientStatusTo?.trim()) &&
+      Number(line.patientId ?? invoice?.patientId) === patientId
+  );
+}
 
 export const DEATH_WRAP_UP_REASON = 'Pet passed away';
 export const INACTIVATE_WRAP_UP_REASON = 'Patient inactivated';
@@ -73,6 +94,13 @@ export type DeathWrapUpAcceptResult = {
 };
 
 const MAIL_ORDER_DONE_STATUSES = new Set(['shipped', 'picked_up', 'cancelled']);
+
+/** A second pass after the server already stopped the item. Accept should not get stuck on it. */
+function alreadyStopped(message: string): boolean {
+  return /already (cancel|cancelled|canceled)|cancellation is already|already inactive|not active/i.test(
+    message,
+  );
+}
 
 function money(n: number): string {
   return Number(n || 0).toLocaleString('en-US', {
@@ -413,7 +441,9 @@ export async function acceptDeathWrapUp(
       membershipsCanceled += 1;
       stopped.push({ kind: 'membership', id: membership.membershipId, label: membership.planName });
     } catch (err) {
-      errors.push(apiErrorMessage(err) || `Could not cancel ${membership.planName}`);
+      const message = apiErrorMessage(err) || `Could not cancel ${membership.planName}`;
+      if (alreadyStopped(message)) continue;
+      errors.push(message);
     }
   }
 
@@ -423,9 +453,10 @@ export async function acceptDeathWrapUp(
       autoshipsCanceled += 1;
       stopped.push({ kind: 'autoship', id: autoship.id, label: autoship.itemName || 'Auto-ship' });
     } catch (err) {
-      errors.push(
-        apiErrorMessage(err) || `Could not cancel auto-ship for ${autoship.itemName || 'item'}`,
-      );
+      const message =
+        apiErrorMessage(err) || `Could not cancel auto-ship for ${autoship.itemName || 'item'}`;
+      if (alreadyStopped(message)) continue;
+      errors.push(message);
     }
   }
 
@@ -435,7 +466,9 @@ export async function acceptDeathWrapUp(
       remindersCanceled += 1;
       stopped.push({ kind: 'reminder', id: reminder.id, label: reminder.description });
     } catch (err) {
-      errors.push(apiErrorMessage(err) || `Could not cancel reminder ${reminder.description}`);
+      const message = apiErrorMessage(err) || `Could not cancel reminder ${reminder.description}`;
+      if (alreadyStopped(message)) continue;
+      errors.push(message);
     }
   }
 
@@ -446,7 +479,9 @@ export async function acceptDeathWrapUp(
       prescriptionsStopped += 1;
       stopped.push({ kind: 'prescription', id: rx.id, label: rx.name });
     } catch (err) {
-      errors.push(apiErrorMessage(err) || `Could not stop refills for ${rx.name}`);
+      const message = apiErrorMessage(err) || `Could not stop refills for ${rx.name}`;
+      if (alreadyStopped(message)) continue;
+      errors.push(message);
     }
   }
 
@@ -460,7 +495,9 @@ export async function acceptDeathWrapUp(
       mailOrderCancelsRequested += 1;
       stopped.push({ kind: 'mailOrder', id: order.id, label: `Order #${order.id}` });
     } catch (err) {
-      errors.push(apiErrorMessage(err) || `Could not request cancellation of order #${order.id}`);
+      const message = apiErrorMessage(err) || `Could not request cancellation of order #${order.id}`;
+      if (alreadyStopped(message)) continue;
+      errors.push(message);
     }
   }
 
@@ -469,7 +506,7 @@ export async function acceptDeathWrapUp(
     practiceId,
     reason,
   });
-  errors.push(...appointments.errors);
+  errors.push(...appointments.errors.filter((message) => !alreadyStopped(message)));
   const cancelled = new Set(appointments.cancelledIds);
   for (const row of preview.futureAppointments) {
     if (!cancelled.has(row.appointmentId)) continue;

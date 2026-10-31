@@ -123,6 +123,14 @@ export type RoomLoaderPanelRule = {
    * (Settings → Memberships) are the ages Room Loader checks against.
    */
   alignPackageId: number | null;
+  /**
+   * Hide this rule when the pet had any of its panels (or an equivalent) within this many
+   * months. Declined or voided lines never count. Staff "labs would be helpful = yes"
+   * bypasses it. Null (or absent on older rows) never hides.
+   */
+  suppressIfDoneWithinMonths?: number | null;
+  /** Other catalog rows that mean the panel was done, e.g. the same screen under another code. */
+  equivalentItems?: RoomLoaderItemRef[];
   options: RoomLoaderPanelOption[];
   /** Lower numbers ask first when several rules match one pet. */
   sortOrder: number;
@@ -194,6 +202,11 @@ export type RoomLoaderOutdoorConfig = {
   pitchItem: RoomLoaderItemRef | null;
   pitchDisplayName: string;
   pitchCautionHtml: string;
+  /**
+   * Other catalog rows that mean the cat is already covered (1-year, 2-year, clinic
+   * codes). History is checked against the pitch item plus these.
+   */
+  equivalentItems?: RoomLoaderItemRef[];
   /** Skip the pitch when the patient already had it inside this window. */
   history: RoomLoaderHistoryGate;
 };
@@ -388,6 +401,7 @@ export function emptyRoomLoaderConfig(): RoomLoaderConfig {
       pitchItem: null,
       pitchDisplayName: '',
       pitchCautionHtml: '',
+      equivalentItems: [],
       history: emptyHistoryGate(),
     },
     medicalConcern: {
@@ -452,7 +466,11 @@ export function normalizeRoomLoaderConfig(raw: unknown): RoomLoaderConfig {
   return {
     version: ROOM_LOADER_CONFIG_VERSION,
     panelRules: Array.isArray(input.panelRules)
-      ? input.panelRules.map(withNormalizedSpecies)
+      ? input.panelRules.map((rule) => ({
+          ...withNormalizedSpecies(rule),
+          suppressIfDoneWithinMonths: rule.suppressIfDoneWithinMonths ?? null,
+          equivalentItems: Array.isArray(rule.equivalentItems) ? rule.equivalentItems : [],
+        }))
       : base.panelRules,
     universalOffers: Array.isArray(input.universalOffers)
       ? input.universalOffers.map(withNormalizedSpecies)
@@ -483,7 +501,10 @@ export function normalizeRoomLoaderConfig(raw: unknown): RoomLoaderConfig {
         typeof outdoorIn.pitchCautionHtml === 'string'
           ? migrateLegacyOutdoorPitchHtml(outdoorIn.pitchCautionHtml)
           : base.outdoor.pitchCautionHtml;
-      return { ...outdoorIn, species, pitchHtml, pitchCautionHtml };
+      const equivalentItems = Array.isArray(outdoorIn.equivalentItems)
+        ? outdoorIn.equivalentItems
+        : [];
+      return { ...outdoorIn, species, pitchHtml, pitchCautionHtml, equivalentItems };
     })(),
     medicalConcern: {
       ...base.medicalConcern,

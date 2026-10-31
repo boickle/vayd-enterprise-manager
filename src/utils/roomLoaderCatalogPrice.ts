@@ -4,7 +4,12 @@ import {
   type ItemWithPriceBreaks,
   type QuantityPriceBreak,
 } from '../api/quantityPriceBreaks';
-import { getPreDiscountForOneUnit, type CatalogPricingItem } from './catalogItemPricing';
+import {
+  getPreDiscountForOneUnit,
+  getTotalPreDiscountForQuantity,
+  type CatalogPricingItem,
+} from './catalogItemPricing';
+import type { CheckItemPricingResponse } from '../api/roomLoader';
 import type { RoomLoaderItemRef, RoomLoaderPanelRule } from './roomLoaderConfigTypes';
 
 function asNumber(value: unknown): number {
@@ -113,4 +118,57 @@ export function itemRefsFromPanelRules(rules: RoomLoaderPanelRule[]): RoomLoader
     }
   }
   return out;
+}
+
+export type QuantityLinePrice = { unit: number; total: number };
+
+/**
+ * RL-02b: what a Room Loader line costs at a quantity, the way the server charges it
+ * (mirrors vayd-api `catalogLineTotal`): the price break for that quantity, the service
+ * fee once per line, the minimum price for the whole line. `unitAtOne` is the price the
+ * form already shows for one unit (member and client discounts included); the discount
+ * share it carries over the catalog list price is applied to the whole line. Allowance
+ * left on a covered item makes only that many units free. Without catalog data for the
+ * item it falls back to unit x quantity.
+ */
+export function quantityLinePrice(
+  pricing: CheckItemPricingResponse | null | undefined,
+  unitAtOne: number,
+  quantity: number
+): QuantityLinePrice {
+  const qty = Math.max(1, Math.floor(Number(quantity) || 1));
+  const unit1 = Number.isFinite(unitAtOne) ? unitAtOne : 0;
+  const simple = { unit: unit1, total: unit1 * qty };
+  if (qty === 1 || !pricing?.item) return simple;
+
+  const catalogItem = pricing.item;
+  const type = String(catalogItem.itemType ?? '').toLowerCase();
+  const entity =
+    type === 'lab' ? catalogItem.lab : type === 'procedure' ? catalogItem.procedure : catalogItem.inventoryItem;
+  if (!entity || entity.price == null) return simple;
+
+  const priced: CatalogPricingItem = {
+    itemType: type,
+    price: Number(entity.price),
+    lab: catalogItem.lab,
+    procedure: catalogItem.procedure,
+    inventoryItem: catalogItem.inventoryItem,
+    tieredPricing: pricing.tieredPricing,
+  };
+  const listOne = getPreDiscountForOneUnit(priced);
+  const listLine = getTotalPreDiscountForQuantity(priced, qty);
+  if (!(listOne > 0) || !Number.isFinite(listLine)) return simple;
+
+  const wp = pricing.wellnessPlanPricing;
+  const remaining = Number(wp?.remainingQuantity);
+  let total: number;
+  if (unit1 === 0 && wp?.hasCoverage && Number.isFinite(remaining) && remaining >= 0 && remaining < qty) {
+    // Allowance covers `remaining` units; the rest are charged at the regular line price.
+    total = (listLine * (qty - remaining)) / qty;
+  } else if (pricing.perUnitPrice != null && Number.isFinite(Number(pricing.perUnitPrice))) {
+    total = Math.min(listLine, Math.max(0, Number(pricing.perUnitPrice)) * qty);
+  } else {
+    total = listLine * (unit1 / listOne);
+  }
+  return { unit: total / qty, total };
 }

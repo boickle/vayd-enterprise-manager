@@ -3287,7 +3287,7 @@ function SchedulerEuthanasiaConsentIcon({
 }) {
   const title =
     status === 'complete'
-      ? 'Euthanasia consent: client submitted'
+      ? 'Euthanasia consent: on file'
       : status === 'sent'
         ? 'Euthanasia consent: sent, waiting for client'
         : 'Euthanasia consent: not sent';

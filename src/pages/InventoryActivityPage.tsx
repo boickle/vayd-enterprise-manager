@@ -9,6 +9,7 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { fetchMyOffices } from '../api/permissions';
 import { INVENTORY_MOVEMENT_LABELS as ACTION_LABELS } from '../utils/inventoryMovementLabels';
 import './Settings.css';
 
@@ -44,6 +45,16 @@ export default function InventoryActivityPage() {
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState('');
   const [exceptionsOnly, setExceptionsOnly] = useState(false);
+  // The full log where someone holds it (an inventory manager's own location); controlled drugs
+  // only at other offices where they hold the controlled-drug log (Controlled Substances
+  // Director, veterinarians) (owner decisions, Oct 30, 2026).
+  const [fullOffices, setFullOffices] = useState<number[] | 'all' | null>(null);
+  const controlledLocked =
+    fullOffices !== null &&
+    fullOffices !== 'all' &&
+    (branchId === '' || !fullOffices.includes(Number(branchId)));
+  const [controlledPicked, setControlledPicked] = useState(false);
+  const controlledOnly = controlledLocked || controlledPicked;
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -57,12 +68,20 @@ export default function InventoryActivityPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [branchId, locationId, action, exceptionsOnly, search]);
+  }, [branchId, locationId, action, exceptionsOnly, search, controlledOnly]);
 
   useEffect(() => {
-    void listPracticeBranches(practiceId)
-      .then((list) => {
-        const active = list.filter((b) => b.isActive !== false);
+    void Promise.all([
+      listPracticeBranches(practiceId),
+      // If the lookup fails, show every office and let the server decide what each one shows.
+      fetchMyOffices(practiceId, 'inventory.activity_log.view').catch(() => 'all' as const),
+      fetchMyOffices(practiceId, 'inventory.activity_log.controlled').catch(() => [] as number[]),
+    ])
+      .then(([list, full, controlled]) => {
+        setFullOffices(full);
+        const allowed = (id: number) =>
+          full === 'all' || controlled === 'all' || full.includes(id) || controlled.includes(id);
+        const active = list.filter((b) => b.isActive !== false && allowed(b.id));
         setBranches(active);
         const initial = active.find((b) => b.isDefault) ?? active[0];
         if (initial) setBranchId(initial.id);
@@ -96,6 +115,7 @@ export default function InventoryActivityPage() {
         ...(search ? { search } : {}),
         ...(action ? { movementType: action } : {}),
         ...(exceptionsOnly ? { exceptionsOnly: true } : {}),
+        ...(controlledOnly ? { controlledOnly: true } : {}),
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -104,7 +124,7 @@ export default function InventoryActivityPage() {
     } finally {
       setBusy(false);
     }
-  }, [branchId, locationId, practiceId, page, search, action, exceptionsOnly]);
+  }, [branchId, locationId, practiceId, page, search, action, exceptionsOnly, controlledOnly]);
 
   useEffect(() => {
     void load();
@@ -130,9 +150,13 @@ export default function InventoryActivityPage() {
         }}
       >
         <div>
-          <h2 style={{ margin: 0 }}>Inventory Activity</h2>
+          <h2 style={{ margin: 0 }}>
+            {controlledLocked ? 'Controlled Drug Activity' : 'Inventory Activity'}
+          </h2>
           <p className="settings-muted" style={{ margin: '4px 0 0' }}>
-            Immutable stock history: who did what and when.
+            {controlledLocked
+              ? 'Every controlled drug received, moved, wasted or adjusted: who did what and when.'
+              : 'Immutable stock history: who did what and when.'}
           </p>
         </div>
         <button className="btn secondary" type="button" disabled={busy} onClick={() => void load()}>
@@ -202,6 +226,18 @@ export default function InventoryActivityPage() {
             ))}
           </select>
         </label>
+        {controlledLocked ? null : (
+          <label className="settings-label" style={{ justifyContent: 'flex-end' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
+              <input
+                type="checkbox"
+                checked={controlledPicked}
+                onChange={(e) => setControlledPicked(e.target.checked)}
+              />
+              Controlled drugs only
+            </span>
+          </label>
+        )}
         <label className="settings-label" style={{ justifyContent: 'flex-end' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
             <input

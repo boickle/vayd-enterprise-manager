@@ -89,6 +89,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Payments collected by day, method, and doctor.',
     element: <PaymentsAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.payments'],
   },
   {
     path: 'sales-tax',
@@ -105,6 +106,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Services delivered (production) by doctor and type.',
     element: <VeterinaryServicesDeliveredPage />,
     role: STAFF,
+    permissions: ['report.production'],
   },
   {
     path: 'vsd-payments',
@@ -129,6 +131,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Expected revenue from booked appointments.',
     element: <ProjectedRevenueAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.projected_revenue'],
   },
   {
     path: 'room-loader-declines',
@@ -180,6 +183,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'How full each day is against booking goals.',
     element: <BookingCalendarAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.booking_calendar'],
   },
   {
     path: 'appointments',
@@ -188,6 +192,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Appointment volume, types, and routing.',
     element: <RoutingAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.appointments'],
   },
   {
     path: 'cancellations',
@@ -196,6 +201,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Cancellations and no-shows, with reasons.',
     element: <CancellationsAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.appointments'],
   },
   {
     path: 'forward-booking',
@@ -204,6 +210,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Clients who booked their next visit before leaving.',
     element: <ForwardBookingAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.appointments'],
   },
   {
     path: 'time-spent',
@@ -212,6 +219,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Time in appointments versus driving.',
     element: <TimeSpentAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.time_spent'],
   },
   {
     path: 'cl-performance',
@@ -220,6 +228,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Client liaison bookings and conversions.',
     element: <CLPerformanceAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.communication'],
   },
 
   // Communication
@@ -230,6 +239,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Emails sent, opened, and clicked.',
     element: <EmailTrackingAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.communication'],
   },
   {
     path: 'openphone-calls',
@@ -238,6 +248,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Call volume, answer rate, and receptionist activity.',
     element: <OpenPhoneCallsAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.communication'],
   },
 
   // Memberships
@@ -247,6 +258,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     category: 'memberships',
     element: <MembershipPurchasesAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.membership'],
   },
 
   // Inventory
@@ -257,7 +269,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'What went missing and how reliable counts are.',
     element: <InventoryShrinkReportPage />,
     role: STAFF,
-    permissions: ['inventory.count.review'],
+    permissions: ['inventory.count.review', 'inventory.count.review_controlled'],
   },
   {
     path: 'inventory/counts',
@@ -266,7 +278,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Every posted count: expected vs counted, $ off, and who counted.',
     element: <InventoryCountReportPage />,
     role: STAFF,
-    permissions: ['inventory.count.review'],
+    permissions: ['inventory.count.review', 'inventory.count.review_controlled'],
   },
   {
     path: 'inventory/expiring',
@@ -293,7 +305,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Every stock movement: received, moved, wasted, sold, counted.',
     element: <InventoryActivityPage />,
     role: STAFF,
-    permissions: ['inventory.activity_log.view'],
+    permissions: ['inventory.activity_log.view', 'inventory.activity_log.controlled'],
   },
   {
     path: 'inventory/totals',
@@ -302,6 +314,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'What’s on hand and what it’s worth.',
     element: <InventoryTotalsPage />,
     role: STAFF,
+    permissions: ['report.inventory_valuation'],
   },
   {
     path: 'inventory/cost-reviews',
@@ -320,6 +333,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     category: 'patients',
     element: <PatientDormancyAnalyticsPage />,
     role: STAFF,
+    permissions: ['report.dormancy'],
   },
 
   // NPS

@@ -885,7 +885,8 @@ export async function withdrawMailOrder(practiceId: number, id: number) {
 export async function requestMailOrderCancellation(
   practiceId: number,
   id: number,
-  body: { reason: MailCancelReason; note?: string | null }
+  /** inventoryItemId: cancel just that item (it is split onto its own order). */
+  body: { reason: MailCancelReason; note?: string | null; inventoryItemId?: number | null }
 ) {
   const { data } = await http.post<MailOrder>(
     `/practice/${practiceId}/mail-orders/${id}/cancel-request`,
@@ -905,6 +906,8 @@ export async function resolveMailOrderCancellation(
       invoiceId: string;
       clientId: number | null;
       lineId: string;
+      /** Every charge to return (a store order covers one per item). */
+      lineIds?: string[];
       shippingLineId: string | null;
     } | null;
   }>(`/practice/${practiceId}/mail-orders/${id}/cancel-resolve`, body);

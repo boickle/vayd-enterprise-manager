@@ -319,6 +319,17 @@ export async function reportAftercareMismatch(body: {
   return data;
 }
 
+export async function recordEuthanasiaWitnessConsent(body: {
+  appointmentId: number;
+  patientId: number;
+  method: 'printed' | 'oral';
+  /** Required for oral consent. Printed consent is the paper form alone. */
+  witnessEmployeeIds?: [number, number];
+}): Promise<EuthanasiaConsentStatus> {
+  const { data } = await http.post<EuthanasiaConsentStatus>('/consent/euthanasia/witness', body);
+  return data;
+}
+
 export async function sendEuthanasiaConsent(body: {
   appointmentId: number;
   patientId: number;

@@ -22,6 +22,7 @@ export type TaskPanelKind =
   | 'soap'
   | 'lab_result'
   | 'idexx_result'
+  | 'visit_refund'
   | 'callback'
   | 'todo';
 
@@ -44,6 +45,14 @@ const KIND_PANELS: Partial<Record<TaskKind, TaskPanelKind>> = {
   idexx_result: 'idexx_result',
 };
 
+/** Refund a visit after the owner enrolled online. Not a callback. */
+export function isVisitRefundTask(
+  task: Pick<PanelKindInput, 'idempotencyKey' | 'title'>,
+): boolean {
+  if (task.idempotencyKey?.startsWith('post-visit-refund-owed-')) return true;
+  return /^Refund .+ visit — owner enrolled online$/i.test(task.title?.trim() ?? '');
+}
+
 /** Doctor/mail approval work tied to a mail order — not a generic to-do. */
 export function isMailOrderApprovalTask(
   task: Pick<PanelKindInput, 'title' | 'links'>,
@@ -55,6 +64,7 @@ export function isMailOrderApprovalTask(
 export function taskPanelKind(task: PanelKindInput): TaskPanelKind {
   // A mail order carries its own approval flow and outranks everything else.
   if (isMailOrderApprovalTask(task)) return 'mail_order';
+  if (isVisitRefundTask(task)) return 'visit_refund';
 
   // Older invoice rows may have a blank kind; the trigger / bill UUID still
   // means this is payment work, not a generic callback jot.

@@ -46,7 +46,13 @@ function defaultTitle(kind: DeathWrapUpKind, many: boolean): string {
 function defaultLead(kind: DeathWrapUpKind, previews: DeathWrapUpPreview[]): string {
   const names = previews.map((p) => p.patientName).join(', ');
   if (kind === 'invoice') {
-    return `Because ${names} has passed, Accept will cancel the items below. Membership money is already on this invoice and was captured with the authorization — it will not be charged or refunded a second time.`;
+    const memberships = previews.flatMap((p) =>
+      p.memberships.map((m) => p.moneyOnVisitMembershipIds.includes(m.membershipId)),
+    );
+    const allOnInvoice = memberships.length > 0 && memberships.every(Boolean);
+    return allOnInvoice
+      ? `Because ${names} has passed, Accept will cancel the items below. Membership money is already on this invoice, so it is not charged or refunded a second time.`
+      : `Because ${names} has passed, Accept will cancel the items below.`;
   }
   if (previews.length > 1) {
     return `Inactivating this client will also inactivate ${names}. Accept will cancel the items below for every pet, then inactivate them.`;
@@ -63,12 +69,15 @@ function PetActions({
   kind: DeathWrapUpKind;
   showName: boolean;
 }) {
+  const heading = (count: number, action: string, label: string) =>
+    count > 0 ? `${action} the following ${label}` : label.charAt(0).toUpperCase() + label.slice(1);
+
   return (
     <div className="death-wrapup-pet">
       {showName ? <h3 className="death-wrapup-pet-name">{preview.patientName}</h3> : null}
 
       <section className="death-wrapup-section">
-        <h4>Memberships</h4>
+        <h4>{heading(preview.memberships.length, 'Cancelling', 'memberships')}</h4>
         {preview.memberships.length === 0 ? (
           <p className="death-wrapup-empty">None to cancel</p>
         ) : (
@@ -84,7 +93,7 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
-        <h4>Auto-ships</h4>
+        <h4>{heading(preview.autoships.length, 'Cancelling', 'auto-ships')}</h4>
         {preview.autoships.length === 0 ? (
           <p className="death-wrapup-empty">None to cancel</p>
         ) : (
@@ -100,9 +109,9 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
-        <h4>Reminders</h4>
+        <h4>{heading(preview.reminders.length, 'Removing', 'reminders')}</h4>
         {preview.reminders.length === 0 ? (
-          <p className="death-wrapup-empty">None to cancel</p>
+          <p className="death-wrapup-empty">None to remove</p>
         ) : (
           <ul>
             {preview.reminders.map((row) => (
@@ -115,7 +124,7 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
-        <h4>Prescription refills</h4>
+        <h4>{heading(preview.prescriptions.length, 'Stopping', 'prescription refills')}</h4>
         {preview.prescriptions.length === 0 ? (
           <p className="death-wrapup-empty">None to stop</p>
         ) : (
@@ -131,7 +140,7 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
-        <h4>Pharmacy orders</h4>
+        <h4>{heading(preview.mailOrders.length, 'Cancelling', 'pharmacy orders')}</h4>
         {preview.mailOrders.length === 0 ? (
           <p className="death-wrapup-empty">None to cancel</p>
         ) : (
@@ -152,7 +161,7 @@ function PetActions({
       </section>
 
       <section className="death-wrapup-section">
-        <h4>Future appointments</h4>
+        <h4>{heading(preview.futureAppointments.length, 'Cancelling', 'appointments')}</h4>
         {preview.futureAppointments.length === 0 ? (
           <p className="death-wrapup-empty">None to cancel</p>
         ) : (

@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { listClientStatuses, type ClientStatusRow } from '../../api/clientStatuses';
 import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
+import { sexWordOf } from '../../utils/patientSexNeuter';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 import { fetchClientByIdStaff, searchClientsStaff, type ClientSearchRow } from '../../api/clientsStaff';
 import {
@@ -313,7 +314,7 @@ function geocodeSummary(c: Record<string, unknown>): { text: string; tone: 'ok' 
 
 /** Pet identity for the household list: "Spayed Female · 3y · Mini Goldendoodle". */
 function petSummary(p: Record<string, unknown>): string {
-  const sex = pickStr(p.sex);
+  const sex = sexWordOf(p.sex);
   const neuter = pickStr(p.neuterStatus);
   const sexBit = [neuter, sex].filter(Boolean).join(' ') || null;
   const dob = pickStr(p.dob) ?? pickStr(p.dateOfBirth);
@@ -2462,9 +2463,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           clientPhone={phone1}
           clientDoNotSms={doNotSms}
           initialInvoiceId={invoiceParam && invoiceParam !== 'new' ? invoiceParam : null}
-          initialReturnLineIds={[searchParams.get('returnLine'), searchParams.get('returnShipping')].filter(
-            (id): id is string => Boolean(id)
-          )}
+          initialReturnLineIds={[
+            // A cancelled store order can return several charges (comma-separated).
+            ...(searchParams.get('returnLine') ?? '').split(','),
+            searchParams.get('returnShipping'),
+          ].filter((id): id is string => Boolean(id))}
           openNew={invoiceParam === 'new'}
           initialPatientId={patientParam ? Number(patientParam) : null}
           initialAppointmentId={appointmentParam ? Number(appointmentParam) : null}

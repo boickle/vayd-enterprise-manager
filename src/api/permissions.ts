@@ -24,7 +24,10 @@ export type RoleSlug =
   | 'client_liaison'
   | 'inventory_manager'
   | 'billing_ar'
-  | 'observer';
+  | 'observer'
+  | 'controlled_substances_director'
+  | 'mail_order_manager'
+  | 'mail_order_team';
 
 export const ROLE_LABELS: Record<RoleSlug, string> = {
   practice_admin: 'Practice Admin',
@@ -39,6 +42,9 @@ export const ROLE_LABELS: Record<RoleSlug, string> = {
   inventory_manager: 'Inventory Manager',
   billing_ar: 'Billing / AR',
   observer: 'Observer',
+  controlled_substances_director: 'Controlled Substances Director',
+  mail_order_manager: 'Mail Order Manager',
+  mail_order_team: 'Mail Order Team Member',
 };
 
 export type EffectivePermissions = {
@@ -261,4 +267,16 @@ export async function saveEmployeeLicense(
   body: { isLicensed: boolean; licenseType: 'veterinarian' | 'technician' | null }
 ): Promise<void> {
   await http.put(`/practice/${practiceId}/employees/${employeeId}/permissions/license`, body);
+}
+
+/**
+ * Offices where the signed-in user holds `key`: 'all', or branch ids. A role assigned to one
+ * office (e.g. an inventory manager for her own location) counts only there.
+ */
+export async function fetchMyOffices(practiceId: number, key: string): Promise<number[] | 'all'> {
+  const { data } = await http.get<{ offices: number[] | 'all' }>(
+    `/practice/${practiceId}/permissions/offices`,
+    { params: { key } }
+  );
+  return data?.offices === 'all' ? 'all' : Array.isArray(data?.offices) ? data.offices : [];
 }

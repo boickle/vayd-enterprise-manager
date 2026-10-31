@@ -32,6 +32,7 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
+import { petMatchesId } from './clientPortal/portalShared';
 import {
   goldenMinAgeMonthsFromPlans,
   starterPlanFitsPet,
@@ -43,6 +44,7 @@ import {
   parseAgeStringToYears,
 } from '../utils/membershipAge';
 import { listBundles } from '../api/memberships';
+import PostVisitRefundOutline from './clientPortal/PostVisitRefundOutline';
 import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
 import {
   buildMembershipAgreementText,
@@ -730,7 +732,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       try {
         const pets = await fetchClientPets();
         if (alive) setClientPetCount(pets.length);
-        const selectedPet = pets.find((p) => p.id === effectivePetId);
+        const selectedPet = pets.find((p) => petMatchesId(p, effectivePetId));
         if (!selectedPet) {
           if (alive) {
             setError('Pet not found.');
@@ -2018,6 +2020,22 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           </section>
         </>
       )}
+
+      {pet && !fromModal ? (
+        <PostVisitRefundOutline
+          patientId={toNumber(pet.dbId ?? (pet as any).patientId ?? pet.id) ?? null}
+          petName={pet.name}
+          planId={selectedPlanExplicit ?? recommendedPlanId}
+          planName={
+            plans.find((p) => p.id === (selectedPlanExplicit ?? recommendedPlanId))?.name ??
+            undefined
+          }
+          planChosen={Boolean(selectedPlanExplicit)}
+          pricingOption={billingPreference}
+          addOns={starterExplicit ? ['starter-addon'] : []}
+          species={petDetails.kind}
+        />
+      ) : null}
 
       <section className="cp-section">
         <h2 className="cp-h2">Available Membership Plans</h2>

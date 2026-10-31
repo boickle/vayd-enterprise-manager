@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
   createOrder,
@@ -36,6 +45,71 @@ import {
 import type { CoverageChoicePrompt } from '../../utils/membershipCoverageChoice';
 import { isSharpsOrderName, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 import { useCan } from '../../permissions/PermissionContext';
+
+/**
+ * Matches have to float over the checkout column. That column is already at the
+ * bottom when the last pet's search opens, so a list drawn under the field is
+ * clipped and the column will not scroll any farther to reveal it.
+ */
+function PlanSearchResults({
+  anchorRef,
+  menuRef,
+  open,
+  children,
+}: {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  menuRef: RefObject<HTMLDivElement | null>;
+  open: boolean;
+  children: ReactNode;
+}) {
+  const [box, setBox] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      const margin = 8;
+      const gap = 4;
+      const below = Math.max(0, window.innerHeight - r.bottom - margin);
+      const above = Math.max(0, r.top - margin);
+      const openUp = below < 220 && above > below;
+      const maxHeight = Math.min(320, openUp ? above : below);
+      setBox({
+        top: openUp ? r.top - gap - maxHeight : r.bottom + gap,
+        left: r.left,
+        width: Math.max(r.width, 240),
+        maxHeight: Math.max(48, maxHeight),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchorRef, open]);
+
+  if (!open || !box || typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="soap-plan-results soap-plan-results--float"
+      role="listbox"
+      style={{ top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
 
 type Props = {
   encounterId: string;
@@ -108,6 +182,8 @@ export default function PlanOrdersSection({
   const [adding, setAdding] = useState(false);
   const [pricingByOrderId, setPricingByOrderId] = useState<Record<string, CatalogPricingItem>>({});
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   const canPrice = patientId != null && Number.isFinite(patientId);
 
@@ -199,9 +275,9 @@ export default function PlanOrdersSection({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (boxRef.current?.contains(target) || resultsRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -520,7 +596,7 @@ export default function PlanOrdersSection({
 
       {!disabled && showSearch ? (
         <div className="soap-plan-search" ref={boxRef}>
-          <div className="soap-plan-search-input">
+          <div className="soap-plan-search-input" ref={inputRef}>
             <Search size={15} className="soap-plan-search-icon" />
             <input
               className="soap-input"
@@ -541,8 +617,11 @@ export default function PlanOrdersSection({
               }}
             />
           </div>
-          {open && query.trim().length >= 1 && (
-            <div className="soap-plan-results" role="listbox">
+          <PlanSearchResults
+            anchorRef={inputRef}
+            menuRef={resultsRef}
+            open={open && query.trim().length >= 1}
+          >
               {searching && <div className="soap-plan-result-empty">Searching…</div>}
               {!searching && searchError && (
                 <div className="soap-plan-result-empty error">{searchError}</div>
@@ -626,8 +705,7 @@ export default function PlanOrdersSection({
                   Add as note: <strong>{query.trim()}</strong>
                 </span>
               </button>
-            </div>
-          )}
+          </PlanSearchResults>
           <p className="soap-hint">
             Catalog prices use quantity tiers and membership/client discounts (same as Room Loader).
             “Add as note” creates a text line you can edit and optionally price.

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import { useCameraCaptureAvailable } from '../utils/cameraCapture';
 import {
   CLIENT_RECORD_MAX_FILES,
   clientRecordFileError,
@@ -49,27 +50,6 @@ const PRACTICE_CHOICES: { value: Choice; label: string }[] = [
 
 function petLabel(pets: ClientRecordPetOption[], formPetId: string): string {
   return pets.find((pet) => pet.id === formPetId)?.name || 'Pet';
-}
-
-/** Desktop browsers ignore `capture` and open a file picker instead. */
-function deviceOpensCamera(): boolean {
-  if (typeof navigator.mediaDevices?.getUserMedia !== 'function') return false;
-  if (navigator.maxTouchPoints < 1) return false;
-  return window.matchMedia('(pointer: coarse)').matches;
-}
-
-function useCameraCaptureAvailable(): boolean {
-  const [available, setAvailable] = useState(deviceOpensCamera);
-
-  useEffect(() => {
-    const media = window.matchMedia('(pointer: coarse)');
-    const update = () => setAvailable(deviceOpensCamera());
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  return available;
 }
 
 export function ClientRecordUploadFields({

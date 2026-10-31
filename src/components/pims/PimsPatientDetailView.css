@@ -224,6 +224,7 @@
   font-size: 12.5px;
   color: var(--color-text-muted, #6b7280);
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .pims-emr-story {
@@ -1399,7 +1400,20 @@
 }
 
 .pims-detail--emr .pims-detail__signalment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
   margin-top: 4px;
+}
+
+.pims-detail--emr .pims-emr-membership {
+  flex: 0 0 100%;
+}
+
+.pims-detail--emr .pims-emr-primary-provider {
+  margin-left: 28px;
+  margin-top: 0;
 }
 
 .pims-detail--emr .pims-detail__reach {
@@ -2709,6 +2723,19 @@
   text-transform: uppercase;
   color: #78716c;
   margin-right: 2px;
+}
+
+@media (max-width: 760px) {
+  .pims-chart-work {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .pims-chart-work__group,
+  .pims-chart-work__group--end {
+    margin-left: 0;
+    width: 100%;
+  }
 }
 
 .pims-chart-compose {

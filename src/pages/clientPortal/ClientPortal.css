@@ -269,10 +269,24 @@
   transform: scale(1.06);
 }
 .pp-switch-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   max-width: 84px;
+  min-width: 0;
+}
+.pp-switch-name-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+.pp-switch-member {
+  flex: 0 0 auto;
+  color: #16a34a;
+  font-size: 12px;
+  line-height: 1;
 }
 .pp-switch--all .pp-switch-avatar {
   display: grid;
@@ -483,6 +497,15 @@
   background: var(--pp-teal-soft);
   border-color: transparent;
   color: var(--pp-teal-dark);
+}
+button.pp-chip--button {
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+button.pp-chip--button:hover {
+  transform: translateY(-1px);
 }
 /* "Love" heart chip — on the hero and on remembered pets */
 .pp-chip.pp-love {
@@ -2248,6 +2271,9 @@
   .pp-switch-name {
     max-width: 70px;
   }
+  .pp-switch-member {
+    font-size: 11px;
+  }
   .pp-switch-badge {
     min-width: 20px;
     height: 20px;
@@ -2371,6 +2397,74 @@
   .pp-promos {
     display: none !important;
   }
+}
+
+/* ---------- post-visit signup banner ---------- */
+.pp-pv-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #0f766e 0%, #0d5e58 100%);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(15, 118, 110, 0.32);
+  margin-bottom: 14px;
+  position: relative;
+}
+.pp-pv-banner__body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.pp-pv-banner__icon {
+  font-size: 26px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.pp-pv-banner__text {
+  flex: 1 1 220px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: #e6f7f5;
+}
+.pp-pv-banner__text strong {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 2px;
+}
+.pp-pv-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.pp-pv-banner .pp-btn--primary {
+  background: #fff;
+  color: #0b5d57;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-weight: 800;
+}
+.pp-pv-banner .pp-btn--primary:hover {
+  background: #e6f7f5;
+}
+.pp-pv-banner__close {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255,255,255,0.65);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-top: -2px;
+}
+.pp-pv-banner__close:hover {
+  color: #fff;
 }
 
 /* ---------- membership renewal banner ---------- */

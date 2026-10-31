@@ -1,0 +1,54 @@
+.controlled-dose {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #334155;
+}
+
+.controlled-dose p {
+  margin: 0;
+}
+
+.controlled-dose__title {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.controlled-dose__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.controlled-dose__row label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.controlled-dose__row input {
+  width: 110px;
+}
+
+.controlled-dose__hint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.controlled-dose__warn {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.controlled-dose__ok {
+  color: #15803d;
+  font-weight: 600;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import { listPracticeBranches, type PracticeBranch } from '../api/branchInventory';
+import { fetchMyOffices } from '../api/permissions';
 import {
   getInventoryCostSummary,
   type InventoryCostSummary,
@@ -36,9 +37,15 @@ export default function InventoryTotalsPage() {
     (async () => {
       setBranchesError(null);
       try {
-        const list = await listPracticeBranches(practiceId);
+        const [list, offices] = await Promise.all([
+          listPracticeBranches(practiceId),
+          // An inventory manager for her own location sees that office only.
+          fetchMyOffices(practiceId, 'report.inventory_valuation').catch(() => 'all' as const),
+        ]);
         if (cancelled) return;
-        const active = list.filter((b) => b.isActive !== false);
+        const active = list.filter(
+          (b) => b.isActive !== false && (offices === 'all' || offices.includes(b.id))
+        );
         setBranches(active);
         let initial: number | null = null;
         try {

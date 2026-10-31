@@ -1263,8 +1263,11 @@ a.soap-header-client:hover {
   line-height: 1.35;
   color: var(--soap-muted);
 }
-.soap-checkout-add .soap-plan-results {
-  top: calc(100% - 4px);
+.soap-plan-results--float {
+  position: fixed;
+  z-index: 80;
+  right: auto;
+  overscroll-behavior: contain;
 }
 .soap-plan-results {
   position: absolute;
@@ -1467,6 +1470,11 @@ a.soap-header-client:hover {
 .soap-invoice-pet-head.is-current {
   background: #eef4ff;
 }
+.soap-invoice-pet-head .membership-benefits-paused-tag,
+.soap-invoice-pet-head .membership-benefits-paused-tag--link {
+  margin-left: 8px;
+  vertical-align: middle;
+}
 .soap-invoice-pet-head-right {
   display: inline-flex;
   align-items: center;
@@ -1543,6 +1551,21 @@ a.soap-header-client:hover {
   font-weight: 500;
   font-size: 12px;
   color: #64748b;
+}
+.soap-checkout-reprice {
+  appearance: none;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.soap-checkout-reprice:hover {
+  border-color: #0f766e;
+  color: #0f766e;
 }
 .soap-checkout-branch {
   margin: 0 0 10px;
@@ -2073,6 +2096,24 @@ a.soap-header-client:hover {
 .soap-checkout-consent input {
   margin-top: 2px;
   flex: none;
+}
+.soap-witness-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.soap-witness-pick label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.soap-witness-pick select {
+  width: 100%;
+  font-weight: 500;
 }
 /* Follow-up prompt at checkout — asked while the client is still here. */
 .soap-checkout-followup {

@@ -46,6 +46,12 @@ type Props = {
    * (owner decision D2). Move Items and Waste / Adjust leave this off so expired bottles can go.
    */
   forUse?: boolean;
+  /**
+   * A controlled drug: the shelf passed in is the doctor's controlled drug location (their safe),
+   * named here. Staff can still take a lot from another shelf; the Controlled Drugs report flags
+   * it (owner decision, Oct 30, 2026).
+   */
+  otherShelvesFrom?: string | null;
 };
 
 /** "Oct 1" from "2026-10-01". */
@@ -127,7 +133,12 @@ export default function StockLotPicker({
   className,
   refreshKey = 0,
   forUse = false,
+  otherShelvesFrom = null,
 }: Props) {
+  /** Showing lots from every shelf instead of the doctor's controlled drug location. */
+  const [anyShelf, setAnyShelf] = useState(false);
+  const branchFilter = anyShelf ? null : branchId;
+  const locationFilter = anyShelf ? null : locationId;
   const [lots, setLots] = useState<InventoryLotBalance[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,8 +157,8 @@ export default function StockLotPicker({
     setLoading(true);
     setError(null);
     void listInventoryLots(practiceId, inventoryItemId, {
-      ...(branchId != null ? { branchId } : {}),
-      ...(locationId != null ? { locationId } : {}),
+      ...(branchFilter != null ? { branchId: branchFilter } : {}),
+      ...(locationFilter != null ? { locationId: locationFilter } : {}),
       includeZero: allowNew,
     })
       .then((rows) => {
@@ -165,7 +176,7 @@ export default function StockLotPicker({
     return () => {
       canceled = true;
     };
-  }, [practiceId, inventoryItemId, branchId, locationId, allowNew, refreshKey, reloadTick]);
+  }, [practiceId, inventoryItemId, branchFilter, locationFilter, allowNew, refreshKey, reloadTick]);
 
   /** Lots staff may pick: in use mode, expired ones are left out. */
   const pickable = useMemo(
@@ -229,7 +240,7 @@ export default function StockLotPicker({
 
   if (inventoryItemId == null) return null;
 
-  const showLocation = locationId == null;
+  const showLocation = locationFilter == null;
   const selectValue = newLot ? 'new' : selectedLotId != null ? String(selectedLotId) : '';
   const showEditableLotFields =
     allowNew && (newLot || (selectedLotId == null && lotNumber.trim() !== ''));
@@ -259,6 +270,19 @@ export default function StockLotPicker({
           </button>
         ) : null}
       </div>
+      {otherShelvesFrom ? (
+        <p className="settings-muted" style={{ fontSize: 12, margin: '0 0 4px' }}>
+          {anyShelf ? 'Every shelf (flagged on the Controlled Drugs report if not the doctor’s). ' : `From ${otherShelvesFrom}. `}
+          <button
+            type="button"
+            style={{ background: 'none', border: 0, padding: 0, color: '#0f766e', fontWeight: 600, cursor: 'pointer' }}
+            disabled={disabled}
+            onClick={() => setAnyShelf((v) => !v)}
+          >
+            {anyShelf ? `Back to ${otherShelvesFrom}` : 'Another shelf…'}
+          </button>
+        </p>
+      ) : null}
       <select
         className="settings-input"
         value={selectValue}
