@@ -91,6 +91,8 @@ export type StoreVariant = {
   pack: string;
   hasImage?: boolean;
   optionLabel?: string | null;
+  /** This variant's value for each of the listing's optionNames, in order. */
+  options?: string[];
   recommendedFrequency?: string | null;
   taxLevelValue?: number | null;
   approvalTag?: 'approved' | 'needs_doctor_approval';
@@ -188,6 +190,8 @@ export type StoreListing = {
   kind?: 'standard' | 'gift_card';
   requiresPet?: boolean;
   giftCard?: StoreGiftCardSettings | null;
+  /** The shopper's choices ("Flavor", "Size"). Empty when none are set. */
+  optionNames?: string[];
   variants: StoreVariant[];
 };
 
@@ -515,6 +519,8 @@ export async function importStoreCatalog(practiceId: number, file: File) {
   return data;
 }
 
+export type StoreOptionFillResult = { fromEcwid: number; drafted: number; unchanged: number };
+
 export async function importEcwidCatalog(practiceId: number, file: File) {
   const form = new FormData();
   form.append('file', file);
@@ -522,9 +528,22 @@ export async function importEcwidCatalog(practiceId: number, file: File) {
     masters: number;
     clonesExcluded: number;
     maps: EcwidMapRow[];
+    options?: StoreOptionFillResult;
   }>(`/practice/${practiceId}/online-store/import`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
+  return data;
+}
+
+/** Fill named choices on products that have none; with an Ecwid CSV, from its options. */
+export async function fillStoreOptions(practiceId: number, file?: File | null, overwrite = false) {
+  const form = new FormData();
+  if (file) form.append('file', file);
+  const { data } = await http.post<StoreOptionFillResult>(
+    `/practice/${practiceId}/online-store/options/fill${overwrite ? '?overwrite=1' : ''}`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
   return data;
 }
 
@@ -698,6 +717,8 @@ export async function patchOnlineStoreListing(
     saleValue?: number | null;
     saleEndsAt?: string | null;
     saleLabel?: string | null;
+    optionNames?: string[];
+    variantOptions?: Array<{ inventoryItemId?: number | null; procedureId?: number | null; values: string[] }>;
   } & StoreListingGiftCardPatch
 ) {
   const { data } = await http.patch<StoreAdminListing>(

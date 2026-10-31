@@ -114,7 +114,12 @@ import './roomLoader/MembershipPitch.css';
 import './PublicRoomLoaderForm.css';
 import './store/Store.css';
 import {
+  namedOptionsOf,
+  optionValuesAt,
   packChipsLabel,
+  settleOptionPicks,
+  variantForPicks,
+  weightOptionIndex,
   packForWeight,
   packsForStrengthOf,
   shortPetWeight,
@@ -1284,17 +1289,30 @@ function StoreOptionModal({
   const [petId, setPetId] = useState<number | null>(pets[0]?.id ?? null);
   const pet = pets.find((p) => p.id === petId) ?? pets[0] ?? null;
   const packs = packsForStrengthOf(variants, strength);
-  const byOption = strengths.length <= 1 && packs.length <= 1 && entries.length > 1;
+  const optionNames = listings.length === 1 ? namedOptionsOf(listings[0]) : [];
+  const [picks, setPicks] = useState<string[]>(entries[0]?.variant.options ?? []);
+  const settledPicks = optionNames.length ? settleOptionPicks(variants, optionNames.length, picks) : [];
+  const weightIndex = optionNames.length ? weightOptionIndex(variants, optionNames.length) : -1;
+  const byOption = !optionNames.length && strengths.length <= 1 && packs.length <= 1 && entries.length > 1;
 
   useEffect(() => {
     if (pet?.weightLbs == null) return;
+    if (optionNames.length) {
+      if (weightIndex < 0) return;
+      const fit = packForWeight(optionValuesAt(variants, weightIndex, settledPicks), pet.weightLbs);
+      if (fit) setPicks(settledPicks.map((p, i) => (i === weightIndex ? fit : p)));
+      return;
+    }
     const match = packForWeight(packsForStrengthOf(variants, strength), pet.weightLbs);
     if (match) setPack(match);
     // Re-pick only when the pet or strength changes, so a pack the client taps stays chosen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pet?.id, pet?.weightLbs, strength]);
 
-  const picked = byOption
+  const namedVariant = optionNames.length ? variantForPicks(variants, settledPicks) : null;
+  const picked = namedVariant
+    ? (entries.find((e) => e.variant === namedVariant) ?? entries[0])
+    : byOption
     ? entries[entryIdx]
     : (entries.find(
         (e) => (strength ? e.variant.strength === strength : true) && (pack ? e.variant.pack === pack : true)
@@ -1307,14 +1325,18 @@ function StoreOptionModal({
   if (!picked || !item) return null;
 
   const safeQty = Math.min(99, Math.max(1, Math.floor(qty) || 1));
+  const weightValues = weightIndex >= 0 ? optionValuesAt(variants, weightIndex, settledPicks) : [];
+  const fitsWeight = (values: string[], chosen: string | null | undefined) =>
+    pet?.weightLbs != null && chosen && values.length > 1 && packForWeight(values, pet.weightLbs) === chosen;
   const fits =
-    pet?.weightLbs != null && packForWeight(packs, pet.weightLbs) === pack && pack && packs.length > 1
+    pet?.weightLbs != null &&
+    (optionNames.length ? fitsWeight(weightValues, settledPicks[weightIndex]) : fitsWeight(packs, pack))
       ? `Fits ${pet.name} (${Math.round(pet.weightLbs * 10) / 10} lbs)`
       : null;
   const total = linePrice(item, safeQty);
   const productName = listings[0].name;
   const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
-  const showPets = pets.length > 1 && packs.length > 1;
+  const showPets = pets.length > 1 && (optionNames.length ? weightValues.length > 1 : packs.length > 1);
 
   return (
     <div className="rl-store-modal__overlay" onClick={onCancel}>
@@ -1328,7 +1350,7 @@ function StoreOptionModal({
         <h4 className="rl-store-modal__title">{productName}</h4>
         <p className="rl-store-modal__note">We'll bring this to your visit.</p>
 
-        {strengths.length > 1 && (
+        {!optionNames.length && strengths.length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">{strengthChipsLabel(strengths)}</div>
             <div className="vayd-store__chips">
@@ -1371,7 +1393,26 @@ function StoreOptionModal({
           </div>
         )}
 
-        {!byOption && packs.length > 1 && (
+        {optionNames.map((name, index) => (
+          <div className="vayd-store__option" key={name}>
+            <div className="vayd-store__option-label">{name}</div>
+            <div className="vayd-store__chips">
+              {optionValuesAt(variants, index, settledPicks).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`vayd-store__chip${settledPicks[index] === value ? ' is-on' : ''}`}
+                  onClick={() => setPicks(settledPicks.map((p, i) => (i === index ? value : p)))}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+            {index === weightIndex && fits && <p className="rl-store-modal__fits">{fits}</p>}
+          </div>
+        ))}
+
+        {!optionNames.length && !byOption && packs.length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">{packChipsLabel(strengths, packs)}</div>
             <div className="vayd-store__chips">

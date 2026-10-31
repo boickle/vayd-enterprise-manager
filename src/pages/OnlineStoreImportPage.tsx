@@ -7,6 +7,7 @@ import {
   addOnlineStoreVariant,
   createOnlineStoreProduct,
   downloadStoreCatalog,
+  fillStoreOptions,
   importEcwidCatalog,
   importStoreCatalog,
   listEcwidMaps,
@@ -32,6 +33,7 @@ import {
   type StoreAdminVariant,
   type StoreCoupon,
   type StoreItemRow,
+  type StoreOptionFillResult,
   type StoreSaleType,
 } from '../api/onlineStore';
 import { uploadInventoryItemImage } from '../api/inventoryTools';
@@ -329,6 +331,203 @@ function variantImageSrc(
 function withImageBust(url: string | null, bust?: number): string | null {
   if (!url) return null;
   return bust ? `${url}${url.includes('?') ? '&' : '?'}t=${bust}` : url;
+}
+
+const MAX_STORE_CHOICES = 3;
+
+function choicesFilledMessage(res: StoreOptionFillResult): string {
+  return `Shopper choices: ${res.fromEcwid} from Ecwid, ${res.drafted} drafted from item names, ${res.unchanged} left as they were.`;
+}
+
+function variantKeyOf(variant: StoreAdminVariant): string {
+  return variant.inventoryItemId ? `inv:${variant.inventoryItemId}` : `proc:${variant.procedureId}`;
+}
+
+/**
+ * Shopper choices for one product (e.g. Flavor, or Duration + Weight). Every item gets one value
+ * per choice; the store and Room Loader show one row of buttons per choice.
+ */
+function StoreChoicesEditor({
+  listing,
+  disabled,
+  onSave,
+}: {
+  listing: StoreAdminListing;
+  disabled: boolean;
+  onSave: (body: {
+    optionNames: string[];
+    variantOptions: Array<{ inventoryItemId?: number; procedureId?: number; values: string[] }>;
+  }) => Promise<void>;
+}) {
+  const savedNames = listing.optionNames ?? [];
+  const [open, setOpen] = useState(false);
+  const [names, setNames] = useState<string[]>(savedNames);
+  const [values, setValues] = useState<Record<string, string[]>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = () => {
+    setNames(savedNames.length ? savedNames : ['']);
+    setValues(
+      Object.fromEntries(listing.variants.map((v) => [variantKeyOf(v), v.options ?? []]))
+    );
+    setError(null);
+    setOpen(true);
+  };
+
+  const cleanNames = names.map((n) => n.trim());
+  const rowValues = (variant: StoreAdminVariant) =>
+    cleanNames.map((_, i) => (values[variantKeyOf(variant)]?.[i] ?? '').trim());
+  const missing = cleanNames.some((n) => !n)
+    ? 'Give every choice a name.'
+    : listing.variants.some((v) => rowValues(v).some((x) => !x))
+      ? 'Give every item a value for each choice.'
+      : new Set(listing.variants.map((v) => rowValues(v).join('\u0000').toLowerCase())).size <
+          listing.variants.length
+        ? 'Two items have the same choices. Each item needs its own combination.'
+        : null;
+
+  const save = async (clear = false) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        optionNames: clear ? [] : cleanNames,
+        variantOptions: listing.variants.map((v) => ({
+          ...(v.inventoryItemId
+            ? { inventoryItemId: v.inventoryItemId }
+            : { procedureId: v.procedureId ?? undefined }),
+          values: clear ? [] : rowValues(v),
+        })),
+      });
+      setOpen(false);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="store-choices__summary">
+        <span className="settings-muted">
+          {savedNames.length ? `Shopper choices: ${savedNames.join(' · ')}` : 'Shopper choices: none yet'}
+        </span>
+        <button
+          type="button"
+          className="inv-catalog-results__text-btn"
+          disabled={disabled}
+          onClick={start}
+        >
+          {savedNames.length ? 'Edit choices' : 'Set up choices'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="store-choices">
+      <div className="store-choices__names">
+        {names.map((name, i) => (
+          <span key={i} className="store-choices__name">
+            <input
+              className="settings-input"
+              placeholder={i === 0 ? 'Flavor, Size, Weight…' : 'Choice name'}
+              value={name}
+              aria-label={`Choice ${i + 1} name`}
+              onChange={(e) => setNames(names.map((n, j) => (j === i ? e.target.value : n)))}
+            />
+            {names.length > 1 ? (
+              <button
+                type="button"
+                className="store-variant-group__remove"
+                aria-label={`Remove choice ${name || i + 1}`}
+                onClick={() => {
+                  setNames(names.filter((_, j) => j !== i));
+                  setValues(
+                    Object.fromEntries(
+                      Object.entries(values).map(([k, row]) => [k, row.filter((_, j) => j !== i)])
+                    )
+                  );
+                }}
+              >
+                ×
+              </button>
+            ) : null}
+          </span>
+        ))}
+        {names.length < MAX_STORE_CHOICES ? (
+          <button
+            type="button"
+            className="inv-catalog-results__text-btn"
+            onClick={() => setNames([...names, ''])}
+          >
+            + Add choice
+          </button>
+        ) : null}
+      </div>
+      <table className="store-choices__table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            {names.map((name, i) => (
+              <th key={i}>{name.trim() || `Choice ${i + 1}`}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {listing.variants.map((variant) => {
+            const key = variantKeyOf(variant);
+            return (
+              <tr key={key}>
+                <td className="settings-muted">{variantDisplayName(variant)}</td>
+                {names.map((name, i) => (
+                  <td key={i}>
+                    <input
+                      className="settings-input"
+                      value={values[key]?.[i] ?? ''}
+                      aria-label={`${name || `Choice ${i + 1}`} for ${variantDisplayName(variant)}`}
+                      onChange={(e) => {
+                        const row = [...(values[key] ?? [])];
+                        row[i] = e.target.value;
+                        setValues({ ...values, [key]: row });
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {missing ? <p className="settings-muted">{missing}</p> : null}
+      {error ? <p className="error">{error}</p> : null}
+      <div className="store-choices__actions">
+        <button
+          type="button"
+          className="btn primary"
+          disabled={disabled || saving || Boolean(missing)}
+          onClick={() => void save()}
+        >
+          Save choices
+        </button>
+        <button type="button" className="btn secondary" disabled={saving} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        {savedNames.length ? (
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={disabled || saving}
+            onClick={() => void save(true)}
+          >
+            Clear choices
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function StoreThumb({
@@ -1442,8 +1641,36 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                     .then((res) => {
                       setMaps(res.maps);
                       setFlash(
-                        `Imported ${res.masters} products. Excluded ${res.clonesExcluded} autoship clones.`
+                        `Imported ${res.masters} products. Excluded ${res.clonesExcluded} autoship clones.${
+                          res.options ? ` ${choicesFilledMessage(res.options)}` : ''
+                        }`
                       );
+                    })
+                    .catch((err) => setError(apiErrorMessage(err)))
+                    .finally(() => setBusy(false));
+                }}
+              />
+            </label>
+            <label
+              className="settings-label"
+              title="Sets choices like Flavor or Size on products with more than one item. Uses Ecwid's options where they match, and drafts the rest from item names. Products that already have choices stay as they are."
+            >
+              Fill shopper choices from Ecwid CSV
+              <input
+                className="settings-input"
+                type="file"
+                accept=".csv,text/csv"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setBusy(true);
+                  setError(null);
+                  void fillStoreOptions(practiceId, file)
+                    .then(async (res) => {
+                      setFlash(choicesFilledMessage(res));
+                      await load();
                     })
                     .catch((err) => setError(apiErrorMessage(err)))
                     .finally(() => setBusy(false));
@@ -2025,7 +2252,28 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                         );
                       }}
                     />
-                  ) : listing.variants.length ? (
+                  ) : null}
+                  {listing.kind !== 'gift_card' && listing.variants.length > 1 ? (
+                    <StoreChoicesEditor
+                      key={`${listing.listingId}:${(listing.optionNames ?? []).join('|')}`}
+                      listing={listing}
+                      disabled={busy}
+                      onSave={async (body) => {
+                        const updated = await patchOnlineStoreListing(
+                          practiceId,
+                          listing.listingId,
+                          body
+                        );
+                        if (!updated) return;
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId ? { ...row, ...updated } : row
+                          )
+                        );
+                      }}
+                    />
+                  ) : null}
+                  {listing.kind === 'gift_card' ? null : listing.variants.length ? (
                     <div className="store-variant-groups">
                       {groupVariantsByStrength(listing.variants).map((group) => (
                         <div key={`${listing.listingId}:${group.key}`}>

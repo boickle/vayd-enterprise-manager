@@ -87,6 +87,9 @@ export default function StoreLayout() {
         </div>
       ) : null}
       <header className="vayd-store__hero">
+        <Link to="/store" className="vayd-store__logo">
+          <img src="/final_thick_lines_cropped.jpeg" alt="Vet At Your Door" />
+        </Link>
         <div className="vayd-store__nav">
           <Link to="/store">Shop</Link>
           {auth.token ? (
@@ -103,9 +106,6 @@ export default function StoreLayout() {
             Cart{count ? ` (${count})` : ''}
           </Link>
         </div>
-        <Link to="/store" className="vayd-store__logo">
-          <img src="/final_thick_lines_cropped.jpeg" alt="Vet At Your Door" />
-        </Link>
       </header>
       <div className="vayd-store__wrap">
         {showPortalReturn ? (

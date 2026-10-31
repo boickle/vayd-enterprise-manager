@@ -22,7 +22,19 @@ import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
 import StoreGiftCardProduct from './StoreGiftCardProduct';
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
-import { packChipsLabel, packForWeight, packsForStrengthOf, shortPetWeight, strengthChipsLabel, strengthsOf } from './storeVariantPick';
+import {
+  namedOptionsOf,
+  optionValuesAt,
+  packChipsLabel,
+  packForWeight,
+  packsForStrengthOf,
+  settleOptionPicks,
+  shortPetWeight,
+  strengthChipsLabel,
+  strengthsOf,
+  variantForPicks,
+  weightOptionIndex,
+} from './storeVariantPick';
 import './Store.css';
 import { useStorePracticeId } from './useStorePracticeId';
 
@@ -58,6 +70,7 @@ export default function StoreProduct() {
   const [customUnit, setCustomUnit] = useState<'days' | 'weeks' | 'months'>('weeks');
   const [strength, setStrength] = useState<string | null>(null);
   const [pack, setPack] = useState<string | null>(null);
+  const [picks, setPicks] = useState<string[]>([]);
   const [added, setAdded] = useState(false);
 
   useEffect(() => {
@@ -83,8 +96,19 @@ export default function StoreProduct() {
       const first = match || (longest && months(longest) > 0 ? longest : variants[0]);
       setStrength(first?.strength ?? null);
       setPack(first?.pack ?? null);
+      setPicks(first?.options ?? []);
     });
   }, [id, practiceId, ready]);
+
+  const optionNames = useMemo(() => (item ? namedOptionsOf(item) : []), [item]);
+  const settledPicks = useMemo(
+    () => (item && optionNames.length ? settleOptionPicks(item.variants || [], optionNames.length, picks) : []),
+    [item, optionNames, picks]
+  );
+  const weightIndex = useMemo(
+    () => (item && optionNames.length ? weightOptionIndex(item.variants || [], optionNames.length) : -1),
+    [item, optionNames]
+  );
 
   const strengths = useMemo(() => {
     if (!item) return [];
@@ -98,6 +122,7 @@ export default function StoreProduct() {
 
   const selected = useMemo(() => {
     if (!item) return null;
+    if (optionNames.length) return variantForPicks(item.variants || [], settledPicks) || item.variants?.[0] || null;
     return (
       (item.variants || []).find(
         (v) =>
@@ -105,7 +130,7 @@ export default function StoreProduct() {
           (pack ? v.pack === pack : true)
       ) || item.variants?.[0] || null
     );
-  }, [item, strength, pack]);
+  }, [item, strength, pack, optionNames, settledPicks]);
 
   const canAutoship = Boolean(
     selected?.inventoryItemId && (item?.variants || []).some((row) => row.inventoryItemId)
@@ -139,9 +164,20 @@ export default function StoreProduct() {
 
   useEffect(() => {
     if (selectedPet?.latestWeightLbs == null) return;
+    if (optionNames.length) {
+      if (weightIndex < 0 || !item) return;
+      const values = optionValuesAt(item.variants || [], weightIndex, settledPicks);
+      const fit = packForWeight(values, selectedPet.latestWeightLbs);
+      if (fit && fit !== settledPicks[weightIndex]) {
+        setPicks(settledPicks.map((p, i) => (i === weightIndex ? fit : p)));
+      }
+      return;
+    }
     const match = packForWeight(packsForStrength, selectedPet.latestWeightLbs);
     if (match) setPack(match);
-  }, [patientId, selectedPet?.latestWeightLbs, packsForStrength]);
+    // Re-pick for a new pet or weight, not on every tap, so a size the client chooses stays chosen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId, selectedPet?.latestWeightLbs, packsForStrength, optionNames, weightIndex]);
 
   useEffect(() => {
     lastRecommendedRef.current = null;
@@ -257,7 +293,7 @@ export default function StoreProduct() {
             <span className="vayd-store__price-note"> each · ${lineTotal.toFixed(2)}</span>
           ) : null}
           {selected && (item.variants || []).length > 1 ? (
-            <span className="vayd-store__price-note"> · {selected.pack}</span>
+            <span className="vayd-store__price-note"> · {optionNames.length ? selected.optionLabel : selected.pack}</span>
           ) : null}
         </p>
         {saleOn && formatSaleEnds(item.saleEndsAt) ? (
@@ -298,7 +334,7 @@ export default function StoreProduct() {
           />
         ) : null}
 
-        {strengths.length > 1 && (
+        {!optionNames.length && strengths.length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">
               {strengthChipsLabel(strengths)}
@@ -363,7 +399,7 @@ export default function StoreProduct() {
           </p>
         ) : null}
 
-        {(item.variants || []).length > 1 && (
+        {!optionNames.length && (item.variants || []).length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">
               {packChipsLabel(strengths, packsForStrength)}
@@ -382,6 +418,24 @@ export default function StoreProduct() {
             </div>
           </div>
         )}
+
+        {optionNames.map((name, index) => (
+          <div className="vayd-store__option" key={name}>
+            <div className="vayd-store__option-label">{name}</div>
+            <div className="vayd-store__chips">
+              {optionValuesAt(item.variants || [], index, settledPicks).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`vayd-store__chip${settledPicks[index] === value ? ' is-on' : ''}`}
+                  onClick={() => setPicks(settledPicks.map((p, i) => (i === index ? value : p)))}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
 
         <div className="vayd-store__option">
           <div className="vayd-store__option-label">

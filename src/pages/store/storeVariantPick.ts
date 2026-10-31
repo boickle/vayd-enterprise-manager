@@ -41,6 +41,52 @@ export function packsForStrengthOf(variants: PickVariant[], strength: string | n
   return [...new Set(variants.filter((v) => !strength || v.strength === strength).map((v) => v.pack))];
 }
 
+type OptionVariant = { options?: string[] };
+
+/**
+ * The listing's named choices, when every variant has a value for each and no two variants
+ * match. Otherwise empty, and pickers fall back to strength and pack.
+ */
+export function namedOptionsOf(listing: { optionNames?: string[]; variants?: OptionVariant[] }): string[] {
+  const names = listing.optionNames ?? [];
+  const variants = listing.variants ?? [];
+  if (!names.length || variants.length < 2) return [];
+  const rows = variants.map((v) => v.options ?? []);
+  if (rows.some((r) => r.length !== names.length || r.some((c) => !String(c).trim()))) return [];
+  const keys = new Set(rows.map((r) => r.map((c) => c.toLowerCase()).join('\u0000')));
+  return keys.size === rows.length ? names : [];
+}
+
+/** Values offered for choice `index`, given the choices before it. */
+export function optionValuesAt(variants: OptionVariant[], index: number, picked: (string | null)[]): string[] {
+  const fits = variants.filter((v) => picked.slice(0, index).every((p, i) => p == null || v.options?.[i] === p));
+  return [...new Set(fits.map((v) => v.options?.[index]).filter((x): x is string => !!x))];
+}
+
+/** Picks kept where they still fit; a later pick that no longer exists moves to the first that does. */
+export function settleOptionPicks(variants: OptionVariant[], count: number, picked: (string | null)[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const values = optionValuesAt(variants, i, out);
+    const want = picked[i];
+    out.push(want != null && values.includes(want) ? want : values[0] ?? '');
+  }
+  return out;
+}
+
+export function variantForPicks<T extends OptionVariant>(variants: T[], picked: string[]): T | null {
+  return variants.find((v) => picked.every((p, i) => v.options?.[i] === p)) ?? null;
+}
+
+/** The choice whose values are all weight ranges (e.g. "4.4–9.9 lbs"), for picking by pet weight. */
+export function weightOptionIndex(variants: OptionVariant[], count: number): number {
+  for (let i = 0; i < count; i += 1) {
+    const values = [...new Set(variants.map((v) => v.options?.[i] ?? ''))];
+    if (values.length > 1 && values.every((v) => weightRangeLbs(v))) return i;
+  }
+  return -1;
+}
+
 /** Heading above the strength chips. */
 export function strengthChipsLabel(strengths: string[]): string {
   return strengths.every((s) => /month/i.test(s))

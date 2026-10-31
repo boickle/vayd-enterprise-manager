@@ -517,6 +517,64 @@
   object-fit: cover;
 }
 
+.store-choices__summary {
+  margin: 8px 0 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.store-choices {
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.store-choices__names {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.store-choices__name {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.store-choices__name .settings-input {
+  width: 160px;
+}
+
+.store-choices__table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.store-choices__table th,
+.store-choices__table td {
+  text-align: left;
+  padding: 3px 6px 3px 0;
+  font-size: 13px;
+}
+
+.store-choices__table .settings-input {
+  width: 100%;
+  min-width: 110px;
+}
+
+.store-choices__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .store-variant-groups {
   margin: 8px 0 0;
   display: flex;
