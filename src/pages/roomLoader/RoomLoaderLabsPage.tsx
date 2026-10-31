@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { AlertTriangle, ClipboardList } from 'lucide-react';
 import type { RoomLoaderConfig } from '../../utils/roomLoaderConfigTypes';
 import { fillPetName, type EngineContext, type ResolvedPetPlan } from '../../utils/roomLoaderOfferEngine';
-import LabPanelsSection from './LabPanelsSection';
+import LabPanelsSection, { panelQuestionFigure } from './LabPanelsSection';
 import RoomLoaderHtml from './RoomLoaderHtml';
 import { sampleInstructionsForAnswers } from './roomLoaderConfigPlan';
 import type { RoomLoaderPriceFor } from './RoomLoaderPrice';
@@ -106,7 +106,24 @@ export default function RoomLoaderLabsPage({
 
       {plan.medicalConcernOptions.length > 0 ? (
         <section className="rl-panels">
-          <RoomLoaderHtml html={config.medicalConcern.introHtml} className="rl-panel__intro" />
+          <div className="rl-panel__prose">
+            {(() => {
+              const figure = panelQuestionFigure(plan.medicalConcernOptions, labsPageSample);
+              return figure ? (
+                <figure className="rl-panel__figure rl-panel__figure--side">
+                  <img
+                    src={figure.imageUrl ?? ''}
+                    alt={figure.imageCaption || figure.displayName}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  {figure.imageCaption ? <figcaption>{figure.imageCaption}</figcaption> : null}
+                </figure>
+              ) : null;
+            })()}
+            <RoomLoaderHtml html={config.medicalConcern.introHtml} className="rl-panel__intro" />
+          </div>
           {plan.medicalConcernOptions.map((option) => {
             const key = medicalConcernPanelKey(petKey, option.id);
             const answer = String(formData[key] ?? '');
@@ -118,18 +135,6 @@ export default function RoomLoaderLabsPage({
                   {price ? <span className="rl-option__price">{price}</span> : null}
                 </h3>
                 <RoomLoaderHtml html={option.descriptionHtml} className="rl-panel__desc" />
-                {option.imageUrl ? (
-                  <figure className="rl-panel__figure">
-                    <img
-                      src={option.imageUrl}
-                      alt={option.imageCaption || option.displayName}
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                    {option.imageCaption ? <figcaption>{option.imageCaption}</figcaption> : null}
-                  </figure>
-                ) : null}
                 <div className="rl-yesno" role="radiogroup" aria-labelledby={`${key}-label`}>
                   <label className={answer === PANEL_ACCEPTED ? 'is-selected' : undefined}>
                     <input

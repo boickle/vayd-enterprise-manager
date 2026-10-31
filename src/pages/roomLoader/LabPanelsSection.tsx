@@ -57,6 +57,20 @@ function panelOptionWithLabsSample(
   };
 }
 
+/**
+ * The one picture a lab question shows, in its upper right (owner request Oct 31, 2026): the first
+ * option that has one, otherwise the Labs page's sample picture. Options don't repeat it.
+ */
+export function panelQuestionFigure(
+  options: RoomLoaderPanelOption[],
+  labsPageSample?: LabsPageSampleImage | null
+): RoomLoaderPanelOption | null {
+  if (options.length === 0) return null;
+  const withImage = options.find((o) => o.imageUrl);
+  const figure = withImage ?? panelOptionWithLabsSample(options[0], labsPageSample);
+  return figure.imageUrl ? figure : null;
+}
+
 function PanelFigure({
   option,
   layout = 'block',
@@ -100,7 +114,6 @@ function PanelBody({ option }: { option: RoomLoaderPanelOption }) {
   return (
     <>
       <RoomLoaderHtml html={option.descriptionHtml} className="rl-panel__desc" />
-      <PanelFigure option={option} />
     </>
   );
 }
@@ -153,7 +166,13 @@ export default function LabPanelsSection({
             </h3>
 
             {multi ? (
-              <RoomLoaderHtml html={fillLabCopy(introSource, copyVars)} className="rl-panel__intro" />
+              <div className="rl-panel__prose">
+                {(() => {
+                  const figure = panelQuestionFigure(rule.options, labsPageSample);
+                  return figure ? <PanelFigure option={figure} layout="side" /> : null;
+                })()}
+                <RoomLoaderHtml html={fillLabCopy(introSource, copyVars)} className="rl-panel__intro" />
+              </div>
             ) : null}
 
             {multi ? (
@@ -200,10 +219,10 @@ export default function LabPanelsSection({
             ) : (
               <div className="rl-panel__single">
                 <div className="rl-panel__prose">
-                  <PanelFigure
-                    option={panelOptionWithLabsSample(rule.options[0], labsPageSample)}
-                    layout="side"
-                  />
+                  {(() => {
+                    const figure = panelQuestionFigure(rule.options, labsPageSample);
+                    return figure ? <PanelFigure option={figure} layout="side" /> : null;
+                  })()}
                   {(introSource || '').trim() !== '' ? (
                     <RoomLoaderHtml
                       html={fillLabCopy(introSource, copyVars)}
