@@ -305,3 +305,22 @@
   color: #0f172a;
   padding-top: 4px;
 }
+
+/* Membership out-of-plan discount shown like every other discount (owner decision Oct 31, 2026). */
+.estimate-list-price {
+  display: block;
+  color: #dc2626;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.estimate-price-shown .estimate-list-price {
+  display: inline;
+  margin-right: 2px;
+}
+
+.estimate-member-discount {
+  color: #15803d;
+  font-size: 12px;
+  white-space: normal;
+}

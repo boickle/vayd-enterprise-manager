@@ -309,6 +309,8 @@ export function estimateEmailModel(estimate: {
     qty: number;
     amount: number;
     listUnitPrice: number | null;
+    discountReason?: string | null;
+    isCovered?: boolean;
     hideOnInvoice: boolean;
   }>;
 }, clientName: string): InvoiceEmailModel {
@@ -328,6 +330,8 @@ export function estimateEmailModel(estimate: {
           qty,
           amount: Number(line.amount) || 0,
           listAmount: list,
+          discountLabel:
+            membershipLineDiscount({ ...line, qty, amount: Number(line.amount) || 0 })?.label ?? null,
         };
       }),
     subtotal: Number(estimate.subtotal) || 0,

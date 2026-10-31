@@ -6,6 +6,7 @@ import * as os from 'os';
 import { createRequire } from 'module';
 
 export default defineConfig({
+  chromeWebSecurity: false, // RL-03-13/14 type into the cross-origin Stripe card iframe (test mode)
   e2e: {
     baseUrl: process.env.CYPRESS_BASE_URL || 'http://localhost:5173',
     setupNodeEvents(on, config) {
@@ -84,6 +85,14 @@ export default defineConfig({
         resendRoomLoader({ loaderId, labs }: { loaderId: number; labs: 'yes' | 'no' }) {
           runSeed(['resend', rlDb, String(loaderId), labs]);
           return null;
+        },
+        /** Wellness plans on the seeded pets with their multi-pet credit amount (RL-03-14). */
+        roomLoaderPlans() {
+          const out = path.join(os.tmpdir(), `rl-credits-${Date.now()}.json`);
+          runSeed(['credits', rlDb, out]);
+          const rows = JSON.parse(fs.readFileSync(out, 'utf8'));
+          fs.unlinkSync(out);
+          return rows;
         },
         cleanRoomLoader() {
           runSeed(['clean', rlDb]);

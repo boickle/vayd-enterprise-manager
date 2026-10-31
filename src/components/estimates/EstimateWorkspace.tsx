@@ -43,6 +43,7 @@ import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { useCan } from '../../permissions/PermissionContext';
+import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 import './EstimateWorkspace.css';
 
 export type EstimatePet = {
@@ -71,6 +72,13 @@ type LineBlock =
 
 const money = (n: number) =>
   Number(n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+/** Regular unit price and total when the line shows a membership discount (owner, Oct 31, 2026). */
+function memberDiscountOf(line: VisitEstimateLine) {
+  const found = membershipLineDiscount(line);
+  if (!found) return null;
+  return { ...found, listUnit: Number(line.listUnitPrice) || 0 };
+}
 
 function catalogIdOf(item: SearchableItem): number | null {
   const catalog =
@@ -120,6 +128,26 @@ function petLabel(pets: EstimatePet[], id: number | null | undefined, fallback?:
     if (known?.name?.trim()) return known.name.trim();
   }
   return fallback?.trim() || (id != null ? `Pet #${id}` : '—');
+}
+
+function MemberAmount({ line }: { line: VisitEstimateLine }) {
+  const member = memberDiscountOf(line);
+  if (!member) return <>{money(Number(line.amount))}</>;
+  return (
+    <>
+      <s className="estimate-list-price" data-testid="estimate-list-amount">
+        {money(member.regularAmount)}
+      </s>
+      <div>{money(Number(line.amount))}</div>
+      <div
+        className="estimate-member-discount"
+        data-testid="estimate-member-discount"
+        title={`${member.label} −${money(member.discount)}`}
+      >
+        {memberDiscountTag(member.label)}
+      </div>
+    </>
+  );
 }
 
 export default function EstimateWorkspace({
@@ -432,7 +460,20 @@ export default function EstimateWorkspace({
   const renderPrice = (line: VisitEstimateLine) => {
     const charged = Number(line.unitPrice) || 0;
     if (line.isCovered) return <span>Covered</span>;
-    if (locked || !canChangePrice) return <span>{money(charged)}</span>;
+    const member = memberDiscountOf(line);
+    const was = member ? (
+      <s className="estimate-list-price" data-testid="estimate-list-price">
+        {money(member.listUnit)}
+      </s>
+    ) : null;
+    if (locked || !canChangePrice) {
+      return (
+        <span className="estimate-price-shown">
+          {was}
+          {money(charged)}
+        </span>
+      );
+    }
     if (priceEditId === line.id) {
       return (
         <input
@@ -456,6 +497,7 @@ export default function EstimateWorkspace({
     }
     return (
       <span className="estimate-price-shown">
+        {was}
         {money(charged)}
         <button
           type="button"
@@ -506,7 +548,11 @@ export default function EstimateWorkspace({
       <td className="estimate-line-qty">{Number(line.qty) || 1}</td>
       <td className="estimate-line-price">{renderPrice(line)}</td>
       <td className="estimate-line-amount">
-        {line.isCovered ? 'Covered' : money(Number(line.amount))}
+        {line.isCovered ? (
+          'Covered'
+        ) : (
+          <MemberAmount line={line} />
+        )}
       </td>
       <td className="estimate-line-remove">
         {!locked && (

@@ -32,6 +32,8 @@ export type VisitEstimateLine = {
   qty: number;
   unitPrice: number;
   listUnitPrice: number | null;
+  /** "Membership discount (plan, 10%)" when the plan's out-of-plan % priced the line. */
+  discountReason?: string | null;
   amount: number;
   isCovered: boolean;
   taxableAmount: number;
