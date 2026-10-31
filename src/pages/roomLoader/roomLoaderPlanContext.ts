@@ -199,6 +199,14 @@ export function buildPlanContext({
     String(formData?.[`${petKey}_labWork`] ?? '') === 'yes' ||
     patient?.questions?.labWork === true;
 
+  // The pet's own appointment start is the visit date; without it gates count from today.
+  const apptStart = (data?.appointments ?? []).find(
+    (appt: AnyRecord) => patientId != null && Number(appt?.patient?.id) === patientId
+  )?.appointmentStart;
+  const parsedVisit =
+    typeof apptStart === 'string' ? DateTime.fromISO(apptStart, { setZone: true }) : null;
+  const visitDate = parsedVisit?.isValid ? parsedVisit : undefined;
+
   return {
     species,
     ageMonths: ageMonthsOnCalendarDay(dob, asOf ?? DateTime.now()),
@@ -208,5 +216,6 @@ export function buildPlanContext({
     outdoorAccess,
     medicalConcern,
     asOf,
+    ...(visitDate ? { visitDate } : {}),
   };
 }

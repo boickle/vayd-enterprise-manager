@@ -39,7 +39,11 @@ import {
   emailNotSentReasonFromSend,
   InactivePetNotice,
   isInactiveCheckInPet,
+  recipientsForPayload,
+  secondEmailOnFile,
+  SendRecipientChoice,
   type EmailNotSentReason,
+  type SendRecipients,
 } from './roomLoader/roomLoaderSendNotices';
 import './RoomLoader.css';
 
@@ -497,6 +501,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   /** Send-to-client confirmation modal: email vs SMS, offered on every send including the first. */
   const [emailNotSent, setEmailNotSent] = useState<EmailNotSentReason | null>(null);
   const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
+  const [confirmRecipients, setConfirmRecipients] = useState<SendRecipients>('primary');
 
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
   const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
@@ -2601,7 +2606,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
   async function executeSendToClient(
     skipEmail = false,
-    options?: { sendViaSms?: boolean; smsMessage?: string }
+    options?: { sendViaSms?: boolean; smsMessage?: string; recipients?: SendRecipients }
   ) {
     if (!selectedRoomLoader) return;
     setSendValidationErrors({});
@@ -2624,6 +2629,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       if (skipEmail) payload.skipEmail = true;
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
+      if (options?.recipients && !options?.sendViaSms) payload.recipients = options.recipients;
       const sendRes = await http.post('/room-loader/send-to-client', payload);
       notifyRoomLoaderSentStatusChanged();
       if (!embedded) await loadRoomLoaders();
@@ -2938,6 +2944,13 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     () => !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
     [petsWithAppointments]
   );
+  const clientSecondEmail = useMemo(
+    () => secondEmailOnFile(petsWithAppointments.find((item) => item.client)?.client),
+    [petsWithAppointments]
+  );
+  useEffect(() => {
+    if (confirmAction === 'send') setConfirmRecipients('primary');
+  }, [confirmAction]);
   const canSendBySms = useMemo(
     () => petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1)),
     [petsWithAppointments]
@@ -5497,6 +5510,14 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     SMS {!canSendBySms && '(no phone on file)'}
                   </label>
                 </div>
+                {confirmSendChannel === 'email' && canSendByEmail && (
+                  <SendRecipientChoice
+                    primaryEmail={petsWithAppointments.find((item) => item.client)?.client?.email}
+                    secondEmail={clientSecondEmail}
+                    value={confirmRecipients}
+                    onChange={setConfirmRecipients}
+                  />
+                )}
                 {!canSendByEmail && !canSendBySms && (
                   <div style={{ fontSize: '13px', color: '#b02a37' }}>
                     This client has no email address and no mobile number on file, so the form cannot be sent.
@@ -5537,6 +5558,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     }
                     void executeSendToClient(false, {
                       sendViaSms: confirmSendChannel === 'sms',
+                      recipients: confirmSendChannel === 'email' ? recipientsForPayload(clientSecondEmail, confirmRecipients) : undefined,
                     });
                   } else if (confirmAction === 'update') {
                     executeSendToClient(true);

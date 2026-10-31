@@ -789,6 +789,27 @@ function effectivePublicMedicationInventoryQuantity(
   return Math.max(minClient, Math.min(999, v));
 }
 
+/** Flat store sales-tax rate; the invoice applies it to items whose catalog tax level is set (visit-tax.ts). */
+const STORE_SALES_TAX_RATE = 0.055;
+
+/**
+ * AL-06: tax for one store line, the way the invoice does it. Taxable only when the catalog item's
+ * taxLevelValue (from the check-item-pricing response) is set and not 0; unknown counts as exempt.
+ */
+function storeLineTax(pricing: CheckItemPricingResponse | null, lineTotal: number): { taxable: boolean; tax: number } {
+  const raw =
+    (pricing?.item?.inventoryItem as { taxLevelValue?: number | null } | undefined)?.taxLevelValue ??
+    (pricing?.item?.procedure as { taxLevelValue?: number | null } | undefined)?.taxLevelValue;
+  const level = Number(raw);
+  const taxable = raw != null && Number.isFinite(level) && level !== 0;
+  return { taxable, tax: taxable ? Math.round(lineTotal * STORE_SALES_TAX_RATE * 100) / 100 : 0 };
+}
+
+/** Rate only when some item is taxed (all taxed items share the one flat rate). */
+function storeTaxLabel(anyTaxed: boolean): string {
+  return anyTaxed ? `Sales tax (${Math.round(STORE_SALES_TAX_RATE * 1000) / 10}%)` : 'Sales tax';
+}
+
 /** Reads checkbox state; prefers stable key, then legacy index key for in-session migration. */
 function publicFormCarePlanRecRowChecked(
   formData: Record<string, unknown>,
@@ -1575,6 +1596,8 @@ export default function PublicRoomLoaderForm() {
   const [storeOptionModalGroup, setStoreOptionModalGroup] = useState<StoreListing[] | null>(null);
   /** True when form was already submitted (client or admin viewing); show read-only or PDF view. */
   const [formAlreadySubmitted, setFormAlreadySubmitted] = useState(false);
+  /** AL-03 (D6): staff started the visit, so the answers are read-only and submit is refused. */
+  const [visitStarted, setVisitStarted] = useState(false);
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
   /** Inline validation errors keyed by form field (e.g. pet0_outdoorAccess). Shown below the field instead of alert. */
   const [fieldValidationErrors, setFieldValidationErrors] = useState<Record<string, string>>({});
@@ -1623,6 +1646,10 @@ export default function PublicRoomLoaderForm() {
           `/public/room-loader/form?token=${encodeURIComponent(safeToken)}`
         );
         setData(responseData);
+        if (responseData?.visitStarted === true) {
+          setVisitStarted(true);
+          setFormAlreadySubmitted(true);
+        }
         setRoomLoaderConfig(resolveRoomLoaderConfig(responseData?.config));
         setChronicMedsByPatient(normalizeChronicMedsByPatient(responseData?.chronicMedsByPatient));
 
@@ -2545,8 +2572,14 @@ export default function PublicRoomLoaderForm() {
         : quantityLinePrice(null, Number(item.price), storeItemQty(item))
     );
     const storeSubtotal = storeLinePrices.reduce((sum, line) => sum + line.total, 0);
-    const storeTaxRate = 0.055;
-    const storeTax = storeSubtotal * storeTaxRate;
+    const storeTaxByLine = storeAdditionalItems.map((item, idx) =>
+      storeLineTax(
+        !Number.isNaN(firstPidForStore) && firstPidForStore > 0 ? getStoreItemPricing(firstPidForStore, item, idx) : null,
+        storeLinePrices[idx].total
+      )
+    );
+    const storeTax = storeTaxByLine.reduce((sum, l) => sum + l.tax, 0);
+    const storeTaxRate = storeTaxByLine.some((l) => l.taxable) ? STORE_SALES_TAX_RATE : 0;
     grandTotal += storeSubtotal + storeTax;
 
     // Store additional items: always include name, quantity, price, code (sku) for backend summary
@@ -2586,7 +2619,7 @@ export default function PublicRoomLoaderForm() {
             i.catalogItemType ?? (i.inventoryItemId != null ? 'inventory' : i.procedureId != null ? 'procedure' : null),
         })),
         subtotal: storeSubtotal,
-        taxLabel: 'Sales tax (5.5%)',
+        taxLabel: storeTaxLabel(storeTaxRate > 0),
         taxRate: storeTaxRate,
         tax: storeTax,
       },
@@ -3010,6 +3043,11 @@ export default function PublicRoomLoaderForm() {
       }
     } catch (err: any) {
       console.error('Error submitting form:', err);
+      if (err?.response?.status === 409 && err?.response?.data?.code === 'VISIT_STARTED') {
+        setVisitStarted(true);
+        setFormAlreadySubmitted(true);
+        return;
+      }
       setFieldValidationErrors((prev) => ({ ...prev, _submit: 'Failed to submit form. Please try again.' }));
     } finally {
       submitInFlightRef.current = false;
@@ -3520,7 +3558,7 @@ export default function PublicRoomLoaderForm() {
   }
 
   // When submitStatus === 'completed', show thank you page (no PDF preview)
-  if (formAlreadySubmitted && data.responseFromClient) {
+  if (formAlreadySubmitted && !visitStarted && data.responseFromClient) {
     const clientPortalUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/client-portal`;
     return (
       <div className="public-room-loader public-room-loader-thank-you" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -3720,7 +3758,9 @@ export default function PublicRoomLoaderForm() {
           }}
           role="alert"
         >
-          This form has already been submitted. Your answers are shown for your records only. No changes can be saved.
+          {visitStarted
+            ? 'Your visit has started. Please tell your care team about any changes.'
+            : 'This form has already been submitted. Your answers are shown for your records only. No changes can be saved.'}
         </div>
       )}
       {/* Check-in — one page per pet */}
@@ -4923,8 +4963,14 @@ export default function PublicRoomLoaderForm() {
                     : null;
                 return sum + (unit ?? Number(item.price)) * storeItemQty(item);
               }, 0);
-              const storeTaxRate = 0.055;
-              const storeTax = storeSubtotal * storeTaxRate;
+              const storeTaxLines = storeAdditionalItems.map((item, idx) =>
+                storeLineTax(
+                  !Number.isNaN(firstPid) && firstPid > 0 ? getStoreItemPricing(firstPid, item, idx) : null,
+                  storeLinePrice(firstPid, item, idx).total
+                )
+              );
+              const storeTax = storeTaxLines.reduce((sum, l) => sum + l.tax, 0);
+              const storeTaxLabelText = storeTaxLabel(storeTaxLines.some((l) => l.taxable));
               return (
                 <div
                   id="public-room-loader-additional-items"
@@ -5080,7 +5126,7 @@ export default function PublicRoomLoaderForm() {
                   </ul>
                   <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #b6d4fe', fontSize: '15px' }}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>Subtotal: {formatPrice(storeSubtotal)}</div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>Sales tax (5.5%): {formatPrice(storeTax)}</div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px', fontWeight: 500 }}>{storeTaxLabelText}: {formatPrice(storeTax)}</div>
                   </div>
                 </div>
               );
@@ -5444,6 +5490,7 @@ export default function PublicRoomLoaderForm() {
               >
                 ← Back to Labs
               </button>
+              {!visitStarted && (
               <button
                 type="button"
                 className={`public-room-loader-btn${
@@ -5466,6 +5513,7 @@ export default function PublicRoomLoaderForm() {
               >
                 {submitting ? 'Submitting...' : readOnly ? 'Already submitted' : 'Submit Form'}
               </button>
+              )}
             </div>
           </div>
         );

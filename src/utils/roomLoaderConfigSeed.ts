@@ -492,6 +492,8 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         item: item('procedure', 96, 'HomeAgain Microchip', 'MICROCHIP'),
         itemBySpecies: { dog: null, cat: null },
         sortOrder: 1,
+        // A chipped pet is never offered another; a decline does not count as done.
+        history: gate({ showEvenIfPreviouslyDeclined: true, neverOfferAgainOnceDone: true }),
       },
       {
         id: 'uni_mur5oynyb0kdn1',

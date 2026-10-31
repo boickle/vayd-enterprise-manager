@@ -68,6 +68,11 @@ export type EngineContext = {
   medicalConcern: boolean;
   /** Overrides "now" in tests. */
   asOf?: DateTime;
+  /**
+   * The day of the visit. The "reminder due further out than N months" gate counts from
+   * here, not from today. Falls back to today when missing.
+   */
+  visitDate?: DateTime;
 };
 
 function now(ctx: Pick<EngineContext, 'asOf'>): DateTime {
@@ -175,9 +180,16 @@ export function historyGateAllows(
     return false;
   }
 
+  if (gate.neverOfferAgainOnceDone && everHadItem(ref, ctx.history)) return false;
+
   if (
     gate.suppressIfReminderDueBeyondMonths != null &&
-    hasReminderDueBeyondMonths(ref, ctx.reminders, gate.suppressIfReminderDueBeyondMonths, asOf)
+    hasReminderDueBeyondMonths(
+      ref,
+      ctx.reminders,
+      gate.suppressIfReminderDueBeyondMonths,
+      ctx.visitDate ?? asOf
+    )
   ) {
     return false;
   }
@@ -336,6 +348,7 @@ export function universalOffersFor(
       const item = universalOfferItem(offer, ctx.species);
       if (!item) return [];
       if (estimateHasItem(item, ctx.estimateLines)) return [];
+      if (offer.history && !historyGateAllows(offer.history, item, ctx)) return [];
       return [
         {
           id: offer.id,

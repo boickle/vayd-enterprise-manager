@@ -2471,6 +2471,18 @@ function UniversalOfferEditor({
               onChange={(n) => onChange({ sortOrder: n ?? 0 })}
             />
           </div>
+          <CheckField
+            label="Never offer again once the pet has had it (e.g. a microchip)"
+            checked={offer.history?.neverOfferAgainOnceDone === true}
+            onChange={(checked) =>
+              onChange({
+                history: {
+                  ...(offer.history ?? { ...emptyHistoryGate(), showEvenIfPreviouslyDeclined: true }),
+                  neverOfferAgainOnceDone: checked,
+                },
+              })
+            }
+          />
           <div className="rl-cfg__field rl-cfg__field--wide">
             <span>Which item it adds</span>
             <div className="rl-cfg__radios">

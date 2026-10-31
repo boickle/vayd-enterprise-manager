@@ -51,6 +51,11 @@ export type RoomLoaderHistoryGate = {
   showEvenIfPreviouslyDeclined: boolean;
   /** With `showEvenIfPreviouslyDeclined`, wait this long after the decline before re-asking. */
   reofferDeclinedAfterMonths: number | null;
+  /**
+   * Never offer again once a non-declined service exists at any point on record (a
+   * microchip). Declines do not count as done. Absent or false: no such rule.
+   */
+  neverOfferAgainOnceDone?: boolean;
 };
 
 export function emptyHistoryGate(): RoomLoaderHistoryGate {
@@ -148,6 +153,11 @@ export type RoomLoaderUniversalOffer = {
   /** Species-specific variants, e.g. a dog pedicure and a cat pedicure. */
   itemBySpecies: { dog: RoomLoaderItemRef | null; cat: RoomLoaderItemRef | null };
   sortOrder: number;
+  /**
+   * Optional history gate. Absent means always offered (grooming-type add-ons that recur
+   * every visit); the VAYD microchip uses `neverOfferAgainOnceDone`.
+   */
+  history?: RoomLoaderHistoryGate;
 };
 
 /** An item offered only to some species, at some ages, when history allows. */
@@ -473,7 +483,12 @@ export function normalizeRoomLoaderConfig(raw: unknown): RoomLoaderConfig {
         }))
       : base.panelRules,
     universalOffers: Array.isArray(input.universalOffers)
-      ? input.universalOffers.map(withNormalizedSpecies)
+      ? input.universalOffers.map((offer) => {
+          const normalized = withNormalizedSpecies(offer);
+          return offer.history
+            ? { ...normalized, history: { ...emptyHistoryGate(), ...offer.history } }
+            : normalized;
+        })
       : base.universalOffers,
     gatedOffers: Array.isArray(input.gatedOffers)
       ? input.gatedOffers.map((offer) => ({

@@ -5,6 +5,9 @@ import {
   emailNotSentReasonFromSend,
   InactivePetNotice,
   isInactiveCheckInPet,
+  recipientsForPayload,
+  secondEmailOnFile,
+  SendRecipientChoice,
 } from './roomLoaderSendNotices';
 
 describe('RL-07-6 inactive pets on the staff screen', () => {
@@ -48,5 +51,29 @@ describe('RL-14-4 success unchanged', () => {
     expect(emailNotSentReasonFromSend({ emailSent: false, reason: 'no_email' }, {})).toBe('no_email');
     const { container } = render(<div />);
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+describe('AL-05 who gets the check-in email', () => {
+  it('AL-05-7 with a second email: asks primary (default) / second / both and reports the choice', () => {
+    const onChange = vi.fn();
+    render(<SendRecipientChoice primaryEmail="a@x.test" secondEmail="b@x.test" value="primary" onChange={onChange} />);
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    expect(radios).toHaveLength(3);
+    expect(radios[0].checked).toBe(true);
+    fireEvent.click(screen.getByLabelText(/Second email/));
+    expect(onChange).toHaveBeenCalledWith('second');
+    fireEvent.click(screen.getByLabelText(/Both emails/));
+    expect(onChange).toHaveBeenCalledWith('both');
+    expect(recipientsForPayload('b@x.test', 'second')).toBe('second');
+    expect(recipientsForPayload('b@x.test', 'both')).toBe('both');
+    expect(recipientsForPayload('b@x.test', 'primary')).toBeUndefined();
+  });
+
+  it('AL-05-8 with one email: no question and no recipients sent', () => {
+    const { container } = render(<SendRecipientChoice primaryEmail="a@x.test" secondEmail={secondEmailOnFile({ secondEmail: '  ' })} value="primary" onChange={() => {}} />);
+    expect(container.innerHTML).toBe('');
+    expect(secondEmailOnFile({ secondEmail: null })).toBeNull();
+    expect(recipientsForPayload(null, 'both')).toBeUndefined();
   });
 });

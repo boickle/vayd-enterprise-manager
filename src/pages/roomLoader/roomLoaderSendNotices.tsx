@@ -79,3 +79,47 @@ export function EmailNotSentWarning({
     </div>
   );
 }
+
+export type SendRecipients = 'primary' | 'second' | 'both';
+
+/** AL-05: the second email on file, trimmed, or null when there is none. */
+export function secondEmailOnFile(client: { secondEmail?: string | null } | null | undefined): string | null {
+  const v = (client?.secondEmail ?? '').trim();
+  return v || null;
+}
+
+/** AL-05: what to send as `recipients`; nothing unless the client has a second email and staff moved off primary. */
+export function recipientsForPayload(secondEmail: string | null, choice: SendRecipients): SendRecipients | undefined {
+  return secondEmail && choice !== 'primary' ? choice : undefined;
+}
+
+/** AL-05: asks who gets the check-in email. Renders nothing when only one email is on file. */
+export function SendRecipientChoice({
+  primaryEmail,
+  secondEmail,
+  value,
+  onChange,
+}: {
+  primaryEmail?: string | null;
+  secondEmail: string | null;
+  value: SendRecipients;
+  onChange: (v: SendRecipients) => void;
+}) {
+  if (!secondEmail) return null;
+  const options: Array<{ v: SendRecipients; label: string }> = [
+    { v: 'primary', label: `Primary email${primaryEmail ? ` (${primaryEmail})` : ''}` },
+    { v: 'second', label: `Second email (${secondEmail})` },
+    { v: 'both', label: 'Both emails' },
+  ];
+  return (
+    <fieldset data-testid="room-loader-send-recipients" style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+      <legend style={{ fontSize: 14, fontWeight: 600, color: '#333', marginBottom: 6 }}>Send email to</legend>
+      {options.map((o) => (
+        <label key={o.v} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <input type="radio" name="confirmSendRecipients" checked={value === o.v} onChange={() => onChange(o.v)} />
+          {o.label}
+        </label>
+      ))}
+    </fieldset>
+  );
+}

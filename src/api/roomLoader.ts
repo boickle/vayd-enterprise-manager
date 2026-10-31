@@ -579,13 +579,6 @@ export async function upsertRoomLoaders(
   return data;
 }
 
-// Delete room loader(s)
-export async function deleteRoomLoaders(ids: number[]): Promise<{ ok: boolean; deleted: number }> {
-  const idsParam = ids.join(',');
-  const { data } = await http.delete<{ ok: boolean; deleted: number }>(`/room-loader?ids=${idsParam}`);
-  return data;
-}
-
 // Search items for room loader
 export type SearchableItem = {
   itemType: 'inventory' | 'lab' | 'procedure' | string;
