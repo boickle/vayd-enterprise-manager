@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
-import RoomLoaderChartPanel, { PetChartNameLink } from './RoomLoaderChartPanel';
+import RoomLoaderChartPanel, { autoOpenChartPetId, PetChartNameLink } from './RoomLoaderChartPanel';
 import { sexNeuterLabel } from '../../utils/patientSexNeuter';
 
 vi.mock('../../components/pims/PimsPatientDetailView', () => ({
@@ -81,4 +81,32 @@ it('sex/neuter label', () => {
   expect(sexNeuterLabel('Male', 'Intact')).toBe('Intact Male');
   expect(sexNeuterLabel('Male')).toBe('Male');
   expect(sexNeuterLabel('Unknown')).toBe('');
+});
+
+describe('autoOpenChartPetId (chart opens on its own)', () => {
+  const base = {
+    modalOpen: true,
+    roomLoaderId: 7,
+    petIds: [11, 12],
+    chartPetId: null,
+    dismissedForRoomLoaderId: null,
+    wideScreen: true,
+  };
+  it('opens the first pet when the details open on a wide screen', () => {
+    expect(autoOpenChartPetId(base)).toBe('11');
+  });
+  it('leaves an open chart alone (e.g. staff switched to the second pet)', () => {
+    expect(autoOpenChartPetId({ ...base, chartPetId: '12' })).toBeNull();
+  });
+  it('stays closed after staff close it for this Room Loader', () => {
+    expect(autoOpenChartPetId({ ...base, dismissedForRoomLoaderId: 7 })).toBeNull();
+  });
+  it('opens again for a different Room Loader', () => {
+    expect(autoOpenChartPetId({ ...base, roomLoaderId: 8, dismissedForRoomLoaderId: 7 })).toBe('11');
+  });
+  it('does not open over the form on a narrow screen, or with the details closed', () => {
+    expect(autoOpenChartPetId({ ...base, wideScreen: false })).toBeNull();
+    expect(autoOpenChartPetId({ ...base, modalOpen: false })).toBeNull();
+    expect(autoOpenChartPetId({ ...base, petIds: [] })).toBeNull();
+  });
 });

@@ -7,6 +7,29 @@ const PimsPatientDetailView = lazy(() => import('../../components/pims/PimsPatie
 
 export type ChartPanelPet = { id: string; name: string; species?: string | null };
 
+/** Wide enough for the chart to sit beside the form (matches RoomLoaderChartPanel.css). */
+export const CHART_SIDE_BY_SIDE_QUERY = '(min-width: 1101px)';
+
+/**
+ * The pet whose chart should open on its own, or null (owner request Oct 31, 2026): the first
+ * pet's chart opens when the details open on a wide screen, unless staff closed it for this
+ * Room Loader or a chart is already showing.
+ */
+export function autoOpenChartPetId(args: {
+  modalOpen: boolean;
+  roomLoaderId: number | null;
+  petIds: Array<number | string | null | undefined>;
+  chartPetId: string | null;
+  dismissedForRoomLoaderId: number | null;
+  wideScreen: boolean;
+}): string | null {
+  if (!args.modalOpen || args.roomLoaderId == null || !args.wideScreen) return null;
+  if (args.chartPetId) return null;
+  if (args.dismissedForRoomLoaderId === args.roomLoaderId) return null;
+  const first = args.petIds.find((id) => id != null && String(id) !== '');
+  return first != null ? String(first) : null;
+}
+
 type Props = {
   pets: ChartPanelPet[];
   activePetId: string;

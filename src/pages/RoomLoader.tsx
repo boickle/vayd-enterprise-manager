@@ -28,7 +28,11 @@ import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
-import RoomLoaderChartPanel, { PetChartNameLink } from './roomLoader/RoomLoaderChartPanel';
+import RoomLoaderChartPanel, {
+  autoOpenChartPetId,
+  CHART_SIDE_BY_SIDE_QUERY,
+  PetChartNameLink,
+} from './roomLoader/RoomLoaderChartPanel';
 import { sexNeuterLabel } from '../utils/patientSexNeuter';
 import { clientHref, patientHref } from '../utils/recentRecordsStore';
 import { appAlert } from '../utils/appDialog';
@@ -471,6 +475,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   /** Pet whose chart is docked beside the details modal (null = panel closed). */
   const [chartPetId, setChartPetId] = useState<string | null>(null);
+  /** Room Loader whose chart panel staff closed, so it isn't reopened automatically. */
+  const [chartDismissedFor, setChartDismissedFor] = useState<number | null>(null);
   const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
   /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
   const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
@@ -1370,6 +1376,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   function handleCloseModal() {
     setIsModalOpen(false);
     setChartPetId(null);
+    setChartDismissedFor(null);
     setSelectedRoomLoaderId(null);
     setSelectedRoomLoader(null);
     setPetAnswers({});
@@ -2928,6 +2935,21 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       clientMembershipPlanName: item.client?.id != null ? (clientMembershipPlanName.get(item.client.id) ?? null) : null,
     }));
   }, [selectedRoomLoader]);
+
+  // Owner request Oct 31, 2026: the first pet's chart opens beside the details on its own (wide
+  // screens, where it sits next to the form rather than over it). Closing it keeps it closed for
+  // this Room Loader; opening another Room Loader opens the chart again.
+  useEffect(() => {
+    const autoPetId = autoOpenChartPetId({
+      modalOpen: isModalOpen,
+      roomLoaderId: selectedRoomLoader?.id ?? null,
+      petIds: petsWithAppointments.map((it) => it.patient.id),
+      chartPetId,
+      dismissedForRoomLoaderId: chartDismissedFor,
+      wideScreen: typeof window !== 'undefined' && window.matchMedia?.(CHART_SIDE_BY_SIDE_QUERY).matches === true,
+    });
+    if (autoPetId) setChartPetId(autoPetId);
+  }, [isModalOpen, selectedRoomLoader?.id, petsWithAppointments, chartPetId, chartDismissedFor]);
 
   const hasClientWithNoEmail = useMemo(
     () => petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
@@ -5404,7 +5426,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               }))}
               activePetId={chartPetId}
               onSelectPet={setChartPetId}
-              onClose={() => setChartPetId(null)}
+              onClose={() => {
+                setChartPetId(null);
+                setChartDismissedFor(selectedRoomLoader?.id ?? null);
+              }}
             />
           )}
         </div>
