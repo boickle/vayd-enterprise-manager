@@ -112,6 +112,15 @@ import {
 import './roomLoader/RoomLoaderSections.css';
 import './roomLoader/MembershipPitch.css';
 import './PublicRoomLoaderForm.css';
+import './store/Store.css';
+import {
+  packChipsLabel,
+  packForWeight,
+  packsForStrengthOf,
+  shortPetWeight,
+  strengthChipsLabel,
+  strengthsOf,
+} from './store/storeVariantPick';
 import { formatPercentRange, useMembershipSavings } from '../api/membershipSavings';
 
 /** Plan/context stand-ins so a pet the payload has not described yet simply offers nothing. */
@@ -1226,6 +1235,221 @@ function getStoreModalRows(listings: StoreListing[], catalogPrices?: CatalogPric
     .sort((a, b) => a.price - b.price);
 }
 
+type StorePickPet = { id: number | null; name: string; weightLbs: number | null };
+
+/**
+ * Product modal for "Add other medications or products". Chooses like the online store product
+ * page: strength chips, then weight-pack chips (pre-picked for the pet), a quantity stepper, one
+ * price and one "Add to visit" button.
+ */
+function StoreOptionModal({
+  listings,
+  catalogPrices,
+  pets,
+  readOnly,
+  linePrice,
+  onSelectItem,
+  onAdd,
+  onCancel,
+}: {
+  listings: StoreListing[];
+  catalogPrices?: CatalogPriceMap;
+  pets: StorePickPet[];
+  readOnly: boolean;
+  linePrice: (item: RoomLoaderStoreProduct, qty: number) => number;
+  onSelectItem: (item: RoomLoaderStoreProduct) => void;
+  onAdd: (item: RoomLoaderStoreProduct, qty: number) => void;
+  onCancel: () => void;
+}) {
+  const entries = useMemo(
+    () =>
+      listings.flatMap((listing) =>
+        listingVariants(listing).map((variant, idx) => ({
+          listing,
+          variant,
+          item: listingToStoreProduct(listing, variant, idx, 'visit', catalogPrices),
+        }))
+      ),
+    [listings, catalogPrices]
+  );
+  const variants = entries.map((e) => e.variant);
+  const strengths = strengthsOf(variants);
+  const [strength, setStrength] = useState<string | null>(entries[0]?.variant.strength || null);
+  const [pack, setPack] = useState<string | null>(entries[0]?.variant.pack ?? null);
+  const [entryIdx, setEntryIdx] = useState(0);
+  const [qty, setQty] = useState(1);
+  const [petId, setPetId] = useState<number | null>(pets[0]?.id ?? null);
+  const pet = pets.find((p) => p.id === petId) ?? pets[0] ?? null;
+  const packs = packsForStrengthOf(variants, strength);
+  const byOption = strengths.length <= 1 && packs.length <= 1 && entries.length > 1;
+
+  useEffect(() => {
+    if (pet?.weightLbs == null) return;
+    const match = packForWeight(packsForStrengthOf(variants, strength), pet.weightLbs);
+    if (match) setPack(match);
+    // Re-pick only when the pet or strength changes, so a pack the client taps stays chosen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pet?.id, pet?.weightLbs, strength]);
+
+  const picked = byOption
+    ? entries[entryIdx]
+    : (entries.find(
+        (e) => (strength ? e.variant.strength === strength : true) && (pack ? e.variant.pack === pack : true)
+      ) ?? entries[0]);
+  const item = picked?.item;
+  useEffect(() => {
+    if (item) onSelectItem(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
+  if (!picked || !item) return null;
+
+  const safeQty = Math.min(99, Math.max(1, Math.floor(qty) || 1));
+  const fits =
+    pet?.weightLbs != null && packForWeight(packs, pet.weightLbs) === pack && pack && packs.length > 1
+      ? `Fits ${pet.name} (${Math.round(pet.weightLbs * 10) / 10} lbs)`
+      : null;
+  const total = linePrice(item, safeQty);
+  const productName = listings[0].name;
+  const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+  const showPets = pets.length > 1 && packs.length > 1;
+
+  return (
+    <div className="rl-store-modal__overlay" onClick={onCancel}>
+      <div
+        className="rl-store-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={productName}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h4 className="rl-store-modal__title">{productName}</h4>
+        <p className="rl-store-modal__note">We'll bring this to your visit.</p>
+
+        {strengths.length > 1 && (
+          <div className="vayd-store__option">
+            <div className="vayd-store__option-label">{strengthChipsLabel(strengths)}</div>
+            <div className="vayd-store__chips">
+              {strengths.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`vayd-store__chip${strength === s ? ' is-on' : ''}`}
+                  onClick={() => {
+                    setStrength(s);
+                    const next = packsForStrengthOf(variants, s);
+                    if (pack && !next.includes(pack)) setPack(next[0] ?? null);
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {showPets && (
+          <div className="vayd-store__option">
+            <div className="vayd-store__option-label">Pet</div>
+            <div className="vayd-store__chips">
+              {pets.map((p, i) => {
+                const w = shortPetWeight(p.weightLbs);
+                return (
+                  <button
+                    key={`${p.id ?? 'x'}-${i}`}
+                    type="button"
+                    className={`vayd-store__chip${pet === p ? ' is-on' : ''}`}
+                    onClick={() => setPetId(p.id)}
+                  >
+                    {w ? `${p.name} (${w})` : p.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {!byOption && packs.length > 1 && (
+          <div className="vayd-store__option">
+            <div className="vayd-store__option-label">{packChipsLabel(strengths, packs)}</div>
+            <div className="vayd-store__chips">
+              {packs.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`vayd-store__chip${pack === p ? ' is-on' : ''}`}
+                  onClick={() => setPack(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            {fits && <p className="rl-store-modal__fits">{fits}</p>}
+          </div>
+        )}
+
+        {byOption && (
+          <div className="vayd-store__option">
+            <div className="vayd-store__option-label">Option</div>
+            <div className="vayd-store__chips">
+              {entries.map((e, i) => (
+                <button
+                  key={e.item.id}
+                  type="button"
+                  className={`vayd-store__chip${entryIdx === i ? ' is-on' : ''}`}
+                  onClick={() => setEntryIdx(i)}
+                >
+                  {e.item.optionLabel || e.listing.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="vayd-store__option">
+          <div className="vayd-store__option-label">Quantity</div>
+          <div className="vayd-store__stepper">
+            <button type="button" aria-label="Decrease quantity" onClick={() => setQty(Math.max(1, safeQty - 1))}>
+              −
+            </button>
+            <input
+              type="number"
+              min={1}
+              max={99}
+              value={safeQty}
+              onChange={(e) => setQty(Math.min(99, Math.max(1, Number(e.target.value) || 1)))}
+            />
+            <button type="button" aria-label="Increase quantity" disabled={safeQty >= 99} onClick={() => setQty(Math.min(99, safeQty + 1))}>
+              +
+            </button>
+          </div>
+        </div>
+
+        <div className="rl-store-modal__price">{money(total)}</div>
+
+        <div className="rl-store-modal__actions">
+          <button
+            type="button"
+            className="rl-store-modal__add"
+            disabled={readOnly}
+            onClick={() => !readOnly && onAdd(item, safeQty)}
+          >
+            Add to visit
+          </button>
+          <button type="button" className="rl-store-modal__cancel" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+        <p className="rl-store-modal__alt">
+          Or,{' '}
+          <a href={`/store/${encodeURIComponent(picked.listing.listingId)}`} target="_blank" rel="noopener noreferrer">
+            order via our online store
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function storeListingSearchText(listing: StoreListing): string {
   return [
     listing.name,
@@ -1594,6 +1818,8 @@ export default function PublicRoomLoaderForm() {
   /** Names of saved "Ship to me" rows that were switched to the visit price (RL-11). */
   const [storeShipConvertedNames, setStoreShipConvertedNames] = useState<string[]>([]);
   const [storeOptionModalGroup, setStoreOptionModalGroup] = useState<StoreListing[] | null>(null);
+  /** Option currently chosen in the product modal; its member price is fetched before it is added. */
+  const [storeModalPickedItem, setStoreModalPickedItem] = useState<RoomLoaderStoreProduct | null>(null);
   /** True when form was already submitted (client or admin viewing); show read-only or PDF view. */
   const [formAlreadySubmitted, setFormAlreadySubmitted] = useState(false);
   /** AL-03 (D6): staff started the visit, so the answers are read-only and submit is refused. */
@@ -3355,6 +3581,41 @@ export default function PublicRoomLoaderForm() {
       window.clearTimeout(timeoutId);
     };
   }, [storeSearchQuery, practiceId, token, storeCatalog]);
+
+  /** Member / discount price for the option chosen in the product modal, before it is added to the visit. */
+  useEffect(() => {
+    const product = storeModalPickedItem;
+    if (!storeOptionModalGroup?.length || !product || !token) return;
+    const first: any = data?.patients?.[0];
+    const pid = Number(first?.patientId ?? first?.patient?.id ?? 0);
+    if (!(pid > 0)) return;
+    const key = getStoreItemPricingCacheKey(pid, product, storeAdditionalItems.length);
+    const clientId = data?.clientId ?? data?.client?.id ?? first?.clientId ?? first?.client?.id ?? data?.appointments?.[0]?.client?.id ?? undefined;
+    const catalogItem =
+      product.inventoryItemId != null
+        ? { inventoryItem: { id: product.inventoryItemId } }
+        : product.procedureId != null
+          ? { procedure: { id: product.procedureId } }
+          : undefined;
+    let cancelled = false;
+    void checkItemPricingPublic({
+      token,
+      patientId: pid,
+      practiceId: Number(data?.practice?.id ?? data?.practiceId ?? data?.appointments?.[0]?.practice?.id ?? 1),
+      clientId,
+      itemType: product.catalogItemType ?? 'inventory',
+      ...(catalogItem ? { item: catalogItem } : {}),
+      customName: product.name,
+    })
+      .then((res) => {
+        if (!cancelled) setClientPricingCache((prev) => ({ ...prev, [key]: res }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeModalPickedItem, storeOptionModalGroup, token, storeAdditionalItems.length]);
 
   /** When a product is opened, refresh clinic (catalog) prices for its variants. */
   useEffect(() => {
@@ -5262,131 +5523,70 @@ export default function PublicRoomLoaderForm() {
               />
             </div>
 
-            {/* Modal: pick a variation of a product (same name, different options/SKU) */}
+            {/* Modal: choose strength / size with chips, like the online store product page */}
             {storeOptionModalGroup && storeOptionModalGroup.length > 0 && (
-              <div
-                style={{
-                  position: 'fixed',
-                  inset: 0,
-                  backgroundColor: 'rgba(0,0,0,0.5)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 9999,
+              <StoreOptionModal
+                key={storeOptionModalGroup.map((l) => l.listingId).join('|')}
+                listings={storeOptionModalGroup}
+                catalogPrices={storeCatalogPrices}
+                readOnly={readOnly}
+                pets={(data?.patients ?? []).map((p: any) => {
+                  const rawId = Number(p.patientId ?? p.patient?.id);
+                  const w = parseFloat(String(p.weight ?? p.patient?.weight ?? p.currentWeight ?? ''));
+                  return {
+                    id: Number.isFinite(rawId) ? rawId : null,
+                    name: p.patientName || 'your pet',
+                    weightLbs: Number.isFinite(w) && w > 0 ? w : null,
+                  };
+                })}
+                linePrice={(item, qty) => {
+                  const pid = Number(data?.patients?.[0]?.patientId ?? data?.patients?.[0]?.patient?.id ?? 0);
+                  const idx = storeAdditionalItems.length;
+                  if (!(pid > 0)) return quantityLinePrice(null, Number(item.price), qty).total;
+                  return quantityLinePrice(
+                    getStoreItemPricing(pid, item, idx),
+                    getStoreAdjustedPrice(pid, item, idx) ?? Number(item.price),
+                    qty
+                  ).total;
                 }}
-                onClick={() => setStoreOptionModalGroup(null)}
-              >
-                <div
-                  style={{
-                    backgroundColor: '#fff',
-                    borderRadius: '8px',
-                    padding: '12px',
-                    maxWidth: '420px',
-                    width: '90%',
-                    maxHeight: '80vh',
-                    overflow: 'auto',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <h4 style={{ margin: 0, marginBottom: '10px', fontSize: '16px', fontWeight: 600, color: '#333' }}>
-                    {storeOptionModalGroup[0].name}
-                  </h4>
-                  <p style={{ margin: 0, marginBottom: '8px', fontSize: '13px', color: '#666' }}>
-                    Choose an option. Items are brought to your visit at the clinic price.
-                  </p>
-                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                    {getStoreModalRows(storeOptionModalGroup, storeCatalogPrices).map(({ key, label, price, item }, idx) => (
-                      <li
-                        key={`${key}-${label}-${price}-${idx}`}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '6px 0',
-                          borderBottom: '1px solid #eee',
-                          gap: '8px',
-                        }}
-                      >
-                        <span style={{ fontSize: '14px', color: '#333' }}>{label}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <strong>{formatPrice(price)}</strong>
-                          <button
-                            type="button"
-                            disabled={readOnly}
-                            onClick={() => {
-                              if (readOnly) return;
-                              // Show full name (product + option picked) in the Additional items list and PDF
-                              const baseName = (item.name || '').trim();
-                              const option = (item.optionLabel || '').trim();
-                              const fullName =
-                                option && baseName && option !== baseName && !baseName.includes(option)
-                                  ? `${baseName} - ${option}`
-                                  : baseName || option || 'Additional item';
-                              const picked = { ...item, name: fullName, quantity: 1 };
-                              let newIdx = 0;
-                              setStoreAdditionalItems((prev) => {
-                                // Re-adding the same option bumps the count rather than
-                                // stacking a second identical line.
-                                const existing = prev.findIndex((row) => sameStoreProduct(row, picked));
-                                if (existing >= 0) {
-                                  newIdx = existing;
-                                  return prev.map((row, i) =>
-                                    i === existing
-                                      ? { ...row, quantity: Math.min(99, storeItemQty(row) + 1) }
-                                      : row
-                                  );
-                                }
-                                const next = [...prev, picked];
-                                newIdx = next.length - 1;
-                                return next;
-                              });
-                              setStoreItemJustAddedIndex(newIdx);
-                              window.setTimeout(() => setStoreItemJustAddedIndex(null), 1200);
-                              requestAnimationFrame(() => {
-                                document.getElementById('public-room-loader-additional-items')?.scrollIntoView({
-                                  behavior: 'smooth',
-                                  block: 'nearest',
-                                });
-                              });
-                              setStoreOptionModalGroup(null);
-                              setStoreSearchQuery('');
-                            }}
-                            style={{
-                              padding: '6px 12px',
-                              fontSize: '13px',
-                              backgroundColor: readOnly ? '#adb5bd' : '#0d6efd',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: '6px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Add
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={() => setStoreOptionModalGroup(null)}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '14px',
-                        backgroundColor: '#6c757d',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
+                onSelectItem={setStoreModalPickedItem}
+                onCancel={() => setStoreOptionModalGroup(null)}
+                onAdd={(item, qty) => {
+                  if (readOnly) return;
+                  // Show full name (product + option picked) in the Additional items list and PDF
+                  const baseName = (item.name || '').trim();
+                  const option = (item.optionLabel || '').trim();
+                  const fullName =
+                    option && baseName && option !== baseName && !baseName.includes(option)
+                      ? `${baseName} - ${option}`
+                      : baseName || option || 'Additional item';
+                  const picked = { ...item, name: fullName, quantity: qty };
+                  let newIdx = 0;
+                  setStoreAdditionalItems((prev) => {
+                    // Re-adding the same option bumps the count rather than stacking a second identical line.
+                    const existing = prev.findIndex((row) => sameStoreProduct(row, picked));
+                    if (existing >= 0) {
+                      newIdx = existing;
+                      return prev.map((row, i) =>
+                        i === existing ? { ...row, quantity: Math.min(99, storeItemQty(row) + qty) } : row
+                      );
+                    }
+                    const next = [...prev, picked];
+                    newIdx = next.length - 1;
+                    return next;
+                  });
+                  setStoreItemJustAddedIndex(newIdx);
+                  window.setTimeout(() => setStoreItemJustAddedIndex(null), 1200);
+                  requestAnimationFrame(() => {
+                    document.getElementById('public-room-loader-additional-items')?.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'nearest',
+                    });
+                  });
+                  setStoreOptionModalGroup(null);
+                  setStoreSearchQuery('');
+                }}
+              />
             )}
 
             <div style={{ width: '100%' }}>

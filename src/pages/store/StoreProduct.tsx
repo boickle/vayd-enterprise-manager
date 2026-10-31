@@ -22,37 +22,9 @@ import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
 import StoreGiftCardProduct from './StoreGiftCardProduct';
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
+import { packChipsLabel, packForWeight, packsForStrengthOf, shortPetWeight, strengthChipsLabel, strengthsOf } from './storeVariantPick';
 import './Store.css';
 import { useStorePracticeId } from './useStorePracticeId';
-
-function weightRangeLbs(pack: string): { low: number; high: number } | null {
-  const match = pack.match(/(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg)?/i);
-  if (!match) return null;
-  let low = Number(match[1]);
-  let high = Number(match[2]);
-  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
-  if (/kg/i.test(match[3] || '')) {
-    low *= 2.20462;
-    high *= 2.20462;
-  }
-  return low <= high ? { low, high } : { low: high, high: low };
-}
-
-/** The size whose range contains this weight. A weight on a shared boundary uses the higher range. */
-function packForWeight(packs: string[], lbs: number): string | null {
-  const hits = packs
-    .map((pack) => ({ pack, range: weightRangeLbs(pack) }))
-    .filter((row): row is { pack: string; range: { low: number; high: number } } => row.range != null)
-    .filter((row) => lbs + 0.001 >= row.range.low && lbs - 0.001 <= row.range.high)
-    .sort((a, b) => a.range.low - b.range.low || a.range.high - b.range.high);
-  return hits.length ? hits[hits.length - 1].pack : null;
-}
-
-function shortPetWeight(lbs: number | null | undefined): string | null {
-  if (lbs == null || !Number.isFinite(Number(lbs)) || Number(lbs) <= 0) return null;
-  const n = Number(lbs);
-  return Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n)} lb` : `${Math.round(n * 10) / 10} lb`;
-}
 
 function weighInDateLabel(at: string | null | undefined): string | null {
   if (!at) return null;
@@ -116,18 +88,12 @@ export default function StoreProduct() {
 
   const strengths = useMemo(() => {
     if (!item) return [];
-    return [...new Set((item.variants || []).map((v) => v.strength).filter(Boolean))] as string[];
+    return strengthsOf(item.variants || []);
   }, [item]);
 
   const packsForStrength = useMemo(() => {
     if (!item) return [];
-    return [
-      ...new Set(
-        (item.variants || [])
-          .filter((v) => !strength || v.strength === strength)
-          .map((v) => v.pack)
-      ),
-    ];
+    return packsForStrengthOf(item.variants || [], strength);
   }, [item, strength]);
 
   const selected = useMemo(() => {
@@ -335,11 +301,7 @@ export default function StoreProduct() {
         {strengths.length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">
-              {strengths.every((s) => /month/i.test(s))
-                ? 'Duration'
-                : strengths.every((s) => /mg/i.test(s))
-                  ? 'Tablet size'
-                  : 'Option'}
+              {strengthChipsLabel(strengths)}
             </div>
             <div className="vayd-store__chips">
               {strengths.map((s) => (
@@ -404,11 +366,7 @@ export default function StoreProduct() {
         {(item.variants || []).length > 1 && (
           <div className="vayd-store__option">
             <div className="vayd-store__option-label">
-              {strengths.every((s) => /month/i.test(s))
-                ? 'Weight'
-                : strengths.length
-                  ? 'Amount'
-                  : 'Size'}
+              {packChipsLabel(strengths, packsForStrength)}
             </div>
             <div className="vayd-store__chips">
               {packsForStrength.map((p) => (

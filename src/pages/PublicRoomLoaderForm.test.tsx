@@ -262,14 +262,15 @@ describe('RL-11 no "Ship to me" (D4)', () => {
     ],
   };
 
-  it('RL-11-1: the store option modal offers only "Bring to the visit (clinic price)"', async () => {
+  it('RL-11-1: the store option modal only offers bringing it to the visit', async () => {
     const { publicStoreProducts } = await import('../api/onlineStore');
     (publicStoreProducts as any).mockResolvedValue([listing]);
     pricingById({});
     mountForm(formPayload({}));
     fireEvent.change(await screen.findByPlaceholderText('Type to search products...'), { target: { value: 'brav' } });
     fireEvent.click(await screen.findByText('Bravecto'));
-    expect(await screen.findByText(/Bring to the visit \(clinic price\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/We'll bring this to your visit/)).toBeInTheDocument();
+    expect(screen.queryByText(/clinic price/i)).toBeNull();
     expect(screen.queryByText(/ship to me/i)).toBeNull();
     expect(screen.queryByText(/ship uses/i)).toBeNull();
   });
