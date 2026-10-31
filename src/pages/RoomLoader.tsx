@@ -28,6 +28,8 @@ import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
+import RoomLoaderChartPanel, { PetChartNameLink } from './roomLoader/RoomLoaderChartPanel';
+import { sexNeuterLabel } from '../utils/patientSexNeuter';
 import { clientHref, patientHref } from '../utils/recentRecordsStore';
 import { appAlert } from '../utils/appDialog';
 import {
@@ -467,6 +469,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [selectedRoomLoader, setSelectedRoomLoader] = useState<RoomLoader | null>(null);
   const [selectedRoomLoaderId, setSelectedRoomLoaderId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  /** Pet whose chart is docked beside the details modal (null = panel closed). */
+  const [chartPetId, setChartPetId] = useState<string | null>(null);
   const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
   /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
   const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
@@ -1365,6 +1369,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
   function handleCloseModal() {
     setIsModalOpen(false);
+    setChartPetId(null);
     setSelectedRoomLoaderId(null);
     setSelectedRoomLoader(null);
     setPetAnswers({});
@@ -3427,7 +3432,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (
         <div
-          className="room-loader-modal-overlay"
+          className={`room-loader-modal-overlay${chartPetId ? ' room-loader-modal-overlay--with-chart' : ''}`}
           role="dialog"
           aria-modal="true"
           onClick={handleCloseModal}
@@ -3582,12 +3587,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
                     Pet {petIndex + 1}:{' '}
                     {displayPatient.id ? (
-                      <Link
-                        to={patientHref(displayPatient.id)}
-                        style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
-                      >
-                        {displayPatient.name || 'Unknown Pet'}
-                      </Link>
+                      <PetChartNameLink
+                        petId={String(displayPatient.id)}
+                        name={displayPatient.name || 'Unknown Pet'}
+                        onOpen={setChartPetId}
+                      />
                     ) : (
                       displayPatient.name || 'Unknown Pet'
                     )}
@@ -3612,7 +3616,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                           // If date parsing fails, skip age
                         }
                       }
-                      if (displayPatient.sex) details.push(displayPatient.sex);
+                      {
+                        const sexLabel = sexNeuterLabel(displayPatient.sex, (displayPatient as { neuterStatus?: string }).neuterStatus);
+                        if (sexLabel) details.push(sexLabel);
+                      }
                       if (displayPatient.breed) details.push(displayPatient.breed);
                       if (displayPatient.weight) details.push(`${displayPatient.weight} lbs`);
                       if (details.length > 0) {
@@ -5388,6 +5395,18 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           )}
             </div>
           </div>
+          {chartPetId && (
+            <RoomLoaderChartPanel
+              pets={petsWithAppointments.map((it) => ({
+                id: String(it.patient.id),
+                name: it.patient.name || '',
+                species: (it.patient as { species?: string | null }).species,
+              }))}
+              activePetId={chartPetId}
+              onSelectPet={setChartPetId}
+              onClose={() => setChartPetId(null)}
+            />
+          )}
         </div>
       )}
 

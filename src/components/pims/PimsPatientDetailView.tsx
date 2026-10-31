@@ -1194,6 +1194,12 @@ type Props = {
   onBack: () => void;
   /** Breadcrumb “Patients” link; default PIMS list. */
   patientsListPath?: string;
+  /**
+   * Docked beside another screen (Room Loader): no household/breadcrumb chrome, never navigates
+   * away (those jumps open a new browser tab), and keeps URL-style state locally instead of in
+   * the browser address bar.
+   */
+  embedded?: boolean;
 };
 
 const GROUP_KEYS = [
@@ -1213,9 +1219,20 @@ export default function PimsPatientDetailView({
   patientId,
   onBack,
   patientsListPath = '/schedule/patients',
+  embedded = false,
 }: Props) {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const routerNavigate = useNavigate();
+  const [urlSearchParams, setUrlSearchParams] = useSearchParams();
+  const [localSearchParams, setLocalSearchParams] = useState(() => new URLSearchParams());
+  const searchParams = embedded ? localSearchParams : urlSearchParams;
+  const setSearchParams = (next: URLSearchParams, opts?: { replace?: boolean }) => {
+    if (embedded) setLocalSearchParams(new URLSearchParams(next));
+    else setUrlSearchParams(next, opts);
+  };
+  const navigate = (to: string) => {
+    if (embedded) window.open(to, '_blank', 'noopener');
+    else routerNavigate(to);
+  };
   const { abilities, userId } = useAuth() as { abilities?: string[]; userId?: string | null };
   const canBookAppointment = !abilities || abilities.includes('canSeeRouting');
   const practiceTz = practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE);
@@ -2290,7 +2307,7 @@ export default function PimsPatientDetailView({
 
   return (
     <div className="pims-detail pims-detail--emr">
-      {clientId || householdPets.length ? (
+      {!embedded && (clientId || householdPets.length) ? (
         <nav className="pims-emr-household" aria-label="Household">
           {clientId ? (
             <Link
