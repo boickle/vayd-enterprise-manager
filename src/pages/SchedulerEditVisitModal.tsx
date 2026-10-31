@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { DateTime } from 'luxon';
+import { PremedsCheckbox } from '../components/PremedsCheckbox';
 import {
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
@@ -275,6 +276,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     );
     const [instructions, setInstructions] = useState(
       () => initialFormSnapshot?.instructions ?? appt.instructions ?? ''
+    );
+    const [needsPremeds, setNeedsPremeds] = useState(
+      () => initialFormSnapshot?.needsPremeds ?? appt.needsPremeds === true
     );
     const statusName = appt.statusName ?? '';
     const confirmStatusName = appt.confirmStatusName ?? '';
@@ -561,6 +565,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     ]);
 
     const typeDirty = appointmentTypeId !== initialTypeId;
+    /** Pre-meds narrows the arrival window — preview the score before saving, like a type change. */
+    const premedsDirty = !appt.allDay && needsPremeds !== (appt.needsPremeds === true);
 
     const previewKind: EditVisitPreviewKind = timesDirty ? 'time' : 'type';
 
@@ -609,6 +615,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         confirmStatusName,
         isComplete,
         allDay: appt.allDay,
+        needsPremeds,
       };
     }, [
       effectiveAppointmentTypeId,
@@ -620,6 +627,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       confirmStatusName,
       isComplete,
       appt.allDay,
+      needsPremeds,
     ]);
 
     const flushFormSnapshot = useCallback(() => {
@@ -764,6 +772,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               confirmStatusName,
               isComplete,
               allDay: appt.allDay,
+              needsPremeds,
             },
             previewAppointmentTypeId: input.tidFromPreview,
             appointmentTypeName,
@@ -818,6 +827,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         appt,
         description,
         instructions,
+        needsPremeds,
         additionalEmployeeIds,
         statusName,
         confirmStatusName,
@@ -1054,7 +1064,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       !hideRescheduleActions && !appt.allDay && onViewPlacement && timesDirty && !placementPreviewActive,
     );
     const canPreviewSchedule = Boolean(
-      !hideRescheduleActions && !appt.allDay && onPreviewSchedule && typeDirty && !placementPreviewActive,
+      !hideRescheduleActions &&
+        !appt.allDay &&
+        onPreviewSchedule &&
+        (typeDirty || premedsDirty) &&
+        !placementPreviewActive,
     );
     const previewConfirmLabel =
       placementPreviewKind === 'type' ? (saving ? 'Booking…' : 'Book') : saving ? 'Saving…' : 'Adjust time';
@@ -1302,7 +1316,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   {typeScoreCompare.overflowOverrunSeconds != null ? (
                     <EditVisitOverflowTag overrunSeconds={typeScoreCompare.overflowOverrunSeconds} />
                   ) : null}
-                  {placementPreviewKind === 'type' && typeScoreCompare.windowLine ? (
+                  {typeScoreCompare.windowLine ? (
                     <p className="scheduler-edit-hint">
                       {typeScoreCompare.windowLine}
                       {typeScoreCompare.windowWarningMayChange
@@ -1348,6 +1362,13 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   <div className="scheduler-edit-date-value">{primaryProviderLabel}</div>
                 </div>
               </div>
+              {!appt.allDay ? (
+                <PremedsCheckbox
+                  checked={needsPremeds}
+                  onChange={setNeedsPremeds}
+                  className="scheduler-edit-premeds"
+                />
+              ) : null}
 
               {appt.allDay ? (
                 <div className="scheduler-edit-two-col">

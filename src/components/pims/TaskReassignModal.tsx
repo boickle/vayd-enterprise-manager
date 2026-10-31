@@ -1,7 +1,19 @@
 import { useState } from 'react';
-import { patchTask, type TaskDetail, type TaskListItem } from '../../api/tasks';
+import { createPortal } from 'react-dom';
+import {
+  patchTask,
+  reassignFromEmployee,
+  type TaskDetail,
+  type TaskListItem,
+} from '../../api/tasks';
 import type { Employee } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import {
+  fromDatetimeLocalValue,
+  taskStartIso,
+  toDatetimeLocalValue,
+  validateTaskScheduleOrder,
+} from '../../utils/taskDateTime';
 import './TaskReassignModal.css';
 
 function errMsg(e: unknown): string {
@@ -13,19 +25,51 @@ function errMsg(e: unknown): string {
   return 'Request failed';
 }
 
-type TaskReassignTarget = Pick<TaskListItem, 'id' | 'title' | 'assignedToEmployeeId'>;
+type TaskMoveTarget = Pick<
+  TaskListItem,
+  'id' | 'title' | 'assignedToEmployeeId' | 'startAt' | 'dueAt' | 'created'
+> & { body?: string | null };
 
-type Props = {
-  task: TaskReassignTarget;
-  employees: Employee[];
-  onClose: () => void;
-  onSaved: (updated: TaskDetail) => void;
+type BulkReassign = {
+  fromEmployeeId: number;
+  taskIds: number[];
+  upcomingOnly?: boolean;
+  label: string;
 };
 
-export default function TaskReassignModal({ task, employees, onClose, onSaved }: Props) {
+type Props = {
+  task?: TaskMoveTarget;
+  bulk?: BulkReassign;
+  employees: Employee[];
+  /** Vacation / inactivation: must pick a person, not the queue. */
+  requireAssignee?: boolean;
+  onClose: () => void;
+  onSaved: (updated?: TaskDetail) => void;
+};
+
+/**
+ * Moving a task means changing who owns it, when it starts, when it is due, or
+ * any combination. They are the same decision in practice — "this isn't mine
+ * until Thursday" — so they share one screen and one button.
+ */
+export default function TaskReassignModal({
+  task,
+  bulk,
+  employees,
+  requireAssignee = false,
+  onClose,
+  onSaved,
+}: Props) {
   const [toId, setToId] = useState<string>(
-    task.assignedToEmployeeId != null ? String(task.assignedToEmployeeId) : '',
+    !bulk && task?.assignedToEmployeeId != null ? String(task.assignedToEmployeeId) : '',
   );
+  const [startLocal, setStartLocal] = useState(() =>
+    !bulk && task ? toDatetimeLocalValue(taskStartIso(task)) : '',
+  );
+  const [dueLocal, setDueLocal] = useState(() =>
+    !bulk && task ? toDatetimeLocalValue(task.dueAt) : '',
+  );
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -35,10 +79,51 @@ export default function TaskReassignModal({ task, employees, onClose, onSaved }:
       setErr('Pick a valid assignee');
       return;
     }
+    if (requireAssignee && id == null) {
+      setErr('Pick who should receive these tasks');
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
-      const updated = await patchTask(task.id, { assignedToEmployeeId: id });
+      if (bulk) {
+        if (id == null) {
+          setErr('Pick who should receive these tasks');
+          return;
+        }
+        await reassignFromEmployee({
+          fromEmployeeId: bulk.fromEmployeeId,
+          toEmployeeId: id,
+          upcomingOnly: bulk.upcomingOnly,
+          taskIds: bulk.taskIds,
+        });
+        onSaved();
+        return;
+      }
+      if (!task) {
+        setErr('Nothing to move');
+        return;
+      }
+      const startAt = fromDatetimeLocalValue(startLocal);
+      const dueAt = fromDatetimeLocalValue(dueLocal);
+      const scheduleErr = validateTaskScheduleOrder(startAt, dueAt);
+      if (scheduleErr) {
+        setErr(scheduleErr);
+        return;
+      }
+      const extra = note.trim();
+      const prior = (task.body ?? '').trim();
+      const body = extra
+        ? prior
+          ? `${prior}\n\nNote when moved:\n${extra}`
+          : `Note when moved:\n${extra}`
+        : undefined;
+      const updated = await patchTask(task.id, {
+        assignedToEmployeeId: id,
+        startAt,
+        dueAt,
+        ...(body !== undefined ? { body } : {}),
+      });
       onSaved(updated);
     } catch (e: unknown) {
       setErr(errMsg(e));
@@ -47,7 +132,11 @@ export default function TaskReassignModal({ task, employees, onClose, onSaved }:
     }
   };
 
-  return (
+  // Bulk only changes the owner — there is no sensible shared due date — so it
+  // keeps the narrower name.
+  const title = bulk ? 'Re-assign tasks' : 'Move this task';
+
+  const modal = (
     <div
       className="task-reassign-modal__backdrop"
       role="presentation"
@@ -60,17 +149,26 @@ export default function TaskReassignModal({ task, employees, onClose, onSaved }:
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="task-reassign-modal__head">
-          <h2 id="task-reassign-title">Reassign</h2>
+          <h2 id="task-reassign-title">{title}</h2>
           <button type="button" className="task-reassign-modal__close" aria-label="Close" onClick={onClose}>
             ×
           </button>
         </div>
-        <p className="task-reassign-modal__task-title">{task.title}</p>
+        <p className="task-reassign-modal__task-title">
+          {bulk ? bulk.label : task?.title}
+        </p>
+        {!bulk ? (
+          <p className="task-reassign-modal__hint">
+            Hand it to someone else, push it to another day, or both. Leave a field
+            alone to keep it as it is.
+          </p>
+        ) : null}
         {err && <p className="task-reassign-modal__error">{err}</p>}
         <label className="task-reassign-modal__field">
           <span>Assign to</span>
           <select value={toId} onChange={(e) => setToId(e.target.value)} disabled={busy}>
-            <option value="">Queue (unassigned)</option>
+            {!requireAssignee && <option value="">Queue (unassigned)</option>}
+            {requireAssignee && <option value="">Select a person…</option>}
             {employees.map((em) => (
               <option key={em.id} value={String(em.id)}>
                 {formatEmployeeDisplayName(em) || em.email}
@@ -78,6 +176,38 @@ export default function TaskReassignModal({ task, employees, onClose, onSaved }:
             ))}
           </select>
         </label>
+        {!bulk && (
+          <>
+            <label className="task-reassign-modal__field">
+              <span>Starts</span>
+              <input
+                type="datetime-local"
+                value={startLocal}
+                onChange={(e) => setStartLocal(e.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <label className="task-reassign-modal__field">
+              <span>Due</span>
+              <input
+                type="datetime-local"
+                value={dueLocal}
+                onChange={(e) => setDueLocal(e.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <label className="task-reassign-modal__field">
+              <span>Note (optional)</span>
+              <textarea
+                rows={3}
+                value={note}
+                placeholder="Anything they should know…"
+                onChange={(e) => setNote(e.target.value)}
+                disabled={busy}
+              />
+            </label>
+          </>
+        )}
         <div className="task-reassign-modal__actions">
           <button type="button" className="task-reassign-modal__cancel" disabled={busy} onClick={onClose}>
             Cancel
@@ -89,4 +219,6 @@ export default function TaskReassignModal({ task, employees, onClose, onSaved }:
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
 }

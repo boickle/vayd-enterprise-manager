@@ -1,0 +1,355 @@
+/* IDEXX: chips, the send strip, order panel, and the results view. */
+
+.idexx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.idexx-chip__brand {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  opacity: 0.8;
+}
+.idexx-chip--todo { background: #fef3c7; color: #92400e; }
+.idexx-chip--wait { background: #e0ecff; color: #1e40af; }
+.idexx-chip--done { background: #e6f4ee; color: #0f766e; }
+.idexx-chip--warn { background: #ffedd5; color: #9a3412; }
+.idexx-chip--alert { background: #fee2e2; color: #b91c1c; }
+.idexx-chip--muted { background: #f1f5f9; color: #64748b; }
+
+/* Per-pet strip on the bill: unsent IDEXX tests and the Send button. */
+.idexx-send-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 6px 0 8px;
+  padding: 8px 12px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.idexx-send-strip__text { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.idexx-send-strip__tests { color: var(--muted); }
+.idexx-send-strip--waiting { border-color: #bfdbfe; background: #eff6ff; }
+
+/* Order panel inside an expanded lab line. */
+.idexx-order {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.idexx-order__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.idexx-order__title { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.idexx-order__meta { color: var(--muted); font-size: 12px; }
+.idexx-order__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.idexx-order__note { font-size: 12px; color: var(--muted); margin: 0; }
+.idexx-order__note--ok { color: #0f766e; }
+.idexx-order__note--warn { color: #9a3412; }
+.idexx-order__error { font-size: 12px; color: #b91c1c; margin: 0; }
+.idexx-order__result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.idexx-order__result-row:hover { background: rgba(0, 0, 0, 0.03); }
+.idexx-order__result-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.idexx-result-list__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 13px;
+}
+.idexx-result-list__row:hover { background: rgba(0, 0, 0, 0.03); }
+.idexx-result-list__chevron,
+.idexx-result-list__expand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.idexx-result-list__expand { flex: 1; min-width: 0; }
+.idexx-result-list__patient {
+  flex: none;
+  font-weight: 700;
+  color: #0f766e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.idexx-result-list__patient:hover { color: #115e59; }
+.idexx-result-list__patient-text { flex: none; font-weight: 700; }
+.idexx-result-list__name {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.idexx-result-list__provider {
+  flex: none;
+  font-weight: 600;
+  color: #1f4d3a;
+}
+
+/* Results view. */
+.idexx-result { display: grid; gap: 10px; font-size: 13px; }
+.idexx-result__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.idexx-result__meta { color: var(--muted); font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+.idexx-result__actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.idexx-result__reviewed { font-size: 12px; color: #0f766e; display: inline-flex; align-items: center; gap: 4px; }
+.idexx-result__flags {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.idexx-result__flags--critical { background: #fef2f2; border-color: #fecaca; }
+.idexx-result__flags-title { font-weight: 700; margin-right: 4px; }
+.idexx-result__flag-pill {
+  display: inline-flex;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #fdba74;
+  font-size: 12px;
+  font-weight: 600;
+}
+.idexx-result__flag-pill--critical { border-color: #f87171; color: #b91c1c; }
+.idexx-result__toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.idexx-result__toggle { font-size: 12px; display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+.idexx-result__section { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.idexx-result__section-title {
+  padding: 6px 10px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.035);
+  border-bottom: 1px solid var(--border);
+}
+.idexx-result__table { width: 100%; border-collapse: collapse; }
+.idexx-result__table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.idexx-result__table td { padding: 5px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.idexx-result__table tr:last-child td { border-bottom: 0; }
+.idexx-result__row--high td, .idexx-result__row--low td { background: #fff7ed; }
+.idexx-result__row--critical td { background: #fef2f2; }
+.idexx-result__value { font-weight: 600; white-space: nowrap; }
+.idexx-result__row--high .idexx-result__value,
+.idexx-result__row--low .idexx-result__value { color: #c2410c; }
+.idexx-result__row--critical .idexx-result__value { color: #b91c1c; }
+.idexx-result__units { color: var(--muted); font-weight: 400; margin-left: 3px; }
+.idexx-result__flag { font-weight: 800; font-size: 11px; margin-left: 4px; }
+.idexx-result__range { white-space: nowrap; color: var(--muted); }
+.idexx-result__note { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
+.idexx-result__notes {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+/* Where the value sits in its reference range. */
+.idexx-range-bar {
+  position: relative;
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: #e2e8f0;
+  vertical-align: middle;
+}
+.idexx-range-bar__normal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  background: #bbf7d0;
+  border-radius: 3px;
+}
+.idexx-range-bar__dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: #0f766e;
+  border: 2px solid var(--surface, #fff);
+  box-sizing: content-box;
+}
+.idexx-range-bar__dot--out { background: #c2410c; }
+.idexx-range-bar__dot--critical { background: #b91c1c; }
+
+/* Send modal. */
+.idexx-send__tests { display: grid; gap: 4px; margin: 0 0 12px; }
+.idexx-send__test { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.idexx-send__code { color: var(--muted); font-size: 12px; }
+.idexx-send__missing {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  margin-bottom: 12px;
+  display: grid;
+  gap: 8px;
+}
+.idexx-send__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.idexx-send__how { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin: 10px 0 0; }
+
+@media (max-width: 640px) {
+  .idexx-send__grid { grid-template-columns: 1fr; }
+  .idexx-result__table th:nth-child(3), .idexx-result__table td:nth-child(3) { display: none; }
+}
+
+.idexx-client-summary {
+  margin-top: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  display: grid;
+  gap: 8px;
+}
+.idexx-client-summary__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.idexx-client-summary__label {
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.idexx-client-summary__preview {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.idexx-client-summary__text { width: 100%; font-size: 13px; line-height: 1.5; }
+.idexx-client-summary__text--read { white-space: pre-wrap; }
+
+.idexx-frame-overlay { z-index: 1200; }
+.idexx-frame {
+  background: var(--color-surface, #fff);
+  border-radius: 10px;
+  width: min(1400px, 96vw);
+  height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+.idexx-frame__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  flex-wrap: wrap;
+}
+.idexx-frame__title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.idexx-frame__body { flex: 1; width: 100%; border: 0; background: #fff; }
+.idexx-frame__loading { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+.idexx-requisition-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #0f766e);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  vertical-align: middle;
+}
+.idexx-requisition-link:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.client-fin__item-by .idexx-requisition-link {
+  margin-left: 0;
+}

@@ -1,0 +1,31 @@
+.membership-cancel-offer {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.membership-cancel-offer__row {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+  font-size: 13px;
+  color: #334155;
+}
+
+.membership-cancel-offer__row p {
+  margin: 0;
+}
+
+.membership-cancel-offer__title {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.membership-cancel-offer__warn {
+  color: #b91c1c;
+  font-weight: 600;
+}

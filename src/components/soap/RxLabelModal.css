@@ -1,0 +1,329 @@
+.rx-label-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(3px);
+  z-index: 4000;
+}
+
+.soap-rx-label-modal {
+  --soap-accent: #2563eb;
+  --soap-border: #e5e7eb;
+  --soap-muted: #6b7280;
+  --soap-bg: #f8fafc;
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  color: #111827;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.soap-rx-label-modal .soap-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.soap-rx-label-modal .soap-modal-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  margin: 0;
+}
+
+.soap-rx-label-modal .soap-modal-sub {
+  color: var(--soap-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 0 16px;
+}
+
+.soap-rx-label-modal .soap-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.soap-rx-label-modal .soap-input,
+.soap-rx-label-modal .soap-select {
+  width: 100%;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.soap-rx-label-modal .soap-input:focus,
+.soap-rx-label-modal .soap-select:focus {
+  outline: none;
+  border-color: var(--soap-accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.soap-rx-label-modal .soap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #111827;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.soap-rx-label-modal .soap-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.soap-rx-label-modal .soap-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.soap-rx-label-modal .soap-btn.primary {
+  background: var(--soap-accent);
+  border-color: var(--soap-accent);
+  color: #fff;
+}
+
+.soap-rx-label-modal .soap-btn.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.soap-rx-label-modal .soap-btn.ghost {
+  background: #fff;
+}
+
+.soap-rx-label-modal .soap-btn.small {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.soap-rx-label-modal .soap-icon-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--soap-muted);
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+}
+
+.soap-rx-label-modal .soap-icon-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+@keyframes soap-rx-refill-flash {
+  0%,
+  100% {
+    background: #fff;
+    border-color: var(--soap-border);
+    box-shadow: none;
+  }
+  40% {
+    background: #fff7ed;
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35);
+  }
+}
+
+.soap-rx-label-refill-input {
+  animation: soap-rx-refill-flash 0.7s ease-in-out 3;
+}
+
+.soap-rx-label-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.soap-rx-label-grid label,
+.soap-rx-label-printer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--soap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.soap-rx-label-wide {
+  grid-column: 1 / -1;
+}
+
+.soap-rx-label-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.soap-rx-label-details-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.soap-rx-label-details-link:hover {
+  color: #1d4ed8;
+}
+
+.soap-rx-label-count,
+.rx-directions-limit {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  text-decoration: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.soap-rx-label-count.is-over,
+.rx-directions-limit.is-over {
+  color: #b91c1c;
+}
+
+.soap-rx-label-modal .soap-refill-details,
+.soap-refill-details {
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border, #e5e7eb);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.soap-rx-label-modal .soap-refill-details p,
+.soap-refill-details p {
+  margin: 0 0 6px;
+}
+
+.soap-rx-label-modal .soap-refill-details p:last-child,
+.soap-refill-details p:last-child {
+  margin-bottom: 0;
+}
+
+.soap-rx-label-static {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  background: var(--soap-bg);
+  font-size: 13px;
+  line-height: 1.45;
+  color: #111827;
+}
+
+.soap-rx-label-static p {
+  margin: 0 0 6px;
+}
+
+.soap-rx-label-static p:last-child {
+  margin-bottom: 0;
+}
+
+.soap-rx-label-signature {
+  display: block;
+  max-width: 180px;
+  max-height: 48px;
+  margin-top: 6px;
+  object-fit: contain;
+}
+
+.soap-rx-label-printer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soap-border);
+}
+
+.soap-rx-label-note,
+.soap-rx-label-help,
+.soap-rx-label-success,
+.soap-rx-label-modal .soap-dose-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.soap-rx-label-note {
+  color: #92400e;
+}
+
+.soap-rx-label-help {
+  color: var(--soap-muted);
+}
+
+.soap-rx-label-success {
+  color: #166534;
+  font-weight: 600;
+}
+
+.soap-rx-label-modal .soap-dose-error {
+  color: #b91c1c;
+}
+
+.rx-label-dymo {
+  font-size: 11.5px;
+  color: #64748b;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.rx-label-dymo:hover:not(:disabled) {
+  color: #2563eb;
+}
+
+.rx-label-dymo:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+  .soap-rx-label-grid {
+    grid-template-columns: 1fr;
+  }
+  .soap-rx-label-wide {
+    grid-column: auto;
+  }
+}

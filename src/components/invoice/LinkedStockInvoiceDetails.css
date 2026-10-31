@@ -1,0 +1,17 @@
+.linked-stock-invoice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.linked-stock-invoice__head {
+  font-size: 13px;
+  color: #334155;
+}
+
+.linked-stock-invoice__note {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}

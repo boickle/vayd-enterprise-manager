@@ -24,6 +24,7 @@ export type ForwardBookingHouseholdEntry = {
   appointmentTypeId?: number;
   appointmentTypeName?: string;
   targetDueDate?: string | null;
+  needsPremeds?: boolean;
   /** Per-pet visit context — used to prefill Book appointment Description. */
   bookingNotes?: string | null;
   description?: string | null;
@@ -43,6 +44,8 @@ export type RoutingForwardBookingIntentV1 = {
   primaryDoctorDisplayName?: string;
   clientDisplayLabel?: string;
   serviceMinutes: number;
+  /** Forward booking row needs pre-meds — routing searches with the pre-meds window. */
+  needsPremeds?: boolean;
   address?: string;
   lat?: number | null;
   lon?: number | null;
@@ -328,9 +331,19 @@ function householdEntryFromForwardBookingRow(entry: ForwardBookingEntry): Forwar
     patientId: String(entry.patientId),
     patientName: pickStr(entry.patient?.name) ?? undefined,
     targetDueDate: entry.targetDueDate ?? null,
+    ...(entry.needsPremeds === true ? { needsPremeds: true } : {}),
     bookingNotes: entry.bookingNotes ?? null,
     description: entry.description ?? null,
   };
+}
+
+/** Any pet being booked in this routing search was flagged pre-meds on its forward booking (warning only). */
+export function forwardBookingIntentNeedsPremeds(intent: RoutingForwardBookingIntentV1): boolean {
+  if (intent.householdEntries?.length && intent.householdScope === 'household_same_target') {
+    return intent.householdEntries.some((e) => e.needsPremeds === true);
+  }
+  const { entries } = forwardBookingScopeTargets(intent);
+  return entries.some((e) => e.needsPremeds === true) || intent.needsPremeds === true;
 }
 
 export function buildRoutingForwardBookingIntentFromEntry(
@@ -371,6 +384,7 @@ export function buildRoutingForwardBookingIntentFromEntry(
     primaryDoctorDisplayName,
     clientDisplayLabel,
     serviceMinutes: mins,
+    ...(entry.needsPremeds === true ? { needsPremeds: true } : {}),
     clientAlerts: pickStr(c.alerts),
     description: entry.description ?? null,
     instructions: entry.instructions ?? null,

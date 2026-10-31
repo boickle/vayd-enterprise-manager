@@ -57,9 +57,10 @@ import SchedulingToolsListPagination, {
 } from '../components/SchedulingToolsListPagination';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const FILL_DAY_OUTREACH_NOTES_DEBOUNCE_MS = 750;
-const FILL_DAY_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const FILL_DAY_PRACTICE_ID = currentPracticeId();
 const FILL_DAY_PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 /** JSON often sends reminder ids as strings; normalize for state keys and PATCH. */

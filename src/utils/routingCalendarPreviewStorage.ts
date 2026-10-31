@@ -13,6 +13,12 @@ export const ROUTING_CALENDAR_PREVIEW_STORAGE_KEY = 'vayd:routing-calendar-previ
 /** Fired on `window` after `writeRoutingCalendarPreview` when the practice calendar is embedded beside Routing. */
 export const ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT = 'vayd:routing-calendar-preview-updated';
 
+/** Scheduler → Routing: step the embedded calendar preview to the previous or next result card. */
+export const ROUTING_PREVIEW_STEP_EVENT = 'vayd:routing-preview-step';
+
+/** Scheduler → Routing: leave the calendar overlay and bring the results list back on screen. */
+export const ROUTING_PREVIEW_SHOW_RESULTS_EVENT = 'vayd:routing-preview-show-results';
+
 /** Scheduler → Routing: reconciled POST /routing/eta window warnings for the active preview card. */
 export const ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT = 'vayd:routing-preview-eta-window-warnings';
 
@@ -61,6 +67,14 @@ export type RoutingCalendarPreviewPayloadV1 = {
   appointmentTypeChosenInRouting?: boolean;
   /** Calculate Time dropdown value (`AppointmentType.name`) at preview time. */
   routingStatsTypeKey?: string;
+  /** Routing searched with the pre-meds window — book modal starts with the box checked. */
+  needsPremeds?: boolean;
+  /** Routing pre-checked it from history — book modal decides per pet instead of all pets. */
+  premedsAutoChecked?: boolean;
+  /** Routing had pre-meds history but the user unchecked it — book modal keeps it unchecked. */
+  premedsDeclined?: boolean;
+  /** Source forward booking was flagged pre-meds — book modal warns when the box is unchecked. */
+  premedsHistory?: boolean;
   clientDisplayLabel?: string;
   /** PATCH target when confirming from routing calendar preview (reschedule flow). */
   rescheduleAppointmentId?: number;

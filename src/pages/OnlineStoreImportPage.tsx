@@ -1,0 +1,3608 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
+import { useAuth } from '../auth/useAuth';
+import {
+  bulkPatchOnlineStoreItems,
+  confirmEcwidMaps,
+  addOnlineStoreVariant,
+  createOnlineStoreProduct,
+  downloadStoreCatalog,
+  importEcwidCatalog,
+  importStoreCatalog,
+  listEcwidMaps,
+  listOnlineStoreItems,
+  listOnlineStoreListings,
+  deleteStoreCoupon,
+  listStoreCoupons,
+  createStoreCategory,
+  listStoreCategories,
+  listingCategoryNames,
+  patchEcwidMap,
+  patchOnlineStoreItem,
+  patchOnlineStoreListing,
+  removeOnlineStoreVariant,
+  saveStoreCoupon,
+  searchStoreInventory,
+  storeMasterImageUrl,
+  storeProductImageUrl,
+  uploadOnlineStoreListingImage,
+  type EcwidMapMatch,
+  type EcwidMapRow,
+  type StoreAdminListing,
+  type StoreAdminVariant,
+  type StoreCoupon,
+  type StoreItemRow,
+  type StoreSaleType,
+} from '../api/onlineStore';
+import { uploadInventoryItemImage } from '../api/inventoryTools';
+import { appConfirm, appPrompt } from '../utils/appDialog';
+import StoreDescriptionEditor from './store/StoreDescriptionEditor';
+import StoreGiftCardSettingsEditor from '../components/onlineStore/StoreGiftCardSettings';
+import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
+import './Settings.css';
+import './Catalog.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
+
+type StoreAdminTab = 'items' | 'coupons' | 'autoship' | 'import';
+
+const STORE_TAB_LABELS: Record<'items' | 'coupons' | 'autoship', string> = {
+  items: 'Store items',
+  coupons: 'Coupons',
+  autoship: 'Bulk autoship',
+};
+
+function matchType(match: Pick<EcwidMapMatch, 'catalogItemType'>): 'inventory' | 'procedure' {
+  return match.catalogItemType === 'procedure' ? 'procedure' : 'inventory';
+}
+
+function matchKey(match: Pick<EcwidMapMatch, 'inventoryItemId' | 'catalogItemType'>): string {
+  return `${matchType(match)}:${match.inventoryItemId}`;
+}
+
+function autoshipFrequencyOptions(current: string | null | undefined) {
+  const extra =
+    current && !AUTOSHIP_FREQS.some((freq) => freq.value === current)
+      ? [{ value: current, label: formatAutoshipFrequency(current) }]
+      : [];
+  return [...AUTOSHIP_FREQS, ...extra];
+}
+
+function isMemorialCategory(value: string | null | undefined): boolean {
+  const name = (value || '').trim();
+  return /^memorial items(\s*\/|$)/i.test(name);
+}
+
+/**
+ * Chips for the categories a product is in, plus a dropdown to add another.
+ * onChange gets the full list; `added` is set when a category was just added.
+ */
+function StoreCategoryPicker({
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  value: string[];
+  options: string[];
+  disabled?: boolean;
+  onChange: (next: string[], added?: string) => void;
+}) {
+  const remaining = [...new Set(options.filter(Boolean))]
+    .filter((name) => !value.includes(name))
+    .sort((a, b) => a.localeCompare(b));
+  const add = (name: string) => {
+    const next = name.trim();
+    if (!next || value.includes(next)) return;
+    onChange([...value, next], next);
+  };
+  return (
+    <div className="store-category-picker">
+      {value.length ? (
+        <div className="store-category-picker__chips">
+          {value.map((name) => (
+            <span key={name} className="store-category-picker__chip">
+              {name}
+              <button
+                type="button"
+                className="store-variant-group__remove"
+                disabled={disabled}
+                title={`Remove from ${name}`}
+                aria-label={`Remove from ${name}`}
+                onClick={() => onChange(value.filter((row) => row !== name))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="settings-muted" style={{ fontWeight: 400 }}>
+          No category
+        </div>
+      )}
+      <select
+        className="settings-input"
+        aria-label="Add a category"
+        value=""
+        disabled={disabled}
+        onChange={(e) => {
+          const next = e.target.value;
+          if (next === '__new__') {
+            void appPrompt({
+              title: 'New store category',
+              message: 'Use a slash for a subcategory, like Heartworm / Chewables.',
+              placeholder: 'Category name',
+            }).then((typed) => add(typed || ''));
+            return;
+          }
+          add(next);
+        }}
+      >
+        <option value="">{value.length ? 'Add another category…' : 'Add a category…'}</option>
+        {remaining.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+        <option value="__new__">Add new category…</option>
+      </select>
+    </div>
+  );
+}
+
+function StoreProductDefaults({
+  approvalTag,
+  featuredOnHome,
+  storeCategories,
+  categoryOptions,
+  disabled,
+  onApproval,
+  onHighlight,
+  onCategories,
+}: {
+  approvalTag: StoreItemRow['approvalTag'];
+  featuredOnHome: boolean;
+  storeCategories: string[];
+  categoryOptions: string[];
+  disabled?: boolean;
+  onApproval: (value: StoreItemRow['approvalTag']) => void;
+  onHighlight: (value: boolean) => void;
+  onCategories: (next: string[], added?: string) => void;
+}) {
+  return (
+    <div className="store-add-workspace__defaults">
+      <div className="store-add-workspace__field">
+        <span>Store categories</span>
+        <StoreCategoryPicker
+          value={storeCategories}
+          options={categoryOptions}
+          disabled={disabled}
+          onChange={onCategories}
+        />
+      </div>
+      <label className="store-add-workspace__field">
+        <span>Approval default</span>
+        <select
+          className="settings-input"
+          value={approvalTag}
+          disabled={disabled}
+          onChange={(e) => onApproval(e.target.value as StoreItemRow['approvalTag'])}
+        >
+          <option value="approved">Approved</option>
+          <option value="needs_doctor_approval">Needs doctor approval</option>
+        </select>
+      </label>
+      <label className="store-add-workspace__check">
+        <input
+          type="checkbox"
+          checked={featuredOnHome}
+          disabled={disabled}
+          onChange={(e) => onHighlight(e.target.checked)}
+        />
+        {featuredOnHome ? 'On the home page' : 'Not on the home page'}
+      </label>
+    </div>
+  );
+}
+
+type StoreSaleFields = {
+  saleType: StoreSaleType | null;
+  saleValue: number | null;
+  saleEndsAt: string | null;
+};
+
+function saleFieldsFromListing(listing: Pick<StoreAdminListing, 'saleType' | 'saleValue' | 'saleEndsAt'>): StoreSaleFields {
+  return {
+    saleType: listing.saleType === 'amount' || listing.saleType === 'percent' ? listing.saleType : null,
+    saleValue: listing.saleValue != null ? Number(listing.saleValue) : null,
+    saleEndsAt: listing.saleEndsAt || null,
+  };
+}
+
+function StoreSaleEditor({
+  saleType,
+  saleValue,
+  saleEndsAt,
+  saleActive,
+  disabled,
+  onChange,
+}: StoreSaleFields & {
+  saleActive?: boolean;
+  disabled?: boolean;
+  onChange: (next: StoreSaleFields) => void;
+}) {
+  const [valueDraft, setValueDraft] = useState(saleValue);
+  const [endsDraft, setEndsDraft] = useState(saleEndsAt);
+  useEffect(() => {
+    setValueDraft(saleValue);
+    setEndsDraft(saleEndsAt);
+  }, [saleType, saleValue, saleEndsAt]);
+
+  return (
+    <div className="store-sale-editor">
+      <label className="store-add-workspace__field">
+        <span>Sale</span>
+        <select
+          className="settings-input"
+          value={saleType || ''}
+          disabled={disabled}
+          onChange={(e) => {
+            const nextType = (e.target.value || null) as StoreSaleType | null;
+            onChange({
+              saleType: nextType,
+              saleValue: nextType ? valueDraft : null,
+              saleEndsAt: nextType ? endsDraft : null,
+            });
+          }}
+        >
+          <option value="">Off</option>
+          <option value="amount">$ off</option>
+          <option value="percent">% off</option>
+        </select>
+      </label>
+      {saleType ? (
+        <>
+          <label className="store-add-workspace__field store-sale-editor__value">
+            <span>{saleType === 'amount' ? 'Amount off' : 'Percent off'}</span>
+            <input
+              className="settings-input"
+              type="number"
+              min={0}
+              step={saleType === 'percent' ? 1 : 0.01}
+              value={valueDraft ?? ''}
+              disabled={disabled}
+              onChange={(e) =>
+                setValueDraft(e.target.value === '' ? null : Number(e.target.value))
+              }
+              onBlur={() =>
+                onChange({
+                  saleType,
+                  saleValue: valueDraft,
+                  saleEndsAt: endsDraft,
+                })
+              }
+            />
+          </label>
+          <label className="store-add-workspace__field">
+            <span>Ends</span>
+            <input
+              className="settings-input"
+              type="date"
+              value={endsDraft || ''}
+              disabled={disabled}
+              onChange={(e) => {
+                const nextEnds = e.target.value || null;
+                setEndsDraft(nextEnds);
+                onChange({
+                  saleType,
+                  saleValue: valueDraft,
+                  saleEndsAt: nextEnds,
+                });
+              }}
+            />
+          </label>
+          {saleActive ? <span className="store-sale-editor__badge">SALE</span> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function masterImageSrc(
+  practiceId: number,
+  listing: Pick<StoreAdminListing, 'imageProductId'>
+): string | null {
+  return listing.imageProductId
+    ? storeMasterImageUrl(practiceId, listing.imageProductId)
+    : null;
+}
+
+function variantImageSrc(
+  practiceId: number,
+  variant: Pick<StoreAdminVariant, 'inventoryItemId' | 'hasImage'>
+): string | null {
+  return variant.hasImage && variant.inventoryItemId
+    ? storeProductImageUrl(practiceId, variant.inventoryItemId)
+    : null;
+}
+
+function withImageBust(url: string | null, bust?: number): string | null {
+  if (!url) return null;
+  return bust ? `${url}${url.includes('?') ? '&' : '?'}t=${bust}` : url;
+}
+
+function StoreThumb({
+  src,
+  label,
+  size = 'sm',
+}: {
+  src: string | null;
+  label: string;
+  size?: 'sm' | 'lg';
+}) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
+  const show = Boolean(src) && !broken;
+  return show ? (
+    <img
+      className={`store-add-workspace__thumb store-add-workspace__thumb--${size}`}
+      src={src ?? ''}
+      alt=""
+      onError={() => setBroken(true)}
+    />
+  ) : (
+    <span
+      className={`store-add-workspace__thumb store-add-workspace__thumb--${size} store-add-workspace__thumb--empty`}
+      aria-label={`${label} has no photo`}
+    >
+      {size === 'lg' ? 'No photo' : ''}
+    </span>
+  );
+}
+
+function StorePhotoUpload({
+  src,
+  label,
+  size = 'sm',
+  disabled,
+  title,
+  onFile,
+}: {
+  src: string | null;
+  label: string;
+  size?: 'sm' | 'lg';
+  disabled?: boolean;
+  title?: string;
+  onFile: (file: File) => void;
+}) {
+  return (
+    <label className="store-photo-upload" title={title || `Upload photo for ${label}`}>
+      <StoreThumb src={src} label={label} size={size} />
+      <input
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        hidden
+        disabled={disabled}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) onFile(file);
+        }}
+      />
+    </label>
+  );
+}
+
+function AutoshipControls({
+  frequency,
+  disabled,
+  onChange,
+}: {
+  frequency: string | null | undefined;
+  disabled?: boolean;
+  onChange: (frequency: string | null) => void;
+}) {
+  const on = Boolean(frequency);
+  return (
+    <label className="store-add-workspace__autoship">
+      <input
+        type="checkbox"
+        disabled={disabled}
+        checked={on}
+        onChange={(e) => onChange(e.target.checked ? frequency || 'monthly' : null)}
+      />
+      {on ? (
+        <select
+          className="settings-input"
+          disabled={disabled}
+          value={frequency || 'monthly'}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {autoshipFrequencyOptions(frequency).map((freq) => (
+            <option key={freq.value} value={freq.value}>
+              {freq.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="settings-muted">Autoship</span>
+      )}
+    </label>
+  );
+}
+
+function packRank(pack: string): number {
+  const order = ['Individual tablet', 'Bottle of 30', 'Bottle of 60', 'Bottle of 90', 'Bottle of 100'];
+  const idx = order.findIndex((label) => pack.startsWith(label));
+  if (idx >= 0) return idx;
+  const n = Number((pack.match(/\d+/) || [])[0]);
+  return Number.isFinite(n) ? 50 + n : 99;
+}
+
+function strengthGroupKey(strength: string | null): string {
+  const n = parseFloat(strength || '');
+  if (Number.isFinite(n)) return String(n);
+  return (strength || '').trim().toLowerCase() || 'each';
+}
+
+function groupVariantsByStrength(variants: StoreAdminVariant[]) {
+  const sorted = [...variants].sort((a, b) => {
+    const strengthA = parseFloat(a.strength || '') || 999;
+    const strengthB = parseFloat(b.strength || '') || 999;
+    if (strengthA !== strengthB) return strengthA - strengthB;
+    return packRank(a.pack) - packRank(b.pack);
+  });
+  const groups = new Map<string, StoreAdminVariant[]>();
+  for (const variant of sorted) {
+    const key = strengthGroupKey(variant.strength);
+    const list = groups.get(key) ?? [];
+    list.push(variant);
+    groups.set(key, list);
+  }
+  return [...groups.entries()].map(([key, rows]) => ({
+    key,
+    strength: rows.find((row) => row.strength)?.strength ?? null,
+    variants: rows,
+  }));
+}
+
+const STORE_ITEMS_PAGE_SIZE = 50;
+
+type AutoshipFilter = '' | 'on' | 'off';
+
+/** `on`: every inventory option has autoship. `off`: at least one inventory option doesn't. */
+function listingMatchesAutoship(listing: StoreAdminListing, filter: AutoshipFilter): boolean {
+  if (!filter) return true;
+  const inventory = listing.variants.filter((v) => v.inventoryItemId);
+  if (!inventory.length) return false;
+  const allOn = inventory.every((v) => Boolean(v.recommendedFrequency));
+  return filter === 'on' ? allOn : !allOn;
+}
+
+function listingMatchesSearch(listing: StoreAdminListing, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    listing.name,
+    listing.description,
+    ...listingCategoryNames(listing),
+    ...listing.variants.flatMap((variant) => [
+      variant.name,
+      variant.code,
+      variant.pack,
+      variant.strength,
+    ]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
+}
+
+const UNCATEGORIZED_FILTER = '__none__';
+
+function categoryParentName(name: string): string | null {
+  const i = name.indexOf('/');
+  if (i <= 0) return null;
+  return name.slice(0, i).trim() || null;
+}
+
+function categoryChildLabel(name: string, parent: string): string {
+  if (name === parent) return `All ${parent}`;
+  const prefix = name.startsWith(`${parent} /`)
+    ? `${parent} /`
+    : name.startsWith(`${parent}/`)
+      ? `${parent}/`
+      : null;
+  return prefix ? name.slice(prefix.length).trim() : name;
+}
+
+function categoryMatchesFilter(value: string, category: string): boolean {
+  if (value === category) return true;
+  return value.startsWith(`${category} /`) || value.startsWith(`${category}/`);
+}
+
+function listingMatchesCategory(listing: StoreAdminListing, category: string): boolean {
+  if (!category) return true;
+  const names = listingCategoryNames(listing);
+  if (category === UNCATEGORIZED_FILTER) return names.length === 0;
+  return names.some((value) => categoryMatchesFilter(value, category));
+}
+
+function itemMatchesCategory(
+  item: Pick<StoreItemRow, 'storeCategory'>,
+  category: string
+): boolean {
+  if (!category) return true;
+  const value = item.storeCategory?.trim() || '';
+  if (category === UNCATEGORIZED_FILTER) return !value;
+  return categoryMatchesFilter(value, category);
+}
+
+type CategoryFilterGroup = {
+  parent: string;
+  parentCount: number;
+  children: Array<{ value: string; label: string; count: number }>;
+};
+
+/** Only categories that actually have store products; the rest would filter to nothing. */
+function buildCategoryFilterGroups(
+  names: string[],
+  countFor: (category: string) => number
+): CategoryFilterGroup[] {
+  const unique = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+  const childrenByParent = new Map<string, string[]>();
+  const standalone: string[] = [];
+
+  for (const name of unique) {
+    const parent = categoryParentName(name);
+    if (!parent) {
+      standalone.push(name);
+      continue;
+    }
+    const list = childrenByParent.get(parent) ?? [];
+    if (name !== parent) list.push(name);
+    childrenByParent.set(parent, list);
+  }
+
+  const parentNames = new Set(childrenByParent.keys());
+  const groups: CategoryFilterGroup[] = [...parentNames].map((parent) => ({
+    parent,
+    parentCount: countFor(parent),
+    children: [...new Set(childrenByParent.get(parent) ?? [])]
+      .map((value) => ({
+        value,
+        label: categoryChildLabel(value, parent),
+        count: countFor(value),
+      }))
+      .filter((child) => child.count > 0)
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  }));
+
+  for (const name of standalone) {
+    if (parentNames.has(name)) continue;
+    groups.push({ parent: name, parentCount: countFor(name), children: [] });
+  }
+
+  return groups
+    .filter((group) => group.parentCount > 0)
+    .sort((a, b) => a.parent.localeCompare(b.parent));
+}
+
+function variantDisplayName(variant: StoreAdminVariant): string {
+  const name = String(variant.name || '').replace(/\s+/g, ' ').trim();
+  if (name) return name;
+  return [variant.strength, variant.pack].filter(Boolean).join(' · ') || 'Item';
+}
+
+function storeItemsPath(listingId?: string | null, adding = false) {
+  const params = new URLSearchParams();
+  params.set('tab', 'items');
+  if (listingId) params.set('product', listingId);
+  else if (adding) params.set('add', '1');
+  return `/schedule/inventory/online-store?${params.toString()}`;
+}
+
+function withReturnTo(href: string, returnTo: string) {
+  const url = new URL(href, 'https://local.invalid');
+  url.searchParams.set('returnTo', returnTo);
+  return `${url.pathname}${url.search}`;
+}
+
+function storeVariantHref(
+  variant: StoreAdminVariant,
+  returnTo?: string | null
+): string | null {
+  let href: string | null = null;
+  if (variant.procedureId && variant.catalogItemType === 'procedure') {
+    href = `/schedule/inventory/items?itemId=${variant.procedureId}&itemType=procedure&name=${encodeURIComponent(variant.name)}`;
+  } else if (variant.inventoryItemId) {
+    href = `/schedule/inventory/items?itemId=${variant.inventoryItemId}&name=${encodeURIComponent(variant.name)}`;
+  }
+  return href && returnTo ? withReturnTo(href, returnTo) : href;
+}
+
+function matchesOf(row: EcwidMapRow): EcwidMapMatch[] {
+  if (row.matches?.length) return row.matches;
+  if (row.inventoryItemId && row.matchName) {
+    return [
+      {
+        inventoryItemId: row.inventoryItemId,
+        catalogItemType: 'inventory',
+        name: row.matchName,
+        code: row.matchCode,
+      },
+    ];
+  }
+  return [];
+}
+
+function decodeJwtPayload(token: string | null): Record<string, unknown> | null {
+  if (!token) return null;
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+  } catch {
+    return null;
+  }
+}
+
+function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (message) return message;
+  return e instanceof Error ? e.message : 'Request failed';
+}
+
+function practiceIdFromAuth(token: string | null): number {
+  const p = decodeJwtPayload(token);
+  const raw = p?.practiceId ?? p?.practice_id;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return currentPracticeId();
+}
+
+/** `import` is the Ecwid / CSV import on its own, under Pharmacy → Setup. */
+export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'store' | 'import' }) {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const practiceId = practiceIdFromAuth(token);
+  const [maps, setMaps] = useState<EcwidMapRow[]>([]);
+  const [items, setItems] = useState<StoreItemRow[]>([]);
+  const [listings, setListings] = useState<StoreAdminListing[]>([]);
+  const [managedCategories, setManagedCategories] = useState<string[]>([]);
+  const [coupons, setCoupons] = useState<StoreCoupon[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Record<number, boolean>>({});
+  const [tab, setTab] = useState<StoreAdminTab>(view === 'import' ? 'import' : 'items');
+  const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [matchingId, setMatchingId] = useState<number | null>(null);
+  const [addStoreOpen, setAddStoreOpen] = useState(false);
+  const [workspaceListing, setWorkspaceListing] = useState<StoreAdminListing | null>(null);
+  const [itemQuery, setItemQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [approvalFilter, setApprovalFilter] = useState<'' | 'approved' | 'needs_doctor_approval'>('');
+  const [homeFilter, setHomeFilter] = useState<'' | 'on' | 'off'>('');
+  const [autoshipFilter, setAutoshipFilter] = useState<AutoshipFilter>('');
+  const [showAllItems, setShowAllItems] = useState(false);
+  const [itemsView, setItemsView] = useState<'live' | 'removed'>('live');
+  const [listedNotice, setListedNotice] = useState<{
+    listing: StoreAdminListing;
+    listed: boolean;
+  } | null>(null);
+  const [bulkAutoshipFrequency, setBulkAutoshipFrequency] = useState('monthly');
+  const [itemPage, setItemPage] = useState(1);
+  const [imageTick, setImageTick] = useState(0);
+
+  const load = async () => {
+    const [m, i, listingsRows, c, cats] = await Promise.all([
+      listEcwidMaps(practiceId),
+      listOnlineStoreItems(practiceId),
+      listOnlineStoreListings(practiceId, { includeRemoved: true }),
+      listStoreCoupons(practiceId),
+      listStoreCategories(practiceId).catch(() => []),
+    ]);
+    setMaps(m);
+    setItems(i);
+    setListings(listingsRows);
+    setCoupons(c);
+    setManagedCategories(cats.map((row) => row.name));
+    const next: Record<number, boolean> = {};
+    for (const row of m) {
+      if (matchesOf(row).length && row.status !== 'skipped') next[row.id] = true;
+    }
+    setSelected(next);
+  };
+
+  useEffect(() => {
+    void load().catch((e) => setError(apiErrorMessage(e)));
+  }, [practiceId]);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (
+      view === 'store' &&
+      (tabParam === 'items' || tabParam === 'coupons' || tabParam === 'autoship')
+    ) {
+      setTab(tabParam);
+    }
+    if (!listings.length) return;
+    const product = searchParams.get('product');
+    if (product) {
+      const listing = listings.find((row) => row.listingId === product);
+      if (!listing) return;
+      setAddStoreOpen(true);
+      setWorkspaceListing(listing);
+      return;
+    }
+    if (searchParams.get('add') === '1') {
+      setAddStoreOpen(true);
+    }
+  }, [listings, searchParams, view]);
+
+  const writeItemsParams = (next: { product?: string | null; add?: boolean }) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', 'items');
+    if (next.product) {
+      params.set('product', next.product);
+      params.delete('add');
+    } else {
+      params.delete('product');
+      if (next.add) params.set('add', '1');
+      else params.delete('add');
+    }
+    setSearchParams(params, { replace: true });
+  };
+
+  const uploadListingPhoto = async (listing: StoreAdminListing, file: File) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await uploadOnlineStoreListingImage(
+        practiceId,
+        listing.listingId,
+        file
+      );
+      if (updated) {
+        setListings((prev) =>
+          prev.map((row) =>
+            row.listingId === listing.listingId
+              ? { ...row, ...updated, variants: updated.variants ?? row.variants }
+              : row
+          )
+        );
+        setWorkspaceListing((prev) =>
+          prev?.listingId === listing.listingId
+            ? { ...prev, ...updated, variants: updated.variants ?? prev.variants }
+            : prev
+        );
+      }
+      setImageTick((tick) => tick + 1);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadVariantPhoto = async (
+    listing: StoreAdminListing,
+    variant: StoreAdminVariant,
+    file: File
+  ) => {
+    if (!variant.inventoryItemId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await uploadInventoryItemImage(practiceId, variant.inventoryItemId, file);
+      setListings((prev) =>
+        prev.map((row) =>
+          row.listingId === listing.listingId
+            ? {
+                ...row,
+                hasImage: true,
+                imageInventoryItemId: row.imageInventoryItemId ?? variant.inventoryItemId,
+                variants: row.variants.map((item) =>
+                  item.inventoryItemId === variant.inventoryItemId
+                    ? { ...item, hasImage: true }
+                    : item
+                ),
+              }
+            : row
+        )
+      );
+      setWorkspaceListing((prev) =>
+        prev?.listingId === listing.listingId
+          ? {
+              ...prev,
+              hasImage: true,
+              variants: prev.variants.map((item) =>
+                item.inventoryItemId === variant.inventoryItemId
+                  ? { ...item, hasImage: true }
+                  : item
+              ),
+            }
+          : prev
+      );
+      setImageTick((tick) => tick + 1);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectedIds = useMemo(
+    () => maps.filter((m) => selected[m.id] && matchesOf(m).length).map((m) => m.id),
+    [maps, selected]
+  );
+
+  const visibleMaps = useMemo(
+    () => (unmatchedOnly ? maps.filter((m) => !matchesOf(m).length) : maps),
+    [maps, unmatchedOnly]
+  );
+
+  const selectableVisibleMaps = useMemo(
+    () => visibleMaps.filter((m) => matchesOf(m).length),
+    [visibleMaps]
+  );
+
+  const allSelectableVisibleSelected =
+    selectableVisibleMaps.length > 0 &&
+    selectableVisibleMaps.every((m) => selected[m.id]);
+
+  const someSelectableVisibleSelected = selectableVisibleMaps.some((m) => selected[m.id]);
+
+  const importSelectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (importSelectAllRef.current) {
+      importSelectAllRef.current.indeterminate =
+        someSelectableVisibleSelected && !allSelectableVisibleSelected;
+    }
+  }, [someSelectableVisibleSelected, allSelectableVisibleSelected]);
+
+  const toggleSelectAllVisible = () => {
+    setSelected((s) => {
+      const next = { ...s };
+      const select = !allSelectableVisibleSelected;
+      for (const row of selectableVisibleMaps) next[row.id] = select;
+      return next;
+    });
+  };
+
+  const removeVariant = async (
+    listing: StoreAdminListing,
+    variant: StoreAdminVariant
+  ) => {
+    const label = [variantDisplayName(variant), variant.pack].filter(Boolean).join(' · ');
+    const last = listing.variants.length <= 1;
+    const ok = await appConfirm({
+      title: 'Are you sure?',
+      message: last
+        ? `Remove ${label || listing.name} from the online store?\n\nThis is the only option, so shoppers will not see the product. The Scout inventory stays. You can add it again with + Add store item.`
+        : `Remove ${label} from ${listing.name}?\n\nShoppers will not see this option. The Scout inventory stays.`,
+      confirmLabel: last ? 'Yes, remove from store' : 'Yes, remove this option',
+      cancelLabel: 'Keep on store',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await removeOnlineStoreVariant(practiceId, listing.listingId, {
+        inventoryItemId: variant.inventoryItemId,
+        procedureId: variant.procedureId,
+      });
+      if (updated) {
+        setListings((prev) =>
+          prev.map((row) => (row.listingId === listing.listingId ? { ...row, ...updated } : row))
+        );
+      } else {
+        setListings((prev) => prev.filter((row) => row.listingId !== listing.listingId));
+      }
+      setFlash(last ? `${listing.name} was removed from the store.` : `Removed ${label}.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const patchVariantAutoship = async (
+    listing: StoreAdminListing,
+    variant: StoreAdminVariant,
+    recommendedFrequency: string | null
+  ) => {
+    if (!variant.inventoryItemId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await patchOnlineStoreItem(practiceId, variant.inventoryItemId, {
+        recommendedFrequency,
+      });
+      setListings((prev) =>
+        prev.map((row) =>
+          row.listingId === listing.listingId
+            ? {
+                ...row,
+                variants: row.variants.map((item) =>
+                  item.inventoryItemId === variant.inventoryItemId
+                    ? { ...item, recommendedFrequency }
+                    : item
+                ),
+              }
+            : row
+        )
+      );
+      setItems((prev) =>
+        prev.map((item) =>
+          item.inventoryItemId === variant.inventoryItemId
+            ? { ...item, recommendedFrequency }
+            : item
+        )
+      );
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeFromStore = async (listing: StoreAdminListing) => {
+    const ok = await appConfirm({
+      title: 'Are you sure?',
+      message: `Remove ${listing.name} from the online store?\n\nShoppers will not see this product. The Scout inventory stays. You can add it again with + Add store item.`,
+      confirmLabel: 'Yes, remove from store',
+      cancelLabel: 'Keep on store',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await patchOnlineStoreListing(practiceId, listing.listingId, { listed: false });
+      setListings((prev) =>
+        prev.map((row) => (row.listingId === listing.listingId ? { ...row, listed: false } : row))
+      );
+      setFlash(null);
+      setListedNotice({ listing, listed: false });
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreToStore = async (listing: StoreAdminListing) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await patchOnlineStoreListing(practiceId, listing.listingId, { listed: true });
+      setListings((prev) =>
+        prev.map((row) => (row.listingId === listing.listingId ? { ...row, listed: true } : row))
+      );
+      setFlash(null);
+      setListedNotice({ listing, listed: true });
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeFromList = async (row: EcwidMapRow) => {
+    const ok = await appConfirm({
+      title: 'Remove from list?',
+      message: `Hide ${row.ecwidName} from this matching list? A later CSV import will not bring it back.`,
+      confirmLabel: 'Remove from list',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await patchEcwidMap(practiceId, row.id, { excluded: true });
+      setMaps((prev) => prev.filter((m) => m.id !== row.id));
+      setSelected((s) => {
+        const next = { ...s };
+        delete next[row.id];
+        return next;
+      });
+      if (matchingId === row.id) setMatchingId(null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyPatch = async (
+    row: EcwidMapRow,
+    body: Parameters<typeof patchEcwidMap>[2],
+    close = false
+  ) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await patchEcwidMap(practiceId, row.id, body);
+      setMaps((prev) => prev.map((m) => (m.id === row.id ? { ...m, ...updated } : m)));
+      setSelected((s) => ({ ...s, [row.id]: matchesOf(updated).length > 0 }));
+      if (close) setMatchingId(null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const storeCategories = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...managedCategories,
+          ...listings.flatMap((row) => listingCategoryNames(row)),
+        ]),
+      ].sort((a, b) => a.localeCompare(b)),
+    [listings, managedCategories]
+  );
+  const liveListings = useMemo(
+    () => listings.filter((listing) => listing.listed !== false),
+    [listings]
+  );
+  const removedListings = useMemo(
+    () => listings.filter((listing) => listing.listed === false),
+    [listings]
+  );
+  /** Store items tab shows either what shoppers can see or what was removed (restorable). */
+  const viewListings = itemsView === 'removed' ? removedListings : liveListings;
+  const categoryFilterGroups = useMemo(
+    () =>
+      buildCategoryFilterGroups(
+        storeCategories,
+        (category) =>
+          viewListings.filter((listing) => listingMatchesCategory(listing, category))
+            .length
+      ),
+    [viewListings, storeCategories]
+  );
+  const uncategorizedCount = useMemo(
+    () => viewListings.filter((listing) => listingCategoryNames(listing).length === 0).length,
+    [viewListings]
+  );
+
+  const rememberCategory = (name: string) => {
+    const next = name.trim();
+    if (!next) return;
+    setManagedCategories((prev) =>
+      prev.includes(next) ? prev : [...prev, next],
+    );
+    void createStoreCategory(practiceId, next).catch(() => undefined);
+  };
+
+  const filteredListings = useMemo(
+    () =>
+      viewListings.filter(
+        (listing) =>
+          listingMatchesCategory(listing, categoryFilter) &&
+          listingMatchesSearch(listing, itemQuery) &&
+          (!approvalFilter || listing.approvalTag === approvalFilter) &&
+          (!homeFilter || (homeFilter === 'on') === Boolean(listing.featuredOnHome)) &&
+          listingMatchesAutoship(listing, autoshipFilter)
+      ),
+    [approvalFilter, autoshipFilter, categoryFilter, homeFilter, itemQuery, viewListings]
+  );
+  const itemPageSize = showAllItems
+    ? Math.max(1, filteredListings.length)
+    : STORE_ITEMS_PAGE_SIZE;
+  const itemPageCount = Math.max(1, Math.ceil(filteredListings.length / itemPageSize));
+  const safeItemPage = Math.min(itemPage, itemPageCount);
+  const pagedListings = useMemo(() => {
+    const start = (safeItemPage - 1) * itemPageSize;
+    return filteredListings.slice(start, start + itemPageSize);
+  }, [filteredListings, itemPageSize, safeItemPage]);
+
+  useEffect(() => {
+    if (itemPage !== safeItemPage) setItemPage(safeItemPage);
+  }, [itemPage, safeItemPage]);
+
+  const categoryFilterLabel =
+    categoryFilter === UNCATEGORIZED_FILTER
+      ? 'Uncategorized'
+      : categoryFilter || '';
+  const categoryListings = useMemo(
+    () =>
+      categoryFilter
+        ? viewListings.filter((listing) => listingMatchesCategory(listing, categoryFilter))
+        : viewListings,
+    [categoryFilter, viewListings]
+  );
+  const autoshipTargetItems = useMemo(() => {
+    if (!categoryFilter) return items;
+    const fromListings = new Map<number, string | null>();
+    for (const listing of categoryListings) {
+      for (const variant of listing.variants) {
+        if (!variant.inventoryItemId) continue;
+        fromListings.set(variant.inventoryItemId, variant.recommendedFrequency ?? null);
+      }
+    }
+    const byId = new Map(items.map((item) => [item.inventoryItemId, item]));
+    const seen = new Set<number>();
+    const next: StoreItemRow[] = [];
+    for (const [id, frequency] of fromListings) {
+      seen.add(id);
+      const item = byId.get(id);
+      if (item) {
+        next.push(item);
+        continue;
+      }
+      next.push({
+        inventoryItemId: id,
+        name: '',
+        code: null,
+        onlineStorePrice: null,
+        shippable: true,
+        hasImage: false,
+        approvalTag: 'approved',
+        listed: true,
+        recommendedFrequency: frequency,
+        storeCategory: categoryFilterLabel,
+        description: null,
+      });
+    }
+    for (const item of items) {
+      if (seen.has(item.inventoryItemId)) continue;
+      if (!itemMatchesCategory(item, categoryFilter)) continue;
+      next.push(item);
+    }
+    return next;
+  }, [categoryFilter, categoryFilterLabel, categoryListings, items]);
+  const memorialInventoryIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const listing of listings) {
+      if (!listingCategoryNames(listing).some(isMemorialCategory)) continue;
+      for (const variant of listing.variants) {
+        if (variant.inventoryItemId) ids.add(variant.inventoryItemId);
+      }
+    }
+    for (const item of items) {
+      if (isMemorialCategory(item.storeCategory)) ids.add(item.inventoryItemId);
+    }
+    return ids;
+  }, [items, listings]);
+  const autoshipScopeItems = useMemo(() => {
+    if (categoryFilter) return autoshipTargetItems;
+    return autoshipTargetItems.filter(
+      (item) => !memorialInventoryIds.has(item.inventoryItemId),
+    );
+  }, [autoshipTargetItems, categoryFilter, memorialInventoryIds]);
+  const autoshipOnCount = autoshipScopeItems.filter((item) =>
+    Boolean(item.recommendedFrequency)
+  ).length;
+  const allAutoshipOn =
+    autoshipScopeItems.length > 0 && autoshipOnCount === autoshipScopeItems.length;
+  const someAutoshipOn = autoshipOnCount > 0 && !allAutoshipOn;
+  const categoryHasProducts = Boolean(categoryFilter && categoryListings.length);
+  const autoshipIsInventoryEmpty = autoshipScopeItems.length === 0;
+
+  const toggleAllAutoship = async () => {
+    if (autoshipIsInventoryEmpty && categoryFilter) return;
+    const scoped = Boolean(categoryFilter);
+    const scopeLabel = scoped ? categoryFilterLabel : 'inventory outside Memorial Items';
+    const cadenceLabel = formatAutoshipFrequency(bulkAutoshipFrequency);
+    if (allAutoshipOn) {
+      const first = await appConfirm({
+        title: scoped
+          ? `Turn off autoship for ${scopeLabel}?`
+          : 'Turn off autoship outside Memorial Items?',
+        message: scoped
+          ? `This turns autoship off on every store inventory option in ${scopeLabel}, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.`
+          : 'This turns autoship off on store inventory outside Memorial Items, not just the 50 on this page. Choose Memorial Items in the category list to change that group on its own.',
+        confirmLabel: 'Continue',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!first) return;
+      const second = await appConfirm({
+        title: 'Are you sure?',
+        message:
+          'Existing client subscriptions are not cancelled here, but new checkout will not offer autoship. This cannot be undone except by turning it back on item by item or with this same control.',
+        confirmLabel: 'Turn off autoship',
+        cancelLabel: 'Keep autoship',
+        danger: true,
+      });
+      if (!second) return;
+    } else {
+      const first = await appConfirm({
+        title: scoped
+          ? `Turn on autoship for ${scopeLabel}?`
+          : 'Turn on autoship outside Memorial Items?',
+        message: scoped
+          ? `This sets ${cadenceLabel} autoship on every store inventory option in ${scopeLabel} that is currently off — the whole category, not just this page.`
+          : `This sets ${cadenceLabel} autoship on inventory that is currently off, except Memorial Items. Items that already have a frequency keep it. Choose a category to change one group, including Memorial Items.`,
+        confirmLabel: 'Continue',
+        cancelLabel: 'Cancel',
+      });
+      if (!first) return;
+      const second = await appConfirm({
+        title: 'Are you sure?',
+        message: scoped
+          ? 'Only options that were off are changed; ones that already have a frequency stay as they are. Procedures without inventory are not included.'
+          : 'Memorial Items are turned off. Other inventory that was already on keeps its frequency. Procedures without inventory are not included.',
+        confirmLabel: `Turn on ${cadenceLabel} autoship`,
+        cancelLabel: 'Cancel',
+      });
+      if (!second) return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const scopeIds = autoshipScopeItems.map((item) => item.inventoryItemId);
+      let next = items;
+      if (scopeIds.length) {
+        next = await bulkPatchOnlineStoreItems(practiceId, {
+          inventoryItemIds: scopeIds,
+          recommendedFrequency: allAutoshipOn ? null : bulkAutoshipFrequency,
+          onlyMissing: !allAutoshipOn,
+        });
+      }
+      if (!scoped && !allAutoshipOn && memorialInventoryIds.size) {
+        next = await bulkPatchOnlineStoreItems(practiceId, {
+          inventoryItemIds: [...memorialInventoryIds],
+          recommendedFrequency: null,
+          onlyMissing: false,
+        });
+      }
+      setItems(next);
+      await load();
+      setFlash(
+        allAutoshipOn
+          ? `Autoship turned off for ${scopeLabel}.`
+          : scoped
+            ? `Autoship set to ${cadenceLabel} for ${scopeLabel} items that were off.`
+            : `Autoship set to ${cadenceLabel} outside Memorial Items. Memorial Items are off.`,
+      );
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const categorySelect = (
+    <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      Category
+      <select
+        className="settings-input"
+        style={{ minWidth: 220 }}
+        value={categoryFilter}
+        onChange={(e) => {
+          setCategoryFilter(e.target.value);
+          setItemPage(1);
+        }}
+        aria-label="Filter store items by category"
+      >
+        <option value="">All categories ({viewListings.length})</option>
+        {uncategorizedCount ? (
+          <option value={UNCATEGORIZED_FILTER}>Uncategorized ({uncategorizedCount})</option>
+        ) : null}
+        {categoryFilterGroups.map((group) =>
+          group.children.length ? (
+            <optgroup key={group.parent} label={group.parent}>
+              <option value={group.parent}>
+                All {group.parent} ({group.parentCount})
+              </option>
+              {group.children.map((child) => (
+                <option key={child.value} value={child.value}>
+                  {child.label} ({child.count})
+                </option>
+              ))}
+            </optgroup>
+          ) : (
+            <option key={group.parent} value={group.parent}>
+              {group.parent} ({group.parentCount})
+            </option>
+          )
+        )}
+      </select>
+    </label>
+  );
+
+  if (searchParams.get('tab') === 'shipping') {
+    return <Navigate to="/schedule/mail-orders" replace />;
+  }
+  if (view === 'store' && searchParams.get('tab') === 'import') {
+    return <Navigate to="/schedule/inventory/store-import" replace />;
+  }
+
+  return (
+    <div className="settings-card" style={{ padding: 16 }}>
+      {view === 'import' ? (
+        <h2 style={{ margin: '0 0 8px' }}>Online Store Import</h2>
+      ) : (
+      <div className="settings-tabs" role="tablist">
+        {(['items', 'coupons'] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            className={`settings-tab${tab === key ? ' active' : ''}`}
+            onClick={() => {
+              setTab(key);
+              const next = new URLSearchParams(searchParams);
+              next.set('tab', key);
+              if (key !== 'items') {
+                next.delete('product');
+                next.delete('add');
+                setAddStoreOpen(false);
+                setWorkspaceListing(null);
+              }
+              setSearchParams(next, { replace: true });
+            }}
+          >
+            {STORE_TAB_LABELS[key]}
+          </button>
+        ))}
+      </div>
+      )}
+      {addStoreOpen && tab === 'items' ? null : error ? (
+        <div className="settings-message settings-error-message">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+      {listedNotice && tab === 'items' && !addStoreOpen ? (
+        <div
+          className={`store-listed-notice${listedNotice.listed ? ' is-restored' : ''}`}
+          role="status"
+        >
+          <span>
+            <strong>{listedNotice.listing.name}</strong>{' '}
+            {listedNotice.listed
+              ? 'is back on the store.'
+              : 'was removed from the store. Shoppers can no longer see it — it’s under Removed if you need it back.'}
+          </span>
+          <span className="store-listed-notice__actions">
+            {listedNotice.listed ? null : (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => void restoreToStore(listedNotice.listing)}
+              >
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => setListedNotice(null)}
+              aria-label="Dismiss message"
+            >
+              Dismiss
+            </button>
+          </span>
+        </div>
+      ) : null}
+      {addStoreOpen && tab === 'items' ? null : flash ? (
+        <div className="settings-message">
+          <span>{flash}</span>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => setFlash(null)}
+            aria-label="Dismiss message"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {tab === 'import' && (
+        <>
+          <p className="settings-muted">
+            Ecwid is only a bootstrap. Upload the Ecwid CSV to seed Scout, then confirm the
+            matches. Autoship clones (MONTHLY / QUARTERLY / etc.) are skipped. One Ecwid product
+            can match many Scout items. Confirming creates a master product plus variations —
+            list prices stay on the Scout item. When this store is the way you want it, download
+            the catalog and upload that file on production. It carries products, categories,
+            autoship, and photos, and matches inventory by eVet id.
+          </p>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label className="settings-label">
+              Ecwid CSV
+              <input
+                className="settings-input"
+                type="file"
+                accept=".csv,text/csv"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setBusy(true);
+                  setError(null);
+                  void importEcwidCatalog(practiceId, file)
+                    .then((res) => {
+                      setMaps(res.maps);
+                      setFlash(
+                        `Imported ${res.masters} products. Excluded ${res.clonesExcluded} autoship clones.`
+                      );
+                    })
+                    .catch((err) => setError(apiErrorMessage(err)))
+                    .finally(() => setBusy(false));
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                void downloadStoreCatalog(practiceId)
+                  .then(() => setFlash('Downloaded the store catalog.'))
+                  .catch((err) => setError(apiErrorMessage(err)))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Download catalog
+            </button>
+            <label className="settings-label">
+              Upload catalog
+              <input
+                className="settings-input"
+                type="file"
+                accept=".zip,.csv,application/zip,text/csv"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setBusy(true);
+                  setError(null);
+                  void importStoreCatalog(practiceId, file)
+                    .then(async (res) => {
+                      const missed = res.unmatched.length;
+                      const removed = res.unlisted || 0;
+                      setFlash(
+                        `Updated ${res.products} products (${res.variants} options, ${res.images} photos).` +
+                          (removed
+                            ? ` Took ${removed} product${removed === 1 ? '' : 's'} off the store because they were not in the file.`
+                            : '') +
+                          (missed
+                            ? ` ${missed} row${missed === 1 ? '' : 's'} did not match an item here.`
+                            : '')
+                      );
+                      if (missed) {
+                        setError(
+                          res.unmatched
+                            .slice(0, 8)
+                            .map((row) => `${row.productName}: ${row.reason}`)
+                            .join(' · ')
+                        );
+                      }
+                      await load();
+                    })
+                    .catch((err) => setError(apiErrorMessage(err)))
+                    .finally(() => setBusy(false));
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy || !selectedIds.length}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                void confirmEcwidMaps(practiceId, selectedIds)
+                  .then((res) => {
+                    const ok = res.results.filter((r) => r.ok).length;
+                    const bad = res.results.filter((r) => !r.ok);
+                    setFlash(
+                      `Listed ${ok} item${ok === 1 ? '' : 's'} on the online store.`
+                    );
+                    if (bad.length) {
+                      setError(bad.map((b) => `${b.name}: ${b.error}`).join(' · '));
+                    }
+                    return load();
+                  })
+                  .catch((err) => setError(apiErrorMessage(err)))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {busy ? 'Working…' : `Show ${selectedIds.length} on online store`}
+            </button>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={unmatchedOnly}
+                onChange={() => setUnmatchedOnly((v) => !v)}
+              />
+              Unmatched only ({maps.filter((m) => !matchesOf(m).length).length})
+            </label>
+          </div>
+          <div className="inv-catalog-results__table-scroll">
+            <table className="inv-catalog-results__table">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      ref={importSelectAllRef}
+                      type="checkbox"
+                      aria-label="Select all rows with Scout matches"
+                      disabled={busy || !selectableVisibleMaps.length}
+                      checked={allSelectableVisibleSelected}
+                      onChange={() => toggleSelectAllVisible()}
+                    />
+                  </th>
+                  <th>Ecwid</th>
+                  <th>SKU</th>
+                  <th>Match</th>
+                  <th>Confidence</th>
+                  <th>Autoship</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleMaps.map((row) => (
+                  <tr key={row.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        disabled={!matchesOf(row).length}
+                        checked={!!selected[row.id]}
+                        onChange={() =>
+                          setSelected((s) => ({ ...s, [row.id]: !s[row.id] }))
+                        }
+                      />
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {row.ecwidImageUrl ? (
+                          <img
+                            src={row.ecwidImageUrl}
+                            alt=""
+                            style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6 }}
+                          />
+                        ) : null}
+                        <div>
+                          <span>{row.ecwidName}</span>
+                          {row.ecwidCategory ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              {row.ecwidCategory}
+                            </div>
+                          ) : null}
+                          {row.variationHints ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              Options: {row.variationHints}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </td>
+                    <td>{row.ecwidSku}</td>
+                    <td style={{ minWidth: 320 }}>
+                      <InventoryMatchPicker
+                        row={row}
+                        practiceId={practiceId}
+                        open={matchingId === row.id}
+                        busy={busy}
+                        onOpen={() => setMatchingId(row.id)}
+                        onClose={() => setMatchingId(null)}
+                        onAdd={(id, type) =>
+                          void applyPatch(
+                            row,
+                            type === 'procedure'
+                              ? { addProcedureId: id }
+                              : { addInventoryItemId: id }
+                          )
+                        }
+                        onAddAll={(hits) =>
+                          void applyPatch(row, {
+                            inventoryItemIds: [
+                              ...new Set([
+                                ...matchesOf(row)
+                                  .filter((m) => matchType(m) === 'inventory')
+                                  .map((m) => m.inventoryItemId),
+                                ...hits
+                                  .filter((h) => (h.catalogItemType ?? 'inventory') === 'inventory')
+                                  .map((h) => h.id),
+                              ]),
+                            ],
+                            procedureIds: [
+                              ...new Set([
+                                ...matchesOf(row)
+                                  .filter((m) => matchType(m) === 'procedure')
+                                  .map((m) => m.inventoryItemId),
+                                ...hits
+                                  .filter((h) => h.catalogItemType === 'procedure')
+                                  .map((h) => h.id),
+                              ]),
+                            ],
+                          })
+                        }
+                        onRemove={(id, type) =>
+                          void applyPatch(
+                            row,
+                            type === 'procedure'
+                              ? { removeProcedureId: id }
+                              : { removeInventoryItemId: id }
+                          )
+                        }
+                        onClear={() => void applyPatch(row, { inventoryItemId: null }, true)}
+                      />
+                    </td>
+                    <td>
+                      {matchesOf(row).length > 1
+                        ? `${matchesOf(row).length} items`
+                        : row.confidence}
+                    </td>
+                    <td>{row.recommendedFrequency || '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={busy}
+                        onClick={() => void removeFromList(row)}
+                      >
+                        Remove from list
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tab === 'items' && (
+        <>
+          {addStoreOpen ? null : (
+          <>
+          <p className="settings-muted">
+            Each row is a Scout store product. Add a master product first, then attach
+            inventory or procedure options — or create a new inventory item and add it.
+            Highlight and approval live on the product; autoship is per option (check the
+            Autoship box on an option and pick its suggested cadence). The table shows 50 at a time.
+          </p>
+          <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy}
+              onClick={() => {
+                setWorkspaceListing(null);
+                setAddStoreOpen(true);
+                writeItemsParams({ add: true });
+              }}
+            >
+              + Add store item
+            </button>
+            {!listings.some((row) => row.kind === 'gift_card') ? (
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={busy}
+                onClick={() => {
+                  void createOnlineStoreProduct(practiceId, {
+                    name: 'Gift Card',
+                    kind: 'gift_card',
+                    storeCategory: 'Gift Cards',
+                    giftCardAmounts: [25, 50, 100, 250],
+                    giftCardAllowCustom: true,
+                    giftCardMin: 10,
+                    giftCardMax: 500,
+                    description:
+                      '<p>Give the gift of care at home. Good toward visits, services, and anything in our online store. Delivered by email with a printable copy.</p>',
+                  })
+                    .then(() => load())
+                    .catch((err) => setError(apiErrorMessage(err)));
+                }}
+              >
+                + Add gift card listing
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={busy}
+              onClick={() =>
+                navigate(
+                  withReturnTo(
+                    '/schedule/inventory/items?create=inventory',
+                    storeItemsPath(null, false)
+                  )
+                )
+              }
+            >
+              + Add inventory item
+            </button>
+          </div>
+          </>
+          )}
+          {addStoreOpen ? (
+            <AddStoreProductWizard
+              key={workspaceListing?.listingId ?? 'new-store-product'}
+              practiceId={practiceId}
+              busy={busy}
+              onBusy={setBusy}
+              error={error}
+              onError={(message) => setError(message)}
+              initialDraft={workspaceListing}
+              listings={listings}
+              categoryOptions={storeCategories}
+              onDone={() => {
+                setAddStoreOpen(false);
+                setWorkspaceListing(null);
+                setError(null);
+                setFlash(null);
+                writeItemsParams({});
+              }}
+              onCreated={async (listing) => {
+                setError(null);
+                setFlash(null);
+                setWorkspaceListing(listing);
+                writeItemsParams({ product: listing.listingId });
+                await load();
+              }}
+              onVariantAdded={async () => {
+                setError(null);
+                setFlash(null);
+                await load();
+              }}
+            />
+          ) : null}
+          {addStoreOpen ? null : (
+          <>
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              marginBottom: 10,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <div className="store-items-view-toggle" role="tablist" aria-label="Store items view">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={itemsView === 'live'}
+                className={itemsView === 'live' ? 'btn primary' : 'btn secondary'}
+                onClick={() => {
+                  setItemsView('live');
+                  setItemPage(1);
+                }}
+              >
+                On the store ({liveListings.length})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={itemsView === 'removed'}
+                className={itemsView === 'removed' ? 'btn primary' : 'btn secondary'}
+                onClick={() => {
+                  setItemsView('removed');
+                  setItemPage(1);
+                }}
+              >
+                Removed ({removedListings.length})
+              </button>
+            </div>
+            <input
+              className="settings-input"
+              style={{ maxWidth: 420, flex: '1 1 240px' }}
+              placeholder="Search store items, SKUs, or descriptions"
+              value={itemQuery}
+              onChange={(e) => {
+                setItemQuery(e.target.value);
+                setItemPage(1);
+              }}
+            />
+            {categorySelect}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              marginBottom: 10,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Approval default
+              <select
+                className="settings-input"
+                value={approvalFilter}
+                onChange={(e) => {
+                  setApprovalFilter(e.target.value as typeof approvalFilter);
+                  setItemPage(1);
+                }}
+              >
+                <option value="">Any</option>
+                <option value="needs_doctor_approval">Needs doctor approval</option>
+                <option value="approved">Approved</option>
+              </select>
+            </label>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Highlight on home
+              <select
+                className="settings-input"
+                value={homeFilter}
+                onChange={(e) => {
+                  setHomeFilter(e.target.value as typeof homeFilter);
+                  setItemPage(1);
+                }}
+              >
+                <option value="">Any</option>
+                <option value="on">On the home page</option>
+                <option value="off">Not on the home page</option>
+              </select>
+            </label>
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Autoship
+              <select
+                className="settings-input"
+                value={autoshipFilter}
+                onChange={(e) => {
+                  setAutoshipFilter(e.target.value as AutoshipFilter);
+                  setItemPage(1);
+                }}
+              >
+                <option value="">Any</option>
+                <option value="on">On for every size</option>
+                <option value="off">Off for at least one size</option>
+              </select>
+            </label>
+            {approvalFilter || homeFilter || autoshipFilter ? (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  setApprovalFilter('');
+                  setHomeFilter('');
+                  setAutoshipFilter('');
+                  setItemPage(1);
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+          <StoreItemsPager
+            page={safeItemPage}
+            pageCount={itemPageCount}
+            pageSize={itemPageSize}
+            total={filteredListings.length}
+            onPage={setItemPage}
+            showAll={showAllItems}
+            onShowAll={(next) => {
+              setShowAllItems(next);
+              setItemPage(1);
+            }}
+          />
+        <div className="store-items-table-wrap">
+        <table className="inv-catalog-results__table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Approval default</th>
+              <th>Highlight on home</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {pagedListings.map((listing) => (
+              <tr key={listing.listingId}>
+                <td style={{ verticalAlign: 'top', minWidth: 320 }}>
+                  <div className="store-add-workspace__option-main">
+                    <StorePhotoUpload
+                      src={withImageBust(masterImageSrc(practiceId, listing), imageTick)}
+                      label={listing.name}
+                      disabled={busy}
+                      title={`Upload photo for ${listing.name}`}
+                      onFile={(file) => void uploadListingPhoto(listing, file)}
+                    />
+                    <div style={{ fontWeight: 600 }}>{listing.name}</div>
+                  </div>
+                  <div className="store-add-workspace__field" style={{ marginTop: 8 }}>
+                    <span>Store categories</span>
+                    <StoreCategoryPicker
+                      value={listingCategoryNames(listing)}
+                      options={storeCategories}
+                      disabled={busy}
+                      onChange={(next, added) => {
+                        if (added) void rememberCategory(added);
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId
+                              ? { ...row, storeCategory: next[0] ?? null, storeCategories: next }
+                              : row
+                          )
+                        );
+                        void patchOnlineStoreListing(practiceId, listing.listingId, {
+                          storeCategories: next,
+                        })
+                          .then((updated) => {
+                            if (!updated) return;
+                            setListings((prev) =>
+                              prev.map((row) =>
+                                row.listingId === listing.listingId
+                                  ? { ...row, ...updated }
+                                  : row
+                              )
+                            );
+                          })
+                          .catch((err) => setError(apiErrorMessage(err)));
+                      }}
+                    />
+                  </div>
+                  <StoreSaleEditor
+                    {...saleFieldsFromListing(listing)}
+                    saleActive={listing.saleActive}
+                    disabled={busy}
+                    onChange={(next) => {
+                      const current = saleFieldsFromListing(listing);
+                      if (
+                        current.saleType === next.saleType &&
+                        current.saleValue === next.saleValue &&
+                        (current.saleEndsAt || null) === (next.saleEndsAt || null)
+                      ) {
+                        return;
+                      }
+                      void patchOnlineStoreListing(practiceId, listing.listingId, next).then(
+                        (updated) => {
+                          if (!updated) return;
+                          setListings((prev) =>
+                            prev.map((row) =>
+                              row.listingId === listing.listingId
+                                ? { ...row, ...updated }
+                                : row
+                            )
+                          );
+                        }
+                      );
+                    }}
+                  />
+                  <StoreDescriptionEditor
+                    value={listing.description}
+                    listings={listings}
+                    currentListingId={listing.listingId}
+                    disabled={busy}
+                    onSave={(description) => {
+                      void patchOnlineStoreListing(practiceId, listing.listingId, {
+                        description,
+                      }).then((updated) => {
+                        if (!updated) return;
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId ? { ...row, ...updated } : row
+                          )
+                        );
+                      });
+                    }}
+                  />
+                  {listing.kind === 'gift_card' ? (
+                    <StoreGiftCardSettingsEditor
+                      value={listing.giftCard}
+                      disabled={busy}
+                      onSave={async (patch) => {
+                        const updated = await patchOnlineStoreListing(
+                          practiceId,
+                          listing.listingId,
+                          patch
+                        ).catch((err) => {
+                          throw new Error(apiErrorMessage(err));
+                        });
+                        if (!updated) return;
+                        setListings((prev) =>
+                          prev.map((row) =>
+                            row.listingId === listing.listingId ? { ...row, ...updated } : row
+                          )
+                        );
+                      }}
+                    />
+                  ) : listing.variants.length ? (
+                    <div className="store-variant-groups">
+                      {groupVariantsByStrength(listing.variants).map((group) => (
+                        <div key={`${listing.listingId}:${group.key}`}>
+                          {group.strength ? (
+                            <div className="store-variant-group__strength">
+                              {group.strength}
+                            </div>
+                          ) : null}
+                          <ul className="store-variant-group__packs">
+                            {group.variants.map((variant) => {
+                              const href = storeVariantHref(variant, storeItemsPath());
+                              return (
+                                <li
+                                  key={
+                                    variant.inventoryItemId
+                                      ? `inv:${variant.inventoryItemId}`
+                                      : `proc:${variant.procedureId}`
+                                  }
+                                >
+                                  {variant.inventoryItemId ? (
+                                    <StorePhotoUpload
+                                      src={withImageBust(
+                                        variantImageSrc(practiceId, variant),
+                                        imageTick
+                                      )}
+                                      label={variantDisplayName(variant)}
+                                      disabled={busy}
+                                      title={`Upload photo for ${variantDisplayName(variant)}`}
+                                      onFile={(file) =>
+                                        void uploadVariantPhoto(listing, variant, file)
+                                      }
+                                    />
+                                  ) : (
+                                    <StorePhotoUpload
+                                      src={withImageBust(
+                                        masterImageSrc(practiceId, listing),
+                                        imageTick
+                                      )}
+                                      label={variantDisplayName(variant)}
+                                      disabled={busy}
+                                      title={`Procedures use the ${listing.name} photo. Click to upload it.`}
+                                      onFile={(file) => void uploadListingPhoto(listing, file)}
+                                    />
+                                  )}
+                                  {href ? (
+                                    <Link className="inv-catalog-results__text-btn" to={href}>
+                                      {variantDisplayName(variant)}
+                                    </Link>
+                                  ) : (
+                                    <span>{variantDisplayName(variant)}</span>
+                                  )}
+                                  {variant.pack &&
+                                  variant.pack !== 'Each' &&
+                                  !variantDisplayName(variant)
+                                    .toLowerCase()
+                                    .includes(variant.pack.toLowerCase()) ? (
+                                    <span className="settings-muted"> · {variant.pack}</span>
+                                  ) : null}
+                                  {variant.catalogItemType === 'procedure' ? (
+                                    <span className="settings-muted"> · procedure</span>
+                                  ) : null}
+                                  {!(Number(variant.onlineStorePrice) > 0) ? (
+                                    <span
+                                      className="store-variant-zero-price"
+                                      title="Options without a price are hidden from shoppers. Set a price on the item or remove this option."
+                                    >
+                                      $0 · hidden from shoppers
+                                    </span>
+                                  ) : null}
+                                  {variant.inventoryItemId ? (
+                                    <label className="store-variant-group__autoship">
+                                      <input
+                                        type="checkbox"
+                                        disabled={busy}
+                                        checked={Boolean(variant.recommendedFrequency)}
+                                        onChange={(e) => {
+                                          void patchVariantAutoship(
+                                            listing,
+                                            variant,
+                                            e.target.checked
+                                              ? variant.recommendedFrequency || 'monthly'
+                                              : null
+                                          );
+                                        }}
+                                      />
+                                      <span className="settings-muted">Autoship</span>
+                                      {variant.recommendedFrequency ? (
+                                        <select
+                                          className="settings-input"
+                                          disabled={busy}
+                                          value={variant.recommendedFrequency}
+                                          onChange={(e) => {
+                                            void patchVariantAutoship(
+                                              listing,
+                                              variant,
+                                              e.target.value
+                                            );
+                                          }}
+                                        >
+                                          {autoshipFrequencyOptions(variant.recommendedFrequency).map((freq) => (
+                                            <option key={freq.value} value={freq.value}>
+                                              {freq.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : null}
+                                    </label>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="store-variant-group__remove"
+                                    disabled={busy}
+                                    title="Remove this option"
+                                    aria-label={`Remove ${variant.pack}`}
+                                    onClick={() => void removeVariant(listing, variant)}
+                                  >
+                                    ×
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="settings-muted" style={{ margin: '8px 0 0' }}>
+                      No options yet. Add inventory or procedures below.
+                    </p>
+                  )}
+                  {listing.kind !== 'gift_card' ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ marginTop: 8 }}
+                      disabled={busy}
+                      onClick={() => {
+                        setWorkspaceListing(listing);
+                        setAddStoreOpen(true);
+                        writeItemsParams({ product: listing.listingId });
+                      }}
+                    >
+                      + Add option
+                    </button>
+                  ) : null}
+                </td>
+                <td>
+                  {listing.kind === 'gift_card' ? (
+                    <span className="settings-muted">Gift card · no pet or approval needed</span>
+                  ) : (
+                    <>
+                      <select
+                        className="settings-input"
+                        value={listing.approvalTag}
+                        onChange={(e) => {
+                          const approvalTag = e.target.value as StoreItemRow['approvalTag'];
+                          void patchOnlineStoreListing(practiceId, listing.listingId, {
+                            approvalTag,
+                          }).then(() => load());
+                        }}
+                      >
+                        <option value="approved">Approved</option>
+                        <option value="needs_doctor_approval">Needs doctor approval</option>
+                      </select>
+                      <label
+                        className="settings-muted"
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}
+                        title="Shoppers must log in and pick which pet this is for. Prescription items always require a pet."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(listing.requiresPet) || listing.approvalTag === 'needs_doctor_approval'}
+                          disabled={busy || listing.approvalTag === 'needs_doctor_approval'}
+                          onChange={(e) => {
+                            const requiresPet = e.target.checked;
+                            setListings((prev) =>
+                              prev.map((row) =>
+                                row.listingId === listing.listingId ? { ...row, requiresPet } : row
+                              )
+                            );
+                            void patchOnlineStoreListing(practiceId, listing.listingId, {
+                              requiresPet,
+                            }).catch((err) => setError(apiErrorMessage(err)));
+                          }}
+                        />
+                        Requires a pet
+                      </label>
+                    </>
+                  )}
+                </td>
+                <td>
+                  <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(listing.featuredOnHome)}
+                      onChange={(e) => {
+                        const featuredOnHome = e.target.checked;
+                        void patchOnlineStoreListing(practiceId, listing.listingId, {
+                          featuredOnHome,
+                        }).then(() => load());
+                      }}
+                    />
+                    {listing.featuredOnHome ? 'On the home page' : 'Not on the home page'}
+                  </label>
+                </td>
+                <td>
+                  {listing.listed === false ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => void restoreToStore(listing)}
+                    >
+                      Restore to store
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={busy}
+                      onClick={() => void removeFromStore(listing)}
+                    >
+                      Remove from store
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+        {pagedListings.length === 0 ? (
+          <p className="settings-muted">
+            {itemQuery.trim()
+              ? 'No store items match that search.'
+              : 'No store items yet.'}
+          </p>
+        ) : (
+          <StoreItemsPager
+            page={safeItemPage}
+            pageCount={itemPageCount}
+            pageSize={itemPageSize}
+            total={filteredListings.length}
+            onPage={setItemPage}
+          />
+        )}
+          </>
+          )}
+        </>
+      )}
+
+      {tab === 'autoship' && (
+        <>
+          <p className="settings-muted">
+            Turn autoship on or off for many store options at once. Pick a category to change
+            just that group, or leave All categories to change everything except Memorial Items.
+            Options that already have a cadence keep it when you turn a group on. To change one
+            option, use its Autoship box under Store items.
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              margin: '12px 0',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            {categorySelect}
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Cadence when turning on
+              <select
+                className="settings-input"
+                value={bulkAutoshipFrequency}
+                disabled={busy}
+                onChange={(e) => setBulkAutoshipFrequency(e.target.value)}
+                aria-label="Autoship cadence used when turning a group on"
+              >
+                {AUTOSHIP_FREQS.map((freq) => (
+                  <option key={freq.value} value={freq.value}>
+                    {freq.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            className={`store-autoship-all${
+              allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
+            }`}
+            disabled={busy || autoshipIsInventoryEmpty}
+            onClick={() => void toggleAllAutoship()}
+          >
+            <span className="store-autoship-all__mark" aria-hidden>
+              {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
+            </span>
+            <span className="store-autoship-all__copy">
+              <strong>
+                {categoryFilter ? `Autoship ${categoryFilterLabel}` : 'Autoship inventory'}
+              </strong>
+              <span>
+                {autoshipIsInventoryEmpty
+                  ? categoryHasProducts
+                    ? `${categoryListings.length} product${
+                        categoryListings.length === 1 ? '' : 's'
+                      } here, but none have an inventory option — autoship only applies to inventory.`
+                    : `No inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                      }.`
+                  : allAutoshipOn
+                    ? `On for all ${autoshipScopeItems.length} inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                      }. Click to turn off.`
+                    : someAutoshipOn
+                      ? `On for ${autoshipOnCount} of ${autoshipScopeItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                        }. Click to turn the rest on.`
+                      : `Off for all ${autoshipScopeItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ' outside Memorial Items'
+                        }. Click to turn on.`}
+              </span>
+            </span>
+          </button>
+        </>
+      )}
+
+      {tab === 'coupons' && (
+        <CouponEditor
+          coupons={coupons}
+          onSave={async (body) => {
+            await saveStoreCoupon(practiceId, body);
+            await load();
+          }}
+          onDelete={async (id) => {
+            await deleteStoreCoupon(practiceId, id);
+            await load();
+          }}
+        />
+      )}
+
+    </div>
+  );
+}
+
+function InventoryMatchPicker({
+  row,
+  practiceId,
+  open,
+  busy,
+  onOpen,
+  onClose,
+  onAdd,
+  onAddAll,
+  onRemove,
+  onClear,
+}: {
+  row: EcwidMapRow;
+  practiceId: number;
+  open: boolean;
+  busy: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onAdd: (id: number, type: 'inventory' | 'procedure') => void;
+  onAddAll: (
+    hits: Array<{ id: number; catalogItemType?: 'inventory' | 'procedure' }>
+  ) => void;
+  onRemove: (id: number, type: 'inventory' | 'procedure') => void;
+  onClear: () => void;
+}) {
+  const matches = matchesOf(row);
+  const matchedKeys = new Set(matches.map((m) => matchKey(m)));
+  const [q, setQ] = useState(row.ecwidName);
+  const [hits, setHits] = useState<
+    Array<{
+      id: number;
+      name: string;
+      code: string | null;
+      catalogItemType?: 'inventory' | 'procedure';
+    }>
+  >([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (open) setQ(row.ecwidName);
+  }, [open, row.ecwidName]);
+
+  useEffect(() => {
+    if (!open) return;
+    const query = q.trim();
+    if (query.length < 2) {
+      setHits([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setSearching(true);
+      void searchStoreInventory(practiceId, query)
+        .then(setHits)
+        .catch(() => setHits([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [open, practiceId, q]);
+
+  const addable = hits.filter(
+    (hit) => !matchedKeys.has(`${hit.catalogItemType ?? 'inventory'}:${hit.id}`)
+  );
+
+  return (
+    <div>
+      {matches.length ? (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
+          {matches.map((match) => (
+            <li
+              key={matchKey(match)}
+              style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}
+            >
+              <span>
+                {match.name}
+                {match.code ? <span className="settings-muted"> ({match.code})</span> : null}
+                {matchType(match) === 'procedure' ? (
+                  <span className="settings-muted"> · procedure</span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={busy}
+                onClick={() => onRemove(match.inventoryItemId, matchType(match))}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="settings-muted" style={{ marginBottom: 6 }}>
+          No Scout items yet
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button type="button" className="btn secondary" disabled={busy} onClick={open ? onClose : onOpen}>
+          {open ? 'Done' : 'Add Scout items'}
+        </button>
+        {matches.length ? (
+          <button type="button" className="btn secondary" disabled={busy} onClick={onClear}>
+            Clear all
+          </button>
+        ) : null}
+      </div>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <input
+            className="settings-input"
+            autoFocus
+            value={q}
+            disabled={busy}
+            placeholder="Search inventory or procedures — memorial items live on procedures"
+            onChange={(e) => setQ(e.target.value)}
+          />
+          {addable.length > 1 && (
+            <button
+              type="button"
+              className="btn primary"
+              style={{ marginTop: 8 }}
+              disabled={busy}
+              onClick={() => onAddAll(addable)}
+            >
+              Add all {addable.length} matches
+            </button>
+          )}
+          {searching && <p className="settings-muted" style={{ margin: '6px 0 0' }}>Searching…</p>}
+          {hits.length > 0 && (
+            <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0' }}>
+              {hits.map((hit) => {
+                const type = hit.catalogItemType ?? 'inventory';
+                const added = matchedKeys.has(`${type}:${hit.id}`);
+                return (
+                  <li key={`${type}:${hit.id}`}>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ width: '100%', textAlign: 'left', marginBottom: 4 }}
+                      disabled={busy || added}
+                      onClick={() => onAdd(hit.id, type)}
+                    >
+                      {added ? 'Added · ' : ''}
+                      {hit.name}
+                      {hit.code ? <span className="settings-muted"> · {hit.code}</span> : null}
+                      {type === 'procedure' ? (
+                        <span className="settings-muted"> · procedure</span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {!searching && q.trim().length >= 2 && hits.length === 0 && (
+            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+              No Scout items match that search.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddStoreProductWizard({
+  practiceId,
+  busy,
+  onBusy,
+  error,
+  onError,
+  listings,
+  categoryOptions,
+  initialDraft,
+  onDone,
+  onCreated,
+  onVariantAdded,
+}: {
+  practiceId: number;
+  busy: boolean;
+  error?: string | null;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string | null) => void;
+  listings: StoreAdminListing[];
+  categoryOptions: string[];
+  initialDraft?: StoreAdminListing | null;
+  onDone: () => void;
+  onCreated: (listing: StoreAdminListing) => Promise<void>;
+  onVariantAdded: (listing: StoreAdminListing) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState<string | null>(null);
+  const [approvalTag, setApprovalTag] =
+    useState<StoreItemRow['approvalTag']>('approved');
+  const [featuredOnHome, setFeaturedOnHome] = useState(false);
+  const [storeCategories, setStoreCategories] = useState<string[]>([]);
+  const [sale, setSale] = useState<StoreSaleFields>({
+    saleType: null,
+    saleValue: null,
+    saleEndsAt: null,
+  });
+  const [newOptionAutoship, setNewOptionAutoship] = useState<string | null>(null);
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
+  const [imageTick, setImageTick] = useState(0);
+  const [draft, setDraft] = useState<StoreAdminListing | null>(initialDraft ?? null);
+
+  useEffect(() => {
+    setDraft(initialDraft ?? null);
+    if (initialDraft) {
+      setApprovalTag(initialDraft.approvalTag);
+      setFeaturedOnHome(Boolean(initialDraft.featuredOnHome));
+      setStoreCategories(listingCategoryNames(initialDraft));
+      setSale(saleFieldsFromListing(initialDraft));
+    }
+  }, [initialDraft]);
+
+  useEffect(() => {
+    if (!pendingImage) {
+      setPendingPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(pendingImage);
+    setPendingPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingImage]);
+
+  const createMaster = async () => {
+    const nextName = name.trim();
+    if (!nextName) {
+      onError('Name the master product first.');
+      return;
+    }
+    onBusy(true);
+    onError(null);
+    try {
+      let created = await createOnlineStoreProduct(practiceId, {
+        name: nextName,
+        description,
+        approvalTag,
+        featuredOnHome,
+        storeCategory: storeCategories[0] ?? null,
+        saleType: sale.saleType,
+        saleValue: sale.saleValue,
+        saleEndsAt: sale.saleEndsAt,
+      });
+      if (storeCategories.length > 1) {
+        const withCategories = await patchOnlineStoreListing(practiceId, created.listingId, {
+          storeCategories,
+        });
+        if (withCategories) created = withCategories;
+      }
+      if (pendingImage) {
+        const withImage = await uploadOnlineStoreListingImage(
+          practiceId,
+          created.listingId,
+          pendingImage
+        );
+        if (withImage) created = withImage;
+        setPendingImage(null);
+      }
+      setDraft(created);
+      setName('');
+      setDescription(null);
+      setSale(saleFieldsFromListing(created));
+      await onCreated(created);
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const uploadDraftImage = async (file: File) => {
+    if (!draft) {
+      setPendingImage(file);
+      return;
+    }
+    onBusy(true);
+    onError(null);
+    try {
+      const updated = await uploadOnlineStoreListingImage(
+        practiceId,
+        draft.listingId,
+        file
+      );
+      if (updated) {
+        setDraft((prev) =>
+          prev
+            ? { ...prev, ...updated, variants: updated.variants ?? prev.variants }
+            : prev
+        );
+      }
+      setPendingImage(null);
+      setImageTick((tick) => tick + 1);
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const uploadOptionImage = async (variant: StoreAdminVariant, file: File) => {
+    if (!variant.inventoryItemId) {
+      await uploadDraftImage(file);
+      return;
+    }
+    onBusy(true);
+    onError(null);
+    try {
+      await uploadInventoryItemImage(practiceId, variant.inventoryItemId, file);
+      setDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              hasImage: true,
+              variants: prev.variants.map((item) =>
+                item.inventoryItemId === variant.inventoryItemId
+                  ? { ...item, hasImage: true }
+                  : item
+              ),
+            }
+          : prev
+      );
+      setImageTick((tick) => tick + 1);
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const patchDraftListing = async (body: {
+    approvalTag?: StoreItemRow['approvalTag'];
+    featuredOnHome?: boolean;
+    description?: string | null;
+    storeCategories?: string[];
+    saleType?: StoreSaleType | null;
+    saleValue?: number | null;
+    saleEndsAt?: string | null;
+  }) => {
+    if (!draft) return;
+    onBusy(true);
+    onError(null);
+    try {
+      const updated = await patchOnlineStoreListing(practiceId, draft.listingId, body);
+      if (updated) {
+        setDraft((prev) =>
+          prev
+            ? { ...prev, ...updated, variants: updated.variants ?? prev.variants }
+            : prev
+        );
+      }
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const patchDraftAutoship = async (
+    variant: StoreAdminVariant,
+    recommendedFrequency: string | null
+  ) => {
+    if (!draft || !variant.inventoryItemId) return;
+    onBusy(true);
+    onError(null);
+    try {
+      await patchOnlineStoreItem(practiceId, variant.inventoryItemId, {
+        recommendedFrequency,
+      });
+      setDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              variants: prev.variants.map((item) =>
+                item.inventoryItemId === variant.inventoryItemId
+                  ? { ...item, recommendedFrequency }
+                  : item
+              ),
+            }
+          : prev
+      );
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  return (
+    <div className="store-add-workspace">
+      <div className="store-add-workspace__header">
+        <div className="store-add-workspace__identity">
+          <label className="store-add-workspace__photo">
+            <StoreThumb
+              src={
+                pendingPreview ||
+                (draft ? masterImageSrc(practiceId, draft) : null)
+              }
+              label={draft?.name || 'New store product'}
+              size="lg"
+            />
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              hidden
+              disabled={busy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void uploadDraftImage(file);
+              }}
+            />
+            <span>Upload photo</span>
+          </label>
+          <div>
+            <p className="store-add-workspace__kicker">
+              {draft ? 'Master product' : 'New store product'}
+            </p>
+            <div className="store-add-workspace__title">
+              {draft ? draft.name : 'Name the master product'}
+            </div>
+          </div>
+        </div>
+        <button type="button" className="btn primary" disabled={busy} onClick={onDone}>
+          Done adding
+        </button>
+      </div>
+      {draft ? (
+        <>
+          <section className="store-add-workspace__section">
+            <h3 className="store-add-workspace__section-title">
+              Store settings for {draft.name}
+            </h3>
+            <StoreProductDefaults
+              approvalTag={draft.approvalTag}
+              featuredOnHome={Boolean(draft.featuredOnHome)}
+              storeCategories={listingCategoryNames(draft)}
+              categoryOptions={categoryOptions}
+              disabled={busy}
+              onApproval={(value) => {
+                setDraft((prev) => (prev ? { ...prev, approvalTag: value } : prev));
+                void patchDraftListing({ approvalTag: value });
+              }}
+              onHighlight={(value) => {
+                setDraft((prev) => (prev ? { ...prev, featuredOnHome: value } : prev));
+                void patchDraftListing({ featuredOnHome: value });
+              }}
+              onCategories={(next, added) => {
+                setDraft((prev) =>
+                  prev ? { ...prev, storeCategory: next[0] ?? null, storeCategories: next } : prev
+                );
+                if (added) void createStoreCategory(practiceId, added).catch(() => undefined);
+                void patchDraftListing({ storeCategories: next });
+              }}
+            />
+            <StoreSaleEditor
+              {...saleFieldsFromListing(draft)}
+              saleActive={draft.saleActive}
+              disabled={busy}
+              onChange={(next) => {
+                const current = saleFieldsFromListing(draft);
+                if (
+                  current.saleType === next.saleType &&
+                  current.saleValue === next.saleValue &&
+                  (current.saleEndsAt || null) === (next.saleEndsAt || null)
+                ) {
+                  return;
+                }
+                setDraft((prev) => (prev ? { ...prev, ...next } : prev));
+                void patchDraftListing(next);
+              }}
+            />
+            <p className="store-add-workspace__hint" style={{ marginTop: 12 }}>
+              Description is HTML. Links and formatting copy onto inventory options
+              that do not already have their own description.
+            </p>
+            <StoreDescriptionEditor
+              value={draft.description}
+              listings={listings}
+              currentListingId={draft.listingId}
+              disabled={busy}
+              onSave={(html) => {
+                setDraft((prev) => (prev ? { ...prev, description: html } : prev));
+                void patchDraftListing({ description: html });
+              }}
+            />
+          </section>
+          <section className="store-add-workspace__section">
+            <h3 className="store-add-workspace__section-title">
+              Options already on {draft.name}
+            </h3>
+            {draft.variants.length ? (
+              <ul className="store-add-workspace__options">
+                {draft.variants.map((variant) => (
+                  <li
+                    key={
+                      variant.inventoryItemId
+                        ? `inv:${variant.inventoryItemId}`
+                        : `proc:${variant.procedureId}`
+                    }
+                    className="store-add-workspace__option-row"
+                  >
+                    <span className="store-add-workspace__option-main">
+                      {variant.inventoryItemId ? (
+                        <StorePhotoUpload
+                          src={withImageBust(
+                            variantImageSrc(practiceId, variant),
+                            imageTick
+                          )}
+                          label={variantDisplayName(variant)}
+                          disabled={busy}
+                          title={`Upload photo for ${variantDisplayName(variant)}`}
+                          onFile={(file) => void uploadOptionImage(variant, file)}
+                        />
+                      ) : (
+                        <StorePhotoUpload
+                          src={withImageBust(
+                            masterImageSrc(practiceId, draft),
+                            imageTick
+                          )}
+                          label={variantDisplayName(variant)}
+                          disabled={busy}
+                          title={`Procedures use the ${draft.name} photo. Click to upload it.`}
+                          onFile={(file) => void uploadDraftImage(file)}
+                        />
+                      )}
+                      <span>
+                        {(() => {
+                          const href = storeVariantHref(
+                            variant,
+                            storeItemsPath(draft.listingId)
+                          );
+                          const label = (
+                            <>
+                              {variantDisplayName(variant)}
+                              {variant.pack && variant.pack !== 'Each'
+                                ? ` · ${variant.pack}`
+                                : ''}
+                              {variant.catalogItemType === 'procedure'
+                                ? ' · procedure'
+                                : ''}
+                            </>
+                          );
+                          return href ? (
+                            <Link className="inv-catalog-results__text-btn" to={href}>
+                              {label}
+                            </Link>
+                          ) : (
+                            label
+                          );
+                        })()}
+                      </span>
+                    </span>
+                    {variant.inventoryItemId ? (
+                      <AutoshipControls
+                        frequency={variant.recommendedFrequency}
+                        disabled={busy}
+                        onChange={(frequency) => void patchDraftAutoship(variant, frequency)}
+                      />
+                    ) : (
+                      <span className="settings-muted">Autoship is for inventory</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="store-add-workspace__empty">None yet.</p>
+            )}
+          </section>
+          <section className="store-add-workspace__section store-add-workspace__section--find">
+            <h3 className="store-add-workspace__section-title">
+              Add an option to {draft.name}
+            </h3>
+            <p className="store-add-workspace__hint">
+              Search Scout inventory or procedures, then click Add. Set autoship here
+              and it applies to inventory options you add next.
+            </p>
+            {error ? <p className="store-add-workspace__error">{error}</p> : null}
+            <AutoshipControls
+              frequency={newOptionAutoship}
+              disabled={busy}
+              onChange={setNewOptionAutoship}
+            />
+            <StoreVariantPicker
+              practiceId={practiceId}
+              listing={draft}
+              busy={busy}
+              autoshipFrequency={newOptionAutoship}
+              onBusy={onBusy}
+              onError={onError}
+              onAdded={async (listing) => {
+                setDraft(listing);
+                await onVariantAdded(listing);
+              }}
+            />
+          </section>
+        </>
+      ) : (
+        <section className="store-add-workspace__section">
+          <p className="store-add-workspace__hint">
+            Shoppers see this name. After you create it, you will add tablet sizes, bottles,
+            or memorial procedures as options.
+          </p>
+          <input
+            className="settings-input"
+            autoFocus
+            value={name}
+            disabled={busy}
+            placeholder="e.g. Apoquel Chewable Tablets"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void createMaster();
+              }
+            }}
+          />
+          <div style={{ marginTop: 10 }}>
+            <StoreDescriptionEditor
+              value={description}
+              listings={listings}
+              currentListingId="new"
+              disabled={busy}
+              showSave={false}
+              placeholder="HTML description shoppers see. Link other store items here."
+              onHtmlChange={setDescription}
+              onSave={setDescription}
+            />
+          </div>
+          <StoreProductDefaults
+            approvalTag={approvalTag}
+            featuredOnHome={featuredOnHome}
+            storeCategories={storeCategories}
+            categoryOptions={categoryOptions}
+            disabled={busy}
+            onApproval={setApprovalTag}
+            onHighlight={setFeaturedOnHome}
+            onCategories={(next, added) => {
+              setStoreCategories(next);
+              if (added) void createStoreCategory(practiceId, added).catch(() => undefined);
+            }}
+          />
+          <StoreSaleEditor
+            {...sale}
+            disabled={busy}
+            onChange={setSale}
+          />
+          <button
+            type="button"
+            className="btn primary"
+            style={{ marginTop: 8 }}
+            disabled={busy || !name.trim()}
+            onClick={() => void createMaster()}
+          >
+            Create master product
+          </button>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function StoreVariantPicker({
+  practiceId,
+  listing,
+  busy,
+  compact,
+  autoshipFrequency,
+  onBusy,
+  onError,
+  onAdded,
+}: {
+  practiceId: number;
+  listing: StoreAdminListing;
+  busy: boolean;
+  compact?: boolean;
+  autoshipFrequency?: string | null;
+  onBusy: (busy: boolean) => void;
+  onError: (message: string | null) => void;
+  onAdded: (listing: StoreAdminListing) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(!compact);
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<
+    Array<{
+      id: number;
+      name: string;
+      code: string | null;
+      catalogItemType?: 'inventory' | 'procedure';
+      hasImage?: boolean;
+    }>
+  >([]);
+  const [searching, setSearching] = useState(false);
+  const taken = new Set(
+    listing.variants.map((variant) =>
+      variant.procedureId && variant.catalogItemType === 'procedure'
+        ? `procedure:${variant.procedureId}`
+        : `inventory:${variant.inventoryItemId}`
+    )
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const query = q.trim();
+    if (query.length < 2) {
+      setHits([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setSearching(true);
+      void searchStoreInventory(practiceId, query)
+        .then(setHits)
+        .catch(() => setHits([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [open, practiceId, q]);
+
+  const addable = hits.filter(
+    (hit) => !taken.has(`${hit.catalogItemType ?? 'inventory'}:${hit.id}`)
+  );
+
+  const addHit = async (hit: (typeof hits)[0]) => {
+    onBusy(true);
+    onError(null);
+    try {
+      let updated = await addOnlineStoreVariant(
+        practiceId,
+        listing.listingId,
+        hit.catalogItemType === 'procedure'
+          ? { procedureId: hit.id }
+          : { inventoryItemId: hit.id }
+      );
+      if (hit.catalogItemType !== 'procedure' && autoshipFrequency) {
+        await patchOnlineStoreItem(practiceId, hit.id, {
+          recommendedFrequency: autoshipFrequency,
+        });
+        updated = {
+          ...updated,
+          variants: updated.variants.map((variant) =>
+            variant.inventoryItemId === hit.id
+              ? { ...variant, recommendedFrequency: autoshipFrequency }
+              : variant
+          ),
+        };
+      }
+      await onAdded(updated);
+      setQ('');
+      setHits([]);
+    } catch (err) {
+      onError(apiErrorMessage(err));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: compact ? 8 : 0 }}>
+      {compact ? (
+        <button
+          type="button"
+          className="btn secondary"
+          disabled={busy}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Done adding options' : '+ Add option'}
+        </button>
+      ) : null}
+      {open ? (
+        <div style={{ marginTop: compact ? 8 : 0 }}>
+          <input
+            className="settings-input"
+            autoFocus={!compact}
+            value={q}
+            disabled={busy}
+            placeholder="Search inventory or procedures to add"
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={busy}
+              onClick={() =>
+                window.location.assign(
+                  withReturnTo(
+                    '/schedule/inventory/items?create=inventory',
+                    storeItemsPath(listing.listingId)
+                  )
+                )
+              }
+            >
+              + Create inventory item
+            </button>
+          </div>
+          {searching ? (
+            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+              Searching…
+            </p>
+          ) : null}
+          {addable.length > 0 ? (
+            <ul className="store-add-workspace__hits">
+              {addable.map((hit) => (
+                <li key={`${hit.catalogItemType ?? 'inventory'}:${hit.id}`}>
+                  <span className="store-add-workspace__option-main">
+                    <StoreThumb
+                      src={
+                        hit.hasImage && hit.catalogItemType !== 'procedure'
+                          ? storeProductImageUrl(practiceId, hit.id)
+                          : null
+                      }
+                      label={hit.name}
+                    />
+                    <span>
+                      {hit.name}
+                      {hit.catalogItemType === 'procedure' ? (
+                        <span className="settings-muted"> · procedure</span>
+                      ) : null}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={busy}
+                    onClick={() => void addHit(hit)}
+                  >
+                    Add to {listing.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {!searching && q.trim().length >= 2 && addable.length === 0 ? (
+            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+              No unused inventory or procedures match. Create an inventory item, then
+              search again.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StoreItemsPager({
+  page,
+  pageCount,
+  pageSize,
+  total,
+  onPage,
+  showAll,
+  onShowAll,
+}: {
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
+  onPage: (page: number) => void;
+  showAll?: boolean;
+  onShowAll?: (next: boolean) => void;
+}) {
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        margin: '8px 0',
+      }}
+    >
+      <span className="settings-muted" style={{ fontSize: 13 }}>
+        {total
+          ? `Showing ${start}–${end} of ${total} store items`
+          : 'No store items'}
+        {onShowAll && (showAll || total > STORE_ITEMS_PAGE_SIZE) ? (
+          <button
+            type="button"
+            className="inv-catalog-results__text-btn"
+            style={{ marginLeft: 8 }}
+            onClick={() => onShowAll(!showAll)}
+          >
+            {showAll ? `Show ${STORE_ITEMS_PAGE_SIZE} at a time` : 'Show all'}
+          </button>
+        ) : null}
+      </span>
+      {pageCount > 1 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={page <= 1}
+            onClick={() => onPage(page - 1)}
+          >
+            Previous
+          </button>
+          <span className="settings-muted" style={{ fontSize: 13 }}>
+            Page {page} of {pageCount}
+          </span>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={page >= pageCount}
+            onClick={() => onPage(page + 1)}
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type CouponDraft = {
+  id: number | null;
+  code: string;
+  name: string;
+  discountType: 'percent' | 'amount';
+  amount: string;
+  minSubtotal: string;
+  uses: 'unlimited' | 'once' | 'once_per_customer';
+  membershipOnly: boolean;
+  freeShipping: boolean;
+  active: boolean;
+};
+
+const blankCoupon = (): CouponDraft => ({
+  id: null,
+  code: '',
+  name: '',
+  discountType: 'percent',
+  amount: '10',
+  minSubtotal: '',
+  uses: 'unlimited',
+  membershipOnly: false,
+  freeShipping: false,
+  active: true,
+});
+
+function couponFromRow(row: StoreCoupon): CouponDraft {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    discountType: row.discountType === 'amount' ? 'amount' : 'percent',
+    amount: String(Number(row.amount)),
+    minSubtotal: row.minSubtotal != null && Number(row.minSubtotal) > 0 ? String(Number(row.minSubtotal)) : '',
+    uses: row.oncePerCustomer ? 'once_per_customer' : row.maxUses === 1 ? 'once' : 'unlimited',
+    membershipOnly: Boolean(row.membershipOnly),
+    freeShipping: Boolean(row.freeShipping),
+    active: row.active !== false,
+  };
+}
+
+function couponDiscountLabel(row: StoreCoupon): string {
+  const amount = Number(row.amount);
+  const off = row.discountType === 'amount' ? `$${amount.toFixed(2)} off` : `${amount}% off`;
+  return row.freeShipping ? `${off} and free shipping` : off;
+}
+
+function couponLimitLabel(row: StoreCoupon): string {
+  const parts: string[] = [];
+  if (row.minSubtotal != null && Number(row.minSubtotal) > 0) {
+    parts.push(`orders over $${Number(row.minSubtotal).toFixed(2)}`);
+  } else {
+    parts.push('all orders');
+  }
+  if (row.membershipOnly) parts.push('members');
+  if (row.oncePerCustomer) parts.push('once per customer');
+  else if (row.maxUses === 1) parts.push('single use');
+  else if (row.maxUses != null) parts.push(`${row.maxUses} uses`);
+  else parts.push('unlimited');
+  return parts.join(' · ');
+}
+
+function randomCouponCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+}
+
+function CouponEditor({
+  coupons,
+  onSave,
+  onDelete,
+}: {
+  coupons: StoreCoupon[];
+  onSave: (body: {
+    id?: number;
+    code: string;
+    name: string;
+    discountType: 'percent' | 'amount';
+    amount: number;
+    minSubtotal: number | null;
+    maxUses: number | null;
+    oncePerCustomer: boolean;
+    membershipOnly: boolean;
+    freeShipping: boolean;
+    active: boolean;
+  }) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<CouponDraft | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<CouponDraft>) =>
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const save = async () => {
+    if (!draft) return;
+    const code = draft.code.trim();
+    const name = draft.name.trim();
+    const amount = Number(draft.amount);
+    if (!code || !name) {
+      setError('Enter a code and a name.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 0 || (amount === 0 && !draft.freeShipping)) {
+      setError('Enter the discount, or turn on free shipping.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const min = Number(draft.minSubtotal);
+      await onSave({
+        ...(draft.id ? { id: draft.id } : {}),
+        code,
+        name,
+        discountType: draft.discountType,
+        amount,
+        minSubtotal: Number.isFinite(min) && min > 0 ? min : null,
+        maxUses: draft.uses === 'once' ? 1 : null,
+        oncePerCustomer: draft.uses === 'once_per_customer',
+        membershipOnly: draft.membershipOnly,
+        freeShipping: draft.freeShipping,
+        active: draft.active,
+      });
+      setDraft(null);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <p className="settings-section-description">
+        Codes customers enter at checkout. A coupon takes a dollar amount or a percent off the
+        order. Membership discounts stay on the membership plan and are not these codes.
+      </p>
+      {error ? <div className="settings-message settings-error-message">{error}</div> : null}
+      {draft ? (
+        <div className="store-coupon-form">
+          <label className="settings-label">
+            Code
+            <span className="store-coupon-code">
+              <input
+                className="settings-input"
+                value={draft.code}
+                onChange={(e) => set({ code: e.target.value.toUpperCase() })}
+                placeholder="SAVE10"
+              />
+              <button
+                type="button"
+                className="btn secondary btn-sm"
+                onClick={() => set({ code: randomCouponCode() })}
+              >
+                Generate
+              </button>
+            </span>
+          </label>
+          <label className="settings-label">
+            Name
+            <input
+              className="settings-input"
+              value={draft.name}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="Spring sale"
+            />
+          </label>
+          <label className="settings-label">
+            Discount
+            <span className="store-coupon-discount">
+              <input
+                className="settings-input"
+                type="number"
+                min={0}
+                value={draft.amount}
+                onChange={(e) => set({ amount: e.target.value })}
+              />
+              <select
+                className="settings-input"
+                value={draft.discountType}
+                onChange={(e) => set({ discountType: e.target.value as CouponDraft['discountType'] })}
+              >
+                <option value="percent">% off the order</option>
+                <option value="amount">$ off the order</option>
+              </select>
+            </span>
+          </label>
+          <label className="settings-label">
+            Orders
+            <span className="store-coupon-discount">
+              <select
+                className="settings-input"
+                value={draft.minSubtotal ? 'minimum' : 'all'}
+                onChange={(e) => set({ minSubtotal: e.target.value === 'all' ? '' : draft.minSubtotal || '50' })}
+              >
+                <option value="all">All orders</option>
+                <option value="minimum">Subtotal over</option>
+              </select>
+              <input
+                className="settings-input"
+                type="number"
+                min={0}
+                placeholder="No minimum"
+                value={draft.minSubtotal}
+                onChange={(e) => set({ minSubtotal: e.target.value })}
+              />
+            </span>
+          </label>
+          <label className="settings-label">
+            Uses
+            <select
+              className="settings-input"
+              value={draft.uses}
+              onChange={(e) => set({ uses: e.target.value as CouponDraft['uses'] })}
+            >
+              <option value="unlimited">Unlimited</option>
+              <option value="once_per_customer">Once per customer</option>
+              <option value="once">Single use</option>
+            </select>
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.membershipOnly}
+              onChange={(e) => set({ membershipOnly: e.target.checked })}
+            />
+            Members only
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.freeShipping}
+              onChange={(e) => set({ freeShipping: e.target.checked })}
+            />
+            Free shipping
+          </label>
+          <label className="store-add-workspace__check">
+            <input
+              type="checkbox"
+              checked={draft.active}
+              onChange={(e) => set({ active: e.target.checked })}
+            />
+            Active
+          </label>
+          <div className="store-coupon-form__actions">
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>
+              {draft.id ? 'Save changes' : 'Save coupon'}
+            </button>
+            <button type="button" className="btn secondary" disabled={busy} onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="btn primary" onClick={() => { setError(null); setDraft(blankCoupon()); }}>
+          Add coupon
+        </button>
+      )}
+      <table className="settings-table" style={{ marginTop: 16 }}>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Discount</th>
+            <th>Limits</th>
+            <th>Used</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {coupons.map((row) => (
+            <tr key={row.id} style={row.active === false ? { opacity: 0.55 } : undefined}>
+              <td><strong>{row.code}</strong></td>
+              <td>{row.name}</td>
+              <td>{couponDiscountLabel(row)}</td>
+              <td>{couponLimitLabel(row)}</td>
+              <td>{row.usedCount ?? 0}{row.maxUses != null ? ` / ${row.maxUses}` : ''}</td>
+              <td>
+                <div className="store-category-actions">
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm"
+                    disabled={busy}
+                    onClick={() => { setError(null); setDraft(couponFromRow(row)); }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm store-category-delete"
+                    disabled={busy}
+                    onClick={() => {
+                      void appConfirm({
+                        title: `Delete ${row.code}?`,
+                        message: 'Customers will no longer be able to use this code.',
+                        confirmLabel: 'Delete coupon',
+                      }).then((yes) => {
+                        if (yes) void onDelete(row.id).catch((err) => setError(apiErrorMessage(err)));
+                      });
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {!coupons.length ? (
+            <tr>
+              <td colSpan={6} className="settings-muted">No coupons yet.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}

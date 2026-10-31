@@ -28,6 +28,12 @@ import {
   flattenUserLabels,
   GMAIL_MESSAGES_PAGE_SIZE,
   GMAIL_INBOX_POLL_MS,
+  GMAIL_INBOX_MIN_REFRESH_MS,
+  GMAIL_QUOTA_BACKOFF_MS,
+  GMAIL_QUOTA_KEEP_LIST_MESSAGE,
+  isGmailFallbackListRow,
+  isGmailQuotaError,
+  isMostlyFallbackGmailList,
   getMessageUserLabels,
   GMAIL_CATEGORIES_GROUP_ID,
   labelChipStyle,
@@ -366,8 +372,11 @@ export default function GmailInbox() {
   const [resultSizeEstimate, setResultSizeEstimate] = useState<number | null>(null);
   const pageTokensRef = useRef<(string | null)[]>([null]);
   const pageIndexRef = useRef(0);
+  const messagesRef = useRef<GmailMessageSummary[]>([]);
+  const quotaBackoffUntilRef = useRef(0);
   pageTokensRef.current = pageTokens;
   pageIndexRef.current = pageIndex;
+  messagesRef.current = messages;
   const [selectedMessage, setSelectedMessage] = useState<GmailMessageSummary | null>(null);
   const selectedMessageRef = useRef(selectedMessage);
   selectedMessageRef.current = selectedMessage;
@@ -446,6 +455,11 @@ export default function GmailInbox() {
     if (fromUrl) return fromUrl;
     return customMailboxes[0] ?? null;
   }, [selectedMailbox, searchParams, customMailboxes]);
+
+  const activeMailboxRef = useRef(activeMailbox);
+  activeMailboxRef.current = activeMailbox;
+  /** Mailbox the rows in `messages` were listed from. */
+  const messagesMailboxRef = useRef<string | null>(null);
 
   const activeMailboxStatus = useMemo(
     () => mailboxes.find((m) => m.email === activeMailbox) ?? null,
@@ -784,28 +798,65 @@ export default function GmailInbox() {
   const loadPage = useCallback(
     async (page: number) => {
       if (!activeMailbox) return;
+      const requestedMailbox = activeMailbox;
       const pageToken = pageTokensRef.current[page] ?? undefined;
-      const res = await fetchGmailMessages(activeMailbox, {
-        ...messageListParams,
-        pageToken,
-        maxResults: GMAIL_MESSAGES_PAGE_SIZE,
-      });
-      const incoming = mergeGmailMessagesByDate(res.threads ?? [], res.untaggedQueue ?? []);
-      setMessages(incoming);
-      if (typeof res.inboxUnreadCount === 'number') {
-        setNavigationLabels((prev) => patchInboxUnreadCount(prev, res.inboxUnreadCount));
-      }
-      setHasNextPage(!!res.nextPageToken);
-      setResultSizeEstimate(res.resultSizeEstimate ?? null);
+      try {
+        const res = await fetchGmailMessages(requestedMailbox, {
+          ...messageListParams,
+          pageToken,
+          maxResults: GMAIL_MESSAGES_PAGE_SIZE,
+        });
+        // Staff switched inboxes while this was loading; these rows belong to the old one.
+        if (activeMailboxRef.current !== requestedMailbox) return res;
+        const sameMailbox = messagesMailboxRef.current === requestedMailbox;
+        const loadedByThread = new Map(
+          (sameMailbox ? messagesRef.current : [])
+            .filter((m) => !isGmailFallbackListRow(m))
+            .map((m) => [m.threadId, m] as const),
+        );
+        // A rate-limited refresh returns placeholder rows; never let one
+        // replace a conversation that already loaded properly.
+        const incoming = mergeGmailMessagesByDate(
+          (res.threads ?? []).map((m) =>
+            isGmailFallbackListRow(m) ? (loadedByThread.get(m.threadId) ?? m) : m,
+          ),
+          res.untaggedQueue ?? [],
+        );
+        const haveGoodList = loadedByThread.size > 0;
+        if (haveGoodList && isMostlyFallbackGmailList(incoming)) {
+          quotaBackoffUntilRef.current = Date.now() + GMAIL_QUOTA_BACKOFF_MS;
+          setError(GMAIL_QUOTA_KEEP_LIST_MESSAGE);
+          return res;
+        }
+        messagesMailboxRef.current = requestedMailbox;
+        setMessages(incoming);
+        if (typeof res.inboxUnreadCount === 'number') {
+          setNavigationLabels((prev) => patchInboxUnreadCount(prev, res.inboxUnreadCount));
+        }
+        setHasNextPage(!!res.nextPageToken);
+        setResultSizeEstimate(res.resultSizeEstimate ?? null);
 
-      if (res.nextPageToken && pageTokensRef.current.length === page + 1) {
-        const nextTokens = [...pageTokensRef.current, res.nextPageToken];
-        pageTokensRef.current = nextTokens;
-        setPageTokens(nextTokens);
-      }
+        if (res.nextPageToken && pageTokensRef.current.length === page + 1) {
+          const nextTokens = [...pageTokensRef.current, res.nextPageToken];
+          pageTokensRef.current = nextTokens;
+          setPageTokens(nextTokens);
+        }
 
-      setCheckedMessageIds(new Set());
-      return res;
+        setCheckedMessageIds(new Set());
+        return res;
+      } catch (e) {
+        if (activeMailboxRef.current !== requestedMailbox) return;
+        if (
+          isGmailQuotaError(e) &&
+          messagesMailboxRef.current === requestedMailbox &&
+          messagesRef.current.length > 0
+        ) {
+          quotaBackoffUntilRef.current = Date.now() + GMAIL_QUOTA_BACKOFF_MS;
+          setError(GMAIL_QUOTA_KEEP_LIST_MESSAGE);
+          return;
+        }
+        throw e;
+      }
     },
     [activeMailbox, messageListParams]
   );
@@ -901,6 +952,10 @@ export default function GmailInbox() {
       prev.messageListParams.q !== messageListParams.q;
 
     if (filtersChanged) {
+      if (prev.activeMailbox !== activeMailbox && messagesMailboxRef.current !== activeMailbox) {
+        setMessages([]);
+        setCheckedMessageIds(new Set());
+      }
       listFilterRef.current = { activeMailbox, messageListParams };
       pageTokensRef.current = [null];
       setPageTokens([null]);
@@ -941,7 +996,9 @@ export default function GmailInbox() {
 
     const practiceId = resolvePracticeIdFromToken(token ?? localStorage.getItem('accessToken'));
 
+    let lastRefreshAt = 0;
     const refreshFromGmail = () => {
+      lastRefreshAt = Date.now();
       void loadPage(pageIndexRef.current).catch(() => {
         /* non-blocking */
       });
@@ -958,6 +1015,9 @@ export default function GmailInbox() {
 
     const poll = () => {
       if (document.visibilityState !== 'visible') return;
+      if (Date.now() < quotaBackoffUntilRef.current) return;
+      // Switching back to the window shouldn't refetch an inbox that is seconds old.
+      if (Date.now() - lastRefreshAt < GMAIL_INBOX_MIN_REFRESH_MS) return;
       refreshFromGmail();
     };
 
@@ -1141,8 +1201,19 @@ export default function GmailInbox() {
     return threadMessages[threadMessages.length - 1];
   }, [threadMessages]);
 
+  /** Mailbox the open conversation was picked from; it can't be loaded from any other. */
+  const selectionMailboxRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectionMailboxRef.current = selectedMessage ? activeMailbox : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMessage?.threadId]);
+
   useEffect(() => {
     if (!selectedMessage || !activeMailbox || !connected) {
+      setThreadMessages([]);
+      return;
+    }
+    if (selectionMailboxRef.current && selectionMailboxRef.current !== activeMailbox) {
       setThreadMessages([]);
       return;
     }
@@ -1570,6 +1641,7 @@ export default function GmailInbox() {
       return;
     }
     if (messages.length === 0) return;
+    if (messagesMailboxRef.current !== activeMailbox) return;
 
     const labelIds = resolveApptRequestLabelIds(userLabels);
     const onHoldId = labelIds.onHold;

@@ -4,7 +4,7 @@ import type { RoutingAppointmentRequestIntentV1 } from './routingAppointmentRequ
 import type { RoutingPatientChipRow } from './routingPatientSelection';
 import type { RoutingVisitPetInput } from './routingServiceMinutes';
 import { appointmentTypeForRoutingStatsKey } from './routingCalculateTimeType';
-import { findCalmingPremedAppointmentType } from './appointmentTypeSettings';
+import { appointmentTypeIsArchived } from './appointmentTypeSettings';
 import {
   buildAppointmentRequestPetStaffInstructions,
   type AppointmentRequestPetEuthNotes,
@@ -31,10 +31,12 @@ export function resolveAppointmentRequestPetTypeId(
   },
   types: readonly AppointmentType[],
 ): number | null {
-  // Calming-meds pets book as the practice's flagged Pre-Meds type, regardless
-  // of the visit reason the client picked on the form.
+  // Calming-meds pets book as the practice's flagged Pre-Meds type while one is
+  // active; otherwise they keep their visit reason and only get the pre-meds flag.
   if (pet.usesCalmingMedications === true) {
-    const premed = findCalmingPremedAppointmentType(types);
+    const premed = types.find(
+      (t) => t.isCalmingPremedType === true && !appointmentTypeIsArchived(t),
+    );
     if (premed?.id != null && Number(premed.id) > 0) return Number(premed.id);
   }
   const rawId = pet.appointmentTypeId;
@@ -121,6 +123,8 @@ export type AppointmentRequestBookVisitPatch = {
   appointmentTypeId: number;
   description: string;
   instructions: string;
+  /** Client said this pet uses calming meds — book with the pre-meds window. */
+  needsPremeds?: boolean;
 };
 
 function buildPatchesFromPetSources(
@@ -168,6 +172,7 @@ function buildPatchesFromPetSources(
       appointmentTypeId: typeId,
       description,
       instructions,
+      ...(pet.usesCalmingMedications === true ? { needsPremeds: true } : {}),
     });
   }
   return patches;

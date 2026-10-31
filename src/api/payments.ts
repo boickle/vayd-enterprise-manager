@@ -109,7 +109,6 @@ export type StripeSubscriptionPlanCatalogResponse = {
 const CATALOG_PLAN_SLUG_KEYS = [
   'foundations',
   'golden',
-  'comfort-care',
   'plus-addon',
   'starter-addon',
 ] as const;
@@ -146,15 +145,6 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     planVariationId: priceId,
   });
 
-  const setComfort = (cadence: 'monthly' | 'annual', combo: 'base' | 'plus', productId: string, priceId: string) => {
-    const key = 'comfort-care';
-    if (!out[key]) out[key] = {} as SubscriptionPlanSpecies;
-    const plan = out[key]!;
-    const general = ((plan as Record<string, unknown>).general ??= {}) as Record<string, SubscriptionPlanCombination>;
-    const cad = (general[cadence] ??= {}) as SubscriptionPlanCombination;
-    (cad as Record<string, SubscriptionPlanEntry>)[combo] = entry(productId, priceId);
-  };
-
   const setSpecies = (
     planKey: 'foundations' | 'golden',
     species: 'cat' | 'dog',
@@ -162,12 +152,18 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     combo: StripeCatalogCombo,
     productId: string,
     priceId: string,
+    offered: boolean,
   ) => {
     if (!out[planKey]) out[planKey] = {} as SubscriptionPlanSpecies;
     const plan = out[planKey]!;
     const specNode = ((plan as Record<string, unknown>)[species] ??= {}) as SubscriptionPlanCadence;
     const cad = (specNode[cadence] ??= {}) as SubscriptionPlanCombination;
-    (cad as Record<string, SubscriptionPlanEntry>)[combo] = entry(productId, priceId);
+    const slot = cad as Record<string, SubscriptionPlanEntry & { offered?: boolean }>;
+    const existing = slot[combo];
+    // A legacy Stripe product (for example "Foundations Only - Cat") can share a
+    // slot with the plan we actually sell. Keep the price that is on that plan.
+    if (existing?.offered && !offered) return;
+    slot[combo] = { ...entry(productId, priceId), offered };
   };
 
   const setAddon = (
@@ -205,17 +201,16 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
       continue;
     }
 
-    if (nameRaw.includes('comfort care')) {
-      const isPlus = nameRaw.includes('comfort care plus');
-      setComfort(cadence, isPlus ? 'plus' : 'base', productId, priceId);
-      continue;
-    }
+    // Comfort Care is discontinued; skip old prices so they don't land under Foundations.
+    if (nameRaw.includes('comfort care')) continue;
 
     const planKey: 'foundations' | 'golden' = nameRaw.includes('golden') ? 'golden' : 'foundations';
 
+    const offered = r.offered === true;
+
     let species: 'cat' | 'dog' | null = null;
-    if (/\bcat\b/i.test(nameRaw)) species = 'cat';
-    else if (/\bdog\b/i.test(nameRaw)) species = 'dog';
+    if (/\b(cat|feline)\b/i.test(nameRaw)) species = 'cat';
+    else if (/\b(dog|canine)\b/i.test(nameRaw)) species = 'dog';
     if (!species) continue;
 
     // Starter wellness was renamed to "Puppy/Kitten"; accept both so the base
@@ -232,7 +227,7 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     else if (isPlus) combo = 'plus';
     else combo = 'base';
 
-    setSpecies(planKey, species, cadence, combo, productId, priceId);
+    setSpecies(planKey, species, cadence, combo, productId, priceId, offered);
   }
 
   return out;
@@ -403,6 +398,7 @@ export interface PaymentResponse {
   success: boolean;
   providerResponse: Record<string, any>;
   providerPaymentId?: string;
+  providerSubscriptionId?: string;
   status?: string;
 }
 
@@ -493,6 +489,15 @@ export async function fetchPaymentsLeaderboards(params?: {
 export async function createPayment(payload: PaymentRequest): Promise<PaymentResponse> {
   const path = `${paymentProcessingApiBasePath()}/payments`;
   const { data } = await http.post(path, payload);
+  return data;
+}
+
+/** After the bank approves the card, ask Scout to record the membership. */
+export async function confirmMembershipPayment(body: {
+  idempotencyKey: string;
+  subscriptionId: string;
+}): Promise<PaymentResponse> {
+  const { data } = await http.post(`${paymentProcessingApiBasePath()}/payments/confirm`, body);
   return data;
 }
 
@@ -660,35 +665,6 @@ function normalizeFormattedSubscriptionPlansResponse(data: unknown): FormattedSu
 export async function fetchFormattedSubscriptionPlans(): Promise<FormattedSubscriptionPlan[]> {
   const { data } = await http.get(`${paymentProcessingApiBasePath()}/subscription-plans/formatted`);
   return normalizeFormattedSubscriptionPlansResponse(data);
-}
-
-export interface MembershipUpgradeRequest {
-  patientId: number | string;
-  newPlansSelected: Array<{
-    planId: string;
-    planName: string;
-    pricingOption: 'monthly' | 'annual';
-    price: number;
-  }>;
-  sourceId: string;
-  customerEmail: string;
-  // Prorated calculation fields
-  proratedRefundAmount?: number; // in dollars
-  proratedChargeAmount?: number; // in dollars
-  upgradeDate?: string; // ISO date string
-  nextBillingDate?: string; // ISO date string
-  currentMembershipId?: number; // ID of the membership being upgraded
-}
-
-export interface MembershipUpgradeResponse {
-  success: boolean;
-  message?: string;
-  [key: string]: any;
-}
-
-export async function upgradeMembership(payload: MembershipUpgradeRequest): Promise<MembershipUpgradeResponse> {
-  const { data } = await http.post('/payment-processing/membership/upgrade', payload);
-  return data;
 }
 
 // =========================

@@ -1,0 +1,33 @@
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #7c2d12;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.impersonation-banner span {
+  flex: 1;
+}
+
+.impersonation-banner button {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid #fff;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.impersonation-banner button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

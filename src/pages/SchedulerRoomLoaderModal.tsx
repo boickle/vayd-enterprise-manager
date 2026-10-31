@@ -183,7 +183,7 @@ export function SchedulerRoomLoaderPdfModal({
                 ? `Room Loader #${roomLoader.id} · status: ${roomLoader.sentStatus}`
                 : 'No Room Loader exists yet for this visit.'}
               {roomLoader?.sentStatus !== 'completed'
-                ? ' The client has not submitted the form yet — use Resend Room Loader from the menu when ready.'
+                ? ' The client has not submitted the form yet — use Re-send Room Loader from the menu when ready.'
                 : null}
             </p>
           )}
@@ -238,7 +238,7 @@ export function schedulerRoomLoaderMenuLabel(
 ): string {
   const st = roomLoaderMenuUiStatus(confirmStatusName, sentStatus, scoutUiStatus);
   if (st === 'complete') return 'View Room Loader';
-  if (st === 'sent') return 'Resend Room Loader';
+  if (st === 'sent') return 'Re-send Room Loader';
   return 'Send Room Loader';
 }
 

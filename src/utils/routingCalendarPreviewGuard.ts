@@ -8,6 +8,8 @@ import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
 } from './routingCalendarPreviewStorage';
 import { blockForwardBookingWorkspaceNavigation } from './forwardBookingWorkspaceGuard';
+import { blockInvoiceDirectionsLeave } from './invoiceDirectionsLeaveGuard';
+import { appAlert } from './appDialog';
 
 export const ROUTING_CALENDAR_PREVIEW_BLOCKED_MESSAGE =
   'A calendar preview is open. Book or dismiss from the preview slot before using the calendar.';
@@ -68,11 +70,17 @@ export function hasActiveScheduleCalendarPreviewBlock(): boolean {
 /** @returns true when the action should be blocked (preview active). Shows an alert. */
 export function alertAndBlockRoutingCalendarPreviewLeave(): boolean {
   if (hasActiveEditVisitTimePreview()) {
-    window.alert(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
+    void appAlert({
+      title: 'Appointment preview open',
+      message: EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
+    });
     return true;
   }
   if (hasActiveRoutingCalendarPreview()) {
-    window.alert(getScheduleCalendarPreviewBlockedMessage());
+    void appAlert({
+      title: 'Calendar preview open',
+      message: getScheduleCalendarPreviewBlockedMessage(),
+    });
     return true;
   }
   return false;
@@ -80,6 +88,7 @@ export function alertAndBlockRoutingCalendarPreviewLeave(): boolean {
 
 /** Use on NavLink / button handlers that navigate away while a preview is active. */
 export function blockRoutingCalendarPreviewNavigation(): boolean {
+  if (blockInvoiceDirectionsLeave()) return true;
   if (blockForwardBookingWorkspaceNavigation()) return true;
   return alertAndBlockRoutingCalendarPreviewLeave();
 }
@@ -176,7 +185,10 @@ export function useRoutingCalendarPreviewNavigationGuard(previewActive: boolean)
         e.preventDefault();
         e.stopPropagation();
         if (hasActiveEditVisitTimePreview()) {
-          window.alert(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
+          void appAlert({
+            title: 'Appointment preview open',
+            message: EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
+          });
         } else if (hasActiveRoutingCalendarPreview()) {
           notifyRoutingPreviewCalendarBlocked();
         }

@@ -11,8 +11,32 @@ import {
   clientAddressFromRecord,
   compareVisitAddressToClientHome,
 } from '../utils/addressMatchCore';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type RangeAppointment = Appointment;
+
+/** A pet's most recent past visit, returned only when that visit needed pre-meds. */
+export type PremedsHistoryVisit = {
+  patientId: number;
+  /** 'chart': the pet is marked as needing pre-meds; 'visit': its last visit had them. */
+  source: 'chart' | 'visit';
+  premedsNote: string | null;
+  appointmentId: number | null;
+  appointmentStart: string | null;
+  appointmentTypeName: string | null;
+};
+
+export async function fetchPremedsHistory(
+  practiceId: number,
+  patientIds: Array<string | number>
+): Promise<PremedsHistoryVisit[]> {
+  const ids = [...new Set(patientIds.map((id) => String(id).trim()).filter((id) => /^\d+$/.test(id)))];
+  if (!ids.length) return [];
+  const { data } = await http.get<PremedsHistoryVisit[]>('/appointments/premeds-history', {
+    params: { practiceId, patientIds: ids.join(',') },
+  });
+  return Array.isArray(data) ? data : [];
+}
 
 /** Normalized confirm/status strings that mean “do not show on practice calendar” (PIMS + presets). */
 const PRACTICE_CALENDAR_CANCELLED_STATUSES = new Set([
@@ -116,6 +140,8 @@ export type CreateAppointmentPayload = {
   appointmentEnd: string;
   description?: string;
   instructions?: string;
+  /** Pet needs pre-meds — forces the practice pre-meds arrival window (default ±30). */
+  needsPremeds?: boolean;
   equipment?: string;
   medications?: string;
   treatmentId?: number;
@@ -682,7 +708,7 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
   });
 }
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 /** UTC bounds for one local calendar day (same shape as scheduler range queries). */
 export function localDayUtcRange(

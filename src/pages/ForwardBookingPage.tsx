@@ -27,12 +27,16 @@ import { EditForwardBookingModal } from '../components/EditForwardBookingModal';
 import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
+  FORWARD_BOOKING_CREATED_EVENT,
   FORWARD_BOOKING_CREATE_NEW_PARAM,
   FORWARD_BOOKING_CREATE_PATIENT_PARAM,
   FORWARD_BOOKING_CREATE_RETURN_TO_PARAM,
   sanitizeForwardBookingReturnTo,
+  taskIdFromForwardBookingReturnPath,
+  withForwardBookingTaskAddedFlag,
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
+import { completeForwardBookingTask } from '../utils/forwardBookingTaskComplete';
 import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchPracticeMainPhone } from '../api/clientPortal';
 import { fetchPrimaryProviders } from '../api/employee';
@@ -163,8 +167,9 @@ import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { buildSchedulerFocusAppointmentUrl, writeSchedulerFocusSession } from '../utils/schedulerFocusAppointment';
 import { DateTime } from 'luxon';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type StatusFilter = ForwardBookingListTab;
 
@@ -863,6 +868,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       notifySchedulingToolsNavCountsRefresh();
     }
   }, [practiceTz, isOnHoldView, includeHistory]);
+
+  useEffect(() => {
+    const onCreated = () => void load({ silent: true });
+    window.addEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+    return () => window.removeEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+  }, [load]);
 
   const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed' | 'onHold') => {
     setExitingRows((prev) => new Map(prev).set(entryId, kind));
@@ -2407,6 +2418,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                             showAlerts
                           />
                         ) : null}
+                        {entry.needsPremeds ? (
+                          <span className="premeds-pill" title="Book with the pre-meds arrival window">
+                            Pre-meds
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                     <div
@@ -2776,6 +2792,18 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           onClose={() => finishCreateForwardBooking(createReturnTo)}
           onCreated={(entry) => {
             const returnPath = createReturnTo;
+            const sourceTaskId = taskIdFromForwardBookingReturnPath(returnPath);
+            if (returnPath && sourceTaskId != null) {
+              // Came from a labs-pending task: the list entry *is* the work, so close
+              // the task and land back on it with the "added" confirmation showing.
+              setCreateOpen(false);
+              setCreatePrefill(null);
+              setCreateReturnTo(null);
+              void completeForwardBookingTask(sourceTaskId, entry).finally(() => {
+                navigate(withForwardBookingTaskAddedFlag(returnPath));
+              });
+              return;
+            }
             finishCreateForwardBooking(returnPath);
             if (returnPath) return;
             setStatusFilter('pending');

@@ -113,6 +113,10 @@ export type ReminderWithPrice = {
     priceAdjustedByMembership?: boolean;
     membershipPlanName?: string;
     membershipDiscountAmount?: number;
+    /** The plan's out-of-plan % was taken off this price (owner decision Oct 31, 2026). */
+    outOfPlanDiscountApplied?: boolean;
+    /** The plan's out-of-plan % for anything it doesn't cover, units past an allowance too. */
+    outOfPlanDiscountPercent?: number;
     clientDiscounts?: Record<string, any>;
   };
   discountPricing?: {
@@ -125,9 +129,16 @@ export type ReminderWithPrice = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;
@@ -342,6 +353,8 @@ export type Appointment = {
   isNewClientAtBooking?: boolean;
   isNewPatient?: boolean;
   isNewClient?: boolean;
+  /** Pet needs pre-meds — arrival window forced to the practice pre-meds band; calendar shows the pre-meds marker. */
+  needsPremeds?: boolean;
 };
 
 export type DeclinedInventoryItem = {
@@ -411,6 +424,12 @@ export type RoomLoader = {
    */
   linkedPriorRoomLoaderId?: number | null;
   linkedRoomLoaderId?: number | null;
+  /** Present when the client has submitted the form (sentStatus completed). */
+  responseFromClient?: {
+    summaryForPdf?: SummaryForPdf;
+    formAnswersForPdf?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
   created?: string;
   updated?: string;
 };
@@ -425,6 +444,8 @@ export type RoomLoaderSearchParams = {
   appointmentFrom?: string;
   /** Inclusive upper bound for appointment date filter (`YYYY-MM-DD`). */
   appointmentTo?: string;
+  /** Limit to loaders for this pet (appointment or linked patient). */
+  patientId?: number;
 };
 
 export type CreateRoomLoaderRequest = {
@@ -453,6 +474,9 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
   }
   if (params?.appointmentTo != null && String(params.appointmentTo).trim() !== '') {
     queryParams.append('appointmentTo', String(params.appointmentTo).trim());
+  }
+  if (params?.patientId != null && Number.isFinite(params.patientId)) {
+    queryParams.append('patientId', String(params.patientId));
   }
 
   const queryString = queryParams.toString();
@@ -567,10 +591,15 @@ export type SearchableItem = {
   itemType: 'inventory' | 'lab' | 'procedure' | string;
   inventoryItem?: any;
   lab?: any;
+  procedure?: any;
   price: number;
+  /** Price after wellness plan + client discounts (only when patientId/clientId provided). */
+  adjustedPrice?: number | null;
   name: string;
   code?: string;
   originalPrice?: number;
+  /** Fixed price per unit (copay, staff / cost-plus): line = min(line total, qty × this). */
+  perUnitPrice?: number | null;
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;
@@ -582,6 +611,10 @@ export type SearchableItem = {
     priceAdjustedByMembership?: boolean;
     membershipPlanName?: string;
     membershipDiscountAmount?: number;
+    /** The plan's out-of-plan % was taken off this price (owner decision Oct 31, 2026). */
+    outOfPlanDiscountApplied?: boolean;
+    /** The plan's out-of-plan % for anything it doesn't cover, units past an allowance too. */
+    outOfPlanDiscountPercent?: number;
     clientDiscounts?: Record<string, any>;
   };
   discountPricing?: {
@@ -594,9 +627,16 @@ export type SearchableItem = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;
@@ -620,7 +660,11 @@ export type ItemSearchParams = {
   limit?: number;
   /** If set, backend may also match items by this code (e.g. same as q to search by name or code). */
   code?: string;
-};
+  /** Apply wellness-plan pricing for this patient. */
+  patientId?: number;
+  /** Apply client status / personal discounts for this client. */
+  clientId?: number;
+} & PricingVisitContext;
 
 export async function searchItems(params: ItemSearchParams): Promise<SearchableItem[]> {
   const queryParams = new URLSearchParams();
@@ -632,13 +676,28 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   if (params.code != null && params.code !== '') {
     queryParams.append('code', params.code);
   }
+  if (params.patientId != null) {
+    queryParams.append('patientId', String(params.patientId));
+  }
+  if (params.clientId != null) {
+    queryParams.append('clientId', String(params.clientId));
+  }
+  for (const key of ['branchId', 'invoiceId', 'encounterId', 'estimateId', 'appointmentId'] as const) {
+    const v = params[key];
+    if (v != null && v !== '') queryParams.append(key, String(v));
+  }
 
   const { data } = await http.get<SearchableItem[]>(`/room-loader/items/search?${queryParams.toString()}`);
   return data;
 }
 
-/** Public item search (no auth required). Used by the public room loader form. */
-export async function searchItemsPublic(params: ItemSearchParams): Promise<SearchableItem[]> {
+/**
+ * Public item search (no auth required). Used by the public room loader form; its token
+ * lets the search use the visit's branch (prices and branch-hidden items).
+ */
+export async function searchItemsPublic(
+  params: ItemSearchParams & { token?: string | null }
+): Promise<SearchableItem[]> {
   const queryParams = new URLSearchParams();
   queryParams.append('q', params.q);
   queryParams.append('practiceId', String(params.practiceId));
@@ -646,6 +705,7 @@ export async function searchItemsPublic(params: ItemSearchParams): Promise<Searc
   if (params.code != null && params.code !== '') {
     queryParams.append('code', params.code);
   }
+  if (params.token) queryParams.append('token', params.token);
 
   const { data } = await http.get<SearchableItem[]>(`/public/room-loader/items/search?${queryParams.toString()}`);
   return data;
@@ -690,11 +750,46 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
+export type ReminderTextMatch = {
+  description: string;
+  itemType: 'lab' | 'procedure' | 'inventory' | null;
+  itemId: number | null;
+  itemName: string | null;
+  confidence: number;
+  /** catalog = reminder definition link, learned = staff-confirmed, fuzzy = name similarity. */
+  source: 'catalog' | 'learned' | 'fuzzy' | null;
+};
+
+/** Room loader matching for reminder text that isn't saved as a reminder yet. */
+export async function matchReminderText(
+  descriptions: string[],
+  patientId?: number
+): Promise<ReminderTextMatch[]> {
+  if (!descriptions.length) return [];
+  const { data } = await http.post<ReminderTextMatch[]>('/room-loader/reminder-matches/match', {
+    descriptions,
+    ...(patientId ? { patientId } : {}),
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+/** Learned matches for this reminder text (global and patient-specific). */
+export async function listReminderMappings(
+  reminderText: string,
+  practiceId: number
+): Promise<ReminderItemMapping[]> {
+  const { data } = await http.get<ReminderItemMapping[]>(
+    '/room-loader/reminder-matches/mappings/reminder',
+    { params: { reminderText, practiceId } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
 // Check item pricing for a patient. Pass the full item object (e.g. from search) so backend has all fields.
 export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
-  clientId: number;
+  clientId?: number;
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
@@ -703,6 +798,28 @@ export type CheckItemPricingRequest = {
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** When several membership benefits match, force this wellness_plan_items id. */
+  preferredWellnessPlanItemId?: number;
+} & PricingVisitContext;
+
+/** The visit a line is priced for; the server picks that visit's branch prices. */
+export type PricingVisitContext = {
+  branchId?: number;
+  invoiceId?: string;
+  encounterId?: string;
+  estimateId?: string;
+  appointmentId?: number;
+};
+
+export type MembershipCoverageAlternative = {
+  wellnessPlanItemId: number;
+  label: string;
+  coverage: string;
+  adjustedPrice: number | null;
+  includedQuantity: number;
+  usedQuantity: number;
+  remainingQuantity: number;
+  isWithinLimit: boolean;
 };
 
 export type CheckItemPricingResponse = {
@@ -717,6 +834,8 @@ export type CheckItemPricingResponse = {
   };
   adjustedPrice: number;
   originalPrice: number;
+  /** Fixed price per unit (copay, staff / cost-plus): line = min(line total, qty × this). */
+  perUnitPrice?: number;
   wellnessPlanPricing?: {
     hasCoverage: boolean;
     adjustedPrice: number;
@@ -725,6 +844,9 @@ export type CheckItemPricingResponse = {
     usedQuantity: number;
     remainingQuantity: number;
     isWithinLimit: boolean;
+    wellnessPlanItemId?: number;
+    coverageAlternatives?: MembershipCoverageAlternative[];
+    [key: string]: unknown;
   };
   discountPricing?: {
     priceAdjustedByDiscount: boolean;
@@ -736,9 +858,16 @@ export type CheckItemPricingResponse = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;

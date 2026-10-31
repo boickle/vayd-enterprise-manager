@@ -5,6 +5,7 @@ import {
   toAppointmentTypeWindowSource,
   type AppointmentTypeWindowInput,
 } from '../utils/appointmentArrivalWindow';
+import { windowSourceForVisit } from '../utils/premedsWindow';
 import { http } from './http';
 
 export type Depot = { lat: number; lon: number };
@@ -50,6 +51,8 @@ export function etaHouseholdArrivalWindowPayload(args: {
   effectiveWindow?: { startIso?: string; endIso?: string } | null;
   /** Used only when `effectiveWindow` is missing — type ±N from scheduled start. */
   appointmentType?: AppointmentTypeWindowInput;
+  /** Visit needs pre-meds — fallback uses the pre-meds window instead of the type's. */
+  needsPremeds?: boolean | null;
   practiceTz?: string | null;
 }): {
   isPersonalBlock?: true;
@@ -65,6 +68,7 @@ export function etaHouseholdArrivalWindowPayload(args: {
     endIso,
     effectiveWindow,
     appointmentType,
+    needsPremeds,
     practiceTz,
   } = args;
 
@@ -90,7 +94,7 @@ export function etaHouseholdArrivalWindowPayload(args: {
   if (isRoutable && startIso?.trim() && practiceTz?.trim()) {
     const fallback = effectiveWindowForScheduledStart(
       startIso,
-      toAppointmentTypeWindowSource(appointmentType),
+      windowSourceForVisit(toAppointmentTypeWindowSource(appointmentType), needsPremeds),
       practiceTz,
       { appointmentEndIso: endIso ?? undefined }
     );
@@ -499,6 +503,8 @@ export async function fetchTypeChangePreview(body: {
   date?: string;
   appointmentId: number;
   newAppointmentTypeId: number;
+  /** Draft "Needs pre-meds" — window narrows when true. Omit to use the saved flag. */
+  newNeedsPremeds?: boolean;
   useTraffic?: boolean;
 }): Promise<TypeChangePreviewResponse> {
   const { data } = await http.post<TypeChangePreviewResponse>(
@@ -515,6 +521,7 @@ export type TimeChangePreviewResponse = {
   original: TypeChangePreviewScoreSnapshot;
   withNewTime: TypeChangePreviewScoreSnapshot;
   delta: number | null;
+  arrivalWindow?: TypeChangePreviewResponse['arrivalWindow'];
   /** Present when preview is feasible + scorable; omit for infeasible previews. */
   feedbackHandoff?: TypeChangeFeedbackHandoff | null;
   dayModelNotes?: string[];
@@ -527,6 +534,8 @@ export async function fetchTimeChangePreview(body: {
   appointmentId: number;
   newAppointmentStartIso: string;
   newAppointmentEndIso: string;
+  /** Draft "Needs pre-meds" — window narrows when true. Omit to use the saved flag. */
+  newNeedsPremeds?: boolean;
   useTraffic?: boolean;
 }): Promise<TimeChangePreviewResponse> {
   const { data } = await http.post<TimeChangePreviewResponse>(

@@ -1,0 +1,1452 @@
+import axios from 'axios';
+import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
+
+/** Catalog tables a plan line can point at. */
+export type MembershipItemType = 'lab' | 'procedure' | 'inventory';
+
+/**
+ * `membership` plans bill on a subscription and are managed under Settings.
+ * `bundle` rows are sold once and live in the catalog. Same store underneath.
+ */
+export type BundleKind = 'bundle' | 'membership';
+
+/**
+ * `all` — every item is included on its own allowance.
+ * `choice` — the items are alternatives sharing one allowance ("this OR that").
+ * `any` — sell-once only: staff may check any subset (including none) at invoice time.
+ */
+export type GroupSelectionMode = 'all' | 'choice' | 'any';
+
+/** What a member pays for a line still inside its allowance. */
+export type ItemCoverage = 'included' | 'copay' | 'percent_off';
+
+/**
+ * How doctor production is valued for a membership / package line.
+ * - `full_price` — catalog list price
+ * - `membership_price` — what the member is charged for the line
+ * - `custom` — fixed amount in `productionOverride`
+ */
+export type ItemProductionBasis = 'full_price' | 'membership_price' | 'custom';
+
+/** Sentinel for unlimited allowance — every matching visit gets member pricing. */
+export const UNLIMITED_ALLOWANCE = -1;
+
+export type MembershipBillingInterval = 'monthly' | 'annual';
+
+/** The plan's chosen billing, else the one price it has, else "Monthly"/"Annual" in its name. */
+export function planBillingCadence(plan: {
+  name?: string | null;
+  billingCadence?: MembershipBillingInterval | null;
+  priceMonthly?: number | null;
+  priceAnnual?: number | null;
+}): MembershipBillingInterval | null {
+  if (plan.billingCadence === 'monthly' || plan.billingCadence === 'annual') {
+    return plan.billingCadence;
+  }
+  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
+  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
+  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
+  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
+  return null;
+}
+
+/* ------------------------------------------------------------------- types */
+
+export type BundleItem = {
+  id: number;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  name: string;
+  code: string | null;
+  catalogPrice: number | null;
+  /** -1 means unlimited (every matching visit gets member pricing). */
+  quantity: number;
+  coverage: ItemCoverage;
+  copayPrice: number | null;
+  percentOff: number | null;
+  productionBasis: ItemProductionBasis;
+  productionOverride: number | null;
+  sortOrder: number;
+  note: string | null;
+};
+
+export type BundleGroup = {
+  id: number;
+  name: string;
+  description: string | null;
+  selectionMode: GroupSelectionMode;
+  /** -1 means unlimited shared OR picks. */
+  allowedQuantity: number;
+  /**
+   * Sell-once `choice`: when true (default), staff must satisfy the pick count.
+   * When false, they may skip. Always treated as optional for `any`.
+   */
+  isRequired: boolean;
+  sortOrder: number;
+  items: BundleItem[];
+};
+
+export type Bundle = {
+  id: number;
+  practiceId: number;
+  kind: BundleKind;
+  name: string;
+  code: string | null;
+  description: string | null;
+  marketingSummary: string | null;
+  /** Line under the plan name on the signup card. */
+  cardTagLine: string | null;
+  /** "Includes" bullets on the signup card; savings lines come from the discounts. */
+  cardBullets: string[] | null;
+  species: string | null;
+  tier: string | null;
+  minAgeMonths: number | null;
+  maxAgeMonths: number | null;
+  termMonths: number | null;
+  /** Default plan at each renewal while the member still fits the age window. */
+  renewalSuccessorPackageId: number | null;
+  renewalSuccessorPackageName: string | null;
+  /** Plan at renewal when the pet has passed maxAgeMonths. */
+  ageLimitSuccessorPackageId: number | null;
+  ageLimitSuccessorPackageName: string | null;
+  price: number | null;
+  /** Bundles with no one-time price: percent off every item. */
+  discountPercent?: number | null;
+  priceMonthly: number | null;
+  priceAnnual: number | null;
+  /** Which price a membership plan bills on. Null on bundles. */
+  billingCadence?: MembershipBillingInterval | null;
+  outOfPlanDiscount: number | null;
+  onlineStoreDiscount: number | null;
+  renewalMonths: number | null;
+  isAutoRenew: boolean;
+  stripeProductId: string | null;
+  stripeMonthlyPriceId: string | null;
+  stripeAnnualPriceId: string | null;
+  portalSlug: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  isArchived: boolean;
+  /** True while Scout edits shield this plan from the eVet import. */
+  isScoutManaged: boolean;
+  activeMemberCount: number;
+  groups: BundleGroup[];
+};
+
+export type BundleItemInput = {
+  id?: number;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  quantity?: number;
+  coverage?: ItemCoverage;
+  copayPrice?: number | null;
+  percentOff?: number | null;
+  productionBasis?: ItemProductionBasis;
+  productionOverride?: number | null;
+  sortOrder?: number;
+  note?: string | null;
+};
+
+export type BundleGroupInput = {
+  id?: number;
+  name: string;
+  description?: string | null;
+  selectionMode: GroupSelectionMode;
+  allowedQuantity?: number;
+  isRequired?: boolean;
+  sortOrder?: number;
+  items: BundleItemInput[];
+};
+
+export type BundleFields = {
+  name?: string;
+  code?: string | null;
+  description?: string | null;
+  marketingSummary?: string | null;
+  cardTagLine?: string | null;
+  cardBullets?: string[] | null;
+  species?: string | null;
+  tier?: string | null;
+  minAgeMonths?: number | null;
+  maxAgeMonths?: number | null;
+  termMonths?: number | null;
+  renewalSuccessorPackageId?: number | null;
+  ageLimitSuccessorPackageId?: number | null;
+  price?: number | null;
+  discountPercent?: number | null;
+  priceMonthly?: number | null;
+  priceAnnual?: number | null;
+  billingCadence?: MembershipBillingInterval | null;
+  outOfPlanDiscount?: number | null;
+  onlineStoreDiscount?: number | null;
+  renewalMonths?: number | null;
+  isAutoRenew?: boolean;
+  stripeProductId?: string | null;
+  stripeMonthlyPriceId?: string | null;
+  stripeAnnualPriceId?: string | null;
+  portalSlug?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+  isArchived?: boolean;
+};
+
+export type PropagationResult = {
+  membershipsUpdated: number;
+  benefitsAdded: number;
+  benefitsUpdated: number;
+  benefitsRemoved: number;
+  /** Member lines re-attached to a recreated plan line for the same item, usage kept. */
+  benefitsRelinked?: number;
+  groupsSynced: number;
+  /** Changed only in internal grouping; what the member gets is the same. */
+  membershipsGroupingOnly?: number;
+  activeMemberships?: number;
+  dryRun?: boolean;
+  members?: {
+    wellnessPlanId: number;
+    patientId: number | null;
+    patientName: string | null;
+    changes: string[];
+  }[];
+};
+
+export type MembershipBenefit = {
+  id: number;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  name: string;
+  code: string | null;
+  catalogPrice: number | null;
+  /** -1 means unlimited. */
+  includedQuantity: number;
+  usedQuantity: number;
+  /** -1 means unlimited remaining. */
+  remainingQuantity: number;
+  coverage: ItemCoverage;
+  price: number | null;
+  percentOff: number | null;
+  /** Added for this patient alone rather than coming from the plan template. */
+  isCustom: boolean;
+  isRemoved: boolean;
+  note: string | null;
+  addedByEmployeeId: number | null;
+  addedAt: string | null;
+  removedByEmployeeId: number | null;
+  removedAt: string | null;
+};
+
+export type MembershipGroup = {
+  id: number;
+  name: string;
+  selectionMode: GroupSelectionMode;
+  allowedQuantity: number;
+  usedQuantity: number;
+  remainingQuantity: number;
+  sortOrder: number;
+  benefits: MembershipBenefit[];
+};
+
+export type PatientMembership = {
+  /** Set after a staff plan change: what happened to billing. */
+  billingNote?: string;
+  id: number;
+  practiceId: number;
+  patientId: number;
+  patientName: string | null;
+  packageId: number;
+  planName: string;
+  planTier: string | null;
+  /** 'expired': never cancelled, but past its end date (e.g. a held renewal). */
+  status: 'active' | 'inactive' | 'expired';
+  /** Set on enrolment only: species or age mismatches staff should check. */
+  warnings?: string[];
+  startDate: string | null;
+  /** Start of the current membership year (the start date until it first renews). */
+  termStartDate?: string | null;
+  expirationDate: string | null;
+  billingInterval: string | null;
+  price: number | null;
+  outOfPlanDiscount: number | null;
+  onlineStoreDiscount: number | null;
+  stripeSubscriptionId: string | null;
+  notes: string | null;
+  createdByEmployeeId: number | null;
+  isScoutManaged: boolean;
+  /** The visit was already re-priced and refunded by a post-visit signup (in person or emailed). */
+  visitRefund?: {
+    at: string;
+    amount: number;
+    status: string;
+    viaEmailedAgreement: boolean;
+  } | null;
+  /** True once the membership fee was collected (agreement on chart for Scout enrolments). */
+  membershipFeePaid: boolean;
+  /** Set while a card dispute is open: no member pricing or covered services. */
+  benefitsPaused: { since: string; reason: string | null } | null;
+  /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
+  ownerChange: MembershipOwnerChange | null;
+  groups: MembershipGroup[];
+  /** Covered services given this term, newest first. */
+  usage?: MembershipUsage[];
+};
+
+export type MembershipUsage = {
+  benefitId: number | null;
+  groupId: number | null;
+  name: string;
+  quantity: number;
+  usedAt: string | null;
+  visitInvoiceId: string | null;
+  note: string | null;
+};
+
+export type MembershipOwnerRef = { id: number; name: string };
+
+export type MembershipOwnerChange = {
+  since: string;
+  /** Owners before the first change staff haven't handled yet. */
+  previous: MembershipOwnerRef[];
+  current: MembershipOwnerRef[];
+  /** Stripe customer on the membership, else whoever made the latest membership payment. */
+  payer: MembershipOwnerRef | null;
+};
+
+export type MembershipAuditEntry = {
+  id: number;
+  action: string;
+  summary: string;
+  employeeId: number | null;
+  employeeName: string | null;
+  detail: Record<string, unknown> | null;
+  createdAt: string | null;
+};
+
+/* ----------------------------------------------------------------- bundles */
+
+export async function listBundles(opts?: {
+  kind?: BundleKind;
+  includeArchived?: boolean;
+  q?: string;
+}): Promise<Bundle[]> {
+  const { data } = await http.get<Bundle[]>('/memberships/bundles', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(opts?.kind ? { kind: opts.kind } : {}),
+      ...(opts?.includeArchived ? { includeArchived: true } : {}),
+      ...(opts?.q?.trim() ? { q: opts.q.trim() } : {}),
+    },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export type TestRenewalAvailability = { available: boolean; reason: string | null };
+
+export type TestRenewalResult = {
+  asOf: string;
+  notices: { sent: number; skipped: number };
+  renewals: { applied: number; canceled: number };
+};
+
+export async function getTestRenewalAvailability(): Promise<TestRenewalAvailability> {
+  const { data } = await http.get<TestRenewalAvailability>(
+    '/memberships/patient-memberships/renewals/test-run',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+export async function runTestRenewal(body: {
+  asOf: string;
+  wellnessPlanId?: number;
+}): Promise<TestRenewalResult> {
+  const { data } = await http.post<TestRenewalResult>(
+    '/memberships/patient-memberships/renewals/test-run',
+    { practiceId: currentPracticeId(), ...body },
+  );
+  return data;
+}
+
+/** A plan whose members would renew onto an archived plan. */
+export type RenewalGap = {
+  packageId: number;
+  name: string;
+  isArchived: boolean;
+  activeMemberCount: number;
+  problem: 'no_next_plan' | 'next_plan_archived' | 'age_out_plan_archived';
+  archivedPlanName: string;
+};
+
+export async function listRenewalGaps(): Promise<RenewalGap[]> {
+  const { data } = await http.get<RenewalGap[]>('/memberships/bundles/renewal-gaps', {
+    params: { practiceId: currentPracticeId() },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getBundle(id: number): Promise<Bundle> {
+  const { data } = await http.get<Bundle>(`/memberships/bundles/${encodeURIComponent(id)}`, {
+    params: { practiceId: currentPracticeId() },
+  });
+  return data;
+}
+
+/** One catalog line after expanding a sell-once bundle (post OR picks). */
+export type BundleSaleLine = {
+  packageItemId: number;
+  groupId: number | null;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  name: string;
+  code: string | null;
+  quantity: number;
+  unitPrice: number;
+  listUnitPrice: number;
+  /** The bundle's own per-unit price for this item ($0 is a real price); null = catalog price. */
+  priceOverride?: number | null;
+  note: string | null;
+};
+
+export type BundleSaleResolution = {
+  /** The pack sells at `bundlePrice` as one line; its items go on at $0 underneath. */
+  fixedPrice?: boolean;
+  /** Percent off every item (bundles with no one-time price). */
+  discountPercent?: number | null;
+  bundleId: number;
+  bundleName: string;
+  bundlePrice: number | null;
+  lines: BundleSaleLine[];
+};
+
+export type BundleSaleGroupSelection = {
+  groupId: number;
+  packageItemIds: number[];
+};
+
+/**
+ * Expand a catalog bundle for an invoice / SOAP charge. `all` groups always
+ * expand; `choice` (OR) groups need staff picks in `selections`.
+ */
+export async function resolveBundleForSale(
+  id: number,
+  selections: BundleSaleGroupSelection[] = []
+): Promise<BundleSaleResolution> {
+  const { data } = await http.post<BundleSaleResolution>(
+    `/memberships/bundles/${encodeURIComponent(id)}/resolve-for-sale`,
+    {
+      practiceId: currentPracticeId(),
+      selections,
+    }
+  );
+  return data;
+}
+
+export async function createBundle(
+  kind: BundleKind,
+  fields: BundleFields & { name: string },
+  groups?: BundleGroupInput[]
+): Promise<Bundle> {
+  const { data } = await http.post<Bundle>('/memberships/bundles', {
+    practiceId: currentPracticeId(),
+    kind,
+    ...fields,
+    ...(groups ? { groups } : {}),
+  });
+  return data;
+}
+
+export async function updateBundle(
+  id: number,
+  fields: BundleFields,
+  opts?: {
+    groups?: BundleGroupInput[];
+    /** "Apply this to all current {{plan}} memberships." */
+    applyToExistingMemberships?: boolean;
+    removeBenefitsDroppedFromPlan?: boolean;
+    /** `future` = new enrollments and renewals; `current` = also update live Stripe subscriptions. */
+    priceApplyTo?: 'future' | 'current';
+  }
+): Promise<Bundle & { propagation?: PropagationResult }> {
+  const { data } = await http.patch<Bundle & { propagation?: PropagationResult }>(
+    `/memberships/bundles/${encodeURIComponent(id)}`,
+    {
+      practiceId: currentPracticeId(),
+      ...fields,
+      ...(opts?.groups ? { groups: opts.groups } : {}),
+      ...(opts?.applyToExistingMemberships ? { applyToExistingMemberships: true } : {}),
+      ...(opts?.removeBenefitsDroppedFromPlan ? { removeBenefitsDroppedFromPlan: true } : {}),
+      ...(opts?.priceApplyTo ? { priceApplyTo: opts.priceApplyTo } : {}),
+    }
+  );
+  return data;
+}
+
+/** Pushes the saved plan onto existing memberships without other edits. */
+export async function applyBundleToExistingMemberships(
+  id: number,
+  opts?: {
+    removeBenefitsDroppedFromPlan?: boolean;
+    packageItemIds?: number[];
+    removePackageItemIds?: number[];
+    /** Sync every member with the whole plan; the id lists are ignored. */
+    wholePlan?: boolean;
+    /** Return the changes without saving them. */
+    dryRun?: boolean;
+  }
+): Promise<PropagationResult> {
+  const { data } = await http.post<PropagationResult>(
+    `/memberships/bundles/${encodeURIComponent(id)}/apply-to-existing`,
+    {
+      practiceId: currentPracticeId(),
+      ...(opts?.wholePlan ? { wholePlan: true } : {}),
+      ...(opts?.dryRun ? { dryRun: true } : {}),
+      ...(opts?.removeBenefitsDroppedFromPlan ? { removeBenefitsDroppedFromPlan: true } : {}),
+      ...(opts?.packageItemIds?.length ? { packageItemIds: opts.packageItemIds } : {}),
+      ...(opts?.removePackageItemIds?.length
+        ? { removePackageItemIds: opts.removePackageItemIds }
+        : {}),
+    }
+  );
+  return data;
+}
+
+/** A downloaded plans file. Only the fields the upload screen reads are typed. */
+export type MembershipPlanFile = {
+  format: string;
+  version: number;
+  exportedAt: string;
+  environment: string | null;
+  practiceId: number;
+  plans: Array<{ id: number; name: string } & Record<string, unknown>>;
+};
+
+export type PlanImportCopy = 'everything' | 'benefits';
+
+export type PlanImportMapping = { sourceIndex: number; targetPackageId?: number };
+
+export type PlanImportRow = {
+  sourceIndex: number;
+  sourceName: string;
+  targetPackageId: number | null;
+  targetName: string;
+  matchedBy: 'eVet id' | 'portal link' | 'name' | 'chosen' | 'none';
+  samePlan: boolean;
+  activeMemberCount: number;
+  settingChanges: string[];
+  benefitsAdded: string[];
+  benefitsRemoved: string[];
+  benefitsChanged: string[];
+  unmatched: string[];
+  warnings: string[];
+  status: 'ready' | 'no_changes' | 'blocked' | 'saved' | 'failed';
+  error: string | null;
+};
+
+export type PlanImportResult = {
+  dryRun: boolean;
+  copy: PlanImportCopy;
+  file: { exportedAt: string; environment: string | null; planCount: number };
+  rows: PlanImportRow[];
+};
+
+/** Every membership plan, or just `ids`, as a file another system can upload. */
+export async function exportMembershipPlans(ids?: number[]): Promise<MembershipPlanFile> {
+  const { data } = await http.get<MembershipPlanFile>('/memberships/bundles/export', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(ids?.length ? { ids: ids.join(',') } : {}),
+    },
+  });
+  return data;
+}
+
+/** Without `mappings` this returns the suggested matches and saves nothing. */
+export async function importMembershipPlans(opts: {
+  file: MembershipPlanFile;
+  copy: PlanImportCopy;
+  mappings?: PlanImportMapping[];
+  dryRun?: boolean;
+}): Promise<PlanImportResult> {
+  const { data } = await http.post<PlanImportResult>('/memberships/bundles/import', {
+    practiceId: currentPracticeId(),
+    file: opts.file,
+    copy: opts.copy,
+    ...(opts.mappings ? { mappings: opts.mappings } : {}),
+    ...(opts.dryRun ? { dryRun: true } : {}),
+  });
+  return data;
+}
+
+export async function archiveBundle(id: number): Promise<void> {
+  await http.delete(`/memberships/bundles/${encodeURIComponent(id)}`, {
+    params: { practiceId: currentPracticeId() },
+  });
+}
+
+export async function getBundleAudit(id: number): Promise<MembershipAuditEntry[]> {
+  const { data } = await http.get<MembershipAuditEntry[]>(
+    `/memberships/bundles/${encodeURIComponent(id)}/audit`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export type PlanMember = {
+  wellnessPlanId: number;
+  patientId: number | null;
+  patientName: string | null;
+  clientId: number | null;
+  clientName: string | null;
+  startDate: string | null;
+  expirationDate: string | null;
+  billingInterval: string | null;
+  cancelAtTermEnd: boolean;
+  benefitsPaused: boolean;
+  /** Benefits drawn this term, all lines added together. */
+  usedTotal: number;
+  /** Pet is inactive or has a completed euthanasia visit: the membership should be cancelled. */
+  petGone?: boolean;
+  petActive?: boolean;
+  inactivationReason?: string | null;
+  inactiveAt?: string | null;
+  euthanasiaVisit?: boolean;
+};
+
+/** Patients currently on this plan, with their client. */
+export async function listPlanMembers(id: number): Promise<PlanMember[]> {
+  const { data } = await http.get<PlanMember[]>(
+    `/memberships/bundles/${encodeURIComponent(id)}/members`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+/* ----------------------------------------------------- patient memberships */
+
+export async function listPatientMemberships(opts?: {
+  patientId?: number;
+  clientId?: number;
+  includeInactive?: boolean;
+}): Promise<PatientMembership[]> {
+  const { data } = await http.get<PatientMembership[]>('/memberships/patient-memberships', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(opts?.patientId ? { patientId: opts.patientId } : {}),
+      ...(opts?.clientId ? { clientId: opts.clientId } : {}),
+      ...(opts?.includeInactive ? { includeInactive: true } : {}),
+    },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+/** Client portal: the logged-in client's own pets' memberships, with benefit usage. */
+export async function listMyPatientMemberships(opts?: {
+  patientId?: number;
+}): Promise<PatientMembership[]> {
+  const { data } = await http.get<PatientMembership[]>('/memberships/patient-memberships/mine', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(opts?.patientId ? { patientId: opts.patientId } : {}),
+    },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getPatientMembership(id: number): Promise<PatientMembership> {
+  const { data } = await http.get<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(id)}`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return data;
+}
+
+export async function getPatientMembershipAudit(id: number): Promise<MembershipAuditEntry[]> {
+  const { data } = await http.get<MembershipAuditEntry[]>(
+    `/memberships/patient-memberships/${encodeURIComponent(id)}/audit`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createPatientMembership(input: {
+  patientId: number;
+  packageId: number;
+  billingInterval?: MembershipBillingInterval;
+  startDate?: string;
+  price?: number | null;
+  stripeSubscriptionId?: string | null;
+  membershipTransactionId?: number | null;
+  notes?: string | null;
+  agreementAccepted?: boolean;
+  agreementSignature?: string;
+  agreementSignatureData?: string;
+  agreementSignedAt?: string;
+  agreementText?: string;
+}): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>('/memberships/patient-memberships', {
+    practiceId: currentPracticeId(),
+    ...input,
+  });
+  return data;
+}
+
+/** Adds a benefit to this patient's membership only; the template is untouched. */
+export async function addMembershipItem(
+  membershipId: number,
+  input: {
+    itemType: MembershipItemType;
+    catalogItemId: number;
+    includedQuantity?: number;
+    coverage?: ItemCoverage;
+    price?: number | null;
+    percentOff?: number | null;
+    groupId?: number | null;
+    note?: string | null;
+  }
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items`,
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export async function updateMembershipItem(
+  membershipId: number,
+  itemId: number,
+  input: {
+    includedQuantity?: number;
+    coverage?: ItemCoverage;
+    price?: number | null;
+    percentOff?: number | null;
+    note?: string | null;
+  }
+): Promise<PatientMembership> {
+  const { data } = await http.patch<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items/${encodeURIComponent(itemId)}`,
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export async function removeMembershipItem(
+  membershipId: number,
+  itemId: number,
+  reason?: string
+): Promise<void> {
+  await http.delete(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      params: {
+        practiceId: currentPracticeId(),
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      },
+    }
+  );
+}
+
+/** Staff fix for a wrong plan; Stripe billing follows (Square is changed by hand). */
+/** What moving to another plan does to billing; nothing is changed. */
+export type MembershipPlanChangePreview = {
+  billing: 'stripe' | 'square';
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  newPrice: number | null;
+  currentPrice: number | null;
+  intervalChanges: boolean;
+  /** Monthly billing: months already billed this membership year, the current one included. */
+  monthsBilled: number | null;
+  /** New price minus current price, per billing period. */
+  priceDifference: number | null;
+  /** Dollars now for the whole membership year so far: positive is charged, negative is credited or refunded. */
+  adjustment: number | null;
+  error: string | null;
+  /** The sentence to show staff, the same wording as the note after the change. */
+  note: string;
+};
+
+export async function previewMembershipPlanChange(
+  membershipId: number,
+  input: { packageId: number; billingInterval?: MembershipBillingInterval }
+): Promise<MembershipPlanChangePreview> {
+  const { data } = await http.get<MembershipPlanChangePreview>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/change-plan/preview`,
+    { params: { practiceId: currentPracticeId(), ...input } }
+  );
+  return data;
+}
+
+export async function changeMembershipPlan(
+  membershipId: number,
+  input: {
+    packageId: number;
+    billingInterval?: MembershipBillingInterval;
+    carryOverUsage?: boolean;
+    keepCustomItems?: boolean;
+    reason?: string | null;
+  }
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/change-plan`,
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export type MembershipBillingCard = {
+  card: { brand: string; last4: string; expMonth: number | null; expYear: number | null } | null;
+  canUpdate: boolean;
+  /** Staff only: still billed on Square, so a new card moves billing to Stripe. */
+  canMoveToStripe?: boolean;
+  reason: string | null;
+};
+
+export type MembershipStripeMoveResult = {
+  ok: true;
+  chargedNow: boolean;
+  firstChargeDate: string | null;
+  benefitsResumed: boolean;
+  squareSubscriptionId: string | null;
+  squareCanceled: boolean;
+  squareActionNeeded: string | null;
+  membership: PatientMembership;
+};
+
+/** Staff: bill a Square membership through Stripe on this card, and cancel Square. */
+export async function moveMembershipToStripe(
+  membershipId: number,
+  paymentMethodId: string
+): Promise<MembershipStripeMoveResult> {
+  const { data } = await http.post<MembershipStripeMoveResult>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/move-to-stripe`,
+    { practiceId: currentPracticeId(), paymentMethodId }
+  );
+  return data;
+}
+
+function membershipCardPath(membershipId: number, mine: boolean) {
+  return `/memberships/patient-memberships/${mine ? 'mine/' : ''}${encodeURIComponent(membershipId)}/card`;
+}
+
+/** The card a membership is billed on. `mine` is the client portal. */
+export async function getMembershipCard(
+  membershipId: number,
+  opts?: { mine?: boolean }
+): Promise<MembershipBillingCard> {
+  const { data } = await http.get<MembershipBillingCard>(
+    membershipCardPath(membershipId, opts?.mine === true),
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return data;
+}
+
+export async function updateMembershipCard(
+  membershipId: number,
+  paymentMethodId: string,
+  opts?: { mine?: boolean }
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    membershipCardPath(membershipId, opts?.mine === true),
+    { practiceId: currentPracticeId(), paymentMethodId }
+  );
+  return data;
+}
+
+export async function resumeMembershipBenefits(
+  membershipId: number,
+  note?: string | null
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/resume-benefits`,
+    { practiceId: currentPracticeId(), note: note || undefined }
+  );
+  return data;
+}
+
+/** Ties a membership to a Stripe subscription Scout couldn't match on its own. */
+export async function linkMembershipStripeSubscription(
+  membershipId: number,
+  subscriptionId: string
+): Promise<{ stripeSubscriptionId: string }> {
+  const { data } = await http.post<{ stripeSubscriptionId: string }>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/stripe-subscription`,
+    { practiceId: currentPracticeId(), subscriptionId }
+  );
+  return data;
+}
+
+export async function markMembershipOwnerChangeHandled(
+  membershipId: number,
+  note?: string | null
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/owner-change/handled`,
+    { practiceId: currentPracticeId(), note: note || undefined }
+  );
+  return data;
+}
+
+export type MembershipCancelLine = {
+  description: string;
+  amount: number;
+};
+
+export type MembershipCancelPreview = {
+  membershipId: number;
+  planName: string;
+  petName: string;
+  billingInterval: 'monthly' | 'annual';
+  termStart: string;
+  termLabel: string;
+  paidThisTerm: number;
+  usedThisTerm: number;
+  chargeAmount: number;
+  refundAmount: number;
+  hasCard: boolean;
+  /** No payment record was found, so the amount paid is estimated from the listed price. */
+  paymentUnknown?: boolean;
+  coveredLines: MembershipCancelLine[];
+  paidLines: MembershipCancelLine[];
+  ownerWillSee: string;
+};
+
+export type MembershipCancelResult = {
+  membership: PatientMembership;
+  invoiceId?: string | null;
+  paidThisTerm: number;
+  usedThisTerm: number;
+  chargeAmount: number;
+  refundAmount: number;
+  chargeIssued?: boolean;
+  refundIssued?: boolean;
+  chargeByHand?: boolean;
+  refundByHand?: boolean;
+  stripeCanceled?: boolean;
+  emailSent?: boolean;
+  moneyError?: string | null;
+  ownerWillSee?: string;
+};
+
+export async function previewMembershipCancel(
+  membershipId: number
+): Promise<MembershipCancelPreview> {
+  const { data } = await http.get<MembershipCancelPreview>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel-preview`,
+    { params: { practiceId: currentPracticeId() } }
+  );
+  return data;
+}
+
+export async function cancelMembership(
+  membershipId: number,
+  reason: string,
+  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean }
+): Promise<MembershipCancelResult> {
+  const { data } = await http.post<MembershipCancelResult>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
+    {
+      practiceId: currentPracticeId(),
+      reason,
+      ...(confirm?.chargeAmount != null ? { confirmChargeAmount: confirm.chargeAmount } : {}),
+      ...(confirm?.refundAmount != null ? { confirmRefundAmount: confirm.refundAmount } : {}),
+      ...(confirm?.skipMoney ? { skipMoney: true } : {}),
+    }
+  );
+  return data;
+}
+
+/* ------------------------------------------------- post-visit membership signup */
+
+export type PostVisitSignupLine = {
+  visitInvoiceId?: string;
+  visitInvoiceLineId: string;
+  description: string;
+  itemType: MembershipItemType | null;
+  catalogItemId: number | null;
+  qty: number;
+  listUnitPrice: number;
+  currentAmount: number;
+  newAmount: number;
+  coveredByMembership: boolean;
+  /** Human-readable and safe to show to staff in the line table. */
+  coverageReason: string;
+  /** When not covered, plan benefit this line would map to. */
+  recommendedBenefitName?: string | null;
+};
+
+export type PostVisitSignupBenefit = {
+  visitInvoiceId?: string;
+  visitInvoiceLineId: string;
+  description: string;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  quantity: number;
+  amountCovered: number;
+};
+
+export type PostVisitSignupInvoiceSummary = {
+  id: string;
+  status: 'open' | 'finalized' | 'paid' | 'void';
+  total: number;
+  amountPaid: number;
+  lineCount: number;
+  patientId: number | null;
+  clientId: number | null;
+  visitAt: string | null;
+  visitAgeHours: number | null;
+  newTotal?: number;
+  refundDue?: number;
+  balanceDue?: number;
+};
+
+export type PostVisitSignupPreview = {
+  invoice: PostVisitSignupInvoiceSummary;
+  invoices?: PostVisitSignupInvoiceSummary[];
+  lines: PostVisitSignupLine[];
+  newSubtotal: number;
+  newTaxTotal: number;
+  newTotal: number;
+  /** Negative: the total reduction membership pricing applies to this bill. */
+  membershipAdjustments: number;
+  amountAlreadyPaid: number;
+  refundDue: number;
+  balanceDue: number;
+  /** First Stripe subscription invoice collected today. Zero when there is no card. */
+  subscriptionAmount?: number;
+  benefitsToCredit: PostVisitSignupBenefit[];
+  planName: string;
+  planPrice: number | null;
+  windowHours?: number;
+  outsideWindow?: boolean;
+  oldestInvoiceAgeHours?: number | null;
+  warnings: string[];
+  /** Paid in eVet, not Stripe — refund or collect the balance by hand. */
+  manualSettlement?: boolean;
+  /** Owner already paid in Stripe. Refund the covered visit only. */
+  ownerAlreadyPaid?: boolean;
+  /** Enter a card — the visit payment cannot start the subscription. */
+  needsCard?: boolean;
+  paidInStripe?: boolean;
+};
+
+export type PostVisitSignupResult = {
+  membershipId: number;
+  planName: string;
+  planPrice: number | null;
+  refundStatus: 'issued' | 'skipped' | 'not_needed' | 'failed';
+  refundAmount: number;
+  refundReference: string | null;
+  refundError: string | null;
+  chargeStatus?: 'issued' | 'skipped' | 'not_needed' | 'failed';
+  chargeAmount?: number;
+  chargeReference?: string | null;
+  chargeError?: string | null;
+  subscriptionStatus?: 'issued' | 'skipped' | 'not_needed' | 'failed';
+  subscriptionAmount?: number;
+  subscriptionId?: string | null;
+  subscriptionError?: string | null;
+  ownerAlreadyPaid?: boolean;
+  invoice: {
+    id: string;
+    status: 'open' | 'finalized' | 'paid' | 'void';
+    subtotal: number;
+    taxTotal: number;
+    total: number;
+    membershipAdjustments: number;
+    amountPaid: number;
+    balanceDue: number;
+  };
+  invoices?: Array<{
+    id: string;
+    status: 'open' | 'finalized' | 'paid' | 'void';
+    subtotal: number;
+    taxTotal: number;
+    total: number;
+    membershipAdjustments: number;
+    amountPaid: number;
+    balanceDue: number;
+    refundStatus: 'issued' | 'skipped' | 'not_needed' | 'failed';
+    refundAmount: number;
+  }>;
+  benefitsCredited: PostVisitSignupBenefit[];
+  emailSent: boolean;
+  windowOverridden?: boolean;
+  warnings: string[];
+};
+
+/** Dry run: what the refund and re-priced bill would be. Writes nothing. */
+export type PostVisitLineSubstitution = {
+  visitInvoiceLineId: string;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+};
+
+export async function previewPostVisitSignup(input: {
+  visitInvoiceId?: string;
+  visitInvoiceIds?: string[];
+  packageId: number;
+  billingInterval?: MembershipBillingInterval;
+  patientId?: number;
+  substitutions?: PostVisitLineSubstitution[];
+  paymentMethodId?: string;
+}): Promise<PostVisitSignupPreview> {
+  const { data } = await http.post<PostVisitSignupPreview>(
+    '/memberships/post-visit-signup/preview',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+/**
+ * Enrolls the patient, re-prices the visit, credits the services they already
+ * received, refunds the difference, and emails the client.
+ *
+ * `confirmRefundAmount` is the figure staff were shown; the API rejects the call
+ * if the bill moved underneath them.
+ */
+export async function executePostVisitSignup(input: {
+  visitInvoiceId?: string;
+  visitInvoiceIds?: string[];
+  packageId: number;
+  billingInterval?: MembershipBillingInterval;
+  patientId?: number;
+  substitutions?: PostVisitLineSubstitution[];
+  confirmRefundAmount?: number;
+  confirmChargeAmount?: number;
+  confirmSubscriptionAmount?: number;
+  skipRefund?: boolean;
+  note?: string;
+  overrideWindow?: boolean;
+  overrideWindowReason?: string;
+  paymentMethodId?: string;
+  agreementAccepted?: boolean;
+  agreementSignature?: string;
+  agreementSignatureData?: string;
+  agreementSignedAt?: string;
+  agreementText?: string;
+}): Promise<PostVisitSignupResult> {
+  const { data } = await http.post<PostVisitSignupResult>(
+    '/memberships/post-visit-signup/execute',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export type MembershipRenewalPreview = {
+  petName: string;
+  clientFirstName: string;
+  currentPlanName: string;
+  nextPlanName: string;
+  billingInterval: MembershipBillingInterval | null;
+  nextPrice: number | null;
+  termEnd: string;
+  reason: 'aged_out' | 'successor' | 'same' | 'chosen';
+  alreadyRenewed: boolean;
+  termReviewClosed: boolean;
+  alreadyCanceling: boolean;
+  cancelPhrase: string;
+  /** Still billed through the old (Square) system: ask for a card and plan. */
+  needsCard: boolean;
+  planOptions: MembershipRenewalPlanOption[];
+  recommendedPackageId: number;
+  /** What renews: the owner's choice if any, else the recommended plan. */
+  nextPackageId: number;
+  /** Set when the plan changes at renewal (for example Foundations to Golden). */
+  comparison: MembershipRenewalComparison | null;
+};
+
+export type MembershipRenewalComparison = {
+  fromPlanName: string;
+  toPlanName: string;
+  billingInterval: MembershipBillingInterval;
+  fromPrice: number | null;
+  toPrice: number | null;
+  priceDifference: number | null;
+  added: string[];
+  why: string | null;
+  canStay: boolean;
+};
+
+export type UpcomingMembershipRenewal = MembershipRenewalPreview & {
+  wellnessPlanId: number;
+  patientId: number | null;
+  reviewToken: string;
+};
+
+export type PostVisitOpenWindow = {
+  patientId: number;
+  patientName: string;
+  /** Business hours remaining in the signup window (always > 0). */
+  hoursLeft: number;
+  windowHours: number;
+};
+
+/** Client portal: pets with a recent visit still inside the post-visit signup window. */
+export async function listMyPostVisitWindows(): Promise<PostVisitOpenWindow[]> {
+  const { data } = await http.get<PostVisitOpenWindow[]>(
+    '/memberships/post-visit-signup/mine/open-windows',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+/** Client portal: what joining on a plan refunds from the pet's recent visit. */
+export type OwnerVisitRefundOutline = {
+  planName: string;
+  refundDue: number;
+  paidTotal: number;
+  newTotal: number;
+  hoursLeft: number | null;
+  visits: Array<{ visitAt: string | null; total: number; paid: number }>;
+  lines: Array<{
+    description: string;
+    qty: number;
+    was: number;
+    now: number;
+    covered: boolean;
+    note: string;
+  }>;
+  unchangedCount: number;
+};
+
+/** Null when there's no recent visit in the window for this pet. */
+export async function previewMyVisitRefund(body: {
+  patientId: number;
+  planId: string;
+  planName?: string;
+  pricingOption: 'monthly' | 'annual';
+  addOns?: string[];
+  species?: string;
+}): Promise<OwnerVisitRefundOutline | null> {
+  const { data } = await http.post<OwnerVisitRefundOutline | null | ''>(
+    '/memberships/post-visit-signup/mine/visit-refund-preview',
+    { practiceId: currentPracticeId(), ...body },
+  );
+  return data || null;
+}
+
+/** Client portal: the logged-in client's pets whose membership renews soon. */
+export async function listMyUpcomingRenewals(): Promise<UpcomingMembershipRenewal[]> {
+  const { data } = await http.get<UpcomingMembershipRenewal[]>(
+    '/memberships/patient-memberships/mine/upcoming-renewals',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+export type MembershipRenewalPlanOption = {
+  packageId: number;
+  name: string;
+  summary: string | null;
+  cardTagLine?: string | null;
+  cardBullets?: string[] | null;
+  monthlyPrice: number | null;
+  annualPrice: number | null;
+  monthlyAvailable: boolean;
+  annualAvailable: boolean;
+  recommended: boolean;
+};
+
+export type MembershipRenewalCardResult = {
+  ok: true;
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  price: number | null;
+  firstChargeDate: string;
+};
+
+/** No JWT — the review token is in the query string. */
+const publicMembershipClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000',
+  withCredentials: false,
+});
+
+export async function fetchMembershipRenewalPreview(
+  token: string
+): Promise<MembershipRenewalPreview> {
+  const { data } = await publicMembershipClient.get<MembershipRenewalPreview>(
+    '/public/membership-renewal',
+    { params: { token } }
+  );
+  return data;
+}
+
+export async function requestMembershipRenewalCancel(
+  token: string,
+  body: { petName: string; phrase: string; reason: string; acknowledge: boolean }
+): Promise<{ ok: true; termEnd: string }> {
+  const { data } = await publicMembershipClient.post<{ ok: true; termEnd: string }>(
+    '/public/membership-renewal/cancel',
+    body,
+    { params: { token } }
+  );
+  return data;
+}
+
+export async function saveMembershipRenewalCard(
+  token: string,
+  body: {
+    packageId: number;
+    billingInterval: MembershipBillingInterval;
+    paymentMethodId: string;
+  }
+): Promise<MembershipRenewalCardResult> {
+  const { data } = await publicMembershipClient.post<MembershipRenewalCardResult>(
+    '/public/membership-renewal/payment-card',
+    body,
+    { params: { token } }
+  );
+  return data;
+}
+
+export async function chooseMembershipRenewalPlan(
+  token: string,
+  body: { packageId: number; billingInterval: MembershipBillingInterval },
+): Promise<{
+  ok: true;
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  price: number | null;
+}> {
+  const { data } = await publicMembershipClient.post(
+    '/public/membership-renewal/plan-choice',
+    body,
+    { params: { token } },
+  );
+  return data;
+}
+
+/* ── Membership agreement emailed to the owner to sign ─────────────────── */
+
+export type MembershipAgreementRequestStatus =
+  | 'pending'
+  | 'signing'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+export type MembershipAgreementSummary = {
+  petName: string | null;
+  planName: string | null;
+  billingInterval: MembershipBillingInterval | null;
+  price: number | null;
+  refundDue: number;
+  balanceDue: number;
+  subscriptionAmount: number;
+};
+
+export type MembershipAgreementRequest = {
+  id: string;
+  kind: 'post_visit_signup' | 'agreement_only';
+  status: MembershipAgreementRequestStatus;
+  patientId: number;
+  membershipId: number | null;
+  planName: string | null;
+  sentToEmail: string;
+  sentByEmployeeId: number | null;
+  sentAt: string;
+  expiresAt: string;
+  remindAt: string;
+  signedName: string | null;
+  signedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  summary: MembershipAgreementSummary | null;
+  link: string;
+};
+
+/**
+ * Post-visit signup with the owner absent: emails the agreement. Nothing is enrolled,
+ * refunded or charged until they sign; signing runs this exact signup.
+ */
+export async function sendPostVisitAgreement(
+  input: Omit<
+    Parameters<typeof executePostVisitSignup>[0],
+    'agreementAccepted' | 'agreementSignature' | 'agreementSignatureData' | 'agreementSignedAt'
+  > & {
+    toEmail: string;
+    agreementText: string;
+    /** Only with a window override; otherwise the link lasts 24 hours. */
+    linkExpiresAt?: string;
+  }
+): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    '/memberships/agreement-requests/post-visit',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+/** The agreement alone, for an existing membership (re-send, or none on file). */
+export async function sendMembershipAgreement(input: {
+  membershipId: number;
+  toEmail: string;
+  agreementText: string;
+}): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    '/memberships/agreement-requests/agreement-only',
+    { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export async function listMembershipAgreementRequests(
+  patientId: number
+): Promise<MembershipAgreementRequest[]> {
+  const { data } = await http.get<MembershipAgreementRequest[]>(
+    '/memberships/agreement-requests',
+    { params: { practiceId: currentPracticeId(), patientId } }
+  );
+  return data;
+}
+
+export async function resendMembershipAgreement(
+  id: string,
+  toEmail?: string
+): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    `/memberships/agreement-requests/${encodeURIComponent(id)}/resend`,
+    { practiceId: currentPracticeId(), ...(toEmail ? { toEmail } : {}) }
+  );
+  return data;
+}
+
+export async function cancelMembershipAgreement(id: string): Promise<MembershipAgreementRequest> {
+  const { data } = await http.post<MembershipAgreementRequest>(
+    `/memberships/agreement-requests/${encodeURIComponent(id)}/cancel`,
+    { practiceId: currentPracticeId() }
+  );
+  return data;
+}
+
+export type PublicMembershipAgreement = {
+  status: MembershipAgreementRequestStatus;
+  kind: 'post_visit_signup' | 'agreement_only';
+  practiceName: string;
+  petName: string | null;
+  planName: string | null;
+  summary: MembershipAgreementSummary | null;
+  agreementText: string;
+  expiresAt: string;
+  signedName: string | null;
+  signedAt: string | null;
+};
+
+export async function getPublicMembershipAgreement(token: string): Promise<PublicMembershipAgreement> {
+  const { data } = await http.get<PublicMembershipAgreement>(
+    `/public/membership-agreements/${encodeURIComponent(token)}`
+  );
+  return data;
+}
+
+export async function signPublicMembershipAgreement(
+  token: string,
+  body: { accepted: boolean; signedName: string; signatureDataUrl: string }
+): Promise<{ status: MembershipAgreementRequestStatus }> {
+  const { data } = await http.post<{ status: MembershipAgreementRequestStatus }>(
+    `/public/membership-agreements/${encodeURIComponent(token)}/sign`,
+    body
+  );
+  return data;
+}

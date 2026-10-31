@@ -4,6 +4,7 @@ import {
   computeFoundationsSeniorScreenFalseCoverageVisitDelta,
   seniorScreenLineNameFalseFoundationsFullCoverage,
 } from '../utils/membershipFoundationsSimulate';
+import { savingsBullets, savingsForPlan, useMembershipSavings } from '../api/membershipSavings';
 
 export type RoomLoaderPlanForDisplay = { planId: string; planName: string; tagLine: string };
 export type RoomLoaderPlansForPetForDisplay = {
@@ -12,8 +13,8 @@ export type RoomLoaderPlansForPetForDisplay = {
   plans: RoomLoaderPlanForDisplay[];
   /** Resolved dog/cat for catalog Stripe names and optional simulate hint (mirrors client portal). */
   membershipSpeciesKind?: 'dog' | 'cat' | null;
-  /** Golden tier eligibility (same threshold as MembershipSignup / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`). */
-  meetsGolden: boolean;
+  /** Card to recommend, by the same plan-age rule as MembershipSignup (`membershipCardChoice`). */
+  recommendedPlanBase: 'golden' | 'foundations';
 };
 
 type Props = {
@@ -60,7 +61,7 @@ type Props = {
   normalizePlanBaseId: (id: string) => string;
   getRecommendedWellnessPlanFromList: (
     plans: RoomLoaderPlanForDisplay[],
-    meetsGolden: boolean
+    recommendedPlanBase: 'golden' | 'foundations'
   ) => RoomLoaderPlanForDisplay | null;
   filterLineItemsForPatientSimulate: <T extends { patientId?: number; category?: string }>(
     items: T[],
@@ -124,13 +125,14 @@ export default function MembershipRecommendationPanel({
   patientHasMembershipFlag,
   todayVisitTotalAlignedWithSummary,
 }: Props) {
+  const membershipSavings = useMembershipSavings();
   return (
     <div id="membership-bill-explainer-panel" role="region" aria-labelledby="membership-bill-explainer-trigger" style={PANEL_STYLE}>
       {membershipPanelLoading && Object.keys(membershipPanelByPatientId).length === 0 && (
         <p style={{ margin: 0, fontSize: '14px', color: '#3d5347' }}>Loading your membership estimate…</p>
       )}
       {pets.map((petPlans, petIndex) => {
-        const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
+        const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.recommendedPlanBase);
         if (!rec) return null;
         const petName = petPlans.patientName || 'your pet';
         const showSharedOneTeamIntro = pets.length === 1 || petIndex === 0;
@@ -174,7 +176,11 @@ export default function MembershipRecommendationPanel({
               right = `✔ Covered by ${planShortLabel} Plan`;
               covered = true;
             } else if (a.adjustedPrice < a.originalPrice) {
-              right = `✔ Member pricing (${formatPrice(a.adjustedPrice)})`;
+              const pctOff = Math.round((1 - a.adjustedPrice / a.originalPrice) * 100);
+              right =
+                pctOff > 0
+                  ? `✔ ${pctOff}% off member pricing (${formatPrice(a.adjustedPrice)})`
+                  : `✔ Member pricing (${formatPrice(a.adjustedPrice)})`;
               covered = true;
             } else {
               right = 'Not included in membership';
@@ -292,10 +298,6 @@ export default function MembershipRecommendationPanel({
               We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. It covers the core wellness care we recommend each year and supports ongoing care with{' '}
               {petName}&apos;s dedicated Vet At Your Door One-Team.
             </>
-          ) : planBase === 'comfort-care' ? (
-            <>
-              We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. Membership makes it simple to get ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
-            </>
           ) : (
             <>
               We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}.
@@ -354,27 +356,6 @@ export default function MembershipRecommendationPanel({
                 </p>
               </div>
             )}
-            {showSharedOneTeamIntro && (
-              <>
-                <div style={{ marginBottom: '14px' }}>
-                  <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
-                    Why families choose One-Team membership
-                  </h4>
-                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
-                    <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
-                    <li style={{ marginBottom: '6px' }}>✔ 50% off exams on additional visits</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
-                  </ul>
-                </div>
-                <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
-                  This is the care we recommend for {petName} each year.
-                  <br />
-                  Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
-                </p>
-              </>
-            )}
             <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#3d5347', lineHeight: 1.45 }}>{subtext}</p>
 
             {monthlyFee != null && monthlyFee > 0 && (
@@ -410,11 +391,11 @@ export default function MembershipRecommendationPanel({
                 <div style={{ fontSize: '14px', color: '#5a6b6c', fontWeight: 500, marginBottom: '10px' }}>
                   12-month membership
                 </div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534', lineHeight: 1.45 }}>
-                  {`Save ${
-                    annualPaymentSavePercent != null && annualPaymentSavePercent > 0 ? annualPaymentSavePercent : 10
-                  }% with annual payment`}
-                </div>
+                {annualPaymentSavePercent != null && annualPaymentSavePercent > 0 ? (
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534', lineHeight: 1.45 }}>
+                    {`Save ${annualPaymentSavePercent}% with annual payment`}
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -480,6 +461,32 @@ export default function MembershipRecommendationPanel({
                 </div>
               ))}
             </div>
+
+            {showSharedOneTeamIntro && (
+              <>
+                <div style={{ marginBottom: '14px', marginTop: '4px' }}>
+                  <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
+                    Why families choose One-Team membership
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
+                    {(() => {
+                      const s = savingsForPlan(membershipSavings, planDisplayName);
+                      return savingsBullets(s.exam, s.store);
+                    })().map((line) => (
+                      <li key={line} style={{ marginBottom: '6px' }}>✔ {line}</li>
+                    ))}
+                    <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
+                  </ul>
+                </div>
+                <p style={{ margin: '0 0 14px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
+                  This is the care we recommend for {petName} each year.
+                  <br />
+                  Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
+                </p>
+              </>
+            )}
 
             <div
               style={{
