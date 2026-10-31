@@ -179,6 +179,12 @@ export type VisitInvoiceLine = {
   stockInventoryItemCode?: string | null;
   trackLots?: boolean;
   listUnitPrice?: number | null;
+  /**
+   * Why the line is below `listUnitPrice`: a staff reason, or "Membership discount (Puppy/Kitten, 10%)"
+   * for the plan's out-of-plan % (owner decision Oct 31, 2026).
+   */
+  discountReason?: string | null;
+  manualDiscountAmount?: number | null;
   patientName?: string | null;
   taxLevelValue?: number | null;
   isTaxExempt?: boolean;

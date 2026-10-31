@@ -3802,3 +3802,11 @@ a.soap-header-client:hover {
 
 /* Addenda styles live with the component (SoapAddendaSection.css) so the section
    also renders inside the patient chart's SOAP note modal. */
+
+/* "Member 10%" tag under a checkout line's discounted amount (owner decision Oct 31, 2026). */
+.soap-invoice-line-member-tag {
+  display: block;
+  color: #15803d;
+  font-size: 12px;
+  white-space: nowrap;
+}

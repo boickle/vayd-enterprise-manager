@@ -2106,3 +2106,10 @@
   margin-left: 6px;
   max-width: 180px;
 }
+
+/* Membership out-of-plan discount under a line (owner decision Oct 31, 2026). */
+.client-fin__member-discount {
+  color: #15803d;
+  font-size: 12px;
+  white-space: normal;
+}

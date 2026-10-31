@@ -163,12 +163,35 @@ export function quantityLinePrice(
   const remaining = Number(wp?.remainingQuantity);
   let total: number;
   if (unit1 === 0 && wp?.hasCoverage && Number.isFinite(remaining) && remaining >= 0 && remaining < qty) {
-    // Allowance covers `remaining` units; the rest are charged at the regular line price.
-    total = (listLine * (qty - remaining)) / qty;
+    // Allowance covers `remaining` units; the rest are charged at the regular line price, less
+    // the plan's out-of-plan % (owner decision Oct 31, 2026).
+    const pct = Math.min(100, Math.max(0, Number(wp.outOfPlanDiscountPercent) || 0));
+    total = ((listLine * (qty - remaining)) / qty) * (1 - pct / 100);
   } else if (pricing.perUnitPrice != null && Number.isFinite(Number(pricing.perUnitPrice))) {
     total = Math.min(listLine, Math.max(0, Number(pricing.perUnitPrice)) * qty);
   } else {
     total = listLine * (unit1 / listOne);
   }
   return { unit: total / qty, total };
+}
+
+export type MemberDiscountShown = { label: string; regularTotal: number; discount: number };
+
+/**
+ * Owner decision Oct 31, 2026: on the client's quote the plan's out-of-plan % is a discount, not a
+ * lower price. The line shows `regularTotal` and "Member discount 10%" takes `discount` off it.
+ * Null when the line's price isn't the member discount (covered, client discount won, none).
+ */
+export function memberDiscountShown(
+  pricing: Pick<CheckItemPricingResponse, 'wellnessPlanPricing'> | null | undefined,
+  netTotal: number,
+  regularTotal: number
+): MemberDiscountShown | null {
+  const wp = pricing?.wellnessPlanPricing;
+  const pct = Number(wp?.outOfPlanDiscountPercent);
+  if (!wp?.outOfPlanDiscountApplied || !Number.isFinite(pct) || pct <= 0) return null;
+  const regular = Math.round(Number(regularTotal) * 100) / 100;
+  const discount = Math.round((regular - Number(netTotal)) * 100) / 100;
+  if (!Number.isFinite(discount) || discount <= 0.009) return null;
+  return { label: `Member discount ${Math.round(pct * 100) / 100}%`, regularTotal: regular, discount };
 }

@@ -345,6 +345,89 @@ describe('RL-03 settings-driven form restored', () => {
     expect(document.body.textContent).not.toMatch(/comfort care/i);
   });
 
+  // Owner decision Oct 31, 2026: the pitch is decided per pet; a member pet is never pitched (no upgrade wording).
+  const householdPayload = (pets: Array<{ id: number; name: string; species: string; member: boolean; plan?: string }>) => {
+    const base = formPayload({
+      species: 'Canine',
+      extra: { membershipAges: { plans: practicePlans } },
+      config: { membership: { enabled: true, startExpanded: true } },
+    }) as any;
+    return {
+      ...base,
+      clientHasMembership: pets.some((p) => p.member),
+      appointments: pets.map((p) => ({
+        id: p.id,
+        patientId: p.id,
+        startTime: '2026-11-10T14:00:00Z',
+        patient: { id: p.id, name: p.name, species: p.species, isMember: p.member, membershipName: p.member ? p.plan : null },
+      })),
+      patients: pets.map((p) => ({
+        patientId: p.id,
+        patientName: p.name,
+        species: p.species,
+        reminders: [],
+        addedItems: [],
+        isMember: p.member,
+        membershipName: p.member ? p.plan : null,
+        patient: { id: p.id, species: p.species },
+      })),
+      availablePlansForPets: pets.map((p) => ({ patientId: p.id, patientName: p.name, isMember: p.member, plans: [] })),
+      savedForm: {
+        ...base.savedForm,
+        currentPage: 3 * pets.length + 1,
+        ...Object.fromEntries(
+          pets.flatMap((_, i) => [
+            [`pet${i}_eatingDrinkingNormal`, 'yes'],
+            [`pet${i}_foodAllergies`, 'no'],
+            [`pet${i}_newPatientBehavior`, 'Fine'],
+            [`pet${i}_feeding`, 'Kibble'],
+          ])
+        ),
+      },
+    };
+  };
+
+  it('RL-03-10: a Foundations member senior gets no pitch and no upgrade wording', async () => {
+    pricingById({});
+    mountForm(householdPayload([{ id: 1, name: 'Rex', species: 'Canine', member: true, plan: 'Canine Foundations' }]));
+    await screen.findByRole('button', { name: /submit form/i });
+    await waitFor(() => expect(getPatientTreatmentHistoryPublic).toHaveBeenCalled());
+    expect(document.body.textContent).not.toMatch(/membership could change|upgrade|golden/i);
+  });
+
+  it('RL-03-10b: mixed household pitches the non-member cat, not the member dog', async () => {
+    pricingById({});
+    mountForm(
+      householdPayload([
+        { id: 1, name: 'Rex', species: 'Canine', member: true, plan: 'Canine Foundations' },
+        { id: 2, name: 'Milo', species: 'Feline', member: false },
+      ])
+    );
+    await screen.findByText(/membership could change/i);
+    const pitch = document.querySelector('.membership-pitch') ?? document.body;
+    expect(pitch.textContent).toMatch(/Milo/);
+    expect(pitch.textContent).not.toMatch(/upgrade/i);
+    const panelText = Array.from(document.querySelectorAll('[class*="membership"]'))
+      .map((n) => n.textContent ?? '')
+      .join(' ');
+    expect(panelText).not.toMatch(/Rex/);
+    // Existing multi-pet credit rule: a non-member pet with a member in the household is offered the $75 credit.
+    expect(document.body.textContent).toMatch(/\$75/);
+  });
+
+  it('RL-03-10c: a household where every pet is a member sees no pitch', async () => {
+    pricingById({});
+    mountForm(
+      householdPayload([
+        { id: 1, name: 'Rex', species: 'Canine', member: true, plan: 'Canine Golden' },
+        { id: 2, name: 'Milo', species: 'Feline', member: true, plan: 'Feline Foundations' },
+      ])
+    );
+    await screen.findByRole('button', { name: /submit form/i });
+    await waitFor(() => expect(getPatientTreatmentHistoryPublic).toHaveBeenCalled());
+    expect(document.body.textContent).not.toMatch(/membership could change|upgrade/i);
+  });
+
   it('RL-03-3: the thank-you page quotes the plan percentages (25%), never a hardcoded 50%', async () => {
     membershipSavings = {
       plans: [],

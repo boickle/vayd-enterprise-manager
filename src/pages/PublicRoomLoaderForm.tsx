@@ -68,7 +68,7 @@ import {
   type ResolvedPetPlan,
 } from '../utils/roomLoaderOfferEngine';
 import { buildPlanContext } from './roomLoader/roomLoaderPlanContext';
-import { quantityLinePrice } from '../utils/roomLoaderCatalogPrice';
+import { memberDiscountShown, quantityLinePrice } from '../utils/roomLoaderCatalogPrice';
 import {
   chronicMedKey,
   chronicMedsOtherKey,
@@ -3435,6 +3435,10 @@ export default function PublicRoomLoaderForm() {
     const parts: string[] = [];
     const wp = pricing.wellnessPlanPricing;
     const dp = pricing.discountPricing;
+    // The plan's out-of-plan % (owner decision Oct 31, 2026): shown as a discount off the regular price.
+    if (wp?.outOfPlanDiscountApplied && Number(wp.outOfPlanDiscountPercent) > 0) {
+      return `Member discount ${Math.round(Number(wp.outOfPlanDiscountPercent) * 100) / 100}%`;
+    }
     // Membership quantity already used — full price applies
     if (wp?.hasCoverage && wp.isWithinLimit === false) {
       return MEMBERSHIP_ALLOTMENT_USED_LABEL;
@@ -4619,6 +4623,15 @@ export default function PublicRoomLoaderForm() {
                   !readOnly;
                 const lineTotal = isChecked && !isReplaced ? rowLinePrice(patientId, item, unitPrice, qty).total : 0;
                 petSubtotal += lineTotal;
+                const memberListUnit = Number(displayPricing?.wellnessPlanPricing?.originalPrice);
+                const memberDiscount =
+                  lineTotal > 0 && Number.isFinite(memberListUnit)
+                    ? memberDiscountShown(
+                        displayPricing as CheckItemPricingResponse,
+                        lineTotal,
+                        rowLinePrice(patientId, item, memberListUnit, qty).total
+                      )
+                    : null;
                 const discountNote =
                   getDiscountNote(displayPricing) ??
                   (hasDiscountPricingNote(displayPricing) ? 'Membership or discount applied' : null);
@@ -4685,9 +4698,18 @@ export default function PublicRoomLoaderForm() {
                           ...(isReplaced || !isChecked ? { textDecoration: 'line-through', color: '#888' } : {}),
                         }}
                       >
-                        {formatPrice(isChecked && !isReplaced ? lineTotal : 0)}
+                        {formatPrice(isChecked && !isReplaced ? (memberDiscount?.regularTotal ?? lineTotal) : 0)}
                       </span>
                     </div>
+                    {memberDiscount ? (
+                      <div
+                        data-testid="rl-member-discount"
+                        style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#15803d', marginLeft: '30px' }}
+                      >
+                        <span>{memberDiscount.label}</span>
+                        <span>−{formatPrice(memberDiscount.discount)}</span>
+                      </div>
+                    ) : null}
                     {showMedQtyControl && (
                       <div style={{ marginLeft: '30px', marginTop: '4px', marginBottom: '2px', fontSize: '14px', color: '#555' }}>
                         <label style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
@@ -4720,7 +4742,7 @@ export default function PublicRoomLoaderForm() {
                         </label>
                       </div>
                     )}
-                    {isChecked && !isReplaced && hasPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{displayNote}</div>}
+                    {isChecked && !isReplaced && hasPricingNote && !memberDiscount && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{displayNote}</div>}
                     {uncheckBody ? <CarePlanWhyRecommendBlurb {...uncheckBody} /> : null}
                   </div>
                 );
@@ -4734,9 +4756,11 @@ export default function PublicRoomLoaderForm() {
                 const pricing = getClientPricing(patientId, searchable);
                 const price = getClientAdjustedPrice(patientId, searchable) ?? 0;
                 if (!isExcluded) petSubtotal += price;
-                const discountNote =
-                  getDiscountNote(pricing) ??
-                  (hasDiscountPricingNote(pricing) ? 'Membership or discount applied' : null);
+                const configMemberDiscount = memberDiscountShown(pricing, price, Number(pricing?.originalPrice));
+                const discountNote = configMemberDiscount
+                  ? `${configMemberDiscount.label} −${formatPrice(configMemberDiscount.discount)}`
+                  : getDiscountNote(pricing) ??
+                    (hasDiscountPricingNote(pricing) ? 'Membership or discount applied' : null);
                 return (
                   <div key={excludeKey} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
@@ -4753,7 +4777,7 @@ export default function PublicRoomLoaderForm() {
                         </span>
                       </label>
                       <span style={{ fontWeight: 700, flexShrink: 0, ...(isExcluded ? { textDecoration: 'line-through', color: '#888' } : {}) }}>
-                        {formatPrice(isExcluded ? 0 : price)}
+                        {formatPrice(isExcluded ? 0 : (configMemberDiscount?.regularTotal ?? price))}
                       </span>
                     </div>
                     {!isExcluded && discountNote != null && (

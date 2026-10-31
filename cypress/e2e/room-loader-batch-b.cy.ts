@@ -14,8 +14,7 @@
  * Stripe and email are the API's fakes; nothing real is sent or charged. Needs the API on
  * vayd_api_test and the dev server pointed at it.
  *
- * Status: run against the test stack. The seed task reads `scenario`. RL-03-10 (open question) and
- * RL-03-13/14 (no Stripe fake) are skipped; RL-02b-5 fails on a real product gap (no price breaks in the form).
+ * Status: run against the test stack. The seed task reads `scenario`. RL-03-13/14 (no Stripe fake) are skipped; RL-02b-5 fails on a real product gap (no price breaks in the form).
  */
 type Seeded = { loaderId: number; token: string; petName: string; path: string };
 
@@ -170,15 +169,26 @@ describe('RL-03: settings-driven form (end to end)', () => {
     cy.contains(/Early Detection Panel/).should('not.exist');
   });
 
-  // OPEN (owner/plan): the form hides the membership pitch for any household with a member (API clientHasMembership), so a
-  // Foundations member sees no "Golden recommended". The plan lists this as an open question (section 7). Expected result unchanged.
-  it.skip('RL-03-10: senior Foundations member sees Golden recommended with member prices (needs scenario)', () => {
+  // Owner decision Oct 31, 2026: a member pet is never pitched (no Golden upgrade wording or cards).
+  it('RL-03-10: senior Foundations member sees no pitch and no upgrade wording', () => {
     openForm({ species: 'dog', ageMonths: 120, membership: 'foundations' });
     answerBasics();
     toCarePlan();
     toSummary();
-    cy.contains(/Golden/i).should('exist');
-    cy.contains(/Recommended/i).should('exist');
+    cy.contains(/membership could change/i).should('not.exist');
+    cy.contains(/upgrade/i).should('not.exist');
+    cy.contains(/Golden/i).should('not.exist');
+  });
+
+  it('RL-03-10b: mixed household pitches the non-member cat only and shows the $75 credit offer', () => {
+    openForm({ pets: [{ species: 'dog', ageMonths: 120, membership: 'foundations' }, { species: 'cat', ageMonths: 48 }] });
+    answerBasics();
+    toCarePlan();
+    toSummary();
+    cy.contains(/membership could change/i).should('exist');
+    cy.contains(/Rlcat/i).should('exist');
+    cy.contains(/upgrade/i).should('not.exist');
+    cy.contains(/\$75/).should('exist');
   });
 
   it('RL-03-11: Golden member cat shows "Included in membership" on covered lines (needs scenario)', () => {

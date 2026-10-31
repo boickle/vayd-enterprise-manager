@@ -2,6 +2,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { formatUsd, invoicePublicLabel } from './pimsInvoices';
 import type { GmailComposeAttachment } from '../api/gmail';
+import { membershipLineDiscount, memberDiscountTag } from './membershipLineDiscount';
 
 export type InvoiceEmailLine = {
   description: string;
@@ -12,6 +13,11 @@ export type InvoiceEmailLine = {
   listAmount?: number | null;
   /** Membership fully or partly paid for this line. */
   membershipBenefit?: boolean;
+  /**
+   * "Membership discount (Puppy/Kitten, 10%)": the line shows at `listAmount` and the discount
+   * is its own row beneath it (owner decision Oct 31, 2026).
+   */
+  discountLabel?: string | null;
 };
 
 export type InvoiceEmailPayment = {
@@ -53,6 +59,7 @@ type StoreOpenInvoiceLike = {
     qty?: number;
     listAmount?: number | null;
     membershipBenefit?: boolean;
+    discountLabel?: string | null;
   }>;
   payments?: InvoiceEmailPayment[];
 };
@@ -85,6 +92,7 @@ export type VisitInvoiceEmailSource = {
     qty?: number;
     amount: number;
     listUnitPrice?: number | null;
+    discountReason?: string | null;
     isCovered?: boolean;
     isDeleted?: boolean;
     hideOnInvoice?: boolean;
@@ -121,6 +129,7 @@ export function visitInvoiceToEmailModel(
         membershipBenefit:
           Boolean(line.isCovered) ||
           (listAmount != null && listAmount > amount + 0.009),
+        discountLabel: membershipLineDiscount({ ...line, qty, amount })?.label ?? null,
       };
     });
   const total = Number(inv.total) || 0;
@@ -168,6 +177,7 @@ export function storeOpenInvoiceToEmailModel(inv: StoreOpenInvoiceLike): Invoice
       amount: Number(line.amount) || 0,
       listAmount: line.listAmount,
       membershipBenefit: Boolean(line.membershipBenefit),
+      discountLabel: line.discountLabel ?? null,
     })),
     payments: inv.payments,
     subtotal,
@@ -183,11 +193,25 @@ function money(n: number): string {
   return formatUsd(Number(n) || 0);
 }
 
+/** A membership discount row under its line, or null (owner decision Oct 31, 2026). */
+export function lineDiscountRow(line: InvoiceEmailLine): { label: string; amount: number } | null {
+  const charged = Number(line.amount) || 0;
+  const list = line.listAmount != null ? Number(line.listAmount) : null;
+  if (!line.discountLabel || list == null || !(list > charged + 0.009)) return null;
+  return { label: line.discountLabel, amount: Math.round((list - charged) * 100) / 100 };
+}
+
 function lineAmountHtml(line: InvoiceEmailLine): string {
   const charged = Number(line.amount) || 0;
   const list = line.listAmount != null ? Number(line.listAmount) : null;
+  // Like every discount: regular price struck through, then what is charged; a membership
+  // discount adds a short "Member 10%" note (owner, Oct 31, 2026).
   if (list != null && list > charged + 0.009) {
-    return `<div style="text-decoration:line-through;color:#dc2626;font-size:12px">${money(list)}</div><div>${money(charged)}</div>`;
+    const row = lineDiscountRow(line);
+    const tag = row
+      ? `<div style="color:#15803d;font-size:12px">${escapeHtml(memberDiscountTag(row.label))}</div>`
+      : '';
+    return `<div style="text-decoration:line-through;color:#dc2626;font-size:12px">${money(list)}</div><div>${money(charged)}</div>${tag}`;
   }
   return money(charged);
 }

@@ -140,6 +140,7 @@ import {
   toDateInput,
   tomorrowInput,
 } from '../../utils/printRxLabel';
+import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -2763,6 +2764,18 @@ export default function VisitCheckoutPanel({
                       ) : (
                         <>
                           {money(l.amount)}
+                          {(() => {
+                            const md = membershipLineDiscount(l);
+                            return md ? (
+                              <span
+                                className="soap-invoice-line-member-tag"
+                                data-testid="checkout-member-discount"
+                                title={`${md.label} −${money(md.discount)}`}
+                              >
+                                {memberDiscountTag(md.label)}
+                              </span>
+                            ) : null;
+                          })()}
                           {canEditLineMeta && order && allowPrice ? (
                             editingPriceLineId === l.id ? (
                               <input
@@ -2857,7 +2870,6 @@ export default function VisitCheckoutPanel({
                     ) : (
                       <span className="soap-invoice-line-remove" aria-hidden />
                     )}
-
                     {attachedShipping.map((ship) => (
                       <div key={ship.id} className="soap-invoice-line-ship">
                         <span className="soap-invoice-line-expand" aria-hidden />

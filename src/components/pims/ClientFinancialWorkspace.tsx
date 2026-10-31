@@ -237,6 +237,7 @@ import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
 import './ClientFinancialWorkspace.css';
+import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 
 export type FinancialPet = {
   id: number;
@@ -568,7 +569,7 @@ function EditableUnitPrice({
   onCancel,
   onCommit,
 }: {
-  line: Pick<VisitInvoiceLine, 'id' | 'unitPrice' | 'listUnitPrice'>;
+  line: Pick<VisitInvoiceLine, 'id' | 'unitPrice' | 'listUnitPrice' | 'discountReason'>;
   canEdit: boolean;
   editing: boolean;
   disabled?: boolean;
@@ -577,6 +578,7 @@ function EditableUnitPrice({
   onCommit: (unitPrice: number) => Promise<boolean>;
 }) {
   const charged = Number(line.unitPrice) || 0;
+  // A membership discount shows like any other: regular price struck through, discounted price below.
   const showList = listPriceAbove(line.listUnitPrice, charged);
   if (!canEdit) {
     return (
@@ -646,6 +648,32 @@ function EditableUnitPrice({
         </button>
       </span>
     </span>
+  );
+}
+
+/** Exported for component tests only. */
+export const EditableUnitPriceForTest = EditableUnitPrice;
+
+/** The line amount after any discount; a membership discount gets a short "Member 10%" tag. */
+export function LineAmount({
+  line,
+}: {
+  line: Pick<VisitInvoiceLine, 'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason'>;
+}) {
+  if (line.isCovered) return <>covered</>;
+  const memberDiscount = membershipLineDiscount(line);
+  if (!memberDiscount) return <>{money(line.amount)}</>;
+  return (
+    <>
+      <div>{money(line.amount)}</div>
+      <div
+        className="client-fin__member-discount"
+        data-testid="line-member-discount"
+        title={`${memberDiscount.label} −${money(memberDiscount.discount)}`}
+      >
+        {memberDiscountTag(memberDiscount.label)}
+      </div>
+    </>
   );
 }
 
@@ -6711,7 +6739,7 @@ export default function ClientFinancialWorkspace({
                             />
                           </td>
                           <td className="client-fin__col-amount client-fin__num">
-                            {line.isCovered ? 'covered' : money(line.amount)}
+                            <LineAmount line={line} />
                           </td>
                           {returning && canReturn && unshippedMailForLine(line) ? (
                             <td>

@@ -113,6 +113,10 @@ export type ReminderWithPrice = {
     priceAdjustedByMembership?: boolean;
     membershipPlanName?: string;
     membershipDiscountAmount?: number;
+    /** The plan's out-of-plan % was taken off this price (owner decision Oct 31, 2026). */
+    outOfPlanDiscountApplied?: boolean;
+    /** The plan's out-of-plan % for anything it doesn't cover, units past an allowance too. */
+    outOfPlanDiscountPercent?: number;
     clientDiscounts?: Record<string, any>;
   };
   discountPricing?: {
@@ -607,6 +611,10 @@ export type SearchableItem = {
     priceAdjustedByMembership?: boolean;
     membershipPlanName?: string;
     membershipDiscountAmount?: number;
+    /** The plan's out-of-plan % was taken off this price (owner decision Oct 31, 2026). */
+    outOfPlanDiscountApplied?: boolean;
+    /** The plan's out-of-plan % for anything it doesn't cover, units past an allowance too. */
+    outOfPlanDiscountPercent?: number;
     clientDiscounts?: Record<string, any>;
   };
   discountPricing?: {
