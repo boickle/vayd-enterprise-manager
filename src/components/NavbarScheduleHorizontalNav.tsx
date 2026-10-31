@@ -27,6 +27,7 @@ type SchedNavItemKey =
   | 'scheduling'
   | 'inventory'
   | 'tasks'
+  | 'marketing'
   | 'settings'
   | 'admin';
 
@@ -37,6 +38,7 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   scheduling: 'Scheduling',
   inventory: 'Inventory',
   tasks: 'Tasks',
+  marketing: 'Marketing',
   settings: 'Settings',
   admin: 'Admin',
 };
@@ -260,6 +262,10 @@ export default function NavbarScheduleHorizontalNav() {
     () => roles.includes('admin') || roles.includes('superadmin'),
     [roles]
   );
+  const showMarketingTab = useMemo(
+    () => roles.includes('admin') || roles.includes('superadmin') || roles.includes('owner'),
+    [roles]
+  );
 
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
@@ -267,9 +273,10 @@ export default function NavbarScheduleHorizontalNav() {
     keys.push('clients', 'patients', 'scheduling');
     if (SHOW_NAV_INVENTORY) keys.push('inventory');
     keys.push('tasks');
+    if (showMarketingTab) keys.push('marketing');
     if (showAdminTab) keys.push('settings', 'admin');
     return keys;
-  }, [homeTab, showAdminTab]);
+  }, [homeTab, showAdminTab, showMarketingTab]);
 
   const settingsMenuRef = useRef<HTMLDetailsElement>(null);
   const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
@@ -402,6 +409,8 @@ export default function NavbarScheduleHorizontalNav() {
         return location.pathname.startsWith('/schedule/inventory');
       case 'tasks':
         return location.pathname.startsWith('/schedule/tasks');
+      case 'marketing':
+        return location.pathname.startsWith('/schedule/marketing');
       case 'scheduling':
         return (
           location.pathname.startsWith('/schedule/routing') ||
@@ -476,6 +485,16 @@ export default function NavbarScheduleHorizontalNav() {
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
             <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
+          </NavLink>
+        );
+      case 'marketing':
+        return (
+          <NavLink
+            key="marketing"
+            to="/schedule/marketing"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Marketing
           </NavLink>
         );
       case 'scheduling':
@@ -655,6 +674,23 @@ export default function NavbarScheduleHorizontalNav() {
                         }}
                       >
                         <TasksNavLabel assignedCount={assignedCount} watchingCount={watchingCount} />
+                      </NavLink>
+                    );
+                  case 'marketing':
+                    return (
+                      <NavLink
+                        key="more-marketing"
+                        to="/schedule/marketing"
+                        className={({ isActive }) =>
+                          `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Marketing
                       </NavLink>
                     );
                   case 'scheduling':

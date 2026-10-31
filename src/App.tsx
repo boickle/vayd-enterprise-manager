@@ -47,6 +47,9 @@ import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import GmailInbox from './pages/GmailInbox';
+import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
+import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -610,6 +613,9 @@ export default function App() {
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="email" element={<GmailInbox />} />
+                    <Route path="marketing" element={<EmailCampaignsPage />} />
+                    <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
+                    <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
                       <Route
