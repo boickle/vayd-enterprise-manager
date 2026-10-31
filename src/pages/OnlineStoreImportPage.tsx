@@ -45,10 +45,11 @@ import './Settings.css';
 import './Catalog.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-type StoreAdminTab = 'items' | 'coupons' | 'autoship' | 'import';
+type StoreAdminTab = 'items' | 'gift_cards' | 'coupons' | 'autoship' | 'import';
 
-const STORE_TAB_LABELS: Record<'items' | 'coupons' | 'autoship', string> = {
+const STORE_TAB_LABELS: Record<'items' | 'gift_cards' | 'coupons' | 'autoship', string> = {
   items: 'Store items',
+  gift_cards: 'Gift cards',
   coupons: 'Coupons',
   autoship: 'Bulk autoship',
 };
@@ -306,6 +307,117 @@ function StoreSaleEditor({
           {saleActive ? <span className="store-sale-editor__badge">SALE</span> : null}
         </>
       ) : null}
+    </div>
+  );
+}
+
+/** Shopper-facing gift card product: sale, amounts, photo — not issued-card balances. */
+function StoreGiftCardAdminPanel({
+  practiceId,
+  listing,
+  busy,
+  storeCategories,
+  imageTick,
+  onPatchListing,
+  onUploadPhoto,
+  onRememberCategory,
+  onRemoveFromStore,
+  onRestoreToStore,
+}: {
+  practiceId: number;
+  listing: StoreAdminListing;
+  busy: boolean;
+  storeCategories: string[];
+  imageTick: number;
+  onPatchListing: (
+    patch: Parameters<typeof patchOnlineStoreListing>[2]
+  ) => Promise<StoreAdminListing | null>;
+  onUploadPhoto: (file: File) => void;
+  onRememberCategory: (name: string) => void;
+  onRemoveFromStore: () => void;
+  onRestoreToStore: () => void;
+}) {
+  const updateListing = (patch: Parameters<typeof patchOnlineStoreListing>[2]) =>
+    onPatchListing(patch);
+
+  return (
+    <div className="store-gift-admin">
+      <div className="store-add-workspace__option-main">
+        <StorePhotoUpload
+          src={withImageBust(masterImageSrc(practiceId, listing), imageTick)}
+          label={listing.name}
+          disabled={busy}
+          title={`Upload photo for ${listing.name}`}
+          onFile={onUploadPhoto}
+        />
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 18 }}>{listing.name}</div>
+          <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+            Shoppers buy from the online store. No pet or doctor approval needed.
+          </p>
+        </div>
+      </div>
+      <div className="store-add-workspace__field">
+        <span>Store categories</span>
+        <StoreCategoryPicker
+          value={listingCategoryNames(listing)}
+          options={storeCategories}
+          disabled={busy}
+          onChange={(next, added) => {
+            if (added) onRememberCategory(added);
+            void updateListing({ storeCategories: next });
+          }}
+        />
+      </div>
+      <StoreSaleEditor
+        {...saleFieldsFromListing(listing)}
+        saleActive={listing.saleActive}
+        disabled={busy}
+        onChange={(next) => {
+          void updateListing(next);
+        }}
+      />
+      <StoreDescriptionEditor
+        value={listing.description}
+        listings={[listing]}
+        currentListingId={listing.listingId}
+        disabled={busy}
+        onSave={(description) => void updateListing({ description })}
+      />
+      <StoreGiftCardSettingsEditor
+        value={listing.giftCard}
+        disabled={busy}
+        onSave={async (patch) => {
+          await updateListing(patch);
+        }}
+      />
+      <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input
+          type="checkbox"
+          checked={Boolean(listing.featuredOnHome)}
+          disabled={busy}
+          onChange={(e) => void updateListing({ featuredOnHome: e.target.checked })}
+        />
+        Show on the store home page (Featured)
+      </label>
+      <p className="settings-muted">
+        <Link to="/schedule/inventory/gift-cards">Sold gift cards</Link> — balances, resend, void,
+        and staff adjustments.
+      </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {listing.listed === false ? (
+          <button type="button" className="btn" disabled={busy} onClick={onRestoreToStore}>
+            Restore to store
+          </button>
+        ) : (
+          <button type="button" className="btn secondary" disabled={busy} onClick={onRemoveFromStore}>
+            Remove from store
+          </button>
+        )}
+        <Link className="btn secondary" to={`/store/${listing.listingId}`} target="_blank" rel="noreferrer">
+          Preview in store
+        </Link>
+      </div>
     </div>
   );
 }
@@ -928,7 +1040,10 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
     const tabParam = searchParams.get('tab');
     if (
       view === 'store' &&
-      (tabParam === 'items' || tabParam === 'coupons' || tabParam === 'autoship')
+      (tabParam === 'items' ||
+        tabParam === 'gift_cards' ||
+        tabParam === 'coupons' ||
+        tabParam === 'autoship')
     ) {
       setTab(tabParam);
     }
@@ -1255,12 +1370,16 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
       ].sort((a, b) => a.localeCompare(b)),
     [listings, managedCategories]
   );
+  const giftCardListing = useMemo(
+    () => listings.find((row) => row.kind === 'gift_card') ?? null,
+    [listings]
+  );
   const liveListings = useMemo(
-    () => listings.filter((listing) => listing.listed !== false),
+    () => listings.filter((listing) => listing.listed !== false && listing.kind !== 'gift_card'),
     [listings]
   );
   const removedListings = useMemo(
-    () => listings.filter((listing) => listing.listed === false),
+    () => listings.filter((listing) => listing.listed === false && listing.kind !== 'gift_card'),
     [listings]
   );
   /** Store items tab shows either what shoppers can see or what was removed (restorable). */
@@ -1530,7 +1649,7 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
         <h2 style={{ margin: '0 0 8px' }}>Online Store Import</h2>
       ) : (
       <div className="settings-tabs" role="tablist">
-        {(['items', 'coupons'] as const).map((key) => (
+        {(['items', 'gift_cards', 'coupons'] as const).map((key) => (
           <button
             key={key}
             type="button"
@@ -1927,30 +2046,6 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
             >
               + Add store item
             </button>
-            {!listings.some((row) => row.kind === 'gift_card') ? (
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={busy}
-                onClick={() => {
-                  void createOnlineStoreProduct(practiceId, {
-                    name: 'Gift Card',
-                    kind: 'gift_card',
-                    storeCategory: 'Gift Cards',
-                    giftCardAmounts: [25, 50, 100, 250],
-                    giftCardAllowCustom: true,
-                    giftCardMin: 10,
-                    giftCardMax: 500,
-                    description:
-                      '<p>Give the gift of care at home. Good toward visits, services, and anything in our online store. Delivered by email with a printable copy.</p>',
-                  })
-                    .then(() => load())
-                    .catch((err) => setError(apiErrorMessage(err)));
-                }}
-              >
-                + Add gift card listing
-              </button>
-            ) : null}
             <button
               type="button"
               className="btn secondary"
@@ -2598,6 +2693,75 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
               </span>
             </span>
           </button>
+        </>
+      )}
+
+      {tab === 'gift_cards' && (
+        <>
+          <p className="settings-muted">
+            Amounts, sale, photo, and terms for the gift card shoppers buy online. For balances on
+            cards already sold, use{' '}
+            <Link to="/schedule/inventory/gift-cards">Sold gift cards</Link>.
+          </p>
+          {!giftCardListing ? (
+            <button
+              type="button"
+              className="btn primary"
+              style={{ marginTop: 12 }}
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                void createOnlineStoreProduct(practiceId, {
+                  name: 'Gift Card',
+                  kind: 'gift_card',
+                  storeCategory: 'Gift Cards',
+                  giftCardAmounts: [25, 50, 100, 250],
+                  giftCardAllowCustom: true,
+                  giftCardMin: 10,
+                  giftCardMax: 500,
+                  description:
+                    '<p>Give the gift of care at home. Good toward visits, services, and anything in our online store. Delivered by email with a printable copy.</p>',
+                })
+                  .then(() => load())
+                  .catch((err) => setError(apiErrorMessage(err)))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Set up online gift cards
+            </button>
+          ) : (
+            <StoreGiftCardAdminPanel
+              key={giftCardListing.listingId}
+              practiceId={practiceId}
+              listing={giftCardListing}
+              busy={busy}
+              storeCategories={storeCategories}
+              imageTick={imageTick}
+              onRememberCategory={rememberCategory}
+              onUploadPhoto={(file) => void uploadListingPhoto(giftCardListing, file)}
+              onRemoveFromStore={() => void removeFromStore(giftCardListing)}
+              onRestoreToStore={() => void restoreToStore(giftCardListing)}
+              onPatchListing={async (patch) => {
+                const updated = await patchOnlineStoreListing(
+                  practiceId,
+                  giftCardListing.listingId,
+                  patch
+                ).catch((err) => {
+                  setError(apiErrorMessage(err));
+                  return null;
+                });
+                if (updated) {
+                  setListings((prev) =>
+                    prev.map((row) =>
+                      row.listingId === giftCardListing.listingId ? { ...row, ...updated } : row
+                    )
+                  );
+                }
+                return updated;
+              }}
+            />
+          )}
         </>
       )}
 

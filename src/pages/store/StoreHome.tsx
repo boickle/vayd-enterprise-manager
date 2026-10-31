@@ -9,7 +9,25 @@ import {
   type StoreListing,
 } from '../../api/onlineStore';
 import './Store.css';
+import { formatSaleEnds } from './storePricing';
 import { useStorePracticeId } from './useStorePracticeId';
+
+function wholeDollars(n: number | null | undefined): string {
+  const value = Number(n);
+  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
+}
+
+function giftSaleHeadline(listing: StoreListing): string {
+  const value = Number(listing.saleValue);
+  const off =
+    listing.saleType === 'percent' && value > 0
+      ? `${Number(value.toFixed(2))}% off gift cards`
+      : listing.saleType === 'amount' && value > 0
+        ? `${wholeDollars(value)} off gift cards`
+        : `${wholeDollars(Number(listing.priceFromWas) - Number(listing.priceFrom))} off gift cards`;
+  const ends = formatSaleEnds(listing.saleEndsAt);
+  return ends ? `${off} until ${ends}` : off;
+}
 
 function categoryParts(raw: string | null | undefined): string[] {
   return String(raw || '')
@@ -96,12 +114,15 @@ export default function StoreHome() {
         if (parts.length > 1) parents.get(parent)!.add(parts.slice(1).join(' / '));
       }
     }
-    return [...parents.entries()]
+    const sorted = [...parents.entries()]
       .map(([parent, kids]) => ({
         parent,
         children: [...kids].sort((a, b) => a.localeCompare(b)),
       }))
       .sort((a, b) => a.parent.localeCompare(b.parent));
+    const gift = sorted.filter((g) => /^gift cards$/i.test(g.parent));
+    const rest = sorted.filter((g) => !/^gift cards$/i.test(g.parent));
+    return [...rest, ...gift];
   }, [items, hiddenCategories]);
 
   const selectedParent = categoryParent(category);
@@ -110,6 +131,13 @@ export default function StoreHome() {
 
   const featured = useMemo(() => items.filter((item) => item.featuredOnHome), [items]);
   const giftCardListing = useMemo(() => items.find((item) => item.kind === 'gift_card') ?? null, [items]);
+  const giftOnSale = Boolean(
+    giftCardListing?.saleActive && giftCardListing.priceFromWas != null && giftCardListing.priceFrom != null
+  );
+  const categoryGroups = useMemo(
+    () => groups.filter((group) => !/^gift cards$/i.test(group.parent)),
+    [groups]
+  );
   const hasFeatured = featured.length > 0;
   const visible = useMemo(() => {
     const matched = items.filter(
@@ -154,7 +182,7 @@ export default function StoreHome() {
         >
           All
         </button>
-        {groups.map((group) => (
+        {categoryGroups.map((group) => (
           <button
             key={group.parent}
             type="button"
@@ -165,6 +193,11 @@ export default function StoreHome() {
             {group.children.length ? ` (${group.children.length})` : ''}
           </button>
         ))}
+        {giftCardListing ? (
+          <Link to={`/store/${giftCardListing.listingId}`} className="vayd-store__chip vayd-store__chip--gift">
+            Gift Cards
+          </Link>
+        ) : null}
       </div>
       {childChips.length ? (
         <div className="vayd-store__chips vayd-store__chips--sub">
@@ -191,16 +224,14 @@ export default function StoreHome() {
         </div>
       ) : null}
       {loading ? <p>Loading store items…</p> : null}
-      {giftCardListing && !q.trim() && !category ? (
-        <div className="vayd-store__gift-tile">
+      {giftOnSale && giftCardListing && !q.trim() && !category ? (
+        <div className="vayd-store__gift-tile vayd-store__gift-tile--sale">
           <div>
-            <h2>Give the gift of care at home</h2>
+            <p className="vayd-store__gift-sale">Sale</p>
+            <h2>{giftSaleHeadline(giftCardListing)}</h2>
             <p>
-              Gift cards by email, sent now or on the day you pick
-              {giftCardListing.saleActive && giftCardListing.priceFromWas != null
-                ? ` — on sale: pay $${Number(giftCardListing.priceFrom).toFixed(2)} for a $${Number(giftCardListing.priceFromWas).toFixed(2)} card`
-                : ''}
-              . No account or pet needed.
+              Pay {wholeDollars(giftCardListing.priceFrom)} for a {wholeDollars(giftCardListing.priceFromWas)}{' '}
+              card. Emailed now or on the day you pick. No account or pet needed.
             </p>
           </div>
           <div className="vayd-store__gift-tile-actions">

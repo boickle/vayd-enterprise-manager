@@ -3684,3 +3684,37 @@
   }
 }
 
+.gift-year-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.gift-year-summary__figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.gift-year-summary__figures div {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f3fbf8;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+}
+
+.gift-year-summary__figures span,
+.gift-year-summary__figures em {
+  display: block;
+  color: #4b5563;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.gift-year-summary__figures strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 20px;
+  color: #103b2e;
+}
+

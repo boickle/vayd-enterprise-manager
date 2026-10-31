@@ -7,8 +7,10 @@ import {
   getGiftCard,
   issueGiftCard,
   listGiftCards,
+  giftCardYearSummary,
   refundGiftCard,
   resendGiftCard,
+  revealGiftCard,
   voidGiftCard,
   type GiftCardStatus,
   type GiftCardTransaction,
@@ -38,10 +40,6 @@ function when(value: string | null | undefined): string {
   return Number.isNaN(d.getTime())
     ? value
     : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-function formatCode(code: string): string {
-  return code.replace(/(.{4})(?=.)/g, '$1-');
 }
 
 type IssueForm = {
@@ -200,7 +198,7 @@ function GiftCardDetail({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [showCode, setShowCode] = useState(false);
+  const [revealedCode, setRevealedCode] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -214,7 +212,7 @@ function GiftCardDetail({
   }, [cardId]);
 
   useEffect(() => {
-    setShowCode(false);
+    setRevealedCode(null);
     setNote(null);
     void load();
   }, [load]);
@@ -299,6 +297,27 @@ function GiftCardDetail({
     if (reason) await act(() => adjustGiftCard(pid, card.id, amount, reason), 'Balance adjusted.');
   };
 
+  const doReveal = async (via: 'show' | 'print') => {
+    const popup = via === 'print' ? window.open('about:blank', '_blank') : null;
+    setBusy(true);
+    setErr(null);
+    setNote(null);
+    try {
+      const revealed = await revealGiftCard(pid, card.id, via);
+      if (via === 'show') setRevealedCode(revealed.code);
+      if (via === 'print') {
+        if (popup) popup.location.href = revealed.printUrl;
+        else setErr('The browser blocked the print window. Allow pop-ups for this site, then try Print again.');
+      }
+      await load();
+    } catch (e) {
+      popup?.close();
+      setErr(e instanceof Error ? e.message : 'Could not show the gift card code');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doResend = async () => {
     const email = await appPrompt({
       title: 'Email the gift card',
@@ -348,15 +367,20 @@ function GiftCardDetail({
         <div>
           <strong>Code</strong>
           <div style={{ fontFamily: 'monospace' }}>
-            {showCode ? formatCode(card.code) : `••••-••••-••••-${card.code.slice(-4)}`}{' '}
-            <button
-              type="button"
-              className="btn secondary"
-              style={{ padding: '2px 8px' }}
-              onClick={() => setShowCode((s) => !s)}
-            >
-              {showCode ? 'Hide' : 'Show'}
-            </button>
+            {revealedCode ?? `••••-••••-••••-${card.code.slice(-4)}`}{' '}
+            {canManage ? (
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ padding: '2px 8px' }}
+                disabled={busy}
+                onClick={() =>
+                  revealedCode ? setRevealedCode(null) : void doReveal('show')
+                }
+              >
+                {revealedCode ? 'Hide' : 'Show'}
+              </button>
+            ) : null}
           </div>
         </div>
         <div>
@@ -392,9 +416,16 @@ function GiftCardDetail({
       {note ? <div className="settings-message">{note}</div> : null}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <a className="btn secondary" href={card.printUrl} target="_blank" rel="noreferrer">
-          Print
-        </a>
+        {canManage ? (
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={busy}
+            onClick={() => void doReveal('print')}
+          >
+            Print
+          </button>
+        ) : null}
         {card.status !== 'void' ? (
           <button
             type="button"
@@ -456,7 +487,9 @@ function GiftCardDetail({
                 <td>{when(t.created)}</td>
                 <td>{GIFT_CARD_TXN_LABELS[t.type] ?? t.type}</td>
                 <td>{GIFT_CARD_CHANNEL_LABELS[t.channel] ?? t.channel}</td>
-                <td style={{ textAlign: 'right' }}>{money(t.faceAmount)}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {t.type === 'code_shown' ? '' : money(t.faceAmount)}
+                </td>
                 <td style={{ textAlign: 'right' }}>{money(t.balanceAfter)}</td>
                 <td>{t.note || ''}</td>
               </tr>
@@ -473,6 +506,14 @@ export default function GiftCardsPage() {
   const canIssue = useCan('gift_card.issue');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<'' | GiftCardStatus>('');
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [summary, setSummary] = useState<{
+    purchased: number;
+    used: number;
+    outstanding: number;
+    asOf: string;
+    years: number[];
+  } | null>(null);
   const [cards, setCards] = useState<StaffGiftCard[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -502,6 +543,21 @@ export default function GiftCardsPage() {
     return () => window.clearTimeout(t);
   }, [reload, canView]);
 
+  useEffect(() => {
+    if (!canView) return;
+    let cancelled = false;
+    void giftCardYearSummary(currentPracticeId(), year)
+      .then((row) => {
+        if (!cancelled) setSummary(row);
+      })
+      .catch(() => {
+        if (!cancelled) setSummary(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canView, year]);
+
   if (!canView) return <PermissionDenied what="look up gift cards" />;
 
   const replaceCard = (card: StaffGiftCard) =>
@@ -520,10 +576,10 @@ export default function GiftCardsPage() {
           style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}
         >
           <div>
-            <h2 style={{ margin: 0 }}>Gift cards</h2>
+            <h2 style={{ margin: 0 }}>Sold gift cards</h2>
             <p className="settings-muted" style={{ margin: 0 }}>
-              Look up a card by code, buyer, or recipient. Totals for bookkeeping are on the Gift
-              cards report.
+              Cards bought online, and cards the clinic issued. Look up a card by code, buyer, or
+              recipient.
             </p>
           </div>
           {canIssue && !issuing ? (
@@ -550,6 +606,50 @@ export default function GiftCardsPage() {
             placeholder="Last 4 or full code, name, email"
             style={{ minWidth: 260 }}
           />
+        </div>
+        <div className="gift-year-summary">
+          <label className="settings-muted" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            Year
+            <select
+              className="settings-input"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              aria-label="Year"
+            >
+              {(summary?.years?.length ? summary.years : [year]).map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="gift-year-summary__figures">
+            <div>
+              <span>Amount purchased</span>
+              <strong>{summary ? money(summary.purchased) : '—'}</strong>
+            </div>
+            <div>
+              <span>Amount used</span>
+              <strong>{summary ? money(summary.used) : '—'}</strong>
+            </div>
+            <div>
+              <span>Amount total outstanding</span>
+              <strong>{summary ? money(summary.outstanding) : '—'}</strong>
+              <em>
+                {summary?.asOf
+                  ? `As of ${new Date(`${summary.asOf}T12:00:00`).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}`
+                  : ''}
+              </em>
+            </div>
+          </div>
+          <p className="settings-muted" style={{ margin: 0 }}>
+            Purchased and used are {year} only. Outstanding is what’s still on the cards at that
+            date, including cards from earlier years.
+          </p>
         </div>
       </div>
 

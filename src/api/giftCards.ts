@@ -48,7 +48,6 @@ export type StaffGiftCard = {
   voidedAt: string | null;
   voidReason: string | null;
   created: string;
-  printUrl: string;
 };
 
 export type GiftCardTransactionType =
@@ -57,7 +56,8 @@ export type GiftCardTransactionType =
   | 'redeem_reversal'
   | 'void'
   | 'refund'
-  | 'adjust';
+  | 'adjust'
+  | 'code_shown';
 
 export type GiftCardTransaction = {
   id: string;
@@ -88,6 +88,7 @@ export const GIFT_CARD_TXN_LABELS: Record<GiftCardTransactionType, string> = {
   void: 'Voided',
   refund: 'Refunded',
   adjust: 'Adjusted',
+  code_shown: 'Code shown',
 };
 
 export const GIFT_CARD_CHANNEL_LABELS: Record<string, string> = {
@@ -137,6 +138,23 @@ export function getGiftCardPrintView(token: string) {
 
 export function listGiftCards(practiceId: number, params: { q?: string; status?: string } = {}) {
   return call(() => http.get<StaffGiftCard[]>(`/practice/${practiceId}/gift-cards`, { params }));
+}
+
+export type GiftCardYearSummary = {
+  year: number;
+  asOf: string;
+  purchased: number;
+  used: number;
+  outstanding: number;
+  years: number[];
+};
+
+export function giftCardYearSummary(practiceId: number, year: number) {
+  return call(() =>
+    http.get<GiftCardYearSummary>(`/practice/${practiceId}/gift-cards/year-summary`, {
+      params: { year },
+    })
+  );
 }
 
 export function getGiftCard(practiceId: number, id: string) {
@@ -204,6 +222,14 @@ export function adjustGiftCard(practiceId: number, id: string, amount: number, r
     http.post<StaffGiftCard>(`/practice/${practiceId}/gift-cards/${id}/adjust`, {
       amount,
       reason,
+    })
+  );
+}
+
+export function revealGiftCard(practiceId: number, id: string, via: 'show' | 'print') {
+  return call(() =>
+    http.post<{ code: string; printUrl: string }>(`/practice/${practiceId}/gift-cards/${id}/reveal`, {
+      via,
     })
   );
 }

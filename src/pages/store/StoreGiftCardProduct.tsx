@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { storeListingImageUrl, type StoreListing } from '../../api/onlineStore';
 import { addGiftCardToCart, isoDateOnly } from './storeCartState';
+import StoreGiftCardBalanceModal from './StoreGiftCardBalanceModal';
 import {
   formatSaleEnds,
   isStoreSaleActive,
@@ -51,6 +52,7 @@ export default function StoreGiftCardProduct({
   const [deliverAt, setDeliverAt] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [added, setAdded] = useState(false);
+  const [balanceOpen, setBalanceOpen] = useState(false);
 
   const saleOn = isStoreSaleActive(listing);
   const amount = usingCustom ? Number(custom) : Number(preset);
@@ -127,7 +129,16 @@ export default function StoreGiftCardProduct({
         ) : null}
       </div>
       <div className="vayd-store__pdp-info">
-        <h1>{listing.name}</h1>
+        <div className="vayd-store__gift-head">
+          <h1>{listing.name}</h1>
+          <button
+            type="button"
+            className="vayd-store__gift-balance-btn"
+            onClick={() => setBalanceOpen(true)}
+          >
+            Check gift card balance
+          </button>
+        </div>
         <p className="vayd-store__price">
           {price != null && price < amount - 0.005 ? (
             <>
@@ -305,8 +316,7 @@ export default function StoreGiftCardProduct({
         <p className="vayd-store__muted">
           {loggedIn
             ? 'Gift cards don’t need a pet on file and can be used by anyone.'
-            : 'No account needed — anyone can buy or use a gift card.'}{' '}
-          <Link to="/store/gift-cards/balance">Check a gift card balance</Link>
+            : 'No account needed — anyone can buy or use a gift card.'}
         </p>
         {rules.displayTerms || rules.terms ? (
           <details className="vayd-store__gift-terms">
@@ -315,6 +325,9 @@ export default function StoreGiftCardProduct({
           </details>
         ) : null}
       </div>
+      {balanceOpen ? (
+        <StoreGiftCardBalanceModal practiceId={practiceId} onClose={() => setBalanceOpen(false)} />
+      ) : null}
     </div>
   );
 }

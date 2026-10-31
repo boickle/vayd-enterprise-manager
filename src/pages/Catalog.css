@@ -517,6 +517,13 @@
   object-fit: cover;
 }
 
+.store-gift-admin {
+  max-width: 720px;
+  margin-top: 12px;
+  display: grid;
+  gap: 14px;
+}
+
 .store-choices__summary {
   margin: 8px 0 0;
   display: flex;

@@ -184,7 +184,7 @@ export default function InventoryLayout({
     ...(canStoreListings ? [{ to: `${basePath}/online-store`, label: 'Store items' }] : []),
     ...(canStoreCategories ? [{ to: `${basePath}/store-categories`, label: 'Categories' }] : []),
     ...(canAbandonedCarts ? [{ to: `${basePath}/abandoned-carts`, label: 'Abandoned carts' }] : []),
-    ...(canSeeGiftCards ? [{ to: `${basePath}/gift-cards`, label: 'Gift cards' }] : []),
+    ...(canSeeGiftCards ? [{ to: `${basePath}/gift-cards`, label: 'Sold gift cards' }] : []),
   ];
   const mailOrdersTo = '/schedule/mail-orders';
   const autoShipsTo = `${basePath}/auto-ships`;
