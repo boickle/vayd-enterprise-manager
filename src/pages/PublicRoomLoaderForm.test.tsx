@@ -51,7 +51,7 @@ const INTERCEPTOR_BREAKS = [
   { lowQuantity: '12', highQuantity: '100', price: '12.48', markup: '', isActive: true },
 ];
 
-type Inv = { id: number; price: number; serviceFee?: number; minimumPrice?: number; isMedication?: boolean };
+type Inv = { id: number; price: number; serviceFee?: number; minimumPrice?: number; isMedication?: boolean; isDispensable?: boolean };
 function pricingResponse(inv: Inv, name: string, breaks?: typeof INTERCEPTOR_BREAKS) {
   const list = inv.price + (inv.serviceFee ?? 0);
   const unit = inv.minimumPrice ? Math.max(inv.minimumPrice, list) : list;
@@ -73,7 +73,7 @@ function medReminder(id: number, name: string, price: number, quantity: number) 
       price,
       type: 'inventory',
       code: `C${id}`,
-      inventoryItem: { id, price, isMedication: true, code: `C${id}` },
+      inventoryItem: { id, price, isMedication: true, isDispensable: true, code: `C${id}` },
     },
   };
 }
@@ -172,7 +172,7 @@ const storeRow = (over: Record<string, unknown> = {}) => ({
 
 describe('RL-02b quantity-aware price on the form', () => {
   it('RL-02b-1: changing qty 5 to 6 hits the price break and the line total follows', async () => {
-    const inv = { id: 900, price: 14.26, isMedication: true };
+    const inv = { id: 900, price: 14.26, isMedication: true, isDispensable: true };
     pricingById({ 900: pricingResponse(inv, 'Interceptor Yellow', INTERCEPTOR_BREAKS) });
     mountForm(formPayload({ reminders: [medReminder(900, 'Interceptor Yellow', 14.26, 5)] }));
     const qty = await screen.findByRole('spinbutton');
@@ -183,7 +183,7 @@ describe('RL-02b quantity-aware price on the form', () => {
   });
 
   it('RL-02b-1: the grand total follows the line and summaryForPdf carries unit price and line total', async () => {
-    const inv = { id: 900, price: 14.26, isMedication: true };
+    const inv = { id: 900, price: 14.26, isMedication: true, isDispensable: true };
     pricingById({ 900: pricingResponse(inv, 'Interceptor Yellow', INTERCEPTOR_BREAKS) });
     mountForm(formPayload({ reminders: [medReminder(900, 'Interceptor Yellow', 14.26, 6)] }));
     await waitFor(() => expect(screen.getAllByText('$79.14').length).toBeGreaterThan(0));
@@ -196,7 +196,7 @@ describe('RL-02b quantity-aware price on the form', () => {
   });
 
   it('RL-02b-2: the service fee is charged once per line, not once per unit', async () => {
-    const inv = { id: 901, price: 1.5, serviceFee: 12, isMedication: true };
+    const inv = { id: 901, price: 1.5, serviceFee: 12, isMedication: true, isDispensable: true };
     pricingById({ 901: pricingResponse(inv, 'Prednisone 5mg', undefined) });
     mountForm(formPayload({ reminders: [medReminder(901, 'Prednisone 5mg', 13.5, 30)] }));
     await waitFor(() => expect(screen.getAllByText('$57.00').length).toBeGreaterThan(0));
@@ -208,7 +208,7 @@ describe('RL-02b quantity-aware price on the form', () => {
   });
 
   it('RL-02b-2: the minimum price applies to the whole line', async () => {
-    const inv = { id: 902, price: 0.5, minimumPrice: 25, isMedication: true };
+    const inv = { id: 902, price: 0.5, minimumPrice: 25, isMedication: true, isDispensable: true };
     pricingById({ 902: pricingResponse(inv, 'Gauze', undefined) });
     mountForm(formPayload({ reminders: [medReminder(902, 'Gauze', 25, 10)] }));
     await waitFor(() => expect(screen.getAllByText('$25.00').length).toBeGreaterThan(0));
@@ -234,8 +234,19 @@ describe('RL-02b quantity-aware price on the form', () => {
     expect(summary.additionalItems.subtotal).toBeCloseTo(105, 2);
   });
 
+  // Owner, Oct 31, 2026: only take-home medications (Is Medication + Dispensable) get a client quantity.
+  it('an in-clinic medication (Is Medication, not Dispensable, e.g. Cytopoint) shows no quantity box', async () => {
+    const inv = { id: 905, price: 100.1, isMedication: true, isDispensable: false };
+    pricingById({ 905: pricingResponse(inv, 'Cytopoint Injection 30 mg') });
+    mountForm(formPayload({ reminders: [medReminder(905, 'Cytopoint Injection 30 mg', 100.1, 1)] }));
+    await screen.findByText('Cytopoint Injection 30 mg');
+    await waitFor(() => expect(screen.getAllByText('$100.10').length).toBeGreaterThan(0));
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+    expect(screen.queryByText(/from your visit plan/)).toBeNull();
+  });
+
   it('RL-02b-4: client quantity is clamped to 1 and 999', async () => {
-    const inv = { id: 900, price: 14.26, isMedication: true };
+    const inv = { id: 900, price: 14.26, isMedication: true, isDispensable: true };
     pricingById({ 900: pricingResponse(inv, 'Interceptor Yellow', INTERCEPTOR_BREAKS) });
     mountForm(formPayload({ reminders: [medReminder(900, 'Interceptor Yellow', 14.26, 3)] }));
     const qty = (await screen.findByRole('spinbutton')) as HTMLInputElement;
@@ -477,7 +488,7 @@ describe('RL-10-5 one submit request while sending', () => {
         release = resolve;
       })
     );
-    pricingById({ 900: pricingResponse({ id: 900, price: 14.26, isMedication: true }, 'Interceptor Yellow') });
+    pricingById({ 900: pricingResponse({ id: 900, price: 14.26, isMedication: true, isDispensable: true }, 'Interceptor Yellow') });
     mountForm(formPayload({ reminders: [medReminder(900, 'Interceptor Yellow', 14.26, 1)] }));
     // page position can carry over between tests; walk forward to the summary page
     await screen.findByRole('button', { name: /submit form|^next:/i });

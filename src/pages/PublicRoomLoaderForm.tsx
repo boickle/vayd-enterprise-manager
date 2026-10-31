@@ -763,7 +763,10 @@ function checkItemPricingResponseIsMedicationInventory(pricing: CheckItemPricing
   if (!pricing?.item) return false;
   const itemType = String(pricing.item.itemType ?? '').toLowerCase();
   if (itemType !== 'inventory') return false;
-  return (pricing.item.inventoryItem as { isMedication?: boolean } | undefined)?.isMedication === true;
+  // Owner, Oct 31, 2026: only take-home medications (Is Medication + Dispensable, e.g. Bravecto) get a
+  // client-chosen quantity; in-clinic ones like Cytopoint injections keep the visit plan's amount.
+  const inv = pricing.item.inventoryItem as { isMedication?: boolean; isDispensable?: boolean } | undefined;
+  return inv?.isMedication === true && inv?.isDispensable === true;
 }
 
 /** Inventory care-plan row: allow client qty edit on summary when pricing response marks the catalog item as medication. */
