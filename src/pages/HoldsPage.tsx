@@ -18,7 +18,11 @@ import {
 } from '../api/holds';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import { fetchSchedulingOutreachSmsFrom, sendClientSms } from '../api/clientSms';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { resolveOnMyWaySmsFromLine } from '../utils/onMyWaySmsFromLine';
+import { resolveQuoFromLine } from '../utils/quoContact';
 import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
 import { ClientEmailHistoryModal } from '../components/ClientEmailHistoryModal';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
@@ -256,6 +260,11 @@ export default function HoldsPage() {
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
   const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
+  const [smsPrimaryProviderId, setSmsPrimaryProviderId] = useState<number | undefined>(undefined);
+  const [smsFrom, setSmsFrom] = useState<string | null>(null);
+  const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
+  const [remindersFromLine, setRemindersFromLine] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
   const [messagesClientLabel, setMessagesClientLabel] = useState('');
   const [emailGroup, setEmailGroup] = useState<HoldHouseholdGroup | null>(null);
@@ -453,33 +462,65 @@ export default function HoldsPage() {
   }, []);
 
   useEffect(() => {
-    void fetchSchedulingOutreachSmsFrom().then((phone) => {
-      setSmsFromLine(phone);
+    void Promise.all([
+      fetchSchedulingOutreachSmsFrom(),
+      fetchPracticeMainPhone(PRACTICE_ID),
+      fetchPrimaryProviders(),
+    ]).then(([reminders, main, providerList]) => {
+      if (reminders) {
+        setRemindersFromLine(reminders);
+        setSmsFromLine((prev) => prev ?? reminders);
+      }
+      if (main) setPracticeMainPhone(main);
+      setProviders(Array.isArray(providerList) ? providerList : []);
     });
   }, []);
 
-  const openSmsModal = useCallback((group: HoldHouseholdGroup) => {
-    if (!holdGroupHasSmsPhone(group)) return;
-    const gen = ++holdOutreachGenRef.current;
-    setSmsError(null);
-    setSmsGroup(group);
-    // Immediate type ±N window (not service end); refine from appointment effectiveWindow.
-    setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ));
-    const slotHold = group.visitSlots[0]?.anchor ?? group.anchor;
-    void resolveHoldSmsBookedSlot(slotHold.id, PRACTICE_ID, PRACTICE_TZ, slotHold).then(
-      (bookedSlot) => {
-        if (gen !== holdOutreachGenRef.current) return;
-        setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ, { bookedSlot }));
-      },
-    );
-  }, []);
+  const openSmsModal = useCallback(
+    (group: HoldHouseholdGroup) => {
+      if (!holdGroupHasSmsPhone(group)) return;
+      const gen = ++holdOutreachGenRef.current;
+      setSmsError(null);
+      setSmsGroup(group);
+      // Immediate type ±N window (not service end); refine from appointment effectiveWindow.
+      setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ));
+      const slotHold = group.visitSlots[0]?.anchor ?? group.anchor;
+      const providerId =
+        slotHold.primaryProvider?.id != null && Number.isFinite(Number(slotHold.primaryProvider.id))
+          ? Number(slotHold.primaryProvider.id)
+          : undefined;
+      const quoFromLine = resolveQuoFromLine({
+        appointmentPrimaryProvider: providerId != null ? { id: providerId } : null,
+        providers,
+      });
+      const routing = resolveOnMyWaySmsFromLine({
+        primaryProviderId: providerId,
+        quoFromLine,
+        practiceMainPhone,
+        remindersFrom: remindersFromLine,
+      });
+      setSmsPrimaryProviderId(routing.payload.primaryProviderId);
+      setSmsFrom(routing.payload.from ?? null);
+      if (routing.fromLineLabel) setSmsFromLine(routing.fromLineLabel);
+      void resolveHoldSmsBookedSlot(slotHold.id, PRACTICE_ID, PRACTICE_TZ, slotHold).then(
+        (bookedSlot) => {
+          if (gen !== holdOutreachGenRef.current) return;
+          setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ, { bookedSlot }));
+        },
+      );
+    },
+    [practiceMainPhone, providers, remindersFromLine],
+  );
 
   const closeSmsModal = useCallback(() => {
     holdOutreachGenRef.current += 1;
     setSmsGroup(null);
     setSmsMessage('');
     setSmsError(null);
-  }, []);
+    setSmsPrimaryProviderId(undefined);
+    setSmsFrom(null);
+    if (remindersFromLine) setSmsFromLine(remindersFromLine);
+  }, [remindersFromLine]);
 
   const openEmailModal = useCallback((group: HoldHouseholdGroup) => {
     const clientId = group.anchor.client?.id;
@@ -531,12 +572,18 @@ export default function HoldsPage() {
       setSmsSending(true);
       setSmsError(null);
       try {
-        const providerId = smsGroup.anchor.primaryProvider?.id;
+        const explicitFrom = smsFrom?.trim() || undefined;
+        const hasProvider =
+          smsPrimaryProviderId != null && Number.isFinite(smsPrimaryProviderId);
         await sendClientSms(clientId, {
           message: smsMessage.trim(),
-          useRemindersFrom: true,
           source: 'holds',
-          ...(providerId != null ? { primaryProviderId: providerId } : {}),
+          // Appointment provider Quo line (reschedule / explore alternatives); leave Quo Open.
+          ...(hasProvider
+            ? { primaryProviderId: smsPrimaryProviderId }
+            : explicitFrom
+              ? { from: explicitFrom }
+              : { useRemindersFrom: true }),
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });
         closeSmsModal();
@@ -547,7 +594,7 @@ export default function HoldsPage() {
         setSmsSending(false);
       }
     },
-    [smsGroup, smsMessage, closeSmsModal]
+    [smsGroup, smsMessage, closeSmsModal, smsPrimaryProviderId, smsFrom]
   );
 
   const doAssignGroup = useCallback(

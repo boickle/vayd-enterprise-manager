@@ -38,7 +38,11 @@ import {
 } from '../utils/forwardBookingCreateLink';
 import { completeForwardBookingTask } from '../utils/forwardBookingTaskComplete';
 import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
+import { fetchPrimaryProviders } from '../api/employee';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { resolveOnMyWaySmsFromLine } from '../utils/onMyWaySmsFromLine';
+import { resolveQuoFromLine } from '../utils/quoContact';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -596,7 +600,14 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const [contactEmailFormat, setContactEmailFormat] = useState<'care_outreach' | 'forward_booking'>(
     'forward_booking',
   );
+  const [contactSmsPrimaryProviderId, setContactSmsPrimaryProviderId] = useState<
+    number | undefined
+  >(undefined);
+  const [contactSmsFrom, setContactSmsFrom] = useState<string | null>(null);
   const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
+  const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
+  const [remindersFromLine, setRemindersFromLine] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Awaited<ReturnType<typeof fetchPrimaryProviders>>>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createPrefill, setCreatePrefill] = useState<CreateForwardBookingPrefill | null>(null);
   const [createReturnTo, setCreateReturnTo] = useState<string | null>(null);
@@ -724,8 +735,17 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         : `Searching ${activeStatusLabel}`;
 
   useEffect(() => {
-    void fetchSchedulingOutreachSmsFrom().then((phone) => {
-      if (phone) setSmsFromLine(phone);
+    void Promise.all([
+      fetchSchedulingOutreachSmsFrom(),
+      fetchPracticeMainPhone(PRACTICE_ID),
+      fetchPrimaryProviders(),
+    ]).then(([reminders, main, providerList]) => {
+      if (reminders) {
+        setRemindersFromLine(reminders);
+        setSmsFromLine((prev) => prev ?? reminders);
+      }
+      if (main) setPracticeMainPhone(main);
+      setProviders(Array.isArray(providerList) ? providerList : []);
     });
   }, []);
 
@@ -1664,6 +1684,26 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     );
     setContactSmsMessage(sms);
     setContactEntry(enriched);
+
+    // Suggested forward-booking provider (tech team → practice/VAYD main). Leave Quo Open.
+    const providerId =
+      enriched.primaryProvider?.id != null && Number.isFinite(Number(enriched.primaryProvider.id))
+        ? Number(enriched.primaryProvider.id)
+        : undefined;
+    const quoFromLine = resolveQuoFromLine({
+      appointmentPrimaryProvider: providerId != null ? { id: providerId } : null,
+      providers,
+    });
+    const routing = resolveOnMyWaySmsFromLine({
+      primaryProviderId: providerId,
+      quoFromLine,
+      practiceMainPhone,
+      remindersFrom: remindersFromLine,
+    });
+    setContactSmsPrimaryProviderId(routing.payload.primaryProviderId);
+    setContactSmsFrom(routing.payload.from ?? null);
+    if (routing.fromLineLabel) setSmsFromLine(routing.fromLineLabel);
+
     setContactOpen(true);
   };
 
@@ -1674,6 +1714,9 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     setContactCanText(false);
     setContactProviderLastName(null);
     setContactEmailFormat('forward_booking');
+    setContactSmsPrimaryProviderId(undefined);
+    setContactSmsFrom(null);
+    if (remindersFromLine) setSmsFromLine(remindersFromLine);
   };
 
   const buildSmsTextForEntry = async (entry: ForwardBookingEntry): Promise<string> => {
@@ -2812,9 +2855,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           canText={contactCanText}
           onClose={closeContactModal}
           smsFromLine={smsFromLine}
+          smsPrimaryProviderId={contactSmsPrimaryProviderId}
+          smsFrom={contactSmsFrom}
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
-          markInboxDone
           smsSource="forward_booking"
         />
       ) : null}
