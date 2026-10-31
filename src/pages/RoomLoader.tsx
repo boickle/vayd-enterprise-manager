@@ -28,6 +28,7 @@ import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
+import { defaultPreMedsAsk, petHasPremedsAlert } from './roomLoader/roomLoaderPremeds';
 import RoomLoaderChartPanel, {
   autoOpenChartPetId,
   CHART_SIDE_BY_SIDE_QUERY,
@@ -909,7 +910,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               answers[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
-                preMedsAsk: sp.questions.preMedsAsk ?? false,
+                preMedsAsk: defaultPreMedsAsk(sp.questions.preMedsAsk, petHasPremedsAlert(patientId, data)),
               };
             }
           });
@@ -982,7 +983,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               answersFromSent[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
-                preMedsAsk: sp.questions.preMedsAsk ?? false,
+                preMedsAsk: defaultPreMedsAsk(sp.questions.preMedsAsk, petHasPremedsAlert(patientId, data)),
               };
             }
             if (sp.vaccines) {
@@ -1036,12 +1037,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               initialReasons[patientId] = '';
             }
             if (initialAnswers[patientId] == null) {
-              initialAnswers[patientId] = { mobility: null, labWork: null, preMedsAsk: false };
+              initialAnswers[patientId] = {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petHasPremedsAlert(patientId, data),
+              };
             }
           });
           (data?.patients || []).forEach((p: any) => {
             if (p?.id != null && initialAnswers[p.id] == null) {
-              initialAnswers[p.id] = { mobility: null, labWork: null, preMedsAsk: false };
+              initialAnswers[p.id] = {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petHasPremedsAlert(p.id, data),
+              };
             }
             if (p?.id != null && initialReasons[p.id] == null) {
               initialReasons[p.id] = '';
@@ -3577,7 +3586,12 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           ) : (
             petsWithAppointments.map((item, petIndex) => {
               const { patient, appointments, client, clientHasMembership, clientMembershipPlanName } = item;
-              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
+              const petPremedsAlert = petHasPremedsAlert(patient.id, { patients: [patient], appointments });
+              const petAnswersForPet = petAnswers[patient.id] || {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petPremedsAlert,
+              };
               const firstAppt = appointments[0];
               
               // Use patient data from appointment if available and more complete
@@ -3924,8 +3938,18 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     )}
                   </div>
 
-                  {/* Pre-examination meds refill question */}
-                  <div style={{ marginTop: '20px' }}>
+                  {/* Pre-examination meds refill question (purple like the chart's pre-meds alert when it's set) */}
+                  <div
+                    className={
+                      petPremedsAlert
+                        ? 'room-loader-premeds-ask room-loader-premeds-ask--alert'
+                        : 'room-loader-premeds-ask'
+                    }
+                    data-testid="room-loader-premeds-ask"
+                  >
+                    {petPremedsAlert ? (
+                      <div className="room-loader-premeds-ask__tag">Pre-meds alert on chart</div>
+                    ) : null}
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
                       Should we ask this client if they need refills of pre-examination medications?
                     </label>

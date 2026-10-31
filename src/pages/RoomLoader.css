@@ -401,3 +401,22 @@
     min-height: 48px;
   }
 }
+
+/* Pre-meds refill question: purple like the chart's pre-meds alert (.pims-emr-premeds) when the pet has it. */
+.room-loader-premeds-ask {
+  margin-top: 20px;
+}
+.room-loader-premeds-ask--alert {
+  padding: 10px 12px;
+  border: 2px solid #8b5cf6;
+  border-radius: 8px;
+  background: #f5f3ff;
+}
+.room-loader-premeds-ask__tag {
+  margin-bottom: 6px;
+  color: #4c1d95;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
