@@ -173,6 +173,7 @@ import {
   invoiceTableHtml,
   ledgerPdfAttachment,
   ledgerTableHtml,
+  isHiddenFromClient,
   payButtonHtml,
   type InvoiceEmailModel,
 } from '../../utils/invoiceEmail';
@@ -3004,9 +3005,9 @@ export default function ClientFinancialWorkspace({
               };
             })
           : (scout!.lines ?? [])
-              // Charges the catalog marks hidden stay off the client's copy. The
-              // money is still in the totals — only the line is withheld.
-              .filter((l) => l.isDeleted !== true && l.hideOnInvoice !== true)
+              // Only no-charge hidden lines stay off the client's copy; a line with
+              // money on it is always shown so the lines add up to the total.
+              .filter((l) => l.isDeleted !== true && !isHiddenFromClient(l))
               .map((l) => {
                 const qty = Number(l.qty) || 1;
                 const amount = Number(l.amount) || 0;
