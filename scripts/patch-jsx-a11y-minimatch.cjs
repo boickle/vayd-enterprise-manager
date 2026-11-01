@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Patches eslint-plugin-jsx-a11y to work with minimatch v10 (default export shape changed).
- * Run after npm install when using overrides to force minimatch ^10.2.1.
+ * Patches eslint-plugin-jsx-a11y to work with minimatch v10+ (default export shape changed).
+ * Run after npm install when using overrides to force a patched minimatch.
  */
 const fs = require('fs');
 const path = require('path');
