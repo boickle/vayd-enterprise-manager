@@ -64,6 +64,8 @@ export type BundleItem = {
   quantity: number;
   coverage: ItemCoverage;
   copayPrice: number | null;
+  /** Bundles only: the item's price inside the bundle (0 is real); null charges the catalog price. */
+  bundlePrice?: number | null;
   percentOff: number | null;
   productionBasis: ItemProductionBasis;
   productionOverride: number | null;
@@ -141,6 +143,8 @@ export type BundleItemInput = {
   quantity?: number;
   coverage?: ItemCoverage;
   copayPrice?: number | null;
+  /** Bundles only: null charges the catalog price; 0 charges $0. */
+  bundlePrice?: number | null;
   percentOff?: number | null;
   productionBasis?: ItemProductionBasis;
   productionOverride?: number | null;
