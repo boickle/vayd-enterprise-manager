@@ -2517,8 +2517,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     setBulkSaving(true);
     setBulkError(null);
     try {
-      const { online, ...adjust } = bulkAdjustBody() ?? {};
-      if (!adjust.inventoryItemIds) return;
+      const built = bulkAdjustBody();
+      if (!built) return;
+      const { online, ...adjust } = built;
       if (online && !(await confirmAutoshipReprice(ids))) return;
       const res = await postBulkInventoryPriceAdjust(practiceId, { ...adjust, dryRun: true });
       bulkRequestIdRef.current = window.crypto.randomUUID();
@@ -2537,8 +2538,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setBulkError('Enter a reason for this price change.');
       return;
     }
-    const { online: _online, ...adjust } = bulkAdjustBody() ?? {};
-    if (!adjust.inventoryItemIds) return;
+    const built = bulkAdjustBody();
+    if (!built) return;
+    const { online: _online, ...adjust } = built;
     setBulkSaving(true);
     setBulkError(null);
     try {
