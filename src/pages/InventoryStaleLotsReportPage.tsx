@@ -10,7 +10,6 @@ import {
   type StaleLotRow,
 } from '../api/inventoryCounts';
 import { apiErrorMessage } from '../api/http';
-import { fetchMyOffices } from '../api/permissions';
 import { addedSummary } from '../components/inventory/AddToWeeklyCountModal';
 import { usePermissions } from '../permissions/PermissionContext';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
@@ -55,16 +54,8 @@ export default function InventoryStaleLotsReportPage() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    void Promise.all([
-      listPracticeBranches(practiceId),
-      fetchMyOffices(practiceId, 'inventory.par.manage').catch(() => 'all' as const),
-      fetchMyOffices(practiceId, 'inventory.count.review_controlled').catch(() => [] as number[]),
-    ])
-      .then(([list, full, controlled]) => {
-        const allowed = (id: number) =>
-          full === 'all' || controlled === 'all' || full.includes(id) || controlled.includes(id);
-        setBranches(list.filter((b) => b.isActive !== false && allowed(b.id)));
-      })
+    void listPracticeBranches(practiceId)
+      .then((list) => setBranches(list.filter((b) => b.isActive !== false)))
       .catch(() => setBranches([]));
   }, [practiceId]);
 

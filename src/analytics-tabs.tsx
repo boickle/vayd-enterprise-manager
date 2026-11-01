@@ -297,7 +297,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     description: 'Lots skipped over, nearly empty and stuck, or not moving.',
     element: <InventoryStaleLotsReportPage />,
     role: STAFF,
-    permissions: ['inventory.par.manage', 'inventory.count.review_controlled'],
+    permissions: ['inventory.stale_lots.view'],
   },
   {
     path: 'inventory/controlled',

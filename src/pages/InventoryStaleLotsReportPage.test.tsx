@@ -14,7 +14,6 @@ vi.mock('../permissions/PermissionContext', () => ({
 vi.mock('../auth/useAuth', () => ({ useAuth: () => ({ token: null }) }));
 vi.mock('../auth/impersonationSession', () => ({ readImpersonation: () => null }));
 vi.mock('../utils/practiceIdFromToken', () => ({ resolvePracticeIdFromToken: () => 1 }));
-vi.mock('../api/permissions', () => ({ fetchMyOffices: async () => 'all' as const }));
 vi.mock('../api/branchInventory', () => ({
   listPracticeBranches: async () => [
     { id: 1, name: 'Kingfield Office', isActive: true },

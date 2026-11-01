@@ -32,3 +32,11 @@ it('gates the tabs the owner asked about', () => {
     'inventory.activity_log.controlled',
   ]);
 });
+
+it('shows Stale lots only with its own key (practice manager and admin), not to inventory managers or the controlled director', () => {
+  const tab = ANALYTICS_TAB_PAGES.find((t) => t.path === 'inventory/stale-lots');
+  expect(tab?.permissions).toEqual(['inventory.stale_lots.view']);
+  const visibleTo = (held: string[]) => !tab?.permissions || tab.permissions.some((k) => held.includes(k));
+  expect(visibleTo(['inventory.par.manage', 'inventory.count.review_controlled'])).toBe(false);
+  expect(visibleTo(['inventory.stale_lots.view'])).toBe(true);
+});
