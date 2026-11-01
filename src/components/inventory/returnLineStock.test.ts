@@ -90,11 +90,12 @@ describe('returnStockRequestParts', () => {
 });
 
 describe('invoiceReturnLocks (owner decisions, Nov 1, 2026)', () => {
-  it('an invoice with returns cannot be unlocked or reopened; it can still be voided', () => {
+  it('an invoice with returns cannot be unlocked, reopened or voided (CAT-14), with the same sentence', () => {
     expect(invoiceReturnLocks({ hasReturns: true, lines: [{ returnOfLineId: null }] })).toEqual({
       unlock: INVOICE_HAS_RETURNS_MESSAGE,
-      void: null,
+      void: INVOICE_HAS_RETURNS_MESSAGE,
     });
+    expect(INVOICE_HAS_RETURNS_MESSAGE).toBe('This invoice has returns. Make a correction instead.');
   });
   it("a return's credit cannot be voided", () => {
     expect(invoiceReturnLocks({ lines: [{ returnOfLineId: 'abc' }] })).toEqual({

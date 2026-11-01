@@ -854,11 +854,13 @@ export async function getControlledReport(
 export async function setControlledReconciled(
   practiceId: number,
   movementIds: number[],
-  reconciled: boolean
+  reconciled: boolean,
+  /** Returned-and-wasted entries have no stock movement; they are keyed by their waste event (CAT-14). */
+  wasteEventIds: number[] = []
 ) {
   const { data } = await http.post<{ updated: number }>(
     `/practice/${practiceId}/inventory-reports/controlled/reconciled`,
-    { movementIds, reconciled }
+    { movementIds, wasteEventIds, reconciled }
   );
   return data;
 }

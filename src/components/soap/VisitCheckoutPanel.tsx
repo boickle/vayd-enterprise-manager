@@ -3666,7 +3666,12 @@ export default function VisitCheckoutPanel({
                 </PermissionGate>
               </>
             )}
-            {!isPaid && !isVoid && status !== 'open' && (
+            {!isPaid && !isVoid && status !== 'open' && invoice?.hasReturns && (
+              <PermissionGate permission="invoice.void">
+                <span role="note" style={{ fontSize: 12, color: '#64748b' }}>{INVOICE_HAS_RETURNS_MESSAGE}</span>
+              </PermissionGate>
+            )}
+            {!isPaid && !isVoid && status !== 'open' && !invoice?.hasReturns && (
               <PermissionGate permission="invoice.void">
                 <button
                   type="button"

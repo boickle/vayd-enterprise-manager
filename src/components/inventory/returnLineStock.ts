@@ -181,7 +181,7 @@ export function returnStockRequestParts(args: {
   return out;
 }
 
-/** Owner decision (Nov 1, 2026): an invoice with returns is corrected, never unlocked or reopened. */
+/** Owner decision (Nov 1, 2026): an invoice with returns is corrected, never unlocked, reopened or voided. */
 export const INVOICE_HAS_RETURNS_MESSAGE = 'This invoice has returns. Make a correction instead.';
 /** Owner decision (Nov 1, 2026): a return's credit is never voided. */
 export const RETURN_CREDIT_VOID_MESSAGE = "A return can't be voided. Correct the stock on Waste / Adjust instead.";
@@ -203,6 +203,7 @@ export function isReturnCredit(invoice: InvoiceLike): boolean {
 export function invoiceReturnLocks(invoice: InvoiceLike): { unlock: string | null; void: string | null } {
   return {
     unlock: invoice?.hasReturns ? INVOICE_HAS_RETURNS_MESSAGE : null,
-    void: isReturnCredit(invoice) ? RETURN_CREDIT_VOID_MESSAGE : null,
+    // A return credit is never voided; nor is the sale while a return stands (it would refund twice).
+    void: isReturnCredit(invoice) ? RETURN_CREDIT_VOID_MESSAGE : invoice?.hasReturns ? INVOICE_HAS_RETURNS_MESSAGE : null,
   };
 }
