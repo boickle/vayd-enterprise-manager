@@ -42,6 +42,7 @@ const SurveyResultsPage = React.lazy(() => import('./pages/SurveyResults'));
 const InventoryShrinkReportPage = React.lazy(() => import('./pages/InventoryShrinkReportPage'));
 const InventoryCountReportPage = React.lazy(() => import('./pages/InventoryCountReportPage'));
 const InventoryExpiringReportPage = React.lazy(() => import('./pages/InventoryExpiringReportPage'));
+const InventoryStaleLotsReportPage = React.lazy(() => import('./pages/InventoryStaleLotsReportPage'));
 const InventoryControlledReportPage = React.lazy(
   () => import('./pages/InventoryControlledReportPage')
 );
@@ -288,6 +289,15 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     element: <InventoryExpiringReportPage />,
     role: STAFF,
     permissions: ['inventory.expiring.view'],
+  },
+  {
+    path: 'inventory/stale-lots',
+    label: 'Stale lots',
+    category: 'inventory',
+    description: 'Lots skipped over, nearly empty and stuck, or not moving.',
+    element: <InventoryStaleLotsReportPage />,
+    role: STAFF,
+    permissions: ['inventory.par.manage', 'inventory.count.review_controlled'],
   },
   {
     path: 'inventory/controlled',

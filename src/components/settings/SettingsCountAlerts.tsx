@@ -26,6 +26,12 @@ const toDraft = (s: CountAlertSettings): Draft => ({
   shrinkPctLimit: String(s.shrinkPctLimit),
   accuracyPctLimit: String(s.accuracyPctLimit),
   weeklyCountCap: String(s.weeklyCountCap ?? 20),
+  staleSkipDraws: String(s.staleSkipDraws ?? 2),
+  staleLowUnits: String(s.staleLowUnits ?? 2),
+  staleLowPct: String(s.staleLowPct ?? 10),
+  staleLowDays: String(s.staleLowDays ?? 30),
+  staleLowDaysControlled: String(s.staleLowDaysControlled ?? 14),
+  staleNoMoveDays: String(s.staleNoMoveDays ?? 90),
 });
 
 export default function SettingsCountAlerts() {
@@ -57,6 +63,19 @@ export default function SettingsCountAlerts() {
     </span>
   );
 
+  const staleField = (key: keyof CountAlertSettings, label: string) => (
+    <input
+      className="settings-input"
+      type="number"
+      min={0}
+      step="any"
+      style={{ width: 80 }}
+      aria-label={label}
+      value={String(draft[key])}
+      onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+    />
+  );
+
   const save = () => {
     setSaving(true);
     setMessage(null);
@@ -73,6 +92,12 @@ export default function SettingsCountAlerts() {
       shrinkPctLimit: n('shrinkPctLimit'),
       accuracyPctLimit: n('accuracyPctLimit'),
       weeklyCountCap: Math.min(200, Math.max(1, Math.round(n('weeklyCountCap') || 20))),
+      staleSkipDraws: Math.max(1, Math.round(n('staleSkipDraws') || 2)),
+      staleLowUnits: n('staleLowUnits'),
+      staleLowPct: Math.min(100, n('staleLowPct')),
+      staleLowDays: Math.max(1, Math.round(n('staleLowDays') || 30)),
+      staleLowDaysControlled: Math.max(1, Math.round(n('staleLowDaysControlled') || 14)),
+      staleNoMoveDays: Math.max(1, Math.round(n('staleNoMoveDays') || 90)),
     })
       .then((s) => {
         setDraft(toDraft(s));
@@ -188,6 +213,45 @@ export default function SettingsCountAlerts() {
         month. The same limits drive the red ! on Analytics → Inventory → Shrink &amp; Accuracy.
         If an office has no inventory manager, a practice manager gets the task.
       </p>
+      <h3 style={{ fontSize: 15, fontWeight: 600, margin: '20px 0 8px' }}>Stale lots review</h3>
+      <p className="settings-muted" style={{ fontSize: 13, marginTop: 0 }}>
+        Analytics → Inventory → Stale lots flags a lot that still has stock when any of these is true.
+      </p>
+      <div style={{ display: 'grid', gap: 10, marginBottom: 8 }}>
+        <label className="settings-label">
+          Skipped over: a newer lot of the same item on the same shelf was drawn at least
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleSkipDraws', 'Times a newer lot was drawn')}
+          </span>
+          times since this one last moved
+        </label>
+        <label className="settings-label">
+          Nearly empty, then stuck: 
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleLowUnits', 'Nearly empty units')}
+          </span>
+          units or fewer, or under
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleLowPct', 'Nearly empty percent')}
+          </span>
+          % of what was received, with no draw in
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleLowDays', 'Days without a draw')}
+          </span>
+          days (controlled drugs:
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleLowDaysControlled', 'Days without a draw, controlled drugs')}
+          </span>
+          days)
+        </label>
+        <label className="settings-label">
+          No movement: stock on hand and nothing moved in
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '0 6px' }}>
+            {staleField('staleNoMoveDays', 'Days with no movement')}
+          </span>
+          days
+        </label>
+      </div>
       {message ? (
         <div
           className={`settings-message ${message.ok ? 'settings-success-message' : 'settings-error-message'}`}
