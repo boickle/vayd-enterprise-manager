@@ -39,6 +39,8 @@ export type BundleItemDraft = {
   quantity: string;
   coverage: ItemCoverage;
   copayPrice: string;
+  /** Bundles only: blank charges the list price; any number, 0 included, charges that. */
+  bundlePrice: string;
   percentOff: string;
   productionBasis: ItemProductionBasis;
   productionOverride: string;
@@ -161,6 +163,7 @@ export function bundleGroupDraftsFrom(bundle: Bundle): BundleGroupDraft[] {
           quantity: String(i.quantity ?? 1),
           coverage: i.coverage,
           copayPrice: i.copayPrice != null ? String(i.copayPrice) : '',
+          bundlePrice: i.bundlePrice != null ? String(i.bundlePrice) : '',
           percentOff: i.percentOff != null ? String(i.percentOff) : '',
           productionBasis:
             i.productionBasis === 'membership_price' ||
@@ -177,7 +180,10 @@ export function bundleGroupDraftsFrom(bundle: Bundle): BundleGroupDraft[] {
     }));
 }
 
-export function bundleGroupDraftsToInput(drafts: BundleGroupDraft[]): BundleGroupInput[] {
+export function bundleGroupDraftsToInput(
+  drafts: BundleGroupDraft[],
+  context: 'bundle' | 'membership' = 'bundle',
+): BundleGroupInput[] {
   return drafts.map((g, gi) => ({
     ...(g.id != null ? { id: g.id } : {}),
     name:
@@ -203,6 +209,7 @@ export function bundleGroupDraftsToInput(drafts: BundleGroupDraft[]): BundleGrou
         quantity: numOrNull(i.quantity) ?? 1,
         coverage: i.coverage,
         copayPrice: i.coverage === 'copay' ? numOrNull(i.copayPrice) : null,
+        ...(context === 'bundle' ? { bundlePrice: numOrNull(i.bundlePrice) } : {}),
         percentOff: i.coverage === 'percent_off' ? numOrNull(i.percentOff) : null,
         productionBasis: i.productionBasis,
         productionOverride:
@@ -256,6 +263,7 @@ function draftFromPick(picked: PickedCatalogItem): BundleItemDraft {
     quantity: '1',
     coverage: 'included',
     copayPrice: '',
+    bundlePrice: '',
     percentOff: '',
     productionBasis: 'full_price',
     productionOverride: '',
@@ -844,6 +852,23 @@ export default function BundleGroupEditor({
                               ))}
                             </select>
                           </label>
+                          {context === 'bundle' ? (
+                            <label className="bge-field bge-field--narrow">
+                              <span className="bge-field__label">Bundle price</span>
+                              <input
+                                className="bge-input"
+                                inputMode="decimal"
+                                value={item.bundlePrice}
+                                placeholder="list price"
+                                disabled={disabled}
+                                onChange={(e) =>
+                                  patchItem(group.key, item.key, {
+                                    bundlePrice: e.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                          ) : null}
                           {item.coverage === 'copay' ? (
                             <label className="bge-field bge-field--narrow">
                               <span className="bge-field__label">Copay $</span>

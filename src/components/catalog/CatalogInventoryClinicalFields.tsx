@@ -84,7 +84,8 @@ const FLAG_HELP: Record<string, string> = {
     'Off by default. Turn on for vaccines and anything that prints a lot #. Leave off for items that only have an expiration (e.g. Miconahex).',
   hasClientNotes:
     'Show a client-facing note on this charge. Set the default below; staff can edit it on the SOAP and at checkout.',
-  hideOnInvoice: 'Hide this line on the client invoice.',
+  hideOnInvoice:
+    'Lines with a charge are always shown to the client; only $0 lines are hidden.',
   hideOnMedicalRecordView: 'Hide this line when viewing the medical record on screen.',
   hideOnMedicalRecordPrint: 'Hide this line when printing the medical record.',
   excludeFromProduction:

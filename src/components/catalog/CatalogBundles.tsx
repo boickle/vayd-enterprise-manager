@@ -371,8 +371,8 @@ export default function CatalogBundles({
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
               />
               <span className="cbn-field__hint">
-                What the client pays once for the whole bundle. Leave at 0 to charge each item
-                at its own price.
+                What the client pays once for the whole bundle. Leave at $0 or blank to charge
+                each item at its bundle price.
               </span>
             </label>
             <label className="cbn-field">

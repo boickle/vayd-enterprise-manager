@@ -77,6 +77,16 @@ function formatInvoiceDateTime(iso: string | null): string | undefined {
   });
 }
 
+/**
+ * "Hide on invoice" only hides lines with no charge (stock-draw components, covered lines).
+ * A line with money on it, including a return (negative), is always shown to the client so the
+ * lines add up to the total (owner decision D1, CAT-01).
+ */
+export function isHiddenFromClient(line: { hideOnInvoice?: boolean | null; amount: number | string | null }): boolean {
+  if (line.hideOnInvoice !== true) return false;
+  return Math.abs(Number(line.amount) || 0) < 0.005;
+}
+
 export type VisitInvoiceEmailSource = {
   id: string;
   scoutInvoiceNumber?: number | null;
@@ -114,7 +124,7 @@ export function visitInvoiceToEmailModel(
   payUrl?: string | null,
 ): InvoiceEmailModel {
   const lines = (inv.lines ?? [])
-    .filter((line) => line.isDeleted !== true && !line.removedAt && line.hideOnInvoice !== true)
+    .filter((line) => line.isDeleted !== true && !line.removedAt && !isHiddenFromClient(line))
     .map((line) => {
       const qty = Math.max(1, Number(line.qty) || 1);
       const amount = Number(line.amount) || 0;
@@ -320,7 +330,7 @@ export function estimateEmailModel(estimate: {
     date: new Date(estimate.created).toLocaleDateString('en-US'),
     clientName,
     lines: estimate.lines
-      .filter((line) => !line.hideOnInvoice)
+      .filter((line) => !isHiddenFromClient(line))
       .map((line) => {
         const qty = Number(line.qty) || 1;
         const list = line.listUnitPrice != null ? Number(line.listUnitPrice) * qty : null;

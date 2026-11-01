@@ -15,6 +15,7 @@ import {
 import {
   patchPracticeInventoryItem,
   postBulkInventoryPriceAdjust,
+  getInventoryAutoshipCounts,
   uploadInventoryItemImage,
   deleteInventoryItemImage,
   inventoryItemImageUrl,
@@ -92,6 +93,14 @@ import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'luc
 import './Settings.css';
 import './Catalog.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+
+/** New labs and procedures start tax-free; inventory starts at Sales Tax (owner decision D2). */
+function defaultTaxLevelFor(t: ItemType): number {
+  return t === 'inventory' ? 1 : 0;
+}
+
+const HIDE_ON_INVOICE_HINT =
+  'Lines with a charge are always shown to the client; only $0 lines are hidden.';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
 /** Pseudo-id in priceTargetBranchIds for the Online Store price target (not a real branch). */
@@ -474,6 +483,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const typeFilter = typeFilterFromSearch(searchParams.toString());
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  /** Once the user picks a tax level, changing the item type no longer resets it. */
+  const createTaxTouched = useRef(false);
   const [createType, setCreateType] = useState<ItemType>('inventory');
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -579,6 +590,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       cancelled = true;
     };
   }, [createOpen, practiceId, selected]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      createTaxTouched.current = false;
+      return;
+    }
+    if (createTaxTouched.current) return;
+    const level = defaultTaxLevelFor(createType);
+    setCreateForm((f) => (f.taxLevelValue === level ? f : { ...f, taxLevelValue: level }));
+  }, [createOpen, createType]);
 
   // Online store "+ Add inventory item" opens the catalog create modal.
   useEffect(() => {
@@ -1569,6 +1590,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setPriceError('Select at least one branch, or Online Store.');
       return;
     }
+    if (
+      applyOnlineStore &&
+      storePriceChanged(priceForm.price) &&
+      !(await confirmAutoshipReprice([selected.itemId]))
+    ) {
+      return;
+    }
     setPriceSaving(true);
     setPriceError(null);
     try {
@@ -2176,6 +2204,46 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     }
   }
 
+  /**
+   * A new store price reprices every active auto-ship and emails those clients within the hour.
+   * Returns false when staff cancel. Items without auto-ships ask nothing.
+   */
+  async function confirmAutoshipReprice(itemIds: number[]): Promise<boolean> {
+    let counts: Record<number, number> = {};
+    try {
+      counts = await getInventoryAutoshipCounts(practiceId, itemIds);
+    } catch {
+      return appConfirm({
+        title: 'Auto-ships',
+        message:
+          'Could not check for auto-ships on this item. Any auto-ships will be repriced and those clients emailed within the hour. Save anyway?',
+        confirmLabel: 'Save',
+      });
+    }
+    const withShips = itemIds.filter((id) => (counts[id] ?? 0) > 0);
+    const total = withShips.reduce((n, id) => n + counts[id], 0);
+    if (total === 0) return true;
+    const ships = `${total} auto-ship${total === 1 ? '' : 's'}`;
+    const where =
+      itemIds.length > 1
+        ? ` on ${withShips.length} item${withShips.length === 1 ? '' : 's'}`
+        : '';
+    return appConfirm({
+      title: 'Reprice auto-ships?',
+      message: `${ships}${where} will be repriced and those clients emailed within the hour.`,
+      confirmLabel: 'Save price',
+    });
+  }
+
+  function storePriceChanged(next: number | null): boolean {
+    const cur = detail?.item as { onlineStorePrice?: unknown } | undefined;
+    const prev =
+      cur?.onlineStorePrice == null || String(cur.onlineStorePrice).trim() === ''
+        ? null
+        : Number(cur.onlineStorePrice);
+    return prev !== next;
+  }
+
   async function saveOnlineStoreFields(): Promise<boolean> {
     if (!selected || (selected.itemType !== 'inventory' && selected.itemType !== 'procedure')) {
       return true;
@@ -2187,6 +2255,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     ) {
       setCatalogError('Enter the online store price to list this item');
       return false;
+    }
+    if (selected.itemType === 'inventory') {
+      const nextStore =
+        catalogDraft.onlineStorePrice.trim() === '' ? null : Number(catalogDraft.onlineStorePrice);
+      if (
+        storePriceChanged(nextStore) &&
+        !(await confirmAutoshipReprice([selected.itemId]))
+      ) {
+        return false;
+      }
     }
     setCatalogSaving(true);
     setCatalogError(null);
@@ -2379,6 +2457,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         setBulkError('Enter at least one percent or flat adjustment.');
         return;
       }
+      if ((hasPctO || hasFO) && !(await confirmAutoshipReprice(ids))) return;
       const res = await postBulkInventoryPriceAdjust(practiceId, {
         inventoryItemIds: ids,
         percentChangePracticePrice: hasPctP ? pctP : undefined,
@@ -3427,7 +3506,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       <span>
                         Show on invoice
                         <small style={{ display: 'block', color: '#6b7280' }}>
-                          Off keeps the charge on the invoice but off the client&rsquo;s copy.
+                          {HIDE_ON_INVOICE_HINT}
                         </small>
                       </span>
                     </label>
@@ -5059,9 +5138,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 <TaxLevelSelect
                   settings={taxSettings}
                   value={createForm.taxLevelValue}
-                  onChange={(taxLevelValue) =>
-                    setCreateForm((f) => ({ ...f, taxLevelValue }))
-                  }
+                  onChange={(taxLevelValue) => {
+                    createTaxTouched.current = true;
+                    setCreateForm((f) => ({ ...f, taxLevelValue }));
+                  }}
                 />
               </div>
               <CatalogDiscountRulesFields
@@ -5199,7 +5279,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         }));
                       }}
                     />
-                    <span>{label}</span>
+                    <span>
+                      {label}
+                      {key === 'hideOnInvoice' && (
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          {HIDE_ON_INVOICE_HINT}
+                        </small>
+                      )}
+                    </span>
                   </label>
                 ))}
               </div>

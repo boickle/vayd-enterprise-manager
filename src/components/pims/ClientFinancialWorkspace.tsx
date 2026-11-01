@@ -1,3 +1,4 @@
+import { HiddenButChargedTag } from './HiddenButChargedTag';
 import {
   Fragment,
   useCallback,
@@ -173,6 +174,7 @@ import {
   invoiceTableHtml,
   ledgerPdfAttachment,
   ledgerTableHtml,
+  isHiddenFromClient,
   payButtonHtml,
   type InvoiceEmailModel,
 } from '../../utils/invoiceEmail';
@@ -3004,9 +3006,9 @@ export default function ClientFinancialWorkspace({
               };
             })
           : (scout!.lines ?? [])
-              // Charges the catalog marks hidden stay off the client's copy. The
-              // money is still in the totals — only the line is withheld.
-              .filter((l) => l.isDeleted !== true && l.hideOnInvoice !== true)
+              // Only no-charge hidden lines stay off the client's copy; a line with
+              // money on it is always shown so the lines add up to the total.
+              .filter((l) => l.isDeleted !== true && !isHiddenFromClient(l))
               .map((l) => {
                 const qty = Number(l.qty) || 1;
                 const amount = Number(l.amount) || 0;
@@ -6562,7 +6564,8 @@ export default function ClientFinancialWorkspace({
                             {isMailSplitChild ? (
                               <div className="client-fin__item-by">{line.description}</div>
                             ) : null}
-                            {line.hideOnInvoice ? (
+                            <HiddenButChargedTag line={line} className="client-fin__item-hidden" />
+                            {line.hideOnInvoice && isHiddenFromClient(line) ? (
                               <div
                                 className="client-fin__item-hidden"
                                 title="This catalog item has Show on Invoice turned off. Staff see the charge; it is left off the invoice the client receives."
