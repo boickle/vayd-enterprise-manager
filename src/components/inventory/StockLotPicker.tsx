@@ -81,6 +81,15 @@ export function lotIsExpired(
   return Boolean(exp && /^\d{4}-\d{2}-\d{2}$/.test(exp) && exp < easternToday());
 }
 
+/** Soonest expiration first; lots with no date last. Equal dates keep the order they came in. */
+export function sortLotsFefo(rows: InventoryLotBalance[]): InventoryLotBalance[] {
+  const key = (lot: InventoryLotBalance) => lot.expirationDate?.slice(0, 10) || '9999-99-99';
+  return rows
+    .map((lot, i) => ({ lot, i }))
+    .sort((a, b) => (key(a.lot) < key(b.lot) ? -1 : key(a.lot) > key(b.lot) ? 1 : a.i - b.i))
+    .map((x) => x.lot);
+}
+
 function lotLabel(lot: InventoryLotBalance, showLocation: boolean): string {
   const raw = lot.lotNumber?.trim() ?? '';
   const lotName =
@@ -162,7 +171,7 @@ export default function StockLotPicker({
       includeZero: allowNew,
     })
       .then((rows) => {
-        if (!canceled) setLots(rows);
+        if (!canceled) setLots(sortLotsFefo(rows));
       })
       .catch((e: unknown) => {
         if (!canceled) {
@@ -231,6 +240,25 @@ export default function StockLotPicker({
     // One usable lot at this location — no choice to make.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowNew, pickable, selectedLotId]);
+
+  // FEFO suggestion (CAT-10): when stock is leaving, the soonest-expiring lot that is still good
+  // and has stock is the one to use first. Only a hint: nothing is blocked or saved.
+  const useFirst = useMemo(() => {
+    if (allowNew) return null;
+    const usable = lots.filter((lot) => !lotIsExpired(lot) && Number(lot.quantityOnHand) > 0);
+    return usable.length > 1 ? usable[0]! : null;
+  }, [allowNew, lots]);
+
+  const olderLotNote = useMemo(() => {
+    if (!useFirst || selectedLotId == null || selectedLotId === useFirst.id) return null;
+    const picked = lots.find((lot) => lot.id === selectedLotId);
+    if (!picked || lotIsExpired(picked)) return null;
+    const pickedExp = picked.expirationDate?.slice(0, 10) || '9999-99-99';
+    const firstExp = useFirst.expirationDate?.slice(0, 10) || '9999-99-99';
+    if (pickedExp <= firstExp) return null;
+    const raw = useFirst.lotNumber?.trim() ?? '';
+    return raw && raw !== 'UNASSIGNED' ? raw : (useFirst.expirationDate?.slice(0, 10) ?? 'earlier');
+  }, [useFirst, lots, selectedLotId]);
 
   const byId = useMemo(() => {
     const map = new Map<number, InventoryLotBalance>();
@@ -353,6 +381,7 @@ export default function StockLotPicker({
               className={blocked ? 'stock-lot-picker__expired' : undefined}
             >
               {lotLabel(lot, showLocation)}
+              {useFirst?.id === lot.id ? ' · Use first' : ''}
             </option>
           );
         })}
@@ -419,6 +448,15 @@ export default function StockLotPicker({
       ) : lots.length > 1 ? (
         <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
           Soonest expiration is listed first — use that bottle unless you know otherwise.
+        </p>
+      ) : null}
+      {olderLotNote ? (
+        <p
+          className="settings-muted stock-lot-picker__older-note"
+          role="note"
+          style={{ margin: '4px 0 0', fontSize: 12, color: '#92400e' }}
+        >
+          Older lot {olderLotNote} has stock
         </p>
       ) : null}
       {canAddLot && inventoryItemId != null ? (

@@ -330,6 +330,18 @@ export type CountAlertSettings = {
   accuracyPctLimit: number;
   /** How many items the system puts on each office's weekly count (1–200, default 20). */
   weeklyCountCap: number;
+  /** Stale lots: draws from a newer lot before an older one counts as skipped over (default 2). */
+  staleSkipDraws: number;
+  /** Stale lots: nearly empty at or under this many units (default 2)... */
+  staleLowUnits: number;
+  /** ...or under this % of the amount received (default 10). */
+  staleLowPct: number;
+  /** Nearly empty and not drawn for this many days (default 30). */
+  staleLowDays: number;
+  /** Same for controlled drugs (default 14). */
+  staleLowDaysControlled: number;
+  /** Stock on hand and nothing moved for this many days (default 90). */
+  staleNoMoveDays: number;
 };
 
 export async function getCountAlertSettings(practiceId: number): Promise<CountAlertSettings> {
@@ -424,4 +436,53 @@ export async function listItemMovementsOrg(
     { params }
   );
   return { total: data?.total ?? 0, rows: Array.isArray(data?.rows) ? data.rows : [] };
+}
+
+export type StaleLotFlagType = 'skipped_over' | 'nearly_empty' | 'no_movement';
+
+export type StaleLotRow = {
+  lotId: number;
+  inventoryItemId: number;
+  itemName: string | null;
+  isControlled: boolean;
+  lotNumber: string;
+  expirationDate: string | null;
+  branchId: number;
+  branchName: string | null;
+  branchLocationId: number;
+  locationName: string | null;
+  quantityOnHand: number;
+  startingQuantity: number | null;
+  lastDrawnAt: string | null;
+  lastMovedAt: string | null;
+  receivedAt: string;
+  flags: { type: StaleLotFlagType; reason: string }[];
+};
+
+export type StaleLotsResponse = {
+  rows: StaleLotRow[];
+  thresholds: Record<
+    | 'staleSkipDraws'
+    | 'staleLowUnits'
+    | 'staleLowPct'
+    | 'staleLowDays'
+    | 'staleLowDaysControlled'
+    | 'staleNoMoveDays',
+    number
+  >;
+};
+
+/** Stale lots review: lots with stock that are skipped over, nearly empty and stuck, or not moving. */
+export async function listStaleLots(
+  practiceId: number,
+  opts?: { branchId?: number; flag?: StaleLotFlagType; controlledOnly?: boolean }
+): Promise<StaleLotsResponse> {
+  const { data } = await http.get<StaleLotsResponse>(`/practice/${practiceId}/inventory-lots/stale`, {
+    params: {
+      ...(opts?.branchId != null ? { branchId: opts.branchId } : {}),
+      ...(opts?.flag ? { flag: opts.flag } : {}),
+      ...(opts?.controlledOnly ? { controlledOnly: '1' } : {}),
+    },
+  });
+  return data;
 }

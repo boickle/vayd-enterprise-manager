@@ -122,3 +122,53 @@ describe('controlled drug: the doctor’s safe first, another shelf if needed', 
     await waitFor(() => expect(list).toHaveBeenLastCalledWith(1, 9, expect.objectContaining({ locationId: 5 })));
   });
 });
+
+describe('CAT-10: first-expired-first-out suggestion', () => {
+  const lot = (id: number, lotNumber: string, expirationDate: string | null, qty = 5) => ({
+    ...lots[1]!,
+    id,
+    lotNumber,
+    expirationDate,
+    quantityOnHand: qty,
+    expired: false,
+  });
+
+  it('lists the soonest-expiring lot first and marks it "Use first"', async () => {
+    const { listInventoryLots } = await import('../../api/branchInventory');
+    vi.mocked(listInventoryLots).mockResolvedValueOnce([
+      lot(3, 'LATE', '2028-01-01'),
+      lot(4, 'NODATE', null),
+      lot(5, 'SOON', '2027-02-01'),
+    ]);
+    render(
+      <StockLotPicker forUse practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={null} onChange={vi.fn()} />
+    );
+    await screen.findByRole('option', { name: /Lot SOON/ });
+    const options = screen.getAllByRole('option');
+    const names = options.map((o) => o.textContent ?? '');
+    expect(names.findIndex((n) => n.includes('SOON'))).toBeLessThan(names.findIndex((n) => n.includes('LATE')));
+    expect(names.findIndex((n) => n.includes('LATE'))).toBeLessThan(names.findIndex((n) => n.includes('NODATE')));
+    expect(screen.getByRole('option', { name: /Lot SOON.*Use first/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Lot LATE.*Use first/ })).toBeNull();
+  });
+
+  it('shows a small note, and still lets the newer lot be used, when an older lot has stock', async () => {
+    const { listInventoryLots } = await import('../../api/branchInventory');
+    vi.mocked(listInventoryLots).mockResolvedValueOnce([lot(5, 'SOON', '2027-02-01'), lot(3, 'LATE', '2028-01-01')]);
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <StockLotPicker forUse practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={null} onChange={onChange} />
+    );
+    await screen.findByRole('option', { name: /Lot SOON/ });
+    expect(screen.queryByText(/Older lot/)).toBeNull();
+    rerender(
+      <StockLotPicker forUse practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={3} onChange={onChange} />
+    );
+    expect(await screen.findByText('Older lot SOON has stock')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Lot LATE/ })).not.toBeDisabled();
+    rerender(
+      <StockLotPicker forUse practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={5} onChange={onChange} />
+    );
+    expect(screen.queryByText(/Older lot/)).toBeNull();
+  });
+});
