@@ -174,6 +174,15 @@ export type VisitInvoiceLine = {
   excludeFromProduction?: boolean;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /**
+   * When the line draws from several lots: each lot with its quantity. Empty or missing means the
+   * single lot above. With several, the fields above are the lot with the most units.
+   */
+  lots?: InvoiceLineLot[];
+  /** Controlled drug, needs a lot #, or vaccine: lots must add up to the whole quantity. */
+  lotsMustCoverAll?: boolean;
+  /** Vaccine: one lot only. */
+  lotsSingleOnly?: boolean;
   stockInventoryItemId?: number | null;
   stockInventoryItemName?: string | null;
   stockInventoryItemCode?: string | null;
@@ -1085,6 +1094,8 @@ export type CounterInvoiceLineInput = {
   catalogItemType?: string | null;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /** Several lots for one line; send [] to clear them. */
+  lots?: InvoiceLineLot[];
   isCovered?: boolean;
   listUnitPrice?: number | null;
   patientId?: number | null;
@@ -1418,6 +1429,13 @@ export async function addCounterInvoiceLine(
   );
   return data;
 }
+
+/** One lot an invoice line draws from, and how many units come from it. */
+export type InvoiceLineLot = {
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  quantity: number;
+};
 
 export async function updateCounterInvoiceLine(
   invoiceId: string,

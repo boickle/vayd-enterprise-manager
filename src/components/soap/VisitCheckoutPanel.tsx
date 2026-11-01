@@ -88,6 +88,7 @@ import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShip
 import { attachTagalongLines, tagalongTaxHint } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
+import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { lotShelf } from '../../utils/lotShelf';
@@ -683,8 +684,7 @@ function CheckoutInvoiceRxFields({
       <div className="client-fin__rx-extras">
         {line.trackLots && !mailed && !hideLotPicker ? (
           <div className={`client-fin__rx-field client-fin__rx-lot${highlight('lot') ? ' is-missing' : ''}`}>
-            <StockLotPicker
-              forUse
+            <MultiLotEditor
               practiceId={VISIT_WORKFLOW_PRACTICE_ID}
               inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
               branchId={lotShelf(line, invoice).branchId}
@@ -692,25 +692,50 @@ function CheckoutInvoiceRxFields({
               otherShelvesFrom={lotShelf(line, invoice).safeName}
               itemName={line.description}
               disabled={disabled || saving}
-              selectedLotId={line.inventoryLotBalanceId ?? null}
-              lotNumber={line.lotNumber ?? ''}
-              onChange={(pick) => {
-                void (async () => {
-                  setSaving(true);
-                  try {
-                    onSaved(
-                      await updateCounterInvoiceLine(invoice.id, line.id, {
-                        inventoryLotBalanceId: pick.lotId,
-                        lotNumber: pick.lotNumber || null,
-                      }),
-                    );
-                  } catch (e) {
-                    onError(apiErrorMessage(e));
-                  } finally {
-                    setSaving(false);
-                  }
-                })();
+              {...lotEditorProps(line)}
+              onSaveLots={async (lots) => {
+                setSaving(true);
+                try {
+                  onSaved(await updateCounterInvoiceLine(invoice.id, line.id, { lots }));
+                  return true;
+                } catch (e) {
+                  onError(apiErrorMessage(e));
+                  return false;
+                } finally {
+                  setSaving(false);
+                }
               }}
+              renderSingle={() => (
+    <StockLotPicker
+                  forUse
+                  practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                  inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
+                  branchId={lotShelf(line, invoice).branchId}
+                  locationId={lotShelf(line, invoice).locationId}
+                  otherShelvesFrom={lotShelf(line, invoice).safeName}
+                  itemName={line.description}
+                  disabled={disabled || saving}
+                  selectedLotId={line.inventoryLotBalanceId ?? null}
+                  lotNumber={line.lotNumber ?? ''}
+                  onChange={(pick) => {
+                    void (async () => {
+                      setSaving(true);
+                      try {
+                        onSaved(
+                          await updateCounterInvoiceLine(invoice.id, line.id, {
+                            inventoryLotBalanceId: pick.lotId,
+                            lotNumber: pick.lotNumber || null,
+                          }),
+                        );
+                      } catch (e) {
+                        onError(apiErrorMessage(e));
+                      } finally {
+                        setSaving(false);
+                      }
+                    })();
+                  }}
+                />
+              )}
             />
           </div>
         ) : mailDoctorApproves ? (
@@ -2951,6 +2976,7 @@ export default function VisitCheckoutPanel({
                                 lotNumber: lot?.lotNumber || null,
                               }).then(onInvoiceChange);
                             }}
+                            onSaveLots={async (lots) => { try { onInvoiceChange(await updateCounterInvoiceLine(invoice.id, l.id, { lots })); return true; } catch (e) { setError(apiErrorMessage(e)); return false; } }}
                           />
                         ) : null}
                         {showRxLabel ? (
@@ -3170,6 +3196,7 @@ export default function VisitCheckoutPanel({
                                   lotNumber: lot?.lotNumber || null,
                                 }).then(onInvoiceChange);
                               }}
+                              onSaveLots={async (lots) => { try { onInvoiceChange(await updateCounterInvoiceLine(invoice.id, l.id, { lots })); return true; } catch (e) { setError(apiErrorMessage(e)); return false; } }}
                             />
                           </div>
                         ) : null}
@@ -3199,6 +3226,7 @@ export default function VisitCheckoutPanel({
                                     lotNumber: lot?.lotNumber || null,
                                   }).then(onInvoiceChange);
                                 }}
+                                onSaveLots={async (lots) => { try { onInvoiceChange(await updateCounterInvoiceLine(invoice.id, l.id, { lots })); return true; } catch (e) { setError(apiErrorMessage(e)); return false; } }}
                               />
                             ) : null}
                             <InvoiceVaccineDoseEditor
@@ -3255,6 +3283,7 @@ export default function VisitCheckoutPanel({
                                     lotNumber: lot?.lotNumber || null,
                                   }).then(onInvoiceChange);
                                 }}
+                                onSaveLots={async (lots) => { try { onInvoiceChange(await updateCounterInvoiceLine(invoice.id, l.id, { lots })); return true; } catch (e) { setError(apiErrorMessage(e)); return false; } }}
                               />
                             ) : null}
                             <VisitDoseAndRxSection
