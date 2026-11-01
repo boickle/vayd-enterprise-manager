@@ -15,6 +15,7 @@ import {
 import {
   patchPracticeInventoryItem,
   postBulkInventoryPriceAdjust,
+  type BulkPricePreviewRow,
   getInventoryAutoshipCounts,
   uploadInventoryItemImage,
   deleteInventoryItemImage,
@@ -31,6 +32,7 @@ import {
 } from '../utils/aftercare';
 import QuantityPriceBreaksEditor from '../components/catalog/QuantityPriceBreaksEditor';
 import { appConfirm, appPrompt } from '../utils/appDialog';
+import { extractHttpErrorMessage } from '../utils/httpErrorMessage';
 import {
   createOnlineStoreProduct,
   createStoreCategory,
@@ -351,6 +353,34 @@ function optionalNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Non-blocking pricing warnings (CAT-A13): the price is under cost, or the markup is under
+ * 100% (which also means a price under cost). Staff can still save.
+ */
+function priceWarnings(cost: number | null, price: number | null, markup: number | null): string[] {
+  const out: string[] = [];
+  const money = (n: number) => `$${n.toFixed(2)}`;
+  if (cost != null && cost > 0 && price != null && price < cost) {
+    out.push(`Price ${money(price)} is below cost ${money(cost)}.`);
+  }
+  if (markup != null && markup < 100) {
+    out.push('Markup is under 100% of cost, so the price is below cost.');
+  }
+  return out;
+}
+
+function PriceWarnings({ cost, price, markup }: { cost: string; price: string; markup: string }) {
+  const warnings = priceWarnings(optionalNumber(cost), optionalNumber(price), optionalNumber(markup));
+  if (!warnings.length) return null;
+  return (
+    <div role="status" className="settings-message" style={{ color: '#b45309', margin: '0 0 10px' }}>
+      {warnings.map((w) => (
+        <div key={w}>Warning: {w}</div>
+      ))}
+    </div>
+  );
+}
+
 type CatalogDiscountDraft = {
   excludePercentageDiscount: boolean;
 };
@@ -454,6 +484,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const { can } = usePermissions();
   const canCreateItem = can('catalog.item.create');
   const canEditItem = can('catalog.item.edit');
+  const canBulkPrice = can('catalog.price.bulk');
   /**
    * Anyone who can't edit the catalog gets the price list: client prices only, no cost, markup,
    * fee, vendor or item details (owner decision, Oct 30, 2026).
@@ -761,6 +792,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [bulkFlatOnline, setBulkFlatOnline] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkReason, setBulkReason] = useState('');
+  const [bulkPreview, setBulkPreview] = useState<BulkPricePreviewRow[] | null>(null);
+  /** One id per run: a retry of the same run returns the first result instead of applying twice. */
+  const bulkRequestIdRef = useRef<string | null>(null);
+  const [coreConflict, setCoreConflict] = useState(false);
+  useEffect(() => {
+    // New numbers need a new preview (and a new run id).
+    setBulkPreview(null);
+    bulkRequestIdRef.current = null;
+  }, [bulkPctPractice, bulkPctOnline, bulkFlatPractice, bulkFlatOnline]);
 
   const [storeStock, setStoreStock] = useState<StoreAvailabilityDetail | null>(null);
   const [catalogSaving, setCatalogSaving] = useState(false);
@@ -1819,6 +1860,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     }
     setCoreSaving(true);
     setCoreError(null);
+    setCoreConflict(false);
     try {
       const body: Record<string, unknown> = {
         name: coreDraft.name.trim(),
@@ -1860,6 +1902,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         body.aftercareDisplayName = coreDraft.isAftercare
           ? coreDraft.aftercareDisplayName.trim() || null
           : null;
+      }
+      // Refuse the save if someone else changed this item since this screen loaded it (CAT-A10).
+      const loadedItem = detail?.item as Record<string, unknown> | undefined;
+      if (loadedItem && 'externalUpdated' in loadedItem) {
+        body.expectedUpdated = (loadedItem.externalUpdated as string | null) ?? null;
       }
       Object.assign(body, catalogDiscountBody(coreDraft));
       if (selected.itemType === 'lab' || selected.itemType === 'procedure') {
@@ -1931,7 +1978,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       }
       return true;
     } catch (e: unknown) {
-      setCoreError(e instanceof Error ? e.message : 'Save failed');
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      setCoreConflict(status === 409 && /changed since you opened it/i.test(extractHttpErrorMessage(e, '')));
+      setCoreError(extractHttpErrorMessage(e, 'Save failed'));
       return false;
     } finally {
       setCoreSaving(false);
@@ -2439,31 +2488,66 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     });
   }
 
+  /** The numbers typed in the bulk modal, or null (with an error shown) when none are usable. */
+  function bulkAdjustBody() {
+    const num = (raw: string) => (raw.trim() === '' ? null : Number(raw));
+    const pctP = num(bulkPctPractice);
+    const pctO = num(bulkPctOnline);
+    const fP = num(bulkFlatPractice);
+    const fO = num(bulkFlatOnline);
+    const ok = (n: number | null): n is number => n != null && Number.isFinite(n);
+    if (!ok(pctP) && !ok(pctO) && !ok(fP) && !ok(fO)) {
+      setBulkError('Enter at least one percent or flat adjustment.');
+      return null;
+    }
+    return {
+      inventoryItemIds: Object.keys(bulkSelected).map(Number),
+      percentChangePracticePrice: ok(pctP) ? pctP : undefined,
+      percentChangeOnlineStorePrice: ok(pctO) ? pctO : undefined,
+      flatAddPracticePrice: ok(fP) ? fP : undefined,
+      flatAddOnlineStorePrice: ok(fO) ? fO : undefined,
+      online: ok(pctO) || ok(fO),
+    };
+  }
+
+  /** Step 1: show before and after for every item; nothing is saved. */
   async function submitBulkPriceAdjust() {
     const ids = Object.keys(bulkSelected).map(Number);
     if (!ids.length) return;
     setBulkSaving(true);
     setBulkError(null);
     try {
-      const pctP = bulkPctPractice.trim() === '' ? null : Number(bulkPctPractice);
-      const pctO = bulkPctOnline.trim() === '' ? null : Number(bulkPctOnline);
-      const fP = bulkFlatPractice.trim() === '' ? null : Number(bulkFlatPractice);
-      const fO = bulkFlatOnline.trim() === '' ? null : Number(bulkFlatOnline);
-      const hasPctP = pctP != null && Number.isFinite(pctP);
-      const hasPctO = pctO != null && Number.isFinite(pctO);
-      const hasFP = fP != null && Number.isFinite(fP);
-      const hasFO = fO != null && Number.isFinite(fO);
-      if (!hasPctP && !hasPctO && !hasFP && !hasFO) {
-        setBulkError('Enter at least one percent or flat adjustment.');
-        return;
-      }
-      if ((hasPctO || hasFO) && !(await confirmAutoshipReprice(ids))) return;
+      const built = bulkAdjustBody();
+      if (!built) return;
+      const { online, ...adjust } = built;
+      if (online && !(await confirmAutoshipReprice(ids))) return;
+      const res = await postBulkInventoryPriceAdjust(practiceId, { ...adjust, dryRun: true });
+      bulkRequestIdRef.current = window.crypto.randomUUID();
+      setBulkPreview(res.items ?? []);
+    } catch (e: unknown) {
+      setBulkError(extractHttpErrorMessage(e, 'Bulk adjust failed'));
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
+  /** Step 2: apply what the preview showed, with the reason and this run's request id. */
+  async function confirmBulkPriceAdjust() {
+    const reason = bulkReason.trim();
+    if (!reason) {
+      setBulkError('Enter a reason for this price change.');
+      return;
+    }
+    const built = bulkAdjustBody();
+    if (!built) return;
+    const { online: _online, ...adjust } = built;
+    setBulkSaving(true);
+    setBulkError(null);
+    try {
       const res = await postBulkInventoryPriceAdjust(practiceId, {
-        inventoryItemIds: ids,
-        percentChangePracticePrice: hasPctP ? pctP : undefined,
-        percentChangeOnlineStorePrice: hasPctO ? pctO : undefined,
-        flatAddPracticePrice: hasFP ? fP : undefined,
-        flatAddOnlineStorePrice: hasFO ? fO : undefined,
+        ...adjust,
+        reason,
+        requestId: bulkRequestIdRef.current ?? undefined,
       });
       const branchCount = res.branchPricesUpdated ?? 0;
       setToast(
@@ -2478,11 +2562,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       setBulkPctOnline('');
       setBulkFlatPractice('');
       setBulkFlatOnline('');
+      setBulkPreview(null);
+      setBulkReason('');
+      bulkRequestIdRef.current = null;
       if (selected?.itemType === 'inventory' && branchId != null) {
         await refreshDetailBundle(selected);
       }
     } catch (e: unknown) {
-      setBulkError(e instanceof Error ? e.message : 'Bulk adjust failed');
+      setBulkError(extractHttpErrorMessage(e, 'Bulk adjust failed'));
     } finally {
       setBulkSaving(false);
     }
@@ -2571,7 +2658,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             />
             Show archived
           </label>
-          {canEditItem && (
+          {canBulkPrice && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
             <input
               type="checkbox"
@@ -2584,7 +2671,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             Select inventory rows for bulk price change
           </label>
           )}
-          {canEditItem && Object.keys(bulkSelected).length > 0 && (
+          {canBulkPrice && Object.keys(bulkSelected).length > 0 && (
             <>
               <span className="settings-muted">{Object.keys(bulkSelected).length} selected</span>
               <button
@@ -2593,6 +2680,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 style={{ fontSize: 13, padding: '6px 12px' }}
                 onClick={() => {
                   setBulkError(null);
+                  setBulkPreview(null);
+                  setBulkReason('');
+                  bulkRequestIdRef.current = null;
                   setBulkModalOpen(true);
                 }}
               >
@@ -3202,6 +3292,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 {coreError && (
                   <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
                     {coreError}
+                    {coreConflict && selected && (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        style={{ marginLeft: 12, fontSize: 13, padding: '4px 10px' }}
+                        onClick={() => {
+                          setCoreError(null);
+                          setCoreConflict(false);
+                          void refreshDetailBundle(selected);
+                        }}
+                      >
+                        Reload
+                      </button>
+                    )}
                   </div>
                 )}
                 <div
@@ -3397,6 +3501,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     );
                   })()}
                 </p>
+                <PriceWarnings cost={coreDraft.cost} price={coreDraft.price} markup={coreDraft.markup} />
                 {(detail.itemType === 'procedure' || detail.itemType === 'inventory') && (
                   <div
                     style={{
@@ -5103,6 +5208,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     }}
                   />
                 </label>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <PriceWarnings cost={createForm.cost} price={createForm.price} markup={createForm.markup} />
+                </div>
                 <label className="settings-label">
                   Service fee
                   <input
@@ -5871,15 +5979,84 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 onChange={(e) => setBulkFlatOnline(e.target.value)}
               />
             </label>
+            <label className="settings-label" style={{ display: 'block', marginBottom: 10 }}>
+              Reason (required to apply)
+              <input
+                type="text"
+                className="settings-input"
+                value={bulkReason}
+                maxLength={500}
+                onChange={(e) => setBulkReason(e.target.value)}
+                placeholder="e.g. Vendor price increase"
+              />
+            </label>
+            {bulkPreview && (
+              <div data-bulk-preview style={{ margin: '12px 0', maxHeight: 260, overflow: 'auto' }}>
+                <p className="settings-muted" style={{ marginBottom: 6 }}>
+                  Nothing is saved yet. Check the new prices, then confirm.
+                </p>
+                <table className="settings-table" style={{ width: '100%', fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Price</th>
+                      <th>Online store</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkPreview.map((r) => {
+                      const money = (n: number | null) => (n == null ? '—' : `$${n.toFixed(2)}`);
+                      const warn = priceWarnings(r.cost, r.practicePriceAfter, r.markupAfter);
+                      return (
+                        <tr key={r.id}>
+                          <td>
+                            {r.name}
+                            {warn.map((w) => (
+                              <div key={w} style={{ color: '#b45309' }}>
+                                Warning: {w}
+                              </div>
+                            ))}
+                          </td>
+                          <td>
+                            {money(r.practicePriceBefore)} → {money(r.practicePriceAfter)}
+                            {r.markupBefore != null && r.markupAfter !== r.markupBefore && (
+                              <div className="settings-muted">
+                                markup {r.markupBefore}% → {r.markupAfter}%
+                              </div>
+                            )}
+                          </td>
+                          <td>
+                            {r.storePriceBefore == null
+                              ? '—'
+                              : `${money(r.storePriceBefore)} → ${money(r.storePriceAfter)}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={bulkSaving}
-                onClick={() => void submitBulkPriceAdjust()}
-              >
-                {bulkSaving ? 'Applying…' : 'Apply to selected'}
-              </button>
+              {bulkPreview ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={bulkSaving}
+                  onClick={() => void confirmBulkPriceAdjust()}
+                >
+                  {bulkSaving ? 'Applying…' : 'Confirm and apply'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={bulkSaving}
+                  onClick={() => void submitBulkPriceAdjust()}
+                >
+                  {bulkSaving ? 'Checking…' : 'Apply to selected'}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn secondary"
