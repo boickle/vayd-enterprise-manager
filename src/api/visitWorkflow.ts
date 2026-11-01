@@ -5,6 +5,8 @@
 // authenticated axios instance.
 import { apiBaseUrl, http } from './http';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import { appAlert } from '../utils/appDialog';
+import { LOTS_CLEARED_MESSAGE } from '../utils/lotSplit';
 
 export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 
@@ -174,6 +176,15 @@ export type VisitInvoiceLine = {
   excludeFromProduction?: boolean;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /**
+   * When the line draws from several lots: each lot with its quantity. Empty or missing means the
+   * single lot above. With several, the fields above are the lot with the most units.
+   */
+  lots?: InvoiceLineLot[];
+  /** Controlled drug, needs a lot #, or vaccine: lots must add up to the whole quantity. */
+  lotsMustCoverAll?: boolean;
+  /** Vaccine: one lot only. */
+  lotsSingleOnly?: boolean;
   stockInventoryItemId?: number | null;
   stockInventoryItemName?: string | null;
   stockInventoryItemCode?: string | null;
@@ -231,6 +242,12 @@ export type VisitInvoiceTender = {
 
 export type VisitInvoice = {
   id: string;
+  /**
+   * Only on the reply to a line edit: the new quantity no longer fit the line's lots, so the
+   * server cleared them and staff must pick them again.
+   */
+  lotsCleared?: boolean;
+  lotsClearedLineId?: string;
   practiceId: number;
   appointmentId: number | null;
   patientId?: number | null;
@@ -1085,6 +1102,8 @@ export type CounterInvoiceLineInput = {
   catalogItemType?: string | null;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /** Several lots for one line; send [] to clear them. */
+  lots?: InvoiceLineLot[];
   isCovered?: boolean;
   listUnitPrice?: number | null;
   patientId?: number | null;
@@ -1419,6 +1438,13 @@ export async function addCounterInvoiceLine(
   return data;
 }
 
+/** One lot an invoice line draws from, and how many units come from it. */
+export type InvoiceLineLot = {
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  quantity: number;
+};
+
 export async function updateCounterInvoiceLine(
   invoiceId: string,
   lineId: string,
@@ -1430,6 +1456,8 @@ export async function updateCounterInvoiceLine(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
     { practiceId: pid(), ...body, ...removeDoseParams(removeDose) }
   );
+  // Every screen that edits a line hears about it, whichever field changed the quantity.
+  if (data?.lotsCleared) void appAlert({ title: 'Lots cleared', message: LOTS_CLEARED_MESSAGE });
   return data;
 }
 

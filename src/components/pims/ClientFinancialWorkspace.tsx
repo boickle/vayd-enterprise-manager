@@ -212,6 +212,7 @@ import {
 } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
+import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { lotShelf } from '../../utils/lotShelf';
@@ -6605,8 +6606,7 @@ export default function ClientFinancialWorkspace({
                             ) : null}
                             {/* Non-Rx / non-vax inventory: lot stays on the row. Expandable lines keep lots inside. */}
                             {line.trackLots && !mailedLineOrder && !showMeta && (!linkedStock.linked || isLinkedKit) ? (
-                              <StockLotPicker
-                                forUse
+                              <MultiLotEditor
                                 practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                 inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                 branchId={lotShelf(line, selected).branchId}
@@ -6614,14 +6614,28 @@ export default function ClientFinancialWorkspace({
                                 otherShelvesFrom={lotShelf(line, selected).safeName}
                                 itemName={line.description}
                                 disabled={!canEdit || busy}
-                                selectedLotId={line.inventoryLotBalanceId ?? null}
-                                lotNumber={line.lotNumber ?? ''}
-                                onChange={(pick) => {
-                                  void patchLine(line, {
-                                    inventoryLotBalanceId: pick.lotId,
-                                    lotNumber: pick.lotNumber || null,
-                                  });
-                                }}
+                                {...lotEditorProps(line)}
+                                onSaveLots={(lots) => patchLine(line, { lots })}
+                                renderSingle={() => (
+                                  <StockLotPicker
+                                  forUse
+                                  practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                  inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
+                                  branchId={lotShelf(line, selected).branchId}
+                                  locationId={lotShelf(line, selected).locationId}
+                                  otherShelvesFrom={lotShelf(line, selected).safeName}
+                                  itemName={line.description}
+                                  disabled={!canEdit || busy}
+                                  selectedLotId={line.inventoryLotBalanceId ?? null}
+                                  lotNumber={line.lotNumber ?? ''}
+                                  onChange={(pick) => {
+                                    void patchLine(line, {
+                                      inventoryLotBalanceId: pick.lotId,
+                                      lotNumber: pick.lotNumber || null,
+                                    });
+                                  }}
+                                />
+                                )}
                               />
                             ) : line.trackLots && mailedLineOrder && !showMeta ? (
                               <p className="client-fin__fulfill-note">Lot chosen when filled</p>
@@ -6851,8 +6865,7 @@ export default function ClientFinancialWorkspace({
                             <td colSpan={invoiceMetaCols}>
                               {isLinkedKit && !mailedLineOrder ? (
                                 <div className="client-fin__rx-field client-fin__rx-lot">
-                                  <StockLotPicker
-                                    forUse
+                                  <MultiLotEditor
                                     practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                     inventoryItemId={line.stockInventoryItemId ?? null}
                                     branchId={lotShelf(line, selected).branchId}
@@ -6860,14 +6873,28 @@ export default function ClientFinancialWorkspace({
                                     otherShelvesFrom={lotShelf(line, selected).safeName}
                                     itemName={linkedStock.stockName}
                                     disabled={!canEdit || busy}
-                                    selectedLotId={line.inventoryLotBalanceId ?? null}
-                                    lotNumber={line.lotNumber ?? ''}
-                                    onChange={(pick) => {
-                                      void patchLine(line, {
-                                        inventoryLotBalanceId: pick.lotId,
-                                        lotNumber: pick.lotNumber || null,
-                                      });
-                                    }}
+                                    {...lotEditorProps(line)}
+                                    onSaveLots={(lots) => patchLine(line, { lots })}
+                                    renderSingle={() => (
+                                      <StockLotPicker
+                                      forUse
+                                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                      inventoryItemId={line.stockInventoryItemId ?? null}
+                                      branchId={lotShelf(line, selected).branchId}
+                                      locationId={lotShelf(line, selected).locationId}
+                                      otherShelvesFrom={lotShelf(line, selected).safeName}
+                                      itemName={linkedStock.stockName}
+                                      disabled={!canEdit || busy}
+                                      selectedLotId={line.inventoryLotBalanceId ?? null}
+                                      lotNumber={line.lotNumber ?? ''}
+                                      onChange={(pick) => {
+                                        void patchLine(line, {
+                                          inventoryLotBalanceId: pick.lotId,
+                                          lotNumber: pick.lotNumber || null,
+                                        });
+                                      }}
+                                    />
+                                    )}
                                   />
                                 </div>
                               ) : null}
@@ -6897,6 +6924,7 @@ export default function ClientFinancialWorkspace({
                                       lotNumber: lot?.lotNumber || null,
                                     });
                                   }}
+                                  onSaveLots={(lots) => patchLine(line, { lots })}
                                 />
                               ) : null}
                               <InvoiceVaccineDoseEditor
@@ -6970,25 +6998,38 @@ export default function ClientFinancialWorkspace({
                             <td colSpan={invoiceMetaCols}>
                               {!mailedLineOrder ? (
                                 <div className="client-fin__rx-field client-fin__rx-lot">
-                                  <StockLotPicker
-                                    forUse
+                                  <MultiLotEditor
                                     practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                                    inventoryItemId={
-                                      line.stockInventoryItemId ?? line.catalogItemId ?? null
-                                    }
+                                    inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                     branchId={lotShelf(line, selected).branchId}
                                     locationId={lotShelf(line, selected).locationId}
                                     otherShelvesFrom={lotShelf(line, selected).safeName}
                                     itemName={line.description}
                                     disabled={!canEdit || busy}
-                                    selectedLotId={line.inventoryLotBalanceId ?? null}
-                                    lotNumber={line.lotNumber ?? ''}
-                                    onChange={(pick) => {
-                                      void patchLine(line, {
-                                        inventoryLotBalanceId: pick.lotId,
-                                        lotNumber: pick.lotNumber || null,
-                                      });
-                                    }}
+                                    {...lotEditorProps(line)}
+                                    onSaveLots={(lots) => patchLine(line, { lots })}
+                                    renderSingle={() => (
+                                      <StockLotPicker
+                                      forUse
+                                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                      inventoryItemId={
+                                        line.stockInventoryItemId ?? line.catalogItemId ?? null
+                                      }
+                                      branchId={lotShelf(line, selected).branchId}
+                                      locationId={lotShelf(line, selected).locationId}
+                                      otherShelvesFrom={lotShelf(line, selected).safeName}
+                                      itemName={line.description}
+                                      disabled={!canEdit || busy}
+                                      selectedLotId={line.inventoryLotBalanceId ?? null}
+                                      lotNumber={line.lotNumber ?? ''}
+                                      onChange={(pick) => {
+                                        void patchLine(line, {
+                                          inventoryLotBalanceId: pick.lotId,
+                                          lotNumber: pick.lotNumber || null,
+                                        });
+                                      }}
+                                    />
+                                    )}
                                   />
                                 </div>
                               ) : null}
@@ -7097,29 +7138,43 @@ export default function ClientFinancialWorkspace({
                                           lotNumber: lot?.lotNumber || null,
                                         });
                                       }}
+                                      onSaveLots={(lots) => patchLine(line, { lots })}
                                     />
                                   </div>
                                 ) : line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
                                   <div className={`client-fin__rx-field client-fin__rx-lot${rxMissing('lot') ? ' is-missing' : ''}`}>
-                                    <StockLotPicker
-                                      forUse
+                                    <MultiLotEditor
                                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                                      inventoryItemId={
-                                        line.stockInventoryItemId ?? line.catalogItemId ?? null
-                                      }
+                                      inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                       branchId={lotShelf(line, selected).branchId}
                                       locationId={lotShelf(line, selected).locationId}
                                       otherShelvesFrom={lotShelf(line, selected).safeName}
                                       itemName={line.description}
                                       disabled={!canEdit || busy}
-                                      selectedLotId={line.inventoryLotBalanceId ?? null}
-                                      lotNumber={line.lotNumber ?? ''}
-                                      onChange={(pick) => {
-                                        void patchLine(line, {
-                                          inventoryLotBalanceId: pick.lotId,
-                                          lotNumber: pick.lotNumber || null,
-                                        });
-                                      }}
+                                      {...lotEditorProps(line)}
+                                      onSaveLots={(lots) => patchLine(line, { lots })}
+                                      renderSingle={() => (
+                                        <StockLotPicker
+                                        forUse
+                                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                        inventoryItemId={
+                                          line.stockInventoryItemId ?? line.catalogItemId ?? null
+                                        }
+                                        branchId={lotShelf(line, selected).branchId}
+                                        locationId={lotShelf(line, selected).locationId}
+                                        otherShelvesFrom={lotShelf(line, selected).safeName}
+                                        itemName={line.description}
+                                        disabled={!canEdit || busy}
+                                        selectedLotId={line.inventoryLotBalanceId ?? null}
+                                        lotNumber={line.lotNumber ?? ''}
+                                        onChange={(pick) => {
+                                          void patchLine(line, {
+                                            inventoryLotBalanceId: pick.lotId,
+                                            lotNumber: pick.lotNumber || null,
+                                          });
+                                        }}
+                                      />
+                                      )}
                                     />
                                   </div>
                                 ) : mailDoctorApproves ? (
