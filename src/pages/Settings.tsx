@@ -1,4 +1,5 @@
 // src/pages/Settings.tsx
+import TaxRateInput from '../components/settings/TaxRateInput';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ChevronDown } from 'lucide-react';
@@ -2833,24 +2834,14 @@ export default function Settings() {
                         }
                       />
                     </label>
-                    <label className="settings-label">
-                      Level 1 rate (%)
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        className="settings-input"
-                        value={taxSettingsDraft.taxLevel1Rate}
-                        disabled={taxSettingsSaving}
-                        onChange={(e) =>
-                          setTaxSettingsDraft((d) =>
-                            d
-                              ? { ...d, taxLevel1Rate: Number(e.target.value) || 0 }
-                              : d
-                          )
-                        }
-                      />
-                    </label>
+                    <TaxRateInput
+                      label="Level 1 rate (%)"
+                      value={taxSettingsDraft.taxLevel1Rate}
+                      disabled={taxSettingsSaving}
+                      onChange={(rate) =>
+                        setTaxSettingsDraft((d) => (d ? { ...d, taxLevel1Rate: rate } : d))
+                      }
+                    />
                   </div>
                   <label className="settings-checkbox-item" style={{ marginBottom: 12 }}>
                     <input
@@ -2887,24 +2878,14 @@ export default function Settings() {
                           }
                         />
                       </label>
-                      <label className="settings-label">
-                        Level 2 rate (%)
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          className="settings-input"
-                          value={taxSettingsDraft.taxLevel2Rate}
-                          disabled={taxSettingsSaving}
-                          onChange={(e) =>
-                            setTaxSettingsDraft((d) =>
-                              d
-                                ? { ...d, taxLevel2Rate: Number(e.target.value) || 0 }
-                                : d
-                            )
-                          }
-                        />
-                      </label>
+                      <TaxRateInput
+                        label="Level 2 rate (%)"
+                        value={taxSettingsDraft.taxLevel2Rate}
+                        disabled={taxSettingsSaving}
+                        onChange={(rate) =>
+                          setTaxSettingsDraft((d) => (d ? { ...d, taxLevel2Rate: rate } : d))
+                        }
+                      />
                     </div>
                   )}
                   <label className="settings-checkbox-item" style={{ marginBottom: 12 }}>
@@ -2942,24 +2923,14 @@ export default function Settings() {
                           }
                         />
                       </label>
-                      <label className="settings-label">
-                        Level 3 rate (%)
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          className="settings-input"
-                          value={taxSettingsDraft.taxLevel3Rate}
-                          disabled={taxSettingsSaving}
-                          onChange={(e) =>
-                            setTaxSettingsDraft((d) =>
-                              d
-                                ? { ...d, taxLevel3Rate: Number(e.target.value) || 0 }
-                                : d
-                            )
-                          }
-                        />
-                      </label>
+                      <TaxRateInput
+                        label="Level 3 rate (%)"
+                        value={taxSettingsDraft.taxLevel3Rate}
+                        disabled={taxSettingsSaving}
+                        onChange={(rate) =>
+                          setTaxSettingsDraft((d) => (d ? { ...d, taxLevel3Rate: rate } : d))
+                        }
+                      />
                     </div>
                   )}
                   {taxSettingsError && (
