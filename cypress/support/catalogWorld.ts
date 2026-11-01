@@ -9,7 +9,8 @@ export type CatRole =
   | 'client_liaison'
   | 'technician'
   | 'veterinarian'
-  | 'lead_client_liaison';
+  | 'lead_client_liaison'
+  | 'admin';
 
 export type CatalogWorld = {
   tag: string;
@@ -37,7 +38,7 @@ export type CatalogWorld = {
   };
   autoshipActivePet: { subscriptionId: number; stripeSubscriptionId: string; clientId: number; patientId: number };
   autoshipInactivePet: { subscriptionId: number; stripeSubscriptionId: string; clientId: number; patientId: number };
-  employees: Record<CatRole, number>;
+  employees: Record<Exclude<CatRole, 'admin'>, number>;
   auth: Record<CatRole, { Authorization: string; token: string }>;
 };
 
