@@ -336,6 +336,16 @@ export default function InventoryActivityPage() {
                     : ' · No witness'}
                 </div>
               ) : null}
+              {(row.returnedWaste ?? []).map((x) => (
+                <div key={x.wasteEventId} style={{ marginTop: 4, fontSize: 13 }}>
+                  Returned — wasted: {Number(x.quantity)} mL
+                  {x.lotNumber ? ` · Lot ${x.lotNumber}` : ''}
+                  {x.disposalMethodCode ? ` · Disposal: ${x.disposalMethodCode.replace(/_/g, ' ')}` : ''}
+                  {x.witnessName ? ` · Witness: ${x.witnessName}` : ' · No witness'}
+                  {x.recordedByName ? ` · Recorded by ${x.recordedByName}` : ''}
+                  {x.at ? ` · ${new Date(x.at).toLocaleString()}` : ''}
+                </div>
+              ))}
               {row.note && (
                 <div className="settings-muted" style={{ marginTop: 4 }}>
                   {row.note}

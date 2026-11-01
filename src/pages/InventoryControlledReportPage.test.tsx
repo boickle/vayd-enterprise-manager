@@ -169,6 +169,44 @@ describe('INV-A14: Controlled drugs report', () => {
     expect(typeLabel({ type: 'wasted', isMedication: true })).toBe('Wasted');
   });
 
+  it('CAT-11 review: a client return wasted is listed as "Returned — wasted", with its disposal, and is not picked for reconcile', async () => {
+    expect(typeLabel({ type: 'wasted', isMedication: true, returnWaste: true })).toBe('Returned — wasted');
+    const doctor = report.doctors[0];
+    api.report = {
+      ...report,
+      doctors: [
+        {
+          ...doctor,
+          lines: [
+            ...doctor.lines.filter((l) => !l.reconciledAt),
+            {
+              ...doctor.lines[1],
+              movementId: null,
+              returnWaste: true,
+              wasteEventId: 77,
+              returnOfMovementId: 10,
+              quantityMl: 4,
+              wasteReason: 'returned_unsellable',
+              wasteDisposal: 'pharmaceutical',
+              wasteWitnessName: 'Sam Rivera',
+              reconciledAt: null,
+            },
+          ],
+        },
+      ],
+    };
+    render(<InventoryControlledReportPage />);
+    const section = await screen.findByRole('region', { name: 'Dr. Avery' });
+    expect(within(section).getByText('Returned — wasted')).toBeInTheDocument();
+    expect(within(section).getByText(/Pharmaceutical waste · Witness: Sam Rivera/)).toBeInTheDocument();
+    expect(within(section).getByText(/match it in Vet Snap by hand/)).toBeInTheDocument();
+    fireEvent.click(within(section).getByLabelText(/Select all to reconcile/));
+    fireEvent.click(within(section).getByRole('button', { name: /Mark \d+ reconciled/ }));
+    await waitFor(() => expect(api.setControlledReconciled).toHaveBeenCalled());
+    const ids = (api.setControlledReconciled.mock.calls[0] as unknown[])[1] as unknown[];
+    expect(ids).not.toContain(null);
+  });
+
   it('shows the doctor filter even with one doctor in range, listing every veterinarian', async () => {
     render(<InventoryControlledReportPage />);
     await screen.findByRole('region', { name: 'Dr. Avery' });

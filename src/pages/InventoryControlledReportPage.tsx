@@ -67,7 +67,8 @@ const TYPE_LABEL: Record<ControlledReportLine['type'], string> = {
  * A controlled drug given at the visit is administered; only a medication sent home is
  * dispensed (owner decision, Oct 30, 2026). Exported for tests.
  */
-export function typeLabel(l: Pick<ControlledReportLine, 'type' | 'isMedication'>): string {
+export function typeLabel(l: Pick<ControlledReportLine, 'type' | 'isMedication' | 'returnWaste'>): string {
+  if (l.returnWaste) return 'Returned — wasted';
   return l.type === 'dispensed' && l.isMedication ? 'Dispensed' : TYPE_LABEL[l.type];
 }
 
@@ -280,7 +281,8 @@ function DoctorSection({
   const pending = doctor.lines.filter((l) => !l.reconciledAt);
   const done = doctor.lines.filter((l) => l.reconciledAt);
   const shown = tab === 'pending' ? pending : tab === 'done' ? done : doctor.lines;
-  const pickable = shown.filter((l) => !l.reconciledAt);
+  // Reconciling is per stock movement; a returned-and-wasted entry has none, so it is not picked.
+  const pickable = shown.filter((l): l is ControlledReportLine & { movementId: number } => !l.reconciledAt && l.movementId != null);
 
   const run = async (ids: number[], reconciled: boolean) => {
     if (!ids.length || busy) return;
@@ -402,8 +404,8 @@ function DoctorSection({
                 const q = vsQuantity(l);
                 const isDone = Boolean(l.reconciledAt);
                 return (
-                  <li key={l.movementId} className={`vs-card${isDone ? ' is-done' : ''}`}>
-                    {isDone ? (
+                  <li key={l.movementId ?? `w${l.wasteEventId}`} className={`vs-card${isDone ? ' is-done' : ''}`}>
+                    {isDone || l.movementId == null ? (
                       <span aria-hidden />
                     ) : (
                       <input
@@ -413,8 +415,9 @@ function DoctorSection({
                         onChange={(e) =>
                           setPicked((prev) => {
                             const next = new Set(prev);
-                            if (e.target.checked) next.add(l.movementId);
-                            else next.delete(l.movementId);
+                            const id = l.movementId as number;
+                            if (e.target.checked) next.add(id);
+                            else next.delete(id);
                             return next;
                           })
                         }
@@ -471,7 +474,9 @@ function DoctorSection({
                       )}
                     </div>
                     <div className="vs-actions">
-                      {isDone ? (
+                      {l.movementId == null ? (
+                        <div className="vs-done">Returned by the client and wasted; match it in Vet Snap by hand.</div>
+                      ) : isDone ? (
                         <>
                           <div className="vs-done">
                             Reconciled
@@ -483,7 +488,7 @@ function DoctorSection({
                             type="button"
                             className="vs-undo"
                             disabled={busy}
-                            onClick={() => void run([l.movementId], false)}
+                            onClick={() => void run([l.movementId as number], false)}
                           >
                             Undo
                           </button>
@@ -493,7 +498,7 @@ function DoctorSection({
                           type="button"
                           className="vs-btn"
                           disabled={busy}
-                          onClick={() => void run([l.movementId], true)}
+                          onClick={() => void run([l.movementId as number], true)}
                         >
                           Reconciled
                         </button>

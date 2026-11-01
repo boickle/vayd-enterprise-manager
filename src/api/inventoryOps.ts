@@ -781,7 +781,14 @@ export type ControlledReportTotals = {
 };
 
 export type ControlledReportLine = {
-  movementId: number;
+  /** The stock movement; null for a client return wasted (it has no movement of its own). */
+  movementId: number | null;
+  /** CAT-11: a client return not back on the shelf, logged as waste ("Returned — wasted"). */
+  returnWaste?: boolean;
+  /** The waste event of a returned-and-wasted entry. */
+  wasteEventId?: number | null;
+  /** The sale movement a returned-and-wasted entry reverses. */
+  returnOfMovementId?: number | null;
   at: string;
   type: ControlledLineType;
   inventoryItemId: number;

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PrevisitCheckinPriceNote } from './PrevisitCheckinPriceNote';
+import { INVOICE_HAS_RETURNS_MESSAGE } from '../inventory/returnLineStock';
 import {
   AlertCircle,
   Ban,
@@ -3678,7 +3679,10 @@ export default function VisitCheckoutPanel({
                 </button>
               </PermissionGate>
             )}
-            {isVoid && canReopen && (
+            {isVoid && canReopen && invoice?.hasReturns ? (
+              <span role="note" style={{ fontSize: 12, color: '#64748b' }}>{INVOICE_HAS_RETURNS_MESSAGE}</span>
+            ) : null}
+            {isVoid && canReopen && !invoice?.hasReturns && (
               <button
                 type="button"
                 className="soap-btn"
