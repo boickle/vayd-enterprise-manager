@@ -1,3 +1,4 @@
+import { HiddenButChargedTag } from './HiddenButChargedTag';
 import {
   Fragment,
   useCallback,
@@ -6563,7 +6564,8 @@ export default function ClientFinancialWorkspace({
                             {isMailSplitChild ? (
                               <div className="client-fin__item-by">{line.description}</div>
                             ) : null}
-                            {line.hideOnInvoice ? (
+                            <HiddenButChargedTag line={line} className="client-fin__item-hidden" />
+                            {line.hideOnInvoice && isHiddenFromClient(line) ? (
                               <div
                                 className="client-fin__item-hidden"
                                 title="This catalog item has Show on Invoice turned off. Staff see the charge; it is left off the invoice the client receives."
