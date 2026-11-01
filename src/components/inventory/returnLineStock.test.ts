@@ -7,6 +7,9 @@ import {
   returnStockRequestParts,
   returnWasteProblem,
   type ReturnLotOption,
+  invoiceReturnLocks,
+  INVOICE_HAS_RETURNS_MESSAGE,
+  RETURN_CREDIT_VOID_MESSAGE,
 } from './returnLineStock';
 
 const lots = (a: number, b: number): ReturnLotOption[] => [
@@ -83,5 +86,26 @@ describe('returnStockRequestParts', () => {
       detail: { disposalCode: 'sharps', witnessId: 9 }, qty: 1, reasons,
     });
     expect(witnessed.waste).toMatchObject({ disposalMethodCode: 'sharps', witnessEmployeeId: 9 });
+  });
+});
+
+describe('invoiceReturnLocks (owner decisions, Nov 1, 2026)', () => {
+  it('an invoice with returns cannot be unlocked or reopened; it can still be voided', () => {
+    expect(invoiceReturnLocks({ hasReturns: true, lines: [{ returnOfLineId: null }] })).toEqual({
+      unlock: INVOICE_HAS_RETURNS_MESSAGE,
+      void: null,
+    });
+  });
+  it("a return's credit cannot be voided", () => {
+    expect(invoiceReturnLocks({ lines: [{ returnOfLineId: 'abc' }] })).toEqual({
+      unlock: null,
+      void: RETURN_CREDIT_VOID_MESSAGE,
+    });
+    // A deleted return line does not make it a credit.
+    expect(invoiceReturnLocks({ lines: [{ returnOfLineId: 'abc', isDeleted: true }] }).void).toBeNull();
+  });
+  it('an ordinary invoice is not locked', () => {
+    expect(invoiceReturnLocks({ hasReturns: false, lines: [] })).toEqual({ unlock: null, void: null });
+    expect(invoiceReturnLocks(null)).toEqual({ unlock: null, void: null });
   });
 });

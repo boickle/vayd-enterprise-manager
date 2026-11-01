@@ -187,6 +187,18 @@ export type InventoryStockMovement = {
     disposalMethodCode: string | null;
     witnessName: string | null;
   } | null;
+  /** On a controlled sale row: what the client brought back and was wasted (CAT-11). */
+  returnedWaste?: Array<{
+    wasteEventId: number;
+    at: string;
+    quantity: number;
+    lotNumber: string | null;
+    reasonCode: string;
+    disposalMethodCode: string | null;
+    witnessName: string | null;
+    recordedByName: string | null;
+    returnLineId: string | null;
+  }> | null;
   [key: string]: unknown;
 };
 

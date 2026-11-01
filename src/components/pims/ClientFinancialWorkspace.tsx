@@ -2,6 +2,7 @@ import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
 import { useWitnessOptions } from '../inventory/WasteDetailFields';
 import {
   chosenReturnLots,
+  invoiceReturnLocks,
   isMultiLot,
   returnLotsProblem,
   returnStockRequestParts,
@@ -3605,11 +3606,14 @@ export default function ClientFinancialWorkspace({
       setInvoiceDirectionsDirty(null, false);
     };
   }, [clientId]);
+  // Owner decisions (Nov 1, 2026): an invoice with returns is not unlocked; a return credit is not voided.
+  const returnLocks = invoiceReturnLocks(selected);
   const canUnlock =
     mayReopenInvoice &&
     selected &&
     !invoiceGone &&
     !isSoapInvoice &&
+    !returnLocks.unlock &&
     (selected.status === 'paid' || selected.status === 'finalized');
   const liveTenders = (selected?.tenders ?? []).filter((t) => !t.voidedAt);
   const canDiscard =
@@ -3625,6 +3629,7 @@ export default function ClientFinancialWorkspace({
     !invoiceGone &&
     selected.status !== 'void' &&
     !isSoapInvoice &&
+    !returnLocks.void &&
     !canDiscard;
 
   async function applyPrefill(invoice: VisitInvoice, refill: FinancialRefillPrefill) {
@@ -8336,6 +8341,12 @@ export default function ClientFinancialWorkspace({
                     </button>
                   ) : null}
                 </div>
+              ) : null}
+              {selected && !invoiceGone && selected.status !== 'void' &&
+              ((mayReopenInvoice && returnLocks.unlock) || (mayVoidInvoice && returnLocks.void)) ? (
+                <p className="settings-muted" role="note" style={{ margin: '6px 0 0' }}>
+                  {mayReopenInvoice && returnLocks.unlock ? returnLocks.unlock : returnLocks.void}
+                </p>
               ) : null}
 
               {canReturn && returning ? (

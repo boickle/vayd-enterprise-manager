@@ -248,6 +248,11 @@ export type VisitInvoice = {
    */
   lotsCleared?: boolean;
   lotsClearedLineId?: string;
+  /**
+   * A line of this invoice has a return whose credit still stands: it can't be unlocked or
+   * reopened (owner decision, Nov 1, 2026).
+   */
+  hasReturns?: boolean;
   practiceId: number;
   appointmentId: number | null;
   patientId?: number | null;

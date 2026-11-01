@@ -110,3 +110,35 @@ it('CAT-12: the "Controlled waste" filter narrows the log, and rows show the wit
     expect(listInventoryMovements).toHaveBeenLastCalledWith(1, 1, expect.objectContaining({ controlledWasteOnly: true }))
   );
 });
+
+it('CAT-11 review: a controlled sale shows what the client brought back and was wasted', async () => {
+  offices.value = { 'inventory.activity_log.view': 'all' };
+  listInventoryMovements.mockResolvedValue({
+    total: 1,
+    rows: [
+      {
+        id: 6,
+        movementType: 'sold',
+        inventoryItem: { id: 2, name: 'Buprenorphine' },
+        quantity: 10,
+        created: '2026-11-01T15:00:00Z',
+        returnedWaste: [
+          {
+            wasteEventId: 9,
+            at: '2026-11-01T16:00:00Z',
+            quantity: 4,
+            lotNumber: 'CB-1',
+            reasonCode: 'returned_unsellable',
+            disposalMethodCode: 'pharmaceutical',
+            witnessName: 'Sam Rivera',
+            recordedByName: 'Hailey Lloyd',
+            returnLineId: 'r1',
+          },
+        ],
+      },
+    ],
+  });
+  render(<InventoryActivityPage />);
+  const line = await screen.findByText(/Returned — wasted: 4 mL/);
+  expect(line.textContent).toMatch(/Lot CB-1 · Disposal: pharmaceutical · Witness: Sam Rivera · Recorded by Hailey Lloyd/);
+});

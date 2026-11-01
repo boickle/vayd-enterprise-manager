@@ -180,3 +180,29 @@ export function returnStockRequestParts(args: {
   }
   return out;
 }
+
+/** Owner decision (Nov 1, 2026): an invoice with returns is corrected, never unlocked or reopened. */
+export const INVOICE_HAS_RETURNS_MESSAGE = 'This invoice has returns. Make a correction instead.';
+/** Owner decision (Nov 1, 2026): a return's credit is never voided. */
+export const RETURN_CREDIT_VOID_MESSAGE = "A return can't be voided. Correct the stock on Waste / Adjust instead.";
+
+type InvoiceLike = {
+  hasReturns?: boolean;
+  lines?: Array<{ returnOfLineId?: string | null; isDeleted?: boolean }> | null;
+} | null | undefined;
+
+/** The invoice is a return's credit (it carries return lines). */
+export function isReturnCredit(invoice: InvoiceLike): boolean {
+  return Boolean(invoice?.lines?.some((l) => !l.isDeleted && l.returnOfLineId));
+}
+
+/**
+ * Why Unlock / Reopen and Void are off for this invoice, or null when they are allowed by the
+ * return rules (other rules, like permissions and status, still apply).
+ */
+export function invoiceReturnLocks(invoice: InvoiceLike): { unlock: string | null; void: string | null } {
+  return {
+    unlock: invoice?.hasReturns ? INVOICE_HAS_RETURNS_MESSAGE : null,
+    void: isReturnCredit(invoice) ? RETURN_CREDIT_VOID_MESSAGE : null,
+  };
+}
