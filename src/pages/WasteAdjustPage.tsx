@@ -15,6 +15,7 @@ import {
 import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
 import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
 import StockLotPicker from '../components/inventory/StockLotPicker';
+import WasteDetailFields, { useWitnessOptions } from '../components/inventory/WasteDetailFields';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { appPrompt } from '../utils/appDialog';
 import './Settings.css';
@@ -37,7 +38,7 @@ export function disposalMethodsFor<T extends { code: string }>(
 }
 
 export default function WasteAdjustPage() {
-  const { token } = useAuth() as { token: string | null };
+  const { token, employeeId } = useAuth() as { token: string | null; employeeId?: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [branchId, setBranchId] = useState<number | ''>('');
@@ -62,6 +63,8 @@ export default function WasteAdjustPage() {
   const [notes, setNotes] = useState('');
   const [lot, setLot] = useState('');
   const [lotId, setLotId] = useState<number | null>(null);
+  const [witnessId, setWitnessId] = useState<number | null>(null);
+  const witnessOptions = useWitnessOptions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -167,7 +170,7 @@ export default function WasteAdjustPage() {
       setError('Quantity must be positive');
       return;
     }
-    if (selectedReason?.requiresDisposalMethod === 'yes' && !disposalCode) {
+    if ((selectedReason?.requiresDisposalMethod === 'yes' || item.isControlled) && !disposalCode) {
       setError('Disposal method is required');
       return;
     }
@@ -197,6 +200,7 @@ export default function WasteAdjustPage() {
         lotNumber: lot.trim() || null,
         inventoryLotBalanceId: lotId,
         explanation: explanation || null,
+        ...(item.isControlled && witnessId != null ? { witnessEmployeeId: witnessId } : {}),
       });
       setToast(
         saved?.negativeWarning
@@ -208,6 +212,7 @@ export default function WasteAdjustPage() {
       setNotes('');
       setLot('');
       setLotId(null);
+      setWitnessId(null);
       setReasonExplanation('');
       setDisposalExplanation('');
       if (reasonCode === OTHER_CORRECTION_REASON && reasons[0]) setReasonCode(reasons[0].code);
@@ -333,86 +338,48 @@ export default function WasteAdjustPage() {
         />
       </label>
 
-      <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
-        <legend>Reason</legend>
-        {reasons.map((r) => (
-          <label key={r.code} className="settings-checkbox-item">
-            <input
-              type="radio"
-              name="reason"
-              checked={reasonCode === r.code}
-              onChange={() => void chooseReason(r.code)}
+      <WasteDetailFields
+        isControlled={item?.isControlled === true}
+        reasons={reasons}
+        reasonCode={reasonCode}
+        onReasonChange={(code) => void chooseReason(code)}
+        reasonExplanation={reasonExplanation}
+        showReasonExplanation={reasonCode === OTHER_CORRECTION_REASON}
+        methods={shownMethods}
+        disposalCode={disposalCode}
+        onDisposalChange={(code) => void chooseDisposal(code)}
+        showDisposal={needsDisposal || selectedReason?.requiresDisposalMethod !== 'no'}
+        disposalExplanation={disposalExplanation}
+        showDisposalExplanation={disposalCode === OTHER_DISPOSAL_METHOD}
+        notes={notes}
+        onNotesChange={setNotes}
+        witnessOptions={witnessOptions}
+        witnessEmployeeId={witnessId}
+        onWitnessChange={setWitnessId}
+        currentEmployeeId={employeeId != null ? Number(employeeId) : null}
+      >
+        {item ? (
+          <div style={{ marginTop: 12 }}>
+            <StockLotPicker
+              practiceId={practiceId}
+              inventoryItemId={item.id}
+              branchId={branchId === '' ? null : Number(branchId)}
+              locationId={fromLoc === '' ? null : Number(fromLoc)}
+              required={item.trackLots === true}
+              selectedLotId={lotId}
+              lotNumber={lot}
+              onChange={(pick) => {
+                setLotId(pick.lotId);
+                setLot(pick.lotNumber);
+              }}
             />
-            <span>{r.label}</span>
-          </label>
-        ))}
-        {reasonCode === OTHER_CORRECTION_REASON && reasonExplanation ? (
-          <p className="settings-muted" style={{ margin: '6px 0 0' }}>
-            Why: {reasonExplanation}{' '}
-            <button type="button" style={{ background: "none", border: 0, padding: 0, color: "#0f766e", fontWeight: 600, cursor: "pointer" }} onClick={() => void chooseReason(reasonCode)}>
-              Edit
-            </button>
-          </p>
+          </div>
         ) : null}
-      </fieldset>
 
-      {(needsDisposal || selectedReason?.requiresDisposalMethod !== 'no') && (
-        <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginTop: 12 }}>
-          <legend>Disposal method</legend>
-          {shownMethods.map((m) => (
-            <label key={m.code} className="settings-checkbox-item">
-              <input
-                type="radio"
-                name="disposal"
-                checked={disposalCode === m.code}
-                onChange={() => void chooseDisposal(m.code)}
-              />
-              <span>{m.label}</span>
-            </label>
-          ))}
-          {disposalCode === OTHER_DISPOSAL_METHOD && disposalExplanation ? (
-            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
-              How: {disposalExplanation}{' '}
-              <button type="button" style={{ background: "none", border: 0, padding: 0, color: "#0f766e", fontWeight: 600, cursor: "pointer" }} onClick={() => void chooseDisposal(disposalCode)}>
-                Edit
-              </button>
-            </p>
-          ) : null}
-        </fieldset>
-      )}
-
-      {item ? (
-        <div style={{ marginTop: 12 }}>
-          <StockLotPicker
-            practiceId={practiceId}
-            inventoryItemId={item.id}
-            branchId={branchId === '' ? null : Number(branchId)}
-            locationId={fromLoc === '' ? null : Number(fromLoc)}
-            required={item.trackLots === true}
-            selectedLotId={lotId}
-            lotNumber={lot}
-            onChange={(pick) => {
-              setLotId(pick.lotId);
-              setLot(pick.lotNumber);
-            }}
-          />
-        </div>
-      ) : null}
-
-      <p className="settings-muted">
-        Recording this adjustment logs your signed-in account and the current time automatically.
-      </p>
-
-      <label className="settings-label">
-        Notes
-        <textarea
-          className="settings-input"
-          rows={3}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          style={{ maxWidth: 'none', width: '100%' }}
-        />
-      </label>
+        <p className="settings-muted">
+          Recording this adjustment logs your signed-in account and the current time automatically.
+        </p>
+      </WasteDetailFields>
 
       <button
         type="button"

@@ -84,3 +84,29 @@ it('an inventory manager for one office with no controlled-drug log sees only th
   expect(screen.queryByRole('option', { name: 'Main' })).toBeNull();
   expect(screen.getByRole('option', { name: 'HC home' })).toBeInTheDocument();
 });
+
+it('CAT-12: the "Controlled waste" filter narrows the log, and rows show the witness', async () => {
+  offices.value = { 'inventory.activity_log.view': 'all' };
+  listInventoryMovements.mockResolvedValue({
+    total: 1,
+    rows: [
+      {
+        id: 5,
+        movementType: 'adjustment_decrease',
+        inventoryItem: { id: 2, name: 'Buprenorphine' },
+        quantity: 0.1,
+        created: '2026-11-01T15:00:00Z',
+        controlledWaste: { reasonCode: 'broken', disposalMethodCode: 'pharmaceutical', witnessName: 'Sam Rivera' },
+      },
+    ],
+  });
+  render(<InventoryActivityPage />);
+  await waitFor(() => expect(listInventoryMovements).toHaveBeenCalled());
+  expect(await screen.findByText(/Witness: Sam Rivera/)).toBeInTheDocument();
+  expect(listInventoryMovements).toHaveBeenLastCalledWith(1, 1, expect.not.objectContaining({ controlledWasteOnly: true }));
+
+  fireEvent.click(screen.getByLabelText('Controlled waste'));
+  await waitFor(() =>
+    expect(listInventoryMovements).toHaveBeenLastCalledWith(1, 1, expect.objectContaining({ controlledWasteOnly: true }))
+  );
+});

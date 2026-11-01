@@ -1,7 +1,7 @@
 /** INV-A14: controlled drugs by doctor, with a flag for doses off another shelf, and a CSV. */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import type { ControlledReport, VetSnapPatientExport } from '../api/inventoryOps';
+import { getControlledReport, type ControlledReport, type VetSnapPatientExport } from '../api/inventoryOps';
 import InventoryControlledReportPage, {
   controlledLogPrintHtml,
   controlledReportCsv,
@@ -306,5 +306,33 @@ describe('Vet Snap patient CSV', () => {
       'Patient ID,Patient Name,Species,Breed,Client ID,Client First Name,Client Last Name,Client Address 1,Client Address 2,Client City,Client State,Client Zip Code'
     );
     expect(rows[1]).toBe('18442,Tucker,Canine,"Labrador, Mix",10671,Ashley,Simmons,1 Main St,,Portland,ME,04101');
+  });
+});
+
+describe('CAT-12: controlled waste on the report', () => {
+  beforeEach(() => {
+    api.report = report;
+    scopes.value = { 'inventory.controlled_report.view': 'all' };
+    vi.mocked(getControlledReport).mockClear();
+  });
+
+  it('shows the witness next to the waste reason and disposal', () => {
+    const line = {
+      ...report.doctors[0].lines[1],
+      wasteReason: 'broken',
+      wasteDisposal: 'pharmaceutical',
+      wasteWitnessName: 'Sam Rivera',
+    };
+    expect(wasteDetail(line)).toBe('broken · Pharmaceutical waste · Witness: Sam Rivera');
+  });
+
+  it('the "Controlled waste" filter asks for waste entries only', async () => {
+    render(<InventoryControlledReportPage />);
+    await screen.findByRole('region', { name: 'Dr. Avery' });
+    expect(vi.mocked(getControlledReport).mock.calls.at(-1)?.[3]).toEqual({ wasteOnly: false });
+    fireEvent.click(screen.getByLabelText('Controlled waste'));
+    await waitFor(() =>
+      expect(vi.mocked(getControlledReport).mock.calls.at(-1)?.[3]).toEqual({ wasteOnly: true })
+    );
   });
 });

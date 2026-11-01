@@ -1,6 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuth } from '../../auth/AuthProvider';
 import { apiErrorMessage } from '../../api/http';
-import { recordWaste } from '../../api/inventoryOps';
+import { getWasteAdmin, recordWaste } from '../../api/inventoryOps';
+import WasteDetailFields, {
+  useWitnessOptions,
+  type WasteMethodOption,
+} from '../inventory/WasteDetailFields';
 import { useCan } from '../../permissions/PermissionContext';
 import { getInvoice, type VisitInvoice, type VisitInvoiceLine } from '../../api/visitWorkflow';
 import './ControlledDoseFields.css';
@@ -40,6 +45,37 @@ export default function ControlledDoseFields({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [methods, setMethods] = useState<WasteMethodOption[]>([]);
+  const [disposalCode, setDisposalCode] = useState('');
+  const [witnessId, setWitnessId] = useState<number | null>(null);
+  // Used only to leave the signed-in person out of the Witness list; the API enforces it too.
+  let employeeId: string | null | undefined = null;
+  try {
+    employeeId = (useAuth() as { employeeId?: string | null }).employeeId;
+  } catch {
+    employeeId = null;
+  }
+  const witnessOptions = useWitnessOptions();
+
+  // Controlled waste always needs a disposal method (CAT-12). Reverse distribution is for
+  // expired drugs only, so it is not offered for a dose drawn up and not given.
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve()
+      .then(() => getWasteAdmin(practiceId))
+      .then((admin) => {
+        if (!cancelled)
+          setMethods(
+            admin.methods
+              .filter((m) => m.isActive && m.code !== 'reverse_distribution')
+              .map((m) => ({ code: m.code, label: m.label }))
+          );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
 
   const canWaste = useCan('inventory.waste');
   const editable = invoice.status === 'open' && !disabled;
@@ -55,7 +91,9 @@ export default function ControlledDoseFields({
       ? 'Choose the branch and location first'
       : line.catalogItemId == null
         ? 'This line has no catalog item'
-        : null;
+        : !disposalCode
+          ? 'Choose a disposal method'
+          : null;
 
   const saveWaste = async () => {
     if (wastedMl == null || wastedMl <= 0 || wasteBlocked) return;
@@ -76,8 +114,11 @@ export default function ControlledDoseFields({
         inventoryLotBalanceId: line.inventoryLotBalanceId ?? null,
         lotNumber: line.lotNumber ?? null,
         invoiceLineId: line.id,
+        disposalMethodCode: disposalCode,
+        ...(witnessId != null ? { witnessEmployeeId: witnessId } : {}),
       });
       setWasted('');
+      setWitnessId(null);
       setNote(`Recorded ${ml(wastedMl)} wasted in the controlled drug log.`);
       // Re-read the bill so the line's wasted total includes this one.
       onInvoiceChange(await getInvoice(invoice.id));
@@ -117,6 +158,19 @@ export default function ControlledDoseFields({
           </button>
           {wasteBlocked ? <span className="controlled-dose__hint">{wasteBlocked}</span> : null}
         </div>
+      ) : null}
+      {editable && canWaste ? (
+        <WasteDetailFields
+          isControlled
+          hideNotes
+          methods={methods}
+          disposalCode={disposalCode}
+          onDisposalChange={setDisposalCode}
+          witnessOptions={witnessOptions}
+          witnessEmployeeId={witnessId}
+          onWitnessChange={setWitnessId}
+          currentEmployeeId={employeeId != null ? Number(employeeId) : null}
+        />
       ) : null}
       {note ? <p className="controlled-dose__ok">{note}</p> : null}
       {error ? <div className="soap-error">{error}</div> : null}

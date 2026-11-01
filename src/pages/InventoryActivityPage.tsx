@@ -54,6 +54,7 @@ export default function InventoryActivityPage() {
     fullOffices !== 'all' &&
     (branchId === '' || !fullOffices.includes(Number(branchId)));
   const [controlledPicked, setControlledPicked] = useState(false);
+  const [controlledWasteOnly, setControlledWasteOnly] = useState(false);
   const controlledOnly = controlledLocked || controlledPicked;
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -68,7 +69,7 @@ export default function InventoryActivityPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [branchId, locationId, action, exceptionsOnly, search, controlledOnly]);
+  }, [branchId, locationId, action, exceptionsOnly, search, controlledOnly, controlledWasteOnly]);
 
   useEffect(() => {
     void Promise.all([
@@ -116,6 +117,7 @@ export default function InventoryActivityPage() {
         ...(action ? { movementType: action } : {}),
         ...(exceptionsOnly ? { exceptionsOnly: true } : {}),
         ...(controlledOnly ? { controlledOnly: true } : {}),
+        ...(controlledWasteOnly ? { controlledWasteOnly: true } : {}),
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -124,7 +126,7 @@ export default function InventoryActivityPage() {
     } finally {
       setBusy(false);
     }
-  }, [branchId, locationId, practiceId, page, search, action, exceptionsOnly, controlledOnly]);
+  }, [branchId, locationId, practiceId, page, search, action, exceptionsOnly, controlledOnly, controlledWasteOnly]);
 
   useEffect(() => {
     void load();
@@ -242,6 +244,16 @@ export default function InventoryActivityPage() {
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
             <input
               type="checkbox"
+              checked={controlledWasteOnly}
+              onChange={(e) => setControlledWasteOnly(e.target.checked)}
+            />
+            Controlled waste
+          </span>
+        </label>
+        <label className="settings-label" style={{ justifyContent: 'flex-end' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
+            <input
+              type="checkbox"
               checked={exceptionsOnly}
               onChange={(e) => setExceptionsOnly(e.target.checked)}
             />
@@ -313,6 +325,17 @@ export default function InventoryActivityPage() {
                   </span>
                 ) : null}
               </div>
+              {row.controlledWaste ? (
+                <div style={{ marginTop: 4, fontSize: 13 }}>
+                  Controlled waste
+                  {row.controlledWaste.disposalMethodCode
+                    ? ` · Disposal: ${row.controlledWaste.disposalMethodCode.replace(/_/g, ' ')}`
+                    : ''}
+                  {row.controlledWaste.witnessName
+                    ? ` · Witness: ${row.controlledWaste.witnessName}`
+                    : ' · No witness'}
+                </div>
+              ) : null}
               {row.note && (
                 <div className="settings-muted" style={{ marginTop: 4 }}>
                   {row.note}
