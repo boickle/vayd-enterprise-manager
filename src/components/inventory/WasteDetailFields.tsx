@@ -35,6 +35,8 @@ export type WasteDetailFieldsProps = {
   onWitnessChange: (id: number | null) => void;
   /** The signed-in employee, who cannot witness their own waste. */
   currentEmployeeId?: number | null;
+  /** Several of these on one screen (one per returned line) need their own radio groups. */
+  idPrefix?: string;
 };
 
 const linkButton = {
@@ -104,6 +106,7 @@ export default function WasteDetailFields({
   witnessEmployeeId,
   onWitnessChange,
   currentEmployeeId,
+  idPrefix = '',
 }: WasteDetailFieldsProps) {
   const offerDisposal = isControlled || showDisposal;
   const witnesses = witnessOptions.filter(
@@ -118,7 +121,7 @@ export default function WasteDetailFields({
             <label key={r.code} className="settings-checkbox-item">
               <input
                 type="radio"
-                name="reason"
+                name={`${idPrefix}reason`}
                 checked={reasonCode === r.code}
                 onChange={() => onReasonChange?.(r.code)}
               />
@@ -148,7 +151,7 @@ export default function WasteDetailFields({
             <label key={m.code} className="settings-checkbox-item">
               <input
                 type="radio"
-                name="disposal"
+                name={`${idPrefix}disposal`}
                 required={isControlled}
                 checked={disposalCode === m.code}
                 onChange={() => onDisposalChange(m.code)}

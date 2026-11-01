@@ -1,3 +1,15 @@
+import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
+import { useWitnessOptions } from '../inventory/WasteDetailFields';
+import {
+  chosenReturnLots,
+  isMultiLot,
+  returnLotsProblem,
+  returnStockRequestParts,
+  returnWasteProblem,
+  type ReturnOptionsLine,
+  type ReturnStockDetail,
+} from '../inventory/returnLineStock';
+import { getWasteAdmin, type DisposalMethod, type WasteReason } from '../../api/inventoryOps';
 import { HiddenButChargedTag } from './HiddenButChargedTag';
 import {
   Fragment,
@@ -79,6 +91,7 @@ import {
   postAccountAdjustment,
   removeCounterInvoiceLine,
   returnVisitInvoiceLines,
+  getVisitReturnOptions,
   refundVisitTender,
   listVisitRefundPeers,
   saveOrderPrescription,
@@ -1575,7 +1588,13 @@ export default function ClientFinancialWorkspace({
   /** Back on the shelf: which shelf ('' = the one it was sold from). */
   const [returnShelfLoc, setReturnShelfLoc] = useState<Record<string, number | ''>>({});
   const [returnLocations, setReturnLocations] = useState<InventoryBranchLocation[]>([]);
+  /** CAT-11: controlled flag and lots still standing per line, and what staff chose for the stock. */
+  const [returnOptions, setReturnOptions] = useState<Record<string, ReturnOptionsLine>>({});
+  const [returnDetail, setReturnDetail] = useState<Record<string, ReturnStockDetail>>({});
+  const [returnWasteReasons, setReturnWasteReasons] = useState<WasteReason[]>([]);
+  const [returnWasteMethods, setReturnWasteMethods] = useState<DisposalMethod[]>([]);
   const [returning, setReturning] = useState(false);
+  const returnWitnessOptions = useWitnessOptions(returning);
   const [refundDraft, setRefundDraft] = useState<null | {
     tenderId: string;
     maxAmount: number;
@@ -2326,6 +2345,7 @@ export default function ClientFinancialWorkspace({
     setReturnQty({});
     setReturnToShelf({});
     setReturnShelfLoc({});
+    setReturnDetail({});
   }, [selected?.id]);
 
   useEffect(() => {
@@ -4849,6 +4869,7 @@ export default function ClientFinancialWorkspace({
       setReturnQty({});
       setReturnToShelf({});
       setReturnShelfLoc({});
+      setReturnDetail({});
       onSelectInvoice?.(next.id);
       await refreshList(next.id);
       setNote(
@@ -4987,19 +5008,72 @@ export default function ClientFinancialWorkspace({
     };
   }, [returning, returnBranchId]);
 
+  // CAT-11: the lots each line can give back, which lines are controlled, and the waste choices.
+  const returnInvoiceId = selected?.id ?? null;
+  useEffect(() => {
+    if (!returning || !returnInvoiceId) {
+      setReturnOptions({});
+      return;
+    }
+    let cancelled = false;
+    void getVisitReturnOptions(returnInvoiceId)
+      .then((res) => {
+        if (!cancelled) setReturnOptions(res.lines ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setReturnOptions({});
+      });
+    void getWasteAdmin(VISIT_WORKFLOW_PRACTICE_ID)
+      .then((res) => {
+        if (cancelled) return;
+        setReturnWasteReasons((res.reasons ?? []).filter((r) => r.isActive !== false));
+        setReturnWasteMethods((res.methods ?? []).filter((m) => m.isActive !== false));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [returning, returnInvoiceId]);
+
   async function submitReturns(refundViaStripe: boolean) {
     if (!selected) return;
+    const stockProblems: string[] = [];
     const items = lines
       .map((line) => {
         const qty = Number(returnQty[line.id] || 0);
         if (line.catalogItemType !== 'inventory') return { lineId: line.id, qty };
-        const backOnShelf = returnToShelf[line.id] !== false;
+        const opts = returnOptions[line.id];
+        const isControlled = opts?.isControlled === true;
+        const backOnShelf = !isControlled && returnToShelf[line.id] !== false;
         const loc = returnShelfLoc[line.id];
+        if (qty > 0 && !unshippedMailForLine(line)) {
+          const label = line.description || 'Item';
+          if (opts && isMultiLot(opts.lots)) {
+            const problem = returnLotsProblem(chosenReturnLots(returnDetail[line.id], opts.lots, qty), opts.lots, qty);
+            if (problem) stockProblems.push(`${label}: ${problem}`);
+          }
+          if (!backOnShelf) {
+            const problem = returnWasteProblem({
+              isControlled,
+              reasons: returnWasteReasons,
+              detail: returnDetail[line.id],
+            });
+            if (problem) stockProblems.push(`${label}: ${problem}`);
+          }
+        }
         return {
           lineId: line.id,
           qty,
           backOnShelf,
           ...(backOnShelf && typeof loc === 'number' ? { returnToLocationId: loc } : {}),
+          ...returnStockRequestParts({
+            backOnShelf,
+            isControlled,
+            options: opts,
+            detail: returnDetail[line.id],
+            qty,
+            reasons: returnWasteReasons,
+          }),
         };
       })
       .filter((item) => item.qty > 0)
@@ -5007,6 +5081,10 @@ export default function ClientFinancialWorkspace({
         const line = lines.find((l) => l.id === item.lineId);
         return !(line && unshippedMailForLine(line));
       });
+    if (stockProblems.length) {
+      setError(stockProblems[0]);
+      return;
+    }
     if (!items.length) {
       setError('Enter a quantity to return on at least one line.');
       return;
@@ -5045,6 +5123,7 @@ export default function ClientFinancialWorkspace({
       setReturnQty({});
       setReturnToShelf({});
       setReturnShelfLoc({});
+      setReturnDetail({});
       setReturning(false);
       setSelected(next);
       onSelectInvoice?.(next.id);
@@ -5789,6 +5868,7 @@ export default function ClientFinancialWorkspace({
                         setReturnQty({});
                         setReturnToShelf({});
                         setReturnShelfLoc({});
+                        setReturnDetail({});
                         setNote(null);
                       }}
                     >
@@ -6774,40 +6854,31 @@ export default function ClientFinancialWorkspace({
                                 placeholder={`≤ ${Math.abs(Number(line.qty) || 0)}`}
                               />
                               {line.catalogItemType === 'inventory' && Number(returnQty[line.id] || 0) > 0 ? (
-                                <label className="client-fin__return-shelf">
-                                  <input
-                                    type="checkbox"
-                                    checked={returnToShelf[line.id] !== false}
-                                    onChange={(e) =>
-                                      setReturnToShelf((prev) => ({ ...prev, [line.id]: e.target.checked }))
-                                    }
-                                  />
-                                  Back on the shelf
-                                </label>
-                              ) : null}
-                              {line.catalogItemType === 'inventory' &&
-                              Number(returnQty[line.id] || 0) > 0 &&
-                              returnToShelf[line.id] !== false &&
-                              returnLocations.length > 0 ? (
-                                <label className="client-fin__return-shelf">
-                                  Shelf
-                                  <select
-                                    value={returnShelfLoc[line.id] ?? ''}
-                                    onChange={(e) =>
-                                      setReturnShelfLoc((prev) => ({
-                                        ...prev,
-                                        [line.id]: e.target.value ? Number(e.target.value) : '',
-                                      }))
-                                    }
-                                  >
-                                    <option value="">Where it was sold from</option>
-                                    {returnLocations.map((loc) => (
-                                      <option key={loc.id} value={loc.id}>
-                                        {loc.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
+                                <ReturnLineStockFields
+                                  lineId={line.id}
+                                  qty={Number(returnQty[line.id] || 0)}
+                                  backOnShelf={
+                                    returnOptions[line.id]?.isControlled !== true &&
+                                    returnToShelf[line.id] !== false
+                                  }
+                                  onBackOnShelfChange={(on) =>
+                                    setReturnToShelf((prev) => ({ ...prev, [line.id]: on }))
+                                  }
+                                  shelfLocationId={returnShelfLoc[line.id] ?? ''}
+                                  onShelfChange={(id) =>
+                                    setReturnShelfLoc((prev) => ({ ...prev, [line.id]: id }))
+                                  }
+                                  locations={returnLocations}
+                                  options={returnOptions[line.id]}
+                                  detail={returnDetail[line.id]}
+                                  onDetailChange={(next) =>
+                                    setReturnDetail((prev) => ({ ...prev, [line.id]: next }))
+                                  }
+                                  reasons={returnWasteReasons}
+                                  methods={returnWasteMethods}
+                                  witnessOptions={returnWitnessOptions}
+                                  currentEmployeeId={cashierEmployeeId}
+                                />
                               ) : null}
                             </td>
                           ) : null}
@@ -8330,6 +8401,7 @@ export default function ClientFinancialWorkspace({
                             setReturnQty({});
                             setReturnToShelf({});
                             setReturnShelfLoc({});
+                            setReturnDetail({});
                             setNote(null);
                           }}
                         >

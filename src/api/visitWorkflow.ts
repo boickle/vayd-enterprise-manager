@@ -1310,10 +1310,47 @@ export async function listVisitRefundPeers(
   return data;
 }
 
+/** CAT-11: per line, is it a controlled drug and which lots can still take stock back (in draw order). */
+export async function getVisitReturnOptions(invoiceId: string): Promise<{
+  lines: Record<
+    string,
+    {
+      isControlled: boolean;
+      lots: {
+        inventoryLotBalanceId: number;
+        lotNumber: string | null;
+        expirationDate: string | null;
+        branchLocationId: number | null;
+        standing: number;
+      }[];
+    }
+  >;
+}> {
+  const { data } = await http.get(`/visit-invoices/${encodeURIComponent(invoiceId)}/return-options`, {
+    params: { practiceId: pid() },
+  });
+  return data;
+}
+
 export async function returnVisitInvoiceLines(
   invoiceId: string,
   /** `backOnShelf`: stock goes back to the lot it was sold from; false logs it as waste. */
-  items: { lineId: string; qty: number; backOnShelf?: boolean; returnToLocationId?: number }[],
+  items: {
+    lineId: string;
+    qty: number;
+    backOnShelf?: boolean;
+    returnToLocationId?: number;
+    /** CAT-11: which lot(s) the quantity goes to (back on shelf) or comes from (waste); must add up to qty. */
+    lots?: { inventoryLotBalanceId: number; quantity: number }[];
+    /** CAT-11: when not back on the shelf, the waste details (same rules as Waste / Adjust). */
+    waste?: {
+      reasonCode: string;
+      disposalMethodCode?: string | null;
+      notes?: string | null;
+      explanation?: string | null;
+      witnessEmployeeId?: number | null;
+    };
+  }[],
   opts?: {
     cashierEmployeeId?: number | null;
     refundViaStripe?: boolean;
