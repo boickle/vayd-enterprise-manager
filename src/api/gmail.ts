@@ -1,4 +1,5 @@
 import { http } from './http';
+import { mayRecordOnOpen } from '../auth/impersonationSession';
 
 export type GmailMailboxStatus = {
   email: string;
@@ -852,6 +853,19 @@ export async function markGmailMessageRead(
   threadId?: string,
 ) {
   return mailboxAction(mailbox, messageId, 'read', threadId);
+}
+
+/**
+ * Opening a message marks it read. Returns null, without touching Gmail, while viewing
+ * as someone else, so looking at their mail never marks it read for them.
+ */
+export async function markGmailMessageReadOnOpen(
+  mailbox: string,
+  messageId: string,
+  threadId?: string,
+) {
+  if (!mayRecordOnOpen()) return null;
+  return markGmailMessageRead(mailbox, messageId, threadId);
 }
 
 export async function markGmailMessageUnread(
