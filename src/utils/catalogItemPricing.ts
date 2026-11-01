@@ -79,27 +79,19 @@ export function getTieredUnitPrice(
     return baseUnitPrice;
   }
 
+  // Active break with the largest low quantity at or below qty: a gap keeps the break below it,
+  // past the last range is the top break, below the first break is the catalog price.
   const qty = Math.floor(quantity);
+  let best: (typeof tieredPricing.priceBreaks)[number] | null = null;
+  let bestLow = -Infinity;
   for (const priceBreak of tieredPricing.priceBreaks) {
     if (!priceBreak.isActive) continue;
     const lowQty = parseInt(String(priceBreak.lowQuantity), 10);
-    const highQty = parseInt(String(priceBreak.highQuantity), 10);
-    if (qty >= lowQty && qty <= highQty) {
-      return Number(priceBreak.price);
-    }
+    if (lowQty > qty || lowQty <= bestLow) continue;
+    best = priceBreak;
+    bestLow = lowQty;
   }
-
-  const activeBreaks = tieredPricing.priceBreaks.filter((pb) => pb.isActive);
-  if (activeBreaks.length > 0) {
-    const minLow = Math.min(...activeBreaks.map((pb) => parseInt(String(pb.lowQuantity), 10)));
-    if (qty < minLow) return baseUnitPrice;
-    const highestTier = activeBreaks.reduce((max, pb) => {
-      const maxHighQ = parseInt(String(max.highQuantity), 10);
-      const pbHigh = parseInt(String(pb.highQuantity), 10);
-      return pbHigh > maxHighQ ? pb : max;
-    });
-    return Number(highestTier.price);
-  }
+  if (best) return Number(best.price);
 
   return baseUnitPrice;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getBundleLinePrice,
   getCatalogLinePrice,
+  getTieredUnitPrice,
   getTotalPreDiscountForQuantity,
 } from './catalogItemPricing';
 
@@ -145,5 +146,24 @@ describe('bundle line pricing', () => {
       } as Parameters<typeof getBundleLinePrice>[1];
       expect(getBundleLinePrice(librela, checked).isCovered).toBe(true);
     });
+  });
+});
+
+describe('quantity price break lookup (CAT-A2)', () => {
+  const tiered = {
+    hasTieredPricing: true,
+    priceBreaks: [
+      { lowQuantity: '2', highQuantity: '3', price: '5', markup: '', isActive: true },
+      { lowQuantity: '8', highQuantity: '10', price: '3', markup: '', isActive: true },
+      { lowQuantity: '4', highQuantity: '5', price: '1', markup: '', isActive: false },
+    ],
+  };
+
+  it('uses the break just below a quantity in a gap, the base below the first, the top past the last', () => {
+    expect(getTieredUnitPrice(tiered, 1, 6)).toBe(6);
+    expect(getTieredUnitPrice(tiered, 3, 6)).toBe(5);
+    expect(getTieredUnitPrice(tiered, 5, 6)).toBe(5);
+    expect(getTieredUnitPrice(tiered, 9, 6)).toBe(3);
+    expect(getTieredUnitPrice(tiered, 50, 6)).toBe(3);
   });
 });
