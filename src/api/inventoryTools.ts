@@ -185,3 +185,16 @@ export async function getInventoryCostSummary(
   );
   return data;
 }
+
+/** How many active, not-paused auto-ships each inventory item has (items with none are absent). */
+export async function getInventoryAutoshipCounts(
+  practiceId: number,
+  itemIds: number[]
+): Promise<Record<number, number>> {
+  if (!itemIds.length) return {};
+  const { data } = await http.get<{ counts?: Record<number, number> }>(
+    `/practice/${practiceId}/inventory-items/autoship-counts`,
+    { params: { ids: itemIds.join(',') } }
+  );
+  return data?.counts ?? {};
+}
