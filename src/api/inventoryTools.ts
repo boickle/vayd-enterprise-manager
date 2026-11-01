@@ -148,13 +148,40 @@ export type BulkInventoryPriceAdjustBody = {
   percentChangeOnlineStorePrice?: number | null;
   flatAddPracticePrice?: number | null;
   flatAddOnlineStorePrice?: number | null;
+  /** Why prices are changing. Required unless dryRun. */
+  reason?: string;
+  /** Client-generated; a repeat with the same id returns the first result without applying again. */
+  requestId?: string;
+  /** Return before/after per item without saving. */
+  dryRun?: boolean;
+};
+
+export type BulkPricePreviewRow = {
+  id: number;
+  name: string;
+  code: string | null;
+  cost: number | null;
+  practicePriceBefore: number | null;
+  practicePriceAfter: number | null;
+  storePriceBefore: number | null;
+  storePriceAfter: number | null;
+  markupBefore: number | null;
+  markupAfter: number | null;
+  branchPrices: Array<{ branchId: number; before: number | null; after: number }>;
+};
+
+export type BulkInventoryPriceAdjustResult = {
+  updated?: number;
+  branchPricesUpdated?: number;
+  dryRun?: boolean;
+  items?: BulkPricePreviewRow[];
 };
 
 export async function postBulkInventoryPriceAdjust(
   practiceId: number,
   body: BulkInventoryPriceAdjustBody
-): Promise<{ updated?: number; branchPricesUpdated?: number }> {
-  const { data } = await http.post<{ updated?: number; branchPricesUpdated?: number }>(
+): Promise<BulkInventoryPriceAdjustResult> {
+  const { data } = await http.post<BulkInventoryPriceAdjustResult>(
     `/practice/${practiceId}/inventory-items/bulk-price-adjust`,
     body
   );
