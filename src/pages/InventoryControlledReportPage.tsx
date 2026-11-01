@@ -36,6 +36,7 @@ export function wasteDetail(l: ControlledReportLine): string {
     l.wasteReason,
     l.wasteDisposal ? DISPOSAL_LABEL[l.wasteDisposal] ?? l.wasteDisposal : null,
     l.wasteExplanation ? `“${l.wasteExplanation}”` : null,
+    l.wasteWitnessName ? `Witness: ${l.wasteWitnessName}` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -523,6 +524,7 @@ export default function InventoryControlledReportPage() {
   const [exporting, setExporting] = useState(false);
   const [doctorFilter, setDoctorFilter] = useState<string>('');
   const [reloadTick, setReloadTick] = useState(0);
+  const [wasteOnly, setWasteOnly] = useState(false);
   const [vets, setVets] = useState<Array<{ key: string; name: string }>>([]);
   const { scopeOf } = usePermissions();
   const ownOnly = scopeOf('inventory.controlled_report.view') === 'own';
@@ -568,7 +570,7 @@ export default function InventoryControlledReportPage() {
     let cancelled = false;
     setBusy(true);
     setError(null);
-    void getControlledReport(practiceId, fromDate, toDate)
+    void getControlledReport(practiceId, fromDate, toDate, { wasteOnly })
       .then((data) => {
         if (!cancelled) setReport(data);
       })
@@ -584,7 +586,7 @@ export default function InventoryControlledReportPage() {
     return () => {
       cancelled = true;
     };
-  }, [practiceId, fromDate, toDate, reloadTick]);
+  }, [practiceId, fromDate, toDate, reloadTick, wasteOnly]);
 
   const reconcile = useCallback(
     async (movementIds: number[], reconciled: boolean) => {
@@ -672,6 +674,14 @@ export default function InventoryControlledReportPage() {
         >
           Print log
         </button>
+        <label className="settings-label" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={wasteOnly}
+            onChange={(e) => setWasteOnly(e.target.checked)}
+          />
+          Controlled waste
+        </label>
         {!ownOnly ? (
           <label className="settings-label">
             Doctor

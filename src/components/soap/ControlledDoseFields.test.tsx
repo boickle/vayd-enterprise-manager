@@ -8,7 +8,13 @@ import ControlledDoseFields from './ControlledDoseFields';
 
 const recordWaste = vi.fn();
 const getInvoice = vi.fn();
-vi.mock('../../api/inventoryOps', () => ({ recordWaste: (...a: unknown[]) => recordWaste(...a) }));
+vi.mock('../../api/inventoryOps', () => ({
+  recordWaste: (...a: unknown[]) => recordWaste(...a),
+  getWasteAdmin: async () => ({
+    reasons: [],
+    methods: [{ code: 'pharmaceutical', label: 'Pharmaceutical waste', isActive: true }],
+  }),
+}));
 vi.mock('../../api/visitWorkflow', () => ({ getInvoice: (...a: unknown[]) => getInvoice(...a) }));
 vi.mock('../../permissions/PermissionContext', () => ({ useCan: () => true }));
 
@@ -51,6 +57,8 @@ it('records waste against the line and reloads the bill so the line shows it', a
   const onInvoiceChange = vi.fn();
   render(<ControlledDoseFields invoice={invoice} line={line()} practiceId={1} onInvoiceChange={onInvoiceChange} />);
   fireEvent.change(screen.getByLabelText('Buprenorphine mL wasted'), { target: { value: '0.1' } });
+  // CAT-12: a controlled drug always needs a disposal method.
+  fireEvent.click(await screen.findByLabelText('Pharmaceutical waste'));
   fireEvent.click(screen.getByRole('button', { name: 'Record waste' }));
   await waitFor(() => expect(onInvoiceChange).toHaveBeenCalledWith(fresh));
   expect(recordWaste).toHaveBeenCalledWith(
@@ -62,4 +70,15 @@ it('records waste against the line and reloads the bill so the line shows it', a
       inventoryLotBalanceId: 7,
     })
   );
+});
+
+it('CAT-12: drawn-up-not-given waste needs a disposal method, and has a Witness picker', async () => {
+  render(<ControlledDoseFields invoice={invoice} line={line()} practiceId={1} onInvoiceChange={() => undefined} />);
+  fireEvent.change(screen.getByLabelText('Buprenorphine mL wasted'), { target: { value: '0.1' } });
+  expect(screen.getByText('Required for controlled drugs.')).toBeInTheDocument();
+  expect(screen.getByLabelText('Witness (optional)')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Record waste' })).toBeDisabled();
+  expect(screen.getByText('Choose a disposal method')).toBeInTheDocument();
+  fireEvent.click(await screen.findByLabelText('Pharmaceutical waste'));
+  expect(screen.getByRole('button', { name: 'Record waste' })).not.toBeDisabled();
 });

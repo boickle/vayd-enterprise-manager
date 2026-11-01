@@ -181,6 +181,12 @@ export type InventoryStockMovement = {
   fromQuantityAfter?: number | null;
   toQuantityBefore?: number | null;
   toQuantityAfter?: number | null;
+  /** Set on controlled-drug waste rows. */
+  controlledWaste?: {
+    reasonCode: string;
+    disposalMethodCode: string | null;
+    witnessName: string | null;
+  } | null;
   [key: string]: unknown;
 };
 
@@ -355,6 +361,8 @@ export async function listInventoryMovements(
     exceptionsOnly?: boolean;
     /** Controlled drugs only. */
     controlledOnly?: boolean;
+    /** Only controlled-drug waste. */
+    controlledWasteOnly?: boolean;
     limit?: number;
     offset?: number;
   }

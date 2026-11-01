@@ -473,6 +473,8 @@ export async function recordWaste(
     invoiceLineId?: string | null;
     /** Required for "Other Correction" and for disposal "Other". */
     explanation?: string | null;
+    /** Controlled drugs only: a second employee who co-signs the waste. */
+    witnessEmployeeId?: number | null;
   }
 ) {
   const { data } = await http.post<{ id: number; negativeWarning?: string | null }>(
@@ -801,6 +803,8 @@ export type ControlledReportLine = {
   wasteDisposal?: string | null;
   /** The written why for "Other Correction" or an "Other" disposal. */
   wasteExplanation?: string | null;
+  /** Second employee who co-signed controlled waste. */
+  wasteWitnessName?: string | null;
   /** False when a dose came off a shelf other than the doctor's own. */
   fromHomeShelf: boolean;
   /** The item is a medication (sent home: dispensed); otherwise a dose given is administered. */
@@ -826,10 +830,15 @@ export type ControlledReport = {
 };
 
 /** Controlled drugs dispensed, returned and wasted under each doctor (INV-A14). */
-export async function getControlledReport(practiceId: number, fromDate: string, toDate: string) {
+export async function getControlledReport(
+  practiceId: number,
+  fromDate: string,
+  toDate: string,
+  opts?: { wasteOnly?: boolean }
+) {
   const { data } = await http.get<ControlledReport>(
     `/practice/${practiceId}/inventory-reports/controlled`,
-    { params: { fromDate, toDate } }
+    { params: { fromDate, toDate, ...(opts?.wasteOnly ? { wasteOnly: true } : {}) } }
   );
   return data;
 }

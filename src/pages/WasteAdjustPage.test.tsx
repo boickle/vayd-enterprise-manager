@@ -76,6 +76,8 @@ it('asks why for "Other Correction" and saves the explanation with the adjustmen
   expect(await screen.findByText(/Why: Count was entered on the wrong shelf/)).toBeInTheDocument();
   expect(appPrompt).toHaveBeenCalledWith(expect.objectContaining({ requireReason: true }));
 
+  // CAT-12: a controlled drug always needs a disposal method.
+  fireEvent.click(screen.getByLabelText('Pharmaceutical waste'));
   fireEvent.click(screen.getByRole('button', { name: 'Record adjustment' }));
   await waitFor(() =>
     expect(recordWaste).toHaveBeenCalledWith(
