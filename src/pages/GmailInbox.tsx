@@ -48,7 +48,7 @@ import {
   labelDisplayName,
   mailboxShortLabel,
   mailboxDisplayLabel,
-  markGmailMessageRead,
+  markGmailMessageReadOnOpen,
   modifyGmailMessage,
   openGmailAttachment,
   starGmailMessage,
@@ -1302,7 +1302,8 @@ export default function GmailInbox() {
     }
     if (!activeMailbox || !msg.isUnread) return;
     try {
-      const result = await markGmailMessageRead(activeMailbox, msg.id, msg.threadId);
+      const result = await markGmailMessageReadOnOpen(activeMailbox, msg.id, msg.threadId);
+      if (!result) return;
       applyLocalMessageUpdate(msg.id, {
         isUnread: false,
         labelIds: result.labelIds,

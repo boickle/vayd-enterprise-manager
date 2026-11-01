@@ -80,3 +80,11 @@ export function endImpersonation(): string {
 export function leaveImpersonation(): void {
   window.location.assign(endImpersonation());
 }
+
+/**
+ * False while viewing as someone. Screens that quietly record something on open
+ * (mark a message read, save a form draft, seed settings) must check this first.
+ */
+export function mayRecordOnOpen(): boolean {
+  return readImpersonation() == null;
+}

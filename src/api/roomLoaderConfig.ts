@@ -2,6 +2,7 @@
 // Loads and saves the practice-scoped configuration for the client Room Loader form.
 // Staff edit this under Settings -> Room Loader; the public form receives the same shape
 // on `GET /public/room-loader/form` so no catalog codes are hardcoded in the UI.
+import { mayRecordOnOpen } from '../auth/impersonationSession';
 import { http } from './http';
 import {
   normalizeRoomLoaderConfig,
@@ -37,7 +38,8 @@ export async function getRoomLoaderConfig(): Promise<RoomLoaderConfig> {
  */
 export async function ensureRoomLoaderConfigSeeded(): Promise<RoomLoaderConfig> {
   const { data } = await http.get<{ config: unknown }>('/room-loader/config');
-  if (!roomLoaderConfigIsUnconfigured(normalizeRoomLoaderConfig(data?.config))) {
+  // Viewing as someone is read only: do not write the starter document.
+  if (!mayRecordOnOpen() || !roomLoaderConfigIsUnconfigured(normalizeRoomLoaderConfig(data?.config))) {
     return resolveRoomLoaderConfig(data?.config);
   }
   return saveRoomLoaderConfig(vaydRoomLoaderConfigSeed());
