@@ -54,4 +54,14 @@ describe('storeLineUnitPrice', () => {
   it('skips the minimum for procedures', () => {
     expect(line({ itemType: 'procedure', base: 5, minimumPrice: 50, qty: 1 })).toBe(5);
   });
+
+  it('CAT-A2: a quantity in a gap between ranges uses the break just below it', () => {
+    const breaks = [
+      { lowQuantity: 2, highQuantity: 3, price: 5 },
+      { lowQuantity: 8, highQuantity: 10, price: 3 },
+    ];
+    expect(line({ base: 6, breaks, qty: 5 })).toBe(25);
+    expect(line({ base: 6, breaks, qty: 1 })).toBe(6);
+    expect(line({ base: 6, breaks, qty: 50 })).toBe(150);
+  });
 });

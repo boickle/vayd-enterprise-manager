@@ -62,18 +62,14 @@ export function storeUnitPrice(
   const n = Math.max(1, Math.floor(Number(qty) || 1));
   const fallback = Number(base ?? 0);
   const active = breaks || [];
-  const hit = active.find(
-    (row) => n >= Number(row.lowQuantity) && n <= Number(row.highQuantity),
-  );
-  if (hit) return Number(hit.price);
-  if (active.length) {
-    const minLow = Math.min(...active.map((row) => Number(row.lowQuantity)));
-    if (n < minLow) return fallback;
-    const highest = active.reduce((max, row) =>
-      Number(row.highQuantity) > Number(max.highQuantity) ? row : max,
-    );
-    return Number(highest.price);
+  // Largest low quantity at or below n: a gap keeps the break below it, past the last range
+  // is the top break, below the first break is the listed price.
+  let best: StorePriceBreak | null = null;
+  for (const row of active) {
+    if (Number(row.lowQuantity) > n) continue;
+    if (!best || Number(row.lowQuantity) > Number(best.lowQuantity)) best = row;
   }
+  if (best) return Number(best.price);
   return fallback;
 }
 

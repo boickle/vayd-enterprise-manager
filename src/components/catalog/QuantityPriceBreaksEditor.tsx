@@ -50,8 +50,39 @@ export default function QuantityPriceBreaksEditor({
 
   const cost = itemCost(item);
 
+  /** Same checks as the API: low <= high, and no overlap with another active break. */
+  function rangeProblem(
+    low: number,
+    high: number,
+    isActive: boolean,
+    excludeId?: number
+  ): string | null {
+    if (low > high) return 'Low Quantity must be <= High Quantity';
+    if (!isActive) return null;
+    const clash = priceBreaks.find(
+      (pb) =>
+        pb.id !== excludeId &&
+        pb.isActive &&
+        low <= Number(pb.highQuantity) &&
+        Number(pb.lowQuantity) <= high
+    );
+    return clash
+      ? `Quantity range ${low}-${high} overlaps the active price break ${clash.lowQuantity}-${clash.highQuantity}. Change or turn off that break first.`
+      : null;
+  }
+
   async function saveEdit(id: number) {
     if (!editing) return;
+    const problem = rangeProblem(
+      Number(editing.lowQuantity),
+      Number(editing.highQuantity),
+      editing.isActive,
+      id
+    );
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -99,8 +130,9 @@ export default function QuantityPriceBreaksEditor({
       setError('High Quantity must be >= 1');
       return;
     }
-    if (lowQtyNum > highQtyNum) {
-      setError('Low Quantity must be <= High Quantity');
+    const problem = rangeProblem(lowQtyNum, highQtyNum, creating.isActive);
+    if (problem) {
+      setError(problem);
       return;
     }
     const markupValue = creating.markup?.trim() ? Number(creating.markup) : null;

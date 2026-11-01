@@ -1613,34 +1613,19 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       return basePrice;
     }
 
-    // Find the price break that matches the quantity
+    // Active break with the largest low quantity at or below qty: a gap keeps the break below it,
+    // past the last range is the top break, below the first break is the base price.
     const qty = Math.floor(quantity);
+    let best: any = null;
+    let bestLow = -Infinity;
     for (const priceBreak of tieredPricing.priceBreaks) {
       if (!priceBreak.isActive) continue;
-      
       const lowQty = parseInt(priceBreak.lowQuantity, 10);
-      const highQty = parseInt(priceBreak.highQuantity, 10);
-      
-      if (qty >= lowQty && qty <= highQty) {
-        return Number(priceBreak.price);
-      }
+      if (lowQty > qty || lowQty <= bestLow) continue;
+      best = priceBreak;
+      bestLow = lowQty;
     }
-
-    // No tier matched: use base price when quantity is below the minimum tier, otherwise highest tier for quantities above the max
-    const activeBreaks = tieredPricing.priceBreaks.filter((pb: any) => pb.isActive);
-    if (activeBreaks.length > 0) {
-      const minLow = Math.min(...activeBreaks.map((pb: any) => parseInt(pb.lowQuantity, 10)));
-      if (qty < minLow) {
-        return basePrice;
-      }
-      // Quantity is above the max tier; use the highest tier's price
-      const highestTier = activeBreaks.reduce((max: any, pb: any) => {
-        const maxHighQ = parseInt(max.highQuantity, 10);
-        const pbHigh = parseInt(pb.highQuantity, 10);
-        return pbHigh > maxHighQ ? pb : max;
-      });
-      return Number(highestTier.price);
-    }
+    if (best) return Number(best.price);
 
     return basePrice;
   }
