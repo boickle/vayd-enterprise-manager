@@ -43,6 +43,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'appointments',
   'holds',
   'exit-survey',
+  'marketing',
 ];
 
 export const SCOUT_TABS: ScoutTabConfig[] = [

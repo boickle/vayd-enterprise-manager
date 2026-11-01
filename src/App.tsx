@@ -91,6 +91,9 @@ import LabsLayout from './pages/LabsLayout';
 import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
+import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
+import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -910,6 +913,9 @@ export default function App() {
                       path="analytics/bank-deposits"
                       element={<Navigate to="/schedule/deposits" replace />}
                     />
+                    <Route path="marketing" element={<EmailCampaignsPage />} />
+                    <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
+                    <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
                       {Object.entries(ANALYTICS_LEGACY_REDIRECTS).map(([from, to]) => (
