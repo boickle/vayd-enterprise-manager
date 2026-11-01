@@ -266,29 +266,37 @@ export function vsQuantity(l: ControlledReportLine): { quantity: string; waste: 
     : { quantity: `${ml(l.quantityMl)}${lot}`, waste: '0 ml' };
 }
 
+/** How an entry is reconciled: by stock movement, or by waste event for a returned-and-wasted one. */
+function entryKey(l: ControlledReportLine): string | null {
+  if (l.movementId != null) return `m${l.movementId}`;
+  if (l.wasteEventId != null) return `w${l.wasteEventId}`;
+  return null;
+}
+
 function DoctorSection({
   doctor,
   onReconcile,
 }: {
   doctor: ControlledReportDoctor;
-  onReconcile: (movementIds: number[], reconciled: boolean) => Promise<void>;
+  onReconcile: (movementIds: number[], reconciled: boolean, wasteEventIds?: number[]) => Promise<void>;
 }) {
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<ReconcileTab>('pending');
-  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const offShelf = doctor.lines.filter((l) => !l.fromHomeShelf).length;
   const pending = doctor.lines.filter((l) => !l.reconciledAt);
   const done = doctor.lines.filter((l) => l.reconciledAt);
   const shown = tab === 'pending' ? pending : tab === 'done' ? done : doctor.lines;
-  // Reconciling is per stock movement; a returned-and-wasted entry has none, so it is not picked.
-  const pickable = shown.filter((l): l is ControlledReportLine & { movementId: number } => !l.reconciledAt && l.movementId != null);
+  // An entry is reconciled by its stock movement, or by its waste event when it is returned-and-wasted.
+  const pickable = shown.filter((l) => !l.reconciledAt && entryKey(l) != null);
 
-  const run = async (ids: number[], reconciled: boolean) => {
-    if (!ids.length || busy) return;
+  const run = async (keys: string[], reconciled: boolean) => {
+    if (!keys.length || busy) return;
     setBusy(true);
     try {
-      await onReconcile(ids, reconciled);
+      const ids = (prefix: string) => keys.filter((k) => k[0] === prefix).map((k) => Number(k.slice(1)));
+      await onReconcile(ids('m'), reconciled, ids('w'));
       setPicked(new Set());
     } finally {
       setBusy(false);
@@ -376,7 +384,7 @@ function DoctorSection({
                   type="checkbox"
                   checked={picked.size > 0 && picked.size === pickable.length}
                   onChange={(e) =>
-                    setPicked(e.target.checked ? new Set(pickable.map((l) => l.movementId)) : new Set())
+                    setPicked(e.target.checked ? new Set(pickable.map((l) => entryKey(l) as string)) : new Set())
                   }
                 />
                 Select all to reconcile ({pickable.length})
@@ -405,17 +413,17 @@ function DoctorSection({
                 const isDone = Boolean(l.reconciledAt);
                 return (
                   <li key={l.movementId ?? `w${l.wasteEventId}`} className={`vs-card${isDone ? ' is-done' : ''}`}>
-                    {isDone || l.movementId == null ? (
+                    {isDone || entryKey(l) == null ? (
                       <span aria-hidden />
                     ) : (
                       <input
                         type="checkbox"
                         aria-label={`Select ${l.itemName} ${vsDate(l.at)}`}
-                        checked={picked.has(l.movementId)}
+                        checked={picked.has(entryKey(l) as string)}
                         onChange={(e) =>
                           setPicked((prev) => {
                             const next = new Set(prev);
-                            const id = l.movementId as number;
+                            const id = entryKey(l) as string;
                             if (e.target.checked) next.add(id);
                             else next.delete(id);
                             return next;
@@ -474,9 +482,7 @@ function DoctorSection({
                       )}
                     </div>
                     <div className="vs-actions">
-                      {l.movementId == null ? (
-                        <div className="vs-done">Returned by the client and wasted; match it in Vet Snap by hand.</div>
-                      ) : isDone ? (
+                      {isDone ? (
                         <>
                           <div className="vs-done">
                             Reconciled
@@ -488,7 +494,7 @@ function DoctorSection({
                             type="button"
                             className="vs-undo"
                             disabled={busy}
-                            onClick={() => void run([l.movementId as number], false)}
+                            onClick={() => void run([entryKey(l) as string], false)}
                           >
                             Undo
                           </button>
@@ -498,7 +504,7 @@ function DoctorSection({
                           type="button"
                           className="vs-btn"
                           disabled={busy}
-                          onClick={() => void run([l.movementId as number], true)}
+                          onClick={() => void run([entryKey(l) as string], true)}
                         >
                           Reconciled
                         </button>
@@ -594,9 +600,10 @@ export default function InventoryControlledReportPage() {
   }, [practiceId, fromDate, toDate, reloadTick, wasteOnly]);
 
   const reconcile = useCallback(
-    async (movementIds: number[], reconciled: boolean) => {
+    async (movementIds: number[], reconciled: boolean, wasteEventIds: number[] = []) => {
       try {
-        await setControlledReconciled(practiceId, movementIds, reconciled);
+        if (wasteEventIds.length) await setControlledReconciled(practiceId, movementIds, reconciled, wasteEventIds);
+        else await setControlledReconciled(practiceId, movementIds, reconciled);
         setReloadTick((n) => n + 1);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Could not save');
