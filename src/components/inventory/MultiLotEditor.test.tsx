@@ -7,6 +7,11 @@ import { vi } from 'vitest';
 import MultiLotEditor from './MultiLotEditor';
 import { checkLotSplit } from '../../utils/lotSplit';
 
+const appConfirm = vi.fn(async () => true);
+vi.mock('../../utils/appDialog', () => ({
+  appConfirm: (...a: unknown[]) => appConfirm(...(a as [])),
+}));
+
 // The lot dropdown is covered by StockLotPicker.test.tsx; here it is a plain pair of buttons.
 vi.mock('./StockLotPicker', () => ({
   default: (p: {
@@ -155,5 +160,54 @@ describe('CAT-09-9: several lots on one line', () => {
     });
     expect(screen.queryByRole('button', { name: 'Save lots' })).toBeNull();
     expect(screen.getByLabelText('Quantity from lot 1')).toBeDisabled();
+  });
+
+  describe('review fixes', () => {
+    const twoLots = [
+      { inventoryLotBalanceId: 1, lotNumber: 'A', quantity: 12 },
+      { inventoryLotBalanceId: 2, lotNumber: 'B', quantity: 8 },
+    ];
+
+    it('"Use one lot" on a controlled drug asks first; cancelling keeps the lots', async () => {
+      appConfirm.mockClear();
+      appConfirm.mockResolvedValueOnce(false);
+      const { onSaveLots } = setup({ mustCoverAll: true, lots: twoLots });
+      fireEvent.click(screen.getByRole('button', { name: 'Use one lot' }));
+      await waitFor(() => expect(appConfirm).toHaveBeenCalledTimes(1));
+      expect(onSaveLots).not.toHaveBeenCalled();
+    });
+
+    it('"Use one lot" on a controlled drug saves the whole line on lot 1 once confirmed', async () => {
+      appConfirm.mockClear();
+      appConfirm.mockResolvedValueOnce(true);
+      const { onSaveLots } = setup({ mustCoverAll: true, lots: twoLots });
+      fireEvent.click(screen.getByRole('button', { name: 'Use one lot' }));
+      await waitFor(() =>
+        expect(onSaveLots).toHaveBeenCalledWith([
+          { inventoryLotBalanceId: 1, lotNumber: 'A', quantity: 20 },
+        ])
+      );
+    });
+
+    it('"Use one lot" on a normal item does not ask', async () => {
+      appConfirm.mockClear();
+      const { onSaveLots } = setup({ lots: twoLots });
+      fireEvent.click(screen.getByRole('button', { name: 'Use one lot' }));
+      await waitFor(() => expect(onSaveLots).toHaveBeenCalled());
+      expect(appConfirm).not.toHaveBeenCalled();
+    });
+
+    it('a controlled drug refuses a lot typed by number that is not from the list', () => {
+      const typed = checkLotSplit(
+        [
+          { lotId: 1, lotNumber: 'A', quantity: '6' },
+          { lotId: null, lotNumber: 'NOT-A-BOTTLE', quantity: '4' },
+        ],
+        10,
+        { mustCoverAll: true }
+      );
+      expect(typed.ok).toBe(false);
+      expect(typed.message).toMatch(/not a bottle on the shelf/);
+    });
   });
 });

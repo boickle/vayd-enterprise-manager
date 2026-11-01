@@ -15,6 +15,10 @@ export type LotSplitCheck = {
 
 const EPS = 1e-6;
 
+/** Shown when a quantity change no longer fits the line's lots and the server cleared them. */
+export const LOTS_CLEARED_MESSAGE =
+  'Lots were cleared because the quantity changed — pick lots again.';
+
 function num(n: number): string {
   return String(Math.round(n * 1e4) / 1e4);
 }
@@ -43,6 +47,14 @@ export function checkLotSplit(
   for (const r of rows) {
     if (r.lotId == null && !r.lotNumber.trim()) {
       return { ok: false, total, message: 'Choose a lot for every row.' };
+    }
+    // Controlled drugs, lot # items and vaccines draw from a real bottle: a lot from the list.
+    if (opts.mustCoverAll && r.lotId == null) {
+      return {
+        ok: false,
+        total,
+        message: `Lot ${r.lotNumber.trim()} is not a bottle on the shelf. Choose each lot from the list.`,
+      };
     }
     const q = Number(r.quantity);
     if (!Number.isFinite(q) || q <= 0 || r.quantity.trim() === '') {

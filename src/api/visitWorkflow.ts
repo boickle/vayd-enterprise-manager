@@ -5,6 +5,8 @@
 // authenticated axios instance.
 import { apiBaseUrl, http } from './http';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import { appAlert } from '../utils/appDialog';
+import { LOTS_CLEARED_MESSAGE } from '../utils/lotSplit';
 
 export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 
@@ -240,6 +242,12 @@ export type VisitInvoiceTender = {
 
 export type VisitInvoice = {
   id: string;
+  /**
+   * Only on the reply to a line edit: the new quantity no longer fit the line's lots, so the
+   * server cleared them and staff must pick them again.
+   */
+  lotsCleared?: boolean;
+  lotsClearedLineId?: string;
   practiceId: number;
   appointmentId: number | null;
   patientId?: number | null;
@@ -1448,6 +1456,8 @@ export async function updateCounterInvoiceLine(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
     { practiceId: pid(), ...body, ...removeDoseParams(removeDose) }
   );
+  // Every screen that edits a line hears about it, whichever field changed the quantity.
+  if (data?.lotsCleared) void appAlert({ title: 'Lots cleared', message: LOTS_CLEARED_MESSAGE });
   return data;
 }
 

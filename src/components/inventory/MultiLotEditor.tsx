@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { InvoiceLineLot, VisitInvoiceLine } from '../../api/visitWorkflow';
 import { checkLotSplit, lotSplitSummary, type LotSplitRow } from '../../utils/lotSplit';
 import StockLotPicker from './StockLotPicker';
+import { appConfirm } from '../../utils/appDialog';
 
 type Props = {
   practiceId: number;
@@ -248,7 +249,19 @@ export default function MultiLotEditor({
             onClick={() => {
               const first = rows[0];
               if (stored.length > 0 && first && (first.lotId != null || first.lotNumber)) {
-                void save([{ ...first, quantity: String(lineQty) }]);
+                void (async () => {
+                  // A controlled drug (or lot # item) is counted bottle by bottle: putting the
+                  // whole line on one lot changes which bottles it came out of, so ask first.
+                  if (mustCoverAll) {
+                    const ok = await appConfirm({
+                      title: 'Use one lot?',
+                      message: `All ${lineQty} will come from lot ${first.lotNumber || first.lotId}, and the other lots come off this line. The bottle counts follow what you save.`,
+                      confirmLabel: 'Use one lot',
+                    });
+                    if (!ok) return;
+                  }
+                  await save([{ ...first, quantity: String(lineQty) }]);
+                })();
               } else {
                 setEditing(false);
               }
