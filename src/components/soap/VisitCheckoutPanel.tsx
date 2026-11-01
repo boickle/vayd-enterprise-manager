@@ -52,6 +52,7 @@ import {
   type VisitTenderMethod,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
+import { HiddenButChargedTag } from '../pims/HiddenButChargedTag';
 import { appConfirm, appDeclineHow, appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
@@ -2599,6 +2600,7 @@ export default function VisitCheckoutPanel({
                           </span>
                         ) : null}
                         {l.description}
+                        <HiddenButChargedTag line={l} className="soap-invoice-mail-tag" />
                         {l.refillOfPrescriptionId != null ? (
                           <span
                             className="soap-invoice-mail-tag"
