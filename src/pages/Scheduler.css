@@ -4529,6 +4529,14 @@ label.scheduler-household-pet-row {
   max-width: min(280px, 96vw);
 }
 
+/* The menu opens under a held finger on phones; don't let iOS select its text. */
+.scheduler-ctx-menu,
+.scheduler-ctx-flyout {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .scheduler-ctx-menu--grouped {
   min-width: 200px;
   max-width: min(260px, 96vw);

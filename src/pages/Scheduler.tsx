@@ -3972,6 +3972,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const y = e.clientY;
       touchLongPressTimerRef.current = window.setTimeout(() => {
         touchLongPressTimerRef.current = null;
+        // iOS may have started selecting text under the held finger; clear it.
+        window.getSelection()?.removeAllRanges();
         cancelScheduledHoverPopover();
         dismissHoverPopover();
         touchHoverApptIdRef.current = null;
@@ -12303,6 +12305,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           background: apptColors.fill,
                           color: apptColors.text,
                           WebkitTouchCallout: 'none' as const,
+                          WebkitUserSelect: 'none',
                           userSelect: 'none',
                         }}
                         onDoubleClick={(ev) => {
@@ -12793,6 +12796,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 zIndex: isStaffItemDragging ? 30 : undefined,
                                 /* Prevent iOS long-press text-selection callout */
                                 WebkitTouchCallout: 'none' as const,
+                                WebkitUserSelect: 'none',
                                 userSelect: 'none',
                               }}
                               role="button"
