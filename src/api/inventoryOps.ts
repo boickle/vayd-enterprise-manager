@@ -643,6 +643,60 @@ export async function resolveStockRequest(
   return data;
 }
 
+export type OfficeSupplyOrder = {
+  id: number;
+  practiceId: number;
+  branchId: number;
+  branchName: string | null;
+  inventoryItemId: number | null;
+  itemCode: string | null;
+  label: string;
+  quantity: number;
+  note: string | null;
+  status: 'open' | 'done' | 'cancelled';
+  requestedByEmployeeId: number | null;
+  requestedByName: string | null;
+  created: string;
+  resolvedAt: string | null;
+};
+
+export async function listOfficeSupplyOrders(practiceId: number, branchId?: number) {
+  const { data } = await http.get<OfficeSupplyOrder[]>(
+    `/practice/${practiceId}/office-supply-orders`,
+    { params: branchId != null ? { branchId, status: 'open' } : { status: 'open' } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createOfficeSupplyOrder(
+  practiceId: number,
+  body: {
+    branchId: number;
+    label: string;
+    inventoryItemId?: number | null;
+    quantity?: number;
+    note?: string | null;
+  }
+) {
+  const { data } = await http.post<OfficeSupplyOrder>(
+    `/practice/${practiceId}/office-supply-orders`,
+    body
+  );
+  return data;
+}
+
+export async function resolveOfficeSupplyOrder(
+  practiceId: number,
+  orderId: number,
+  status: 'done' | 'cancelled'
+) {
+  const { data } = await http.post<OfficeSupplyOrder>(
+    `/practice/${practiceId}/office-supply-orders/${orderId}/resolve`,
+    { status }
+  );
+  return data;
+}
+
 export type InventoryPurchaseOrderLine = {
   id: number;
   inventoryItemId: number;

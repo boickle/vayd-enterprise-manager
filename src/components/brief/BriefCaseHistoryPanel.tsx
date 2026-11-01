@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchPatientLabSource } from '../../utils/patientLabSource';
+import { extractHouseholdPdfExcerpts } from '../../utils/householdChartPdfs';
 import { AlertTriangle, CalendarClock, MessageSquare, Plus, Send, Sparkles, Trash2 } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { useAuth } from '../../auth/useAuth';
@@ -401,6 +403,10 @@ export default function BriefCaseHistoryPanel({
         setPatientRecord(rec);
         setEncounters(encounters);
         setMedicalRecord((medicalRecord as MedicalRecordBundle | null) ?? null);
+        const [labs, pdfExcerpts] = await Promise.all([
+          fetchPatientLabSource(Number(patientId)),
+          extractHouseholdPdfExcerpts(Number(patientId), medicalRecord as MedicalRecordBundle | null, 3),
+        ]);
         setSource(
           buildCaseHistorySource({
             patientId,
@@ -415,6 +421,8 @@ export default function BriefCaseHistoryPanel({
             medicalRecord: medicalRecord as MedicalRecordBundle | null,
             asOfDate,
             householdPets,
+            labs,
+            pdfExcerpts,
           })
         );
       } catch (err) {

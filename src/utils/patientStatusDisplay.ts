@@ -42,3 +42,27 @@ export function patientStatusChip(p: Record<string, unknown>): PatientChip | nul
   }
   return { label: legacy, tone: 'muted' };
 }
+
+export type PatientInactiveBanner = {
+  title: string;
+  body: string;
+  /** Passed away / euthanasia — warmer banner styling. */
+  memorial: boolean;
+};
+
+/** Full-width callout on the patient chart when the pet is not active. */
+export function patientInactiveBanner(p: Record<string, unknown>): PatientInactiveBanner | null {
+  if (patientIsActiveInHousehold(p)) return null;
+  const status = patientStatusChip(p);
+  const statusName = status?.label ?? null;
+  const memorial = Boolean(
+    statusName && /euthan|deceas|passed away|hbc deceased/i.test(statusName),
+  );
+  const title = statusName ? `Inactive patient · ${statusName}` : 'Inactive patient';
+  const body = memorial
+    ? 'This pet is no longer on the active roster. Do not schedule visits or send reminders unless you reactivate them.'
+    : statusName
+      ? `Status: ${statusName}. They stay off reminders and scheduling until reactivated.`
+      : 'This pet is off the active roster until you reactivate them.';
+  return { title, body, memorial };
+}

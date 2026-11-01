@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchPatientLabSource } from '../../utils/patientLabSource';
+import { extractHouseholdPdfExcerpts } from '../../utils/householdChartPdfs';
 import { DateTime } from 'luxon';
 import { ChevronDown, ChevronUp, MessageSquare, Search, Send, Sparkles } from 'lucide-react';
 import { Link } from 'react-router';
@@ -285,6 +287,10 @@ export default function PimsChartCaseSummaryCard({
     };
     setIdentity(nextIdentity);
 
+    const [labs, pdfExcerpts] = await Promise.all([
+      fetchPatientLabSource(Number(patientId)),
+      extractHouseholdPdfExcerpts(Number(patientId), snap.medicalRecord, 3),
+    ]);
     return buildCaseHistorySource({
       patientId,
       patientName: snap.patientName,
@@ -298,6 +304,8 @@ export default function PimsChartCaseSummaryCard({
       medicalRecord: snap.medicalRecord,
       asOfDate: today,
       householdPets,
+      labs,
+      pdfExcerpts,
     });
   };
 

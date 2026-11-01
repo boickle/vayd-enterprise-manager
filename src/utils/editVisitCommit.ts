@@ -8,8 +8,6 @@ import type { Appointment } from '../api/roomLoader';
 import { appointmentTypeAllowsClient } from './appointmentTypeSettings';
 import { DateTime } from 'luxon';
 import {
-  appendEditedByStaffNote,
-  appendLinkedClientStaffNote,
   type AppointmentChangeActor,
   type EditVisitChangeKind,
 } from './appointmentChangeAuditNote';
@@ -256,15 +254,8 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
   }
 
   const description = input.form.description.trim();
-  let instructions = input.form.instructions.trim();
-  if (input.editedByAudit?.changes.length) {
-    instructions = appendEditedByStaffNote(
-      instructions,
-      input.editedByAudit.actor,
-      input.editedByAudit.practiceTz,
-      input.editedByAudit.changes
-    ).trim();
-  }
+  // Who changed what is recorded in the appointment History, not appended to staff notes.
+  const instructions = input.form.instructions.trim();
 
   const link = input.linkClient;
   if (link) {
@@ -281,15 +272,6 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
           'The selected client\'s home address does not match this visit address. Choose a client at the same location.'
         );
       }
-    }
-    if (link.linkAudit) {
-      instructions = appendLinkedClientStaffNote(
-        instructions,
-        link.linkAudit.actor,
-        link.linkAudit.practiceTz,
-        link.clientLabel,
-        link.patientLabel
-      ).trim();
     }
   }
 

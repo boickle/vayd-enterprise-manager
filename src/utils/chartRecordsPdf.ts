@@ -1,5 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { IdexxResultDetail } from '../api/idexx';
+import type { LabResult } from '../api/inHouseLabs';
+import { isLabValueAbnormal, labSummaryHasText, type LabFormElement } from './labValues';
 import type { ChartRow } from './patientChartFromMedicalRecord';
 
 /** Billing adjustments are not part of a medical record. */
@@ -110,13 +112,16 @@ export function isFileRow(row: ChartRow): boolean {
   );
 }
 
-/** One result line in a lab table. `flag` is H or L when outside the reference range. */
+/**
+ * One result line in a lab table. `flag` is H or L when outside the reference range, A when a
+ * reading is abnormal without a direction (a Positive snap test).
+ */
 export type LabRow = {
   test: string;
   result: string;
   units: string;
   range: string;
-  flag: '' | 'H' | 'L';
+  flag: '' | 'H' | 'L' | 'A';
 };
 export type LabSection = { name: string; rows: LabRow[]; notes: string[] };
 export type LabReport = { meta: string; sections: LabSection[]; notes: string[] };
@@ -350,6 +355,87 @@ export function labReportFromIdexx(detail: IdexxResultDetail): LabReport {
     .join('  |  ');
   const overall = detail.notes?.content?.trim();
   return { meta, sections, notes: overall ? [overall] : [] };
+}
+
+function inHouseFlag(el: LabFormElement, value: string): LabRow['flag'] {
+  if (!isLabValueAbnormal(el, value)) return '';
+  if (el.abnormalOptions?.length || el.valueType !== 'number') return 'A';
+  const n = Number(value);
+  if (el.min != null && n < el.min) return 'L';
+  return 'H';
+}
+
+function inHouseRange(el: LabFormElement): string {
+  if (el.min != null && el.max != null) return `${el.min} - ${el.max}`;
+  if (el.min != null) return `>= ${el.min}`;
+  if (el.max != null) return `<= ${el.max}`;
+  return el.abnormalOptions?.length && el.options?.length
+    ? el.options.filter((o) => !el.abnormalOptions!.includes(o)).join(' / ')
+    : '';
+}
+
+/** In-house lab forms as a results table: one section per form, analytes or a write-up. */
+export function labReportFromInHouse(results: LabResult[]): LabReport {
+  const sections: LabSection[] = results.map((r) => {
+    const notes: string[] = [];
+    if (r.status !== 'complete') notes.push('Results pending.');
+    // Summary forms are a write-up; analyte forms can carry one too.
+    if (labSummaryHasText(r.summary)) notes.push(htmlToText(r.summary ?? ''));
+    const rows: LabRow[] = [];
+    for (const el of r.elementsSnapshot ?? []) {
+      const v = r.values?.[el.key];
+      const value = v?.value?.trim() ?? '';
+      const comment = v?.comments?.trim() ?? '';
+      if (!value && !comment) continue;
+      rows.push({
+        test: el.name,
+        result: value,
+        units: el.units ?? '',
+        range: inHouseRange(el),
+        flag: value ? inHouseFlag(el, value) : '',
+      });
+      if (comment) notes.push(`${el.name}: ${comment}`);
+    }
+    return { name: r.templateName || r.lab?.name || 'In-house lab', rows, notes };
+  });
+  const by = results
+    .map((r) => [r.resultedBy?.firstName, r.resultedBy?.lastName].filter(Boolean).join(' '))
+    .find(Boolean);
+  const when = results.map((r) => r.resultedAt ?? r.serviceDate).find(Boolean);
+  const meta = [
+    'In-house',
+    by && `Resulted by ${by}`,
+    when && `Resulted ${new Date(when).toLocaleDateString('en-US')}`,
+  ]
+    .filter(Boolean)
+    .join('  |  ');
+  return { meta, sections, notes: [] };
+}
+
+/**
+ * Short text of a lab report for the AI summaries: each panel's out-of-range values, a count of
+ * the rest, and the lab's comments. Every value is listed when a panel has only a few.
+ */
+export function labReportBriefText(report: LabReport): string {
+  const parts: string[] = [];
+  for (const sec of report.sections) {
+    const label = sec.name || 'Results';
+    const filled = sec.rows.filter((r) => r.result);
+    const flagged = filled.filter((r) => r.flag);
+    const show = filled.length <= 6 ? filled : flagged;
+    const fmt = (r: LabRow) =>
+      `${r.test} ${r.result}${r.units ? ` ${r.units}` : ''}${r.range ? ` [${r.range}]` : ''}${r.flag ? ` ${r.flag}` : ''}`;
+    let line = `${label}: `;
+    if (!filled.length) line += 'no values';
+    else if (filled.length <= 6) line += show.map(fmt).join('; ');
+    else if (flagged.length) {
+      line += `out of range: ${flagged.map(fmt).join('; ')}; other ${filled.length - flagged.length} values within range`;
+    } else line += `all ${filled.length} values within range`;
+    parts.push(line + '.');
+    for (const n of sec.notes.slice(0, 4)) parts.push(`${label} note: ${n.replace(/\s+/g, ' ').slice(0, 400)}`);
+  }
+  for (const n of report.notes.slice(0, 3)) parts.push(`Note: ${n.replace(/\s+/g, ' ').slice(0, 400)}`);
+  return parts.join('\n');
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────
@@ -640,7 +726,10 @@ class RecordWriter {
             bold: flagged,
           }
         );
-        if (flagged) this.draw(row.flag, left + cols.flag, this.y - 8.5, { size: 8.5, bold: true });
+        if (flagged) {
+          const mark = row.flag === 'A' ? 'ABN' : row.flag;
+          this.draw(mark, left + cols.flag, this.y - 8.5, { size: 8.5, bold: true });
+        }
         this.draw(
           fit(row.units, this.font, 8.5, cols.range - cols.units - 4),
           left + cols.units,

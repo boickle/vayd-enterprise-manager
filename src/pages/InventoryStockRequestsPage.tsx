@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
+import { fetchMyOffices } from '../api/permissions';
+import { usePermissions } from '../permissions/PermissionContext';
 import {
   getInventoryBranchStock,
   listBranchParLevels,
@@ -12,16 +14,20 @@ import {
 } from '../api/branchInventory';
 import {
   formatOrderPacks,
+  listOfficeSupplyOrders,
   listPurchaseOrders,
   listStockRequests,
   orderPacksSoldNote,
   listSuppliers,
+  resolveOfficeSupplyOrder,
   resolveStockRequest,
   type InventoryPurchaseOrder,
   type InventoryStockRequest,
   type InventoryStockRequestKind,
   type InventorySupplier,
+  type OfficeSupplyOrder,
 } from '../api/inventoryOps';
+import AddOfficeSupplyOrderModal from '../components/inventory/AddOfficeSupplyOrderModal';
 import ParTransferModal, {
   type TransferModalSource,
 } from '../components/inventory/ParTransferModal';
@@ -176,6 +182,8 @@ type Props = { kind: InventoryStockRequestKind };
 
 export default function InventoryStockRequestsPage({ kind }: Props) {
   const { token } = useAuth() as { token: string | null };
+  const { hasRole } = usePermissions();
+  const isInventoryManager = hasRole('inventory_manager');
   const [searchParams] = useSearchParams();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const branchFromUrl = Number(searchParams.get('branchId'));
@@ -202,12 +210,22 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const [purchaseOrders, setPurchaseOrders] = useState<InventoryPurchaseOrder[]>([]);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [openOrderId, setOpenOrderId] = useState<number | null>(null);
+  const [supplyOrders, setSupplyOrders] = useState<OfficeSupplyOrder[]>([]);
+  const [supplyModalOpen, setSupplyModalOpen] = useState(false);
+  const [supplyBusyId, setSupplyBusyId] = useState<number | null>(null);
+  const [poOffices, setPoOffices] = useState<number[] | 'all' | null>(null);
 
   const isFill = kind === 'fill';
   const isTransfer = kind === 'transfer';
   const isOrder = kind === 'order';
   const title = isTransfer || isFill ? 'Transfer List' : 'Order List';
   const officeName = branches.find((b) => b.id === branchId)?.name ?? 'Office';
+  const canActOnOrder =
+    isOrder &&
+    isInventoryManager &&
+    branchId !== '' &&
+    (poOffices === 'all' ||
+      (Array.isArray(poOffices) && poOffices.includes(Number(branchId))));
   const orderedQtyByItemLoc = useMemo(() => {
     const map = new Map<string, number>();
     for (const po of purchaseOrders) {
@@ -261,6 +279,41 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
       setLocationId((prev) => (prev !== '' && active.some((l) => l.id === prev) ? prev : ''));
     });
   }, [practiceId, branchId]);
+
+  useEffect(() => {
+    if (!isOrder || branchId === '') {
+      setSupplyOrders([]);
+      return;
+    }
+    let cancelled = false;
+    void listOfficeSupplyOrders(practiceId, Number(branchId))
+      .then((rows) => {
+        if (!cancelled) setSupplyOrders(rows);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setSupplyOrders([]);
+        setError(e instanceof Error ? e.message : 'Could not load office supplies');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOrder, practiceId, branchId]);
+
+  useEffect(() => {
+    if (!isOrder) return;
+    let cancelled = false;
+    void fetchMyOffices(practiceId, 'inventory.po.manage')
+      .then((offices) => {
+        if (!cancelled) setPoOffices(offices);
+      })
+      .catch(() => {
+        if (!cancelled) setPoOffices([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOrder, practiceId]);
 
   async function loadStockMap(requests: InventoryStockRequest[]) {
     const pairs = new Map<string, { officeId: number; itemId: number }>();
@@ -473,7 +526,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
       <p className="settings-section-description">
         {isTransfer || isFill
           ? 'Prefer Main first (down to 0 — that may put the item on the order list back to max), then other locations over par, then other offices over par. Only pull another location below par if Main is empty. To is short of par; uncovered asks show From as —. Locations at or over par are not destinations.'
-          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that.'}
+          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that. Everyone can view this list. Placing an order or adding a line is for the inventory manager of this office.'}
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
@@ -531,9 +584,14 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             </select>
           </label>
         )}
-        {isOrder && branchId !== '' && rows.length > 0 ? (
+        {isOrder && canActOnOrder && rows.length > 0 ? (
           <button type="button" className="btn primary" onClick={() => setOrderModalOpen(true)}>
             Order
+          </button>
+        ) : null}
+        {canActOnOrder ? (
+          <button type="button" className="btn secondary" onClick={() => setSupplyModalOpen(true)}>
+            + Order List
           </button>
         ) : null}
       </div>
@@ -896,6 +954,93 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
           </table>
         </div>
       )}
+      {isOrder && branchId !== '' ? (
+        <div style={{ marginTop: 28 }}>
+          <h3 style={{ marginBottom: 8 }}>Office supplies & unlisted items</h3>
+          <p className="settings-muted" style={{ marginTop: 0 }}>
+            Added by hand for this office. Catalog matches and things that are not in inventory,
+            such as paper towels. This list is separate from the par-driven order list and does not
+            change on-hand counts.
+          </p>
+          {supplyOrders.length === 0 ? (
+            <p className="settings-muted">Nothing added for this office yet.</p>
+          ) : (
+            <div className="settings-table-container">
+              <table className="settings-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th>Added by</th>
+                    {canActOnOrder ? <th /> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {supplyOrders.map((row) => (
+                    <tr key={row.id}>
+                      <td>
+                        <strong>{row.label}</strong>
+                        <div className="settings-muted" style={{ fontSize: 12 }}>
+                          {row.inventoryItemId != null
+                            ? row.itemCode
+                              ? `Catalog · ${row.itemCode}`
+                              : 'Catalog'
+                            : 'Unlisted'}
+                          {row.note ? ` · ${row.note}` : ''}
+                        </div>
+                      </td>
+                      <td>{row.quantity}</td>
+                      <td>{row.requestedByName ?? '—'}</td>
+                      {canActOnOrder ? (
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={supplyBusyId === row.id}
+                            onClick={() => {
+                              setSupplyBusyId(row.id);
+                              void resolveOfficeSupplyOrder(practiceId, row.id, 'done')
+                                .then(() => {
+                                  setSupplyOrders((prev) => prev.filter((r) => r.id !== row.id));
+                                  setToast('Marked ordered');
+                                  window.setTimeout(() => setToast(null), 2500);
+                                })
+                                .catch((e: unknown) => {
+                                  setError(e instanceof Error ? e.message : 'Could not update that line');
+                                })
+                                .finally(() => setSupplyBusyId(null));
+                            }}
+                          >
+                            Ordered
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={supplyBusyId === row.id}
+                            onClick={() => {
+                              setSupplyBusyId(row.id);
+                              void resolveOfficeSupplyOrder(practiceId, row.id, 'cancelled')
+                                .then(() => {
+                                  setSupplyOrders((prev) => prev.filter((r) => r.id !== row.id));
+                                })
+                                .catch((e: unknown) => {
+                                  setError(e instanceof Error ? e.message : 'Could not remove that line');
+                                })
+                                .finally(() => setSupplyBusyId(null));
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : null}
       {isOrder ? (
         <div style={{ marginTop: 32 }}>
           <h3 style={{ marginBottom: 8 }}>Orders placed</h3>
@@ -979,6 +1124,22 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             setToast('Order recorded. Inventory is unchanged until receive.');
             window.setTimeout(() => setToast(null), 3500);
             void reload();
+          }}
+        />
+      ) : null}
+      {isOrder && supplyModalOpen && branchId !== '' ? (
+        <AddOfficeSupplyOrderModal
+          open
+          practiceId={practiceId}
+          offices={branches.map((b) => ({ id: b.id, name: b.name }))}
+          initialBranchId={Number(branchId)}
+          onClose={() => setSupplyModalOpen(false)}
+          onAdded={(addedBranchId, label) => {
+            setToast(`Added ${label}`);
+            window.setTimeout(() => setToast(null), 2500);
+            if (addedBranchId === Number(branchId)) {
+              void listOfficeSupplyOrders(practiceId, addedBranchId).then(setSupplyOrders);
+            }
           }}
         />
       ) : null}

@@ -2,6 +2,8 @@ import type { Appointment } from '../api/roomLoader';
 import type { PatientPrescription, PatientProblem, SoapEncounter } from '../api/visitWorkflow';
 import { PE_SYSTEMS, peExamFromValue } from '../components/soap/peTemplate';
 import type { CaseHistoryCitation } from './chartCitation';
+import type { HouseholdPdfExcerpt } from './buildHouseholdSource';
+import type { LabSourceEntry } from './patientLabSource';
 import {
   buildChartRowsFromMedicalRecord,
   type ChartRow,
@@ -358,6 +360,10 @@ export function buildCaseHistorySource(opts: {
   asOfDate: string;
   /** Other pets in the household (include inactive) for recent-loss context. */
   householdPets?: HouseholdPetStatusInput[];
+  /** Scout IDEXX and in-house lab results, newest first. */
+  labs?: LabSourceEntry[];
+  /** Text read from previous-record / outside-clinic PDFs on the chart. */
+  pdfExcerpts?: HouseholdPdfExcerpt[];
 }): CaseHistorySource {
   const citations: CaseHistoryCitation[] = [];
   const lines: string[] = [];
@@ -449,6 +455,33 @@ export function buildCaseHistorySource(opts: {
     }
   }
   lines.push('');
+
+  const labs = opts.labs ?? [];
+  if (labs.length) {
+    lines.push('Lab results in Scout (IDEXX and in-house), newest first:');
+    for (const lab of labs) {
+      const date = lab.date ?? 'undated';
+      citations.push({
+        ref: lab.ref,
+        date,
+        label: lab.label,
+        href: patientChartHref(opts.patientId),
+      });
+      lines.push(`- [ref:${lab.ref}] ${date} ${lab.label}`);
+      lines.push(...indentBlock(clip(lab.text, EVENT_BODY_CAP)));
+    }
+    lines.push('');
+  }
+
+  const pdfs = (opts.pdfExcerpts ?? []).filter((p) => p.text.trim());
+  if (pdfs.length) {
+    lines.push('Previous-record PDFs on the chart (text read from the file):');
+    for (const pdf of pdfs) {
+      lines.push(`- ${pdf.date ?? 'undated'} "${pdf.name}":`);
+      lines.push(...indentBlock(clip(pdf.text.replace(/\s+/g, ' '), 2500)));
+    }
+    lines.push('');
+  }
 
   const soaps = [...opts.encounters]
     .sort((a, b) => {

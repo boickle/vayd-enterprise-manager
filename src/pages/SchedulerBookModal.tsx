@@ -76,7 +76,6 @@ import {
   formatAddressLine,
 } from '../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
-import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
 import {
   draftSlotOfferMessage,
   formatSendSlotOfferError,
@@ -111,10 +110,7 @@ import { findScheduleOptimizeQueueItemForAppointments } from '../utils/scheduleO
 import {
   appendExploreAlternativeCreatedStaffNote,
   appendExploreAlternativeSourceStaffNote,
-  appendOptimizedMoveStaffNote,
-  appendRescheduledByStaffNote,
   formatStaffNoteAppointmentWhen,
-  resolveAppointmentChangeActorFromAuth,
 } from '../utils/appointmentChangeAuditNote';
 import {
   filterAppointmentTypesByIds,
@@ -2491,17 +2487,8 @@ export function SchedulerBookModal({
 
       const descriptionForNewBook = (raw: string) => raw.trim();
 
-      const bookActor = resolveAppointmentChangeActorFromAuth({
-        token,
-        userEmail,
-        doctorId,
-        providers,
-      });
-
-      const staffNotesForNewBook = (raw: string) => {
-        const trimmed = raw.trim();
-        return appendBookedStaffNote(trimmed || null, bookActor, practiceTz).trim();
-      };
+      // Who booked it and when is in the appointment History, not the staff notes.
+      const staffNotesForNewBook = (raw: string) => raw.trim();
 
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
       const forwardBookingEntryId = prefill?.forwardBookingEntryId;
@@ -2534,13 +2521,17 @@ export function SchedulerBookModal({
         (Boolean(prefill?.scheduleOptimizeMove) || queuedOptimize?.status === 'queued');
       const optimizeDriveDeltaMin =
         prefill?.scheduleOptimizeDriveDeltaMin ?? queuedOptimize?.driveDeltaMin ?? null;
-      const staffNotesForReschedule = (
-        raw: string | null | undefined,
-        originalStartIso?: string | null
-      ) =>
-        useOptimizeMoveNote
-          ? appendOptimizedMoveStaffNote(raw, bookActor, practiceTz, optimizeDriveDeltaMin)
-          : appendRescheduledByStaffNote(raw, bookActor, practiceTz, originalStartIso);
+      // The reschedule (from → to, who, when) is recorded in the appointment History.
+      // An optimization move adds why, with the drive time saved.
+      const rescheduleChangeNote = useOptimizeMoveNote
+        ? `Moved by route optimization${
+            optimizeDriveDeltaMin != null &&
+            Number.isFinite(optimizeDriveDeltaMin) &&
+            optimizeDriveDeltaMin < 0
+              ? ` (saved ${Math.abs(Math.round(optimizeDriveDeltaMin))} min drive)`
+              : ''
+          }`
+        : null;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -2628,8 +2619,8 @@ export function SchedulerBookModal({
             ...(!perVisitReschedule ? { needsPremeds } : {}),
             appointmentTypeId: Number(resolvedAppointmentTypeId),
             description: rawDescription || null,
-            instructions:
-              staffNotesForReschedule(rawInstructions || null, originalStartIso).trim() || null,
+            instructions: (rawInstructions ?? '').trim() || null,
+            ...(rescheduleChangeNote ? { changeNote: rescheduleChangeNote } : {}),
             ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });

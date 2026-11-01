@@ -158,6 +158,7 @@ vi.mock('../api/inventoryOps', async (orig) => ({
     },
   ]),
   listPurchaseOrders: vi.fn(async () => []),
+  listOfficeSupplyOrders: vi.fn(async () => []),
   listSuppliers: vi.fn(async () => []),
   resolveStockRequest: vi.fn(),
 }));
@@ -168,6 +169,12 @@ vi.mock('../utils/syncFillList', async (orig) => ({
     fillSources: [],
     orderBreakdowns: [],
   })),
+}));
+vi.mock('../permissions/PermissionContext', () => ({
+  usePermissions: () => ({
+    hasRole: () => false,
+    effective: { roles: ['technician'], isPlatformAdmin: false },
+  }),
 }));
 vi.mock('../components/inventory/ParTransferModal', () => ({ default: () => null }));
 vi.mock('../components/inventory/PlaceOrderModal', () => ({ default: () => null }));

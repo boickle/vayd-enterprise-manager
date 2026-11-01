@@ -1382,7 +1382,7 @@ export default function ReceiveShipmentPage() {
         onClose={() => setNewItemFor(null)}
         onCreated={onNewItemCreated}
       />
-      <h1 className="settings-title">Receive Shipment</h1>
+      <h1 className="settings-title">Unbox Shipment</h1>
       {resumedDraft ? (
         <div
           className="settings-message"

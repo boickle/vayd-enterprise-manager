@@ -3,8 +3,6 @@ import {
   putAppointmentAlternateAddress,
 } from '../api/appointments';
 import type { Provider } from '../api/employee';
-import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
-import { resolveAppointmentChangeActorFromAuth } from '../utils/appointmentChangeAuditNote';
 import type { ManualBookPreviewDraft } from './routingCalendarPreviewStorage';
 import type { AppointmentType } from '../api/appointmentSettings';
 import { appointmentFormFlags } from './appointmentTypeSettings';
@@ -78,18 +76,8 @@ export async function commitManualBookPreviewDraft(
   inFlightManualBookKeys.add(lockKey);
 
   try {
-    const bookActor = resolveAppointmentChangeActorFromAuth({
-      token: ctx.token,
-      userEmail: ctx.userEmail,
-      doctorId: ctx.doctorId,
-      providers: ctx.providers,
-    });
-
-    const instructions = appendBookedStaffNote(
-      draft.instructions?.trim() || null,
-      bookActor,
-      ctx.practiceTz,
-    ).trim();
+    // Who booked it is in the appointment History.
+    const instructions = draft.instructions?.trim() ?? '';
 
     const created = await createAppointment({
       practiceId: draft.practiceId,

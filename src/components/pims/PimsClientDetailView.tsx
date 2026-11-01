@@ -60,6 +60,7 @@ import {
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { PimsClientMergeButton } from './PimsChartWorkBar';
 import { patientIsActiveInHousehold, patientStatusChip } from '../../utils/patientStatusDisplay';
+import InactivePetsToggle from './InactivePetsToggle';
 import { PetThumb, patientPhotoSrc } from './PetThumb';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import ClientCommunicationsPanel from './ClientCommunicationsPanel';
@@ -1330,6 +1331,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [visitsOpen, toggleVisitsOpen] = useClientSectionOpen(userId ?? null, 'visits');
   const [prefsOpen, togglePrefsOpen] = useClientSectionOpen(userId ?? null, 'prefs');
   const [householdOpen, toggleHouseholdOpen] = useClientSectionOpen(userId ?? null, 'household');
+  const [showInactivePets, setShowInactivePets] = useState(false);
   const [summaryOpen, toggleSummaryOpen] = useClientSectionOpen(userId ?? null, 'summary');
   const [syncOpen, toggleSyncOpen] = useClientSectionOpen(userId ?? null, 'sync');
   const reach = useClientReach();
@@ -1807,18 +1809,22 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           ) : undefined
         }
         belowTitle={(() => {
-          const activeHousehold = patients.filter((p) =>
-            patientIsActiveInHousehold(p as Record<string, unknown>),
-          );
-          if (!activeHousehold.length) return null;
+          const isActivePet = (p: (typeof patients)[number]) =>
+            patientIsActiveInHousehold(p as Record<string, unknown>);
+          const activeHousehold = patients.filter(isActivePet);
+          const inactiveCount = patients.length - activeHousehold.length;
+          const shownPets = showInactivePets ? patients : activeHousehold;
+          if (!shownPets.length && !inactiveCount) return null;
           return (
             <ul
               className="pims-emr-household__pets pims-emr-household__pets--under-name"
-              aria-label="Active patients"
+              aria-label={showInactivePets ? 'Patients' : 'Active patients'}
             >
-              {[...activeHousehold]
-                .sort((a, b) =>
-                  (pickStr(a.name) ?? '').localeCompare(pickStr(b.name) ?? ''),
+              {[...shownPets]
+                .sort(
+                  (a, b) =>
+                    Number(!isActivePet(a)) - Number(!isActivePet(b)) ||
+                    (pickStr(a.name) ?? '').localeCompare(pickStr(b.name) ?? ''),
                 )
                 .map((p, idx) => {
                   const pid = p.id != null ? String(p.id) : '';
@@ -1828,7 +1834,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   const sexTone = patientSexHighlightTone(p as never);
                   const sexClass =
                     sexTone === 'female' ? ' is-female' : sexTone === 'male' ? ' is-male' : '';
-                  const petActive = p.isActive !== false;
+                  const petActive = isActivePet(p);
                   const membership =
                     (pid ? petMembershipById[pid] : null) ?? patientMembershipFromRecord(p);
                   const heart = membership.isMember ? (
@@ -1848,6 +1854,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                         <Link
                           className={`pims-emr-household__pet${sexClass}${petActive ? '' : ' is-inactive'}`}
                           to={href}
+                          title={petActive ? undefined : `${pickStr(p.name) ?? 'This pet'} is inactive`}
                         >
                           <PetThumb
                             src={petImageSrc(pid, p.imageUrl)}
@@ -1866,6 +1873,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     </li>
                   );
                 })}
+              <InactivePetsToggle
+                count={inactiveCount}
+                shown={showInactivePets}
+                onToggle={() => setShowInactivePets((v) => !v)}
+              />
             </ul>
           );
         })()}

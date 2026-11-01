@@ -15,6 +15,7 @@ import {
   type MedicalRecordBundle,
 } from './patientChartFromMedicalRecord';
 import { htmlToPlainText, looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
+import type { LabSourceEntry } from './patientLabSource';
 
 export type HouseholdPdfExcerpt = {
   name: string;
@@ -32,6 +33,8 @@ export type HouseholdPetSourceInput = HouseholdPetStatusInput & {
   encounters?: SoapEncounter[];
   /** Text pulled from previous-record / outside-clinic PDFs. */
   pdfExcerpts?: HouseholdPdfExcerpt[];
+  /** Scout IDEXX and in-house lab results, newest first. */
+  labs?: LabSourceEntry[];
 };
 
 function money(n: number): string {
@@ -175,6 +178,26 @@ function appendPetChart(lines: string[], pet: HouseholdPetSourceInput): void {
   if (soaps.length) {
     lines.push('SOAP notes:');
     for (const enc of soaps) lines.push(...compactSoapLines(enc));
+  }
+
+  // Imported eVet labs come from the medical record; Scout labs are passed in.
+  const evetLabs = rows
+    .filter((r) => r.source === 'lab')
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .slice(0, 6);
+  const scoutLabs = pet.labs ?? [];
+  if (evetLabs.length || scoutLabs.length) {
+    lines.push('Lab results (newest first):');
+    for (const lab of scoutLabs) {
+      lines.push(`- ${lab.date ?? 'undated'} ${lab.label}`);
+      lines.push(`    ${clip(lab.text.replace(/\s+/g, ' '), 700)}`);
+    }
+    for (const r of evetLabs) {
+      const when = isoDay(r.serviceDateIso) || 'undated';
+      const body = eventBody(r);
+      lines.push(`- ${when} ${r.typeLabel}: ${r.description}`);
+      if (body) lines.push(`    ${clip(body.replace(/\s+/g, ' '), 700)}`);
+    }
   }
 
   const pdfs = pet.pdfExcerpts?.filter((p) => p.text.trim()) ?? [];

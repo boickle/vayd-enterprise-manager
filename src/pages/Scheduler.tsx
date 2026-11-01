@@ -16,7 +16,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
-import { AlertTriangle, CalendarDays, Cat, Dog, Heart, Printer, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Cat, Dog, Heart, History, Printer, X } from 'lucide-react';
 import {
   appointmentZoneFullName,
   appointmentZoneShortLabel,
@@ -550,6 +550,12 @@ import {
 import { fetchAppointmentsRangeForLocalDay } from '../api/appointments';
 import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
 import './Scheduler.css';
+import {
+  AppointmentHistoryHost,
+  isAppointmentHistoryOpen,
+  openAppointmentHistory,
+} from '../components/appointmentHistory/appointmentHistoryHost';
+import { staffNoteAuditLines } from '../utils/appointmentHistoryFormat';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const PRACTICE_ID = currentPracticeId();
@@ -2602,9 +2608,36 @@ export function SchedulerHoverContent({
             ) : null}
           </>
         ) : null}
+        <div className="scheduler-tooltip-vh-history">
+          <button
+            type="button"
+            className="scheduler-tooltip-vh-history-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              openAppointmentHistory(appt.id, appointmentHistoryTitle(appt), {
+                createdLine,
+                earlierLines: staffNoteAuditLines(appt.instructions),
+              });
+            }}
+          >
+            <History size={13} aria-hidden />
+            History — who changed what
+          </button>
+        </div>
       </div>
     </>
   );
+}
+
+/** "Moses · Elizabeth Blaisdell" for the History window title. */
+function appointmentHistoryTitle(appt: Appointment): string | null {
+  const pets = patientsForAppointment(appt)
+    .map((p) => pickStr((p as { name?: unknown }).name))
+    .filter(Boolean)
+    .join(', ');
+  const c = appt.client;
+  const owner = c ? [pickStr(c.firstName), pickStr(c.lastName)].filter(Boolean).join(' ') : '';
+  return [pets, owner].filter(Boolean).join(' · ') || null;
 }
 
 function SchedulerAppointmentModal({
@@ -2783,6 +2816,24 @@ function SchedulerAppointmentModal({
                   appointmentModifiedByPerson(appt, providers)
                 )}
               />
+              <div className="scheduler-modal-history">
+                <button
+                  type="button"
+                  className="scheduler-tooltip-vh-history-btn"
+                  onClick={() =>
+                    openAppointmentHistory(appt.id, appointmentHistoryTitle(appt), {
+                      createdLine: formatAppointmentAuditWhenByLine(
+                        formatAppointmentWhenDisplay(pickStr(appt.created) ?? undefined),
+                        appointmentCreatedByPerson(appt, providers)
+                      ),
+                      earlierLines: staffNoteAuditLines(appt.instructions),
+                    })
+                  }
+                >
+                  <History size={13} aria-hidden />
+                  History — who changed what
+                </button>
+              </div>
             </div>
           </section>
 
@@ -3880,7 +3931,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       cancelHoverDismiss();
       hoverDismissTimerRef.current = window.setTimeout(() => {
         hoverDismissTimerRef.current = null;
-        if (hoverPinnedRef.current) return;
+        // Visit Highlights stays under the History window and is there when it closes.
+        if (hoverPinnedRef.current || isAppointmentHistoryOpen()) return;
         setHover((prev) => {
           if (apptId == null) return null;
           return prev?.appt.id === apptId ? null : prev;
@@ -4022,6 +4074,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (!hover) return;
 
     const onPointerDown = (ev: PointerEvent) => {
+      if (isAppointmentHistoryOpen()) return;
       const target = ev.target;
       if (!(target instanceof Node)) return;
       if (hoverTooltipRef.current?.contains(target)) return;
@@ -4032,12 +4085,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     };
 
     const onScroll = () => {
-      if (suppressHoverScrollDismissRef.current) return;
+      if (suppressHoverScrollDismissRef.current || isAppointmentHistoryOpen()) return;
       dismissHoverPopover();
     };
 
     const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') dismissHoverPopover();
+      // Esc closes History first; Visit Highlights stays.
+      if (ev.key === 'Escape' && !isAppointmentHistoryOpen()) dismissHoverPopover();
     };
 
     document.addEventListener('pointerdown', onPointerDown, true);
@@ -14392,6 +14446,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
 
+      <AppointmentHistoryHost />
       {roomLoaderPdfModalAppt ? (
         <SchedulerRoomLoaderPdfModal
           appt={roomLoaderPdfModalAppt}

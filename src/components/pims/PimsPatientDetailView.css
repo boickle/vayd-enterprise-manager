@@ -133,9 +133,37 @@
   background: #eff6ff;
 }
 
-.pims-emr-household__pet.is-inactive {
+/* Beats the pink / blue chip colors: an inactive pet reads as grey. */
+.pims-emr-household__pet.is-inactive:not(.is-current) {
+  border-color: #cbd5e1;
   color: #94a3b8;
   font-weight: 500;
+  border-style: dashed;
+  background: #f8fafc;
+}
+
+.pims-emr-household__pet.is-inactive .pims-emr-household__pet-img {
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+
+.pims-emr-household__inactive-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pims-emr-household__inactive-toggle:hover {
+  border-color: #94a3b8;
+  color: #334155;
 }
 
 .pims-emr-household__pet-heart {
@@ -1369,6 +1397,65 @@
   row-gap: 10px;
   padding-bottom: 12px;
   margin-bottom: 12px;
+}
+
+.pims-detail--patient-inactive .pims-detail__header {
+  background: #f8fafc;
+  border: 2px solid #94a3b8;
+  border-radius: 14px;
+  padding: 14px 16px 10px;
+}
+
+.pims-detail--patient-inactive.pims-detail--patient-memorial .pims-detail__header {
+  background: #fff5f5;
+  border-color: #dc2626;
+}
+
+.pims-detail--patient-inactive .pims-detail__avatar {
+  opacity: 0.78;
+  filter: grayscale(0.4);
+}
+
+.pims-detail--patient-inactive .pims-emr-title__name {
+  color: #475569;
+}
+
+.pims-detail--patient-inactive.pims-detail--patient-memorial .pims-emr-title__name {
+  color: #991b1b;
+}
+
+.pims-emr-inactive-banner {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  border: 2px solid #64748b;
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.pims-emr-inactive-banner--memorial {
+  border-color: #b91c1c;
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.pims-emr-inactive-banner__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+
+.pims-emr-inactive-banner__body {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .pims-detail--emr .pims-detail__header-span {

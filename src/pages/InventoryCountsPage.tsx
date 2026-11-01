@@ -6,6 +6,7 @@ import {
   patchCountLine,
   startCountSession,
   getOpenCountSession,
+  getWeeklyCountOffices,
   submitCountLine,
   submitCountSession,
   type StaffCountLine,
@@ -13,12 +14,16 @@ import {
   type StaffCountSession,
 } from '../api/inventoryCounts';
 import { ExpirationDateField } from '../components/inventory/ExpirationDateField';
+import AddToWeeklyCountModal, { addedSummary } from '../components/inventory/AddToWeeklyCountModal';
+import { usePermissions } from '../permissions/PermissionContext';
 import { apiErrorMessage } from '../api/http';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { readImpersonation } from '../auth/impersonationSession';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
+/** Admins and practice managers by default (vayd-api permission-catalog.ts). */
+const WEEKLY_ADD_PERMISSION = 'inventory.count.add_weekly';
 const UNASSIGNED_LOT = 'UNASSIGNED';
 
 type DraftCell = {
@@ -193,25 +198,45 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const [savingId, setSavingId] = useState<number | null>(null);
 
   const isFull = kind === 'full';
+  const { can } = usePermissions();
+  const [addOpen, setAddOpen] = useState(false);
+  // View-as is read-only, so the add button stays hidden there too.
+  const canAddWeekly = !isFull && can(WEEKLY_ADD_PERMISSION) && readImpersonation() == null;
+
+  function showSheet(next: StaffCountSession) {
+    setSession(next);
+    const nextDrafts: Record<number, DraftCell[]> = {};
+    for (const line of next.lines) {
+      nextDrafts[line.id] = cellsFromLine(line);
+    }
+    setDrafts(nextDrafts);
+  }
 
   useEffect(() => {
     let cancelled = false;
-    void listPracticeBranches(practiceId)
-      .then((list) => {
+    void Promise.all([
+      listPracticeBranches(practiceId),
+      isFull
+        ? Promise.resolve('all' as const)
+        : getWeeklyCountOffices(practiceId).catch(() => [] as number[]),
+    ])
+      .then(([list, offices]) => {
         if (cancelled) return;
         const active = list.filter((b) => b.isActive !== false);
-        setBranches(active);
+        const visible =
+          offices === 'all' ? active : active.filter((b) => offices.includes(b.id));
+        setBranches(visible);
         let initial: number | null = null;
         try {
           const stored = localStorage.getItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`);
           if (stored) {
             const n = Number(stored);
-            if (Number.isFinite(n) && active.some((b) => b.id === n)) initial = n;
+            if (Number.isFinite(n) && visible.some((b) => b.id === n)) initial = n;
           }
         } catch {
           /* ignore */
         }
-        setBranchId(initial ?? active.find((b) => b.isDefault)?.id ?? active[0]?.id ?? null);
+        setBranchId(initial ?? visible.find((b) => b.isDefault)?.id ?? visible[0]?.id ?? null);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load offices');
@@ -219,7 +244,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [practiceId]);
+  }, [practiceId, isFull]);
 
   useEffect(() => {
     if (branchId == null) {
@@ -245,12 +270,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
           setNoOpenSheet(true);
           return;
         }
-        setSession(next);
-        const nextDrafts: Record<number, DraftCell[]> = {};
-        for (const line of next.lines) {
-          nextDrafts[line.id] = cellsFromLine(line);
-        }
-        setDrafts(nextDrafts);
+        showSheet(next);
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -460,7 +480,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         <summary className="settings-muted" style={{ cursor: 'pointer' }}>
           {isFull
             ? 'Count each lot at the locations you check. Blind count: on-hand is hidden.'
-            : 'Due A/B/C items (up to 20). Each location enters its own count. Blind count: on-hand is hidden.'}{' '}
+            : `Due A/B/C items (up to ${session?.weeklyCap ?? 20} a week, plus any a manager adds). Each location enters its own count. Blind count: on-hand is hidden.`}{' '}
           <span style={{ textDecoration: 'underline' }}>How it works</span>
         </summary>
         <p className="settings-muted" style={{ margin: '6px 0 0' }}>
@@ -516,6 +536,12 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
           {error}
         </div>
       )}
+      {!isFull && branches.length === 0 && !error ? (
+        <p className="settings-muted" style={{ margin: '0 0 8px' }}>
+          No weekly count office is assigned to you. You see your default office, your controlled
+          substance office, and any office where you have a role.
+        </p>
+      ) : null}
       {noOpenSheet ? (
         <p className="settings-muted" style={{ margin: '0 0 8px' }}>
           No {isFull ? 'full' : 'weekly'} count sheet is open for this office yet.
@@ -581,6 +607,21 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             />
             <span>Show posted ({doneCount})</span>
           </label>
+        )}
+        {canAddWeekly && branchId != null && (session || noOpenSheet) && (
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={busy || editingLineId != null}
+            title={
+              editingLineId != null
+                ? 'Save or cancel the row you are editing first'
+                : 'Put more items on this week’s count, on top of the system’s picks'
+            }
+            onClick={() => setAddOpen(true)}
+          >
+            + Add to Weekly Count
+          </button>
         )}
         {session && session.status === 'open' && (
           <button
@@ -702,6 +743,11 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                             <div className="settings-muted" style={{ fontSize: 12 }}>
                               Also: {line.aliases.slice(0, 4).join(', ')}
                               {line.aliases.length > 4 ? '…' : ''}
+                            </div>
+                          ) : null}
+                          {line.addedManually ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              Added by {line.addedByName ?? 'a manager'}
                             </div>
                           ) : null}
                           {line.submitted ? (
@@ -959,6 +1005,23 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
           </table>
         </div>
       )}
+      {canAddWeekly && branchId != null ? (
+        <AddToWeeklyCountModal
+          open={addOpen}
+          practiceId={practiceId}
+          branchId={branchId}
+          branchName={branches.find((b) => b.id === branchId)?.name ?? 'this office'}
+          onSheetItemIds={(session?.lines ?? []).map((l) => l.inventoryItemId)}
+          onClose={() => setAddOpen(false)}
+          onAdded={(result) => {
+            setNoOpenSheet(false);
+            setEditingLineId(null);
+            showSheet(result);
+            setToast(addedSummary(result));
+            window.setTimeout(() => setToast(null), 3500);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

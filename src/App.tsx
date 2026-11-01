@@ -195,7 +195,7 @@ function MobileNav() {
         </button>
         {open === 'inventory' && (
           <div className="mobile-nav__dropdown" role="menu">
-            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/receive')}>Receive</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/receive')}>Unbox</button>
             <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/transfer-list')}>Transfer List</button>
             <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/move')}>Move</button>
           </div>

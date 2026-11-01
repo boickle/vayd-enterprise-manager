@@ -25,6 +25,7 @@ const toDraft = (s: CountAlertSettings): Draft => ({
   shrinkTaskEnabled: s.shrinkTaskEnabled,
   shrinkPctLimit: String(s.shrinkPctLimit),
   accuracyPctLimit: String(s.accuracyPctLimit),
+  weeklyCountCap: String(s.weeklyCountCap ?? 20),
 });
 
 export default function SettingsCountAlerts() {
@@ -71,6 +72,7 @@ export default function SettingsCountAlerts() {
       shrinkTaskEnabled: Boolean(draft.shrinkTaskEnabled),
       shrinkPctLimit: n('shrinkPctLimit'),
       accuracyPctLimit: n('accuracyPctLimit'),
+      weeklyCountCap: Math.min(200, Math.max(1, Math.round(n('weeklyCountCap') || 20))),
     })
       .then((s) => {
         setDraft(toDraft(s));
@@ -87,6 +89,31 @@ export default function SettingsCountAlerts() {
 
   return (
     <div>
+      <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Weekly count</h3>
+      <label className="settings-label" style={{ marginBottom: 8 }}>
+        Items per weekly count, per office
+        <input
+          className="settings-input"
+          type="number"
+          min={1}
+          max={200}
+          step={1}
+          style={{ width: 90 }}
+          value={String(draft.weeklyCountCap)}
+          onChange={(e) => setDraft({ ...draft, weeklyCountCap: e.target.value })}
+          aria-label="Items per weekly count, per office"
+        />
+      </label>
+      <p className="settings-muted" style={{ fontSize: 13, marginTop: 0 }}>
+        How many due items the system puts on each office&rsquo;s weekly count every Monday (1–200,
+        default 20). Items not finished carry over and use part of next week&rsquo;s number. Raise
+        it for the first months after go-live to get through everything sooner. Items a manager adds
+        with &ldquo;+ Add to Weekly Count&rdquo; are extra and don&rsquo;t count toward it. A
+        reminder goes out Thursday morning for anything still uncounted.
+      </p>
+      <h3 style={{ fontSize: 15, fontWeight: 600, margin: '20px 0 8px' }}>
+        Count difference alerts
+      </h3>
       <label className="settings-checkbox-item" style={{ marginBottom: 12 }}>
         <input
           type="checkbox"

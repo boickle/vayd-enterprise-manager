@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withoutHandlingSection } from './chartRecordsPdf';
+import { labReportBriefText, labReportFromInHouse, withoutHandlingSection } from './chartRecordsPdf';
 
 const summary = `REMINDERS
 Overdue:
@@ -218,5 +218,70 @@ describe('lab results print as tables', () => {
     expect(report.sections[0]!.rows.map((r) => r.flag)).toEqual(['', 'L', 'H']);
     expect(report.meta).toContain('Accession 123');
     expect(JSON.stringify(report)).not.toMatch(/critical/i);
+  });
+});
+
+describe('in-house lab forms on a printed record', () => {
+  const el = (o: Record<string, unknown>) =>
+    ({ key: 'k', name: 'Test', valueType: 'number', min: null, max: null, units: null, ...o }) as never;
+  const result = (o: Record<string, unknown> = {}) =>
+    ({
+      id: 1,
+      patientId: 7,
+      status: 'complete',
+      templateName: 'CBC',
+      templateMode: 'analytes',
+      summary: null,
+      resultedAt: '2026-10-20T15:00:00Z',
+      serviceDate: '2026-10-20',
+      resultedBy: { firstName: 'Abby', lastName: 'Messina' },
+      elementsSnapshot: [
+        el({ key: 'wbc', name: 'WBC', min: 5.5, max: 16.9, units: 'K/uL' }),
+        el({ key: 'hct', name: 'HCT', min: 37, max: 55, units: '%' }),
+        el({ key: 'hw', name: 'Heartworm', valueType: 'select', options: ['Negative', 'Positive'], abnormalOptions: ['Positive'] }),
+        el({ key: 'blank', name: 'Blank row' }),
+      ],
+      values: {
+        wbc: { value: '22.1', comments: null },
+        hct: { value: '30', comments: 'mild hemolysis' },
+        hw: { value: 'Positive', comments: null },
+      },
+      ...o,
+    }) as never;
+
+  it('prints each value with its range and flags high, low and abnormal', () => {
+    const report = labReportFromInHouse([result()]);
+    expect(report.meta).toContain('Resulted by Abby Messina');
+    const [sec] = report.sections;
+    expect(sec.name).toBe('CBC');
+    expect(sec.rows).toEqual([
+      { test: 'WBC', result: '22.1', units: 'K/uL', range: '5.5 - 16.9', flag: 'H' },
+      { test: 'HCT', result: '30', units: '%', range: '37 - 55', flag: 'L' },
+      { test: 'Heartworm', result: 'Positive', units: '', range: 'Negative', flag: 'A' },
+    ]);
+    expect(sec.notes).toContain('HCT: mild hemolysis');
+  });
+
+  it('prints a write-up form as text and marks a pending form', () => {
+    const report = labReportFromInHouse([
+      result({ templateMode: 'summary', elementsSnapshot: [], values: {}, summary: '<p>Cytology: cocci 3+</p>' }),
+      result({ status: 'pending', templateName: 'UA', elementsSnapshot: [], values: {} }),
+    ]);
+    expect(report.sections[0].notes.join(' ')).toContain('Cytology: cocci 3+');
+    expect(report.sections[1].notes).toContain('Results pending.');
+  });
+
+  it('gives the AI summaries a short line per panel', () => {
+    const text = labReportBriefText(labReportFromInHouse([result()]));
+    expect(text).toContain('CBC: WBC 22.1 K/uL [5.5 - 16.9] H; HCT 30 % [37 - 55] L; Heartworm Positive [Negative] A.');
+    expect(text).toContain('CBC note: HCT: mild hemolysis');
+  });
+
+  it('lists only out-of-range values from a long panel', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      test: `T${i}`, result: '1', units: '', range: '0 - 2', flag: i === 3 ? 'H' : '',
+    }));
+    const text = labReportBriefText({ meta: '', notes: [], sections: [{ name: 'Chem', rows: rows as never, notes: [] }] });
+    expect(text).toBe('Chem: out of range: T3 1 [0 - 2] H; other 9 values within range.');
   });
 });

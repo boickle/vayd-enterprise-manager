@@ -1,4 +1,6 @@
 import { DateTime } from 'luxon';
+import { fetchPatientLabSource } from './patientLabSource';
+import { extractHouseholdPdfExcerpts } from './householdChartPdfs';
 import { fetchPatientByIdStaff, fetchPatientMedicalRecordStaff } from '../api/patients';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
@@ -89,6 +91,10 @@ export async function loadPatientHistorySource(opts: {
         .filter((p): p is HouseholdPetStatusInput => p != null);
     }
   }
+  const [labs, pdfExcerpts] = await Promise.all([
+    fetchPatientLabSource(Number(opts.patientId)),
+    extractHouseholdPdfExcerpts(Number(opts.patientId), medicalRecord as MedicalRecordBundle | null, 3),
+  ]);
   const src = buildCaseHistorySource({
     patientId: String(opts.patientId),
     patientName: opts.patientName,
@@ -102,6 +108,8 @@ export async function loadPatientHistorySource(opts: {
     medicalRecord: medicalRecord as MedicalRecordBundle | null,
     asOfDate: today,
     householdPets,
+    labs,
+    pdfExcerpts,
   });
   return { text: src.text, owner, today };
 }

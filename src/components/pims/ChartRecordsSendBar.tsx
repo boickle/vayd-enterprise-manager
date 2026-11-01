@@ -13,6 +13,7 @@ import {
   htmlToText,
   isFileRow,
   labReportFromIdexx,
+  labReportFromInHouse,
   recordDetailText,
   recordProvider,
   recordsPdfFilename,
@@ -222,6 +223,14 @@ export default function ChartRecordsSendBar({
               ? { ...textEntry(row, ''), lab: labReportFromIdexx(result) }
               : textEntry(row, 'Results are on file at the practice.')
           );
+          continue;
+        }
+        if (row.labResults?.length) {
+          // In-house lab forms print as a results table under the row (a charge or a Lab row).
+          entries.push({
+            ...textEntry(row, rowDetail(row)),
+            lab: labReportFromInHouse(row.labResults),
+          });
           continue;
         }
         if (!isFileRow(row)) {

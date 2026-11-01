@@ -120,6 +120,11 @@ describe('Pharmacy menus by role', () => {
     expect(t.manage).toBeNull();
   });
 
+  it('a technician does not see the mail order queue', () => {
+    as(['technician'], []);
+    expect(tabs().queue).toBeNull();
+  });
+
   it('a practice manager sees Manage and Setup', () => {
     as(['practice_manager'], ['store.listing.manage', 'mail_order.fulfill', 'store.subscription.manage']);
     const t = tabs();

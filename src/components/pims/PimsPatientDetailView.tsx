@@ -126,6 +126,7 @@ import { PimsExamDetailModal } from './PimsExamDetailModal';
 import { PimsMedicalNoteModal } from './PimsMedicalNoteModal';
 import PimsSoapNoteModal from './PimsSoapNoteModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
+import InactivePetsToggle from './InactivePetsToggle';
 import PimsChartWorkBar, { PimsPatientMergeButton } from './PimsChartWorkBar';
 import PimsChartCaseSummaryCard from './PimsChartCaseSummaryCard';
 import PatientMembershipPanel from './PatientMembershipPanel';
@@ -188,6 +189,7 @@ import {
 import { BreedPicker, SpeciesSelect, useSpeciesCatalog } from './detail/SpeciesBreedFields';
 import {
   patientActiveChip,
+  patientInactiveBanner,
   patientIsActiveInHousehold,
   patientStatusChip as statusChipFromRecord,
 } from '../../utils/patientStatusDisplay';
@@ -250,11 +252,10 @@ function householdPetsFromClient(raw: unknown, currentId: string): HouseholdPet[
   if (!Array.isArray(patients)) return [];
   const pets = patients
     .filter((p): p is Record<string, unknown> => p != null && typeof p === 'object' && p.id != null)
-    .filter((p) => patientIsActiveInHousehold(p))
     .map((p) => ({
       id: String(p.id),
       name: pickStr(p.name) ?? `Pet #${p.id}`,
-      active: p.isActive !== false,
+      active: patientIsActiveInHousehold(p),
       imageUrl: petImageSrc(String(p.id), p.imageUrl),
       isMember: patientMembershipFromRecord(p).isMember,
       membershipName: patientMembershipFromRecord(p).membershipName,
@@ -1345,6 +1346,7 @@ export default function PimsPatientDetailView({
   const [removeChartError, setRemoveChartError] = useState<string | null>(null);
   const [expandedRxKeys, setExpandedRxKeys] = useState<Set<string>>(() => new Set());
   const [householdPets, setHouseholdPets] = useState<HouseholdPet[]>([]);
+  const [showInactivePets, setShowInactivePets] = useState(false);
   const [householdClient, setHouseholdClient] = useState<Record<string, unknown> | null>(null);
   const reach = useClientReach();
 
@@ -1546,6 +1548,10 @@ export default function PimsPatientDetailView({
   const ownerZone = zoneLabel(client);
   const badge = payload ? patientActiveBadge(payload) : { label: '—', variant: 'muted' as const };
   const statusChip = payload ? patientStatusChip(payload) : null;
+  const inactiveBanner =
+    payload && !patientIsActiveInHousehold(payload as Record<string, unknown>)
+      ? patientInactiveBanner(payload as Record<string, unknown>)
+      : null;
 
   const allChartRows = useMemo(() => {
     const base = buildChartRowsFromMedicalRecord(
@@ -1979,7 +1985,7 @@ export default function PimsPatientDetailView({
 
   const record = payload as Record<string, unknown>;
   const scoutState = scoutManagedState(record, 'patient');
-  const isActive = record.isActive === true || record.active === true;
+  const isActive = patientIsActiveInHousehold(record);
 
   /** Refreshes local state from a write response, falling back to a re-fetch. */
   async function applyWriteResult(updated: unknown) {
@@ -2306,7 +2312,16 @@ export default function PimsPatientDetailView({
   ];
 
   return (
-    <div className="pims-detail pims-detail--emr">
+    <div
+      className={[
+        'pims-detail',
+        'pims-detail--emr',
+        inactiveBanner ? 'pims-detail--patient-inactive' : '',
+        inactiveBanner?.memorial ? 'pims-detail--patient-memorial' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {!embedded && (clientId || householdPets.length) ? (
         <nav className="pims-emr-household" aria-label="Household">
           {clientId ? (
@@ -2341,7 +2356,9 @@ export default function PimsPatientDetailView({
           )}
           {householdPets.length ? (
             <ul className="pims-emr-household__pets" aria-label="Patients">
-              {householdPets.map((pet) => {
+              {householdPets
+                .filter((pet) => showInactivePets || pet.active || pet.id === patientId)
+                .map((pet) => {
                 const current = pet.id === patientId;
                 const sexClass =
                   pet.sexTone === 'female'
@@ -2375,6 +2392,7 @@ export default function PimsPatientDetailView({
                       <Link
                         className={`pims-emr-household__pet${sexClass}${pet.active ? '' : ' is-inactive'}`}
                         to={`${patientsListPath}?patientId=${encodeURIComponent(pet.id)}`}
+                        title={pet.active ? undefined : `${pet.name} is inactive`}
                       >
                         <PetThumb src={pet.imageUrl} size={22} className="pims-emr-household__pet-img" />
                         {pet.name}
@@ -2384,6 +2402,11 @@ export default function PimsPatientDetailView({
                   </li>
                 );
               })}
+              <InactivePetsToggle
+                count={householdPets.filter((pet) => !pet.active && pet.id !== patientId).length}
+                shown={showInactivePets}
+                onToggle={() => setShowInactivePets((v) => !v)}
+              />
             </ul>
           ) : null}
         </nav>
@@ -2455,8 +2478,8 @@ export default function PimsPatientDetailView({
         }
         badges={
           <>
-            <PimsBadge tone={badge.variant}>{badge.label}</PimsBadge>
-            {statusChip ? (
+            {isActive ? <PimsBadge tone={badge.variant}>{badge.label}</PimsBadge> : null}
+            {isActive && statusChip ? (
               <PimsBadge tone={statusChip.variant}>{statusChip.label}</PimsBadge>
             ) : null}
             {scoutState.scoutManaged ? (
@@ -2543,6 +2566,17 @@ export default function PimsPatientDetailView({
         }
         afterReach={
           <>
+            {inactiveBanner ? (
+              <div
+                className={`pims-emr-inactive-banner${
+                  inactiveBanner.memorial ? ' pims-emr-inactive-banner--memorial' : ''
+                }`}
+                role="status"
+              >
+                <p className="pims-emr-inactive-banner__title">{inactiveBanner.title}</p>
+                <p className="pims-emr-inactive-banner__body">{inactiveBanner.body}</p>
+              </div>
+            ) : null}
             {payload ? (
               <PatientPremedsBanner
                 needsPremeds={payload.needsPremeds === true}

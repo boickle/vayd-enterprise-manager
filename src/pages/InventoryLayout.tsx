@@ -111,8 +111,7 @@ export default function InventoryLayout({
   // Manage and Setup: practice manager and admin only (owner decision, Oct 30, 2026).
   const canSetup = isAdmin || hasRole('practice_admin', 'practice_manager');
   const canManage = isAdmin || hasRole('practice_admin', 'practice_manager');
-  // Store, mail order queue and auto-ships by permission: practice management and the mail
-  // order roles; not inventory managers (owner decision, Oct 30, 2026).
+  // Mail order queue: mail order staff, practice manager, and admin (not technicians).
   const holdsStoreListings = useCan('store.listing.manage');
   const holdsStoreCategories = useCan('store.category.manage');
   const holdsAbandonedCarts = useCan('store.abandoned_cart.resend');
@@ -175,6 +174,15 @@ export default function InventoryLayout({
       />
     );
   }
+  const onMailQueue =
+    location.pathname === '/schedule/mail-orders' ||
+    location.pathname.startsWith('/schedule/mail-orders/');
+  if (!permissionsReady && onMailQueue) {
+    return <p className="settings-muted">Loading…</p>;
+  }
+  if (!canMailQueue && onMailQueue) {
+    return <Navigate to={`${basePath}/counts`} replace />;
+  }
 
   const catalogItems: NavItem[] = [
     { to: `${basePath}/items`, label: 'Items' },
@@ -210,7 +218,7 @@ export default function InventoryLayout({
   ];
   const moveOrderItems: NavItem[] = [
     { to: `${basePath}/counts`, label: 'Weekly Counts' },
-    { to: `${basePath}/receive`, label: 'Receive' },
+    { to: `${basePath}/receive`, label: 'Unbox' },
     { to: `${basePath}/move`, label: 'Move Items' },
     { to: `${basePath}/waste`, label: 'Waste / Adjust' },
     { to: `${basePath}/transfer-list`, label: 'Transfer List' },

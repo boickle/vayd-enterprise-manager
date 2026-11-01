@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchPatientLabSource, type LabSourceEntry } from '../../utils/patientLabSource';
 import { Link } from 'react-router';
 import { DateTime } from 'luxon';
 import { ChevronDown, ChevronUp, MessageSquare, Search, Send, Sparkles } from 'lucide-react';
@@ -198,6 +199,7 @@ export default function PimsClientHouseholdChatCard({
         let medicalRecord: MedicalRecordBundle | null = null;
         let encounters: SoapEncounter[] = [];
         let pdfExcerpts: Awaited<ReturnType<typeof extractHouseholdPdfExcerpts>> = [];
+        let labs: LabSourceEntry[] = [];
         if (Number.isFinite(pid) && pid > 0) {
           const [mr, soaps] = await Promise.all([
             fetchPatientMedicalRecordStaff(pid).catch(() => null),
@@ -206,7 +208,11 @@ export default function PimsClientHouseholdChatCard({
           medicalRecord = mr;
           encounters = soaps;
           // A few previous-record PDFs per pet — not every certificate or check-in.
-          pdfExcerpts = await extractHouseholdPdfExcerpts(pid, mr, 2);
+          // The most recent Scout labs per pet (IDEXX and in-house).
+          [pdfExcerpts, labs] = await Promise.all([
+            extractHouseholdPdfExcerpts(pid, mr, 2),
+            fetchPatientLabSource(pid, 5),
+          ]);
         }
         return {
           id: pet.id,
@@ -222,6 +228,7 @@ export default function PimsClientHouseholdChatCard({
           medicalRecord,
           encounters,
           pdfExcerpts,
+          labs,
         };
       }),
     );

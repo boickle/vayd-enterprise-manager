@@ -1347,3 +1347,29 @@ export async function fetchDoctorMonth(
     days,
   };
 }
+
+/** One field that changed on an appointment, as History shows it. */
+export type AppointmentFieldChange = {
+  field: string;
+  label: string;
+  from: string | null;
+  to: string | null;
+};
+
+/** One History entry: who did what to an appointment, and when. */
+export type AppointmentChangeEntry = {
+  id: number;
+  action: 'created' | 'updated' | 'deleted';
+  changes: AppointmentFieldChange[];
+  note: string | null;
+  actorName: string | null;
+  createdAt: string;
+};
+
+/** GET /appointments/:id/changes — History, newest first. */
+export async function listAppointmentChanges(id: number | string): Promise<AppointmentChangeEntry[]> {
+  const { data } = await http.get<AppointmentChangeEntry[]>(
+    `/appointments/${encodeURIComponent(String(id))}/changes`
+  );
+  return data;
+}

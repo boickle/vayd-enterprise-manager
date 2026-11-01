@@ -49,6 +49,9 @@ export type StaffCountLine = {
   requireLotNumber?: boolean;
   effectiveAbc: string;
   submitted: boolean;
+  /** A manager put this item on the weekly count with "+ Add to Weekly Count". */
+  addedManually?: boolean;
+  addedByName?: string | null;
   actualTotal: number | null;
   locations: StaffCountLocation[];
 };
@@ -57,6 +60,8 @@ export type StaffCountSession = {
   id: number;
   branchId: number;
   kind?: 'weekly' | 'full';
+  /** Weekly sheets: how many items the system picks per week (Settings → Count alerts). */
+  weeklyCap?: number;
   status: 'open' | 'submitted';
   created: string;
   submittedAt: string | null;
@@ -178,6 +183,30 @@ export async function getOpenCountSession(
   return data || null;
 }
 
+export type AddWeeklyCountItemsResult = StaffCountSession & {
+  added: number;
+  /** Already on this week's sheet. */
+  alreadyOnSheet: number;
+  /** Not an active stock item in this practice. */
+  notCountable: number;
+};
+
+/**
+ * "+ Add to Weekly Count" (admin / practice manager): chosen items, the next N due, or both.
+ * These are extra to the weekly limit. Starts the office's weekly sheet when none is open.
+ */
+export async function addWeeklyCountItems(
+  practiceId: number,
+  branchId: number,
+  body: { inventoryItemIds?: number[]; nextDue?: number }
+): Promise<AddWeeklyCountItemsResult> {
+  const { data } = await http.post<AddWeeklyCountItemsResult>(
+    `/practice/${practiceId}/branches/${branchId}/inventory-counts/weekly/items`,
+    body
+  );
+  return data;
+}
+
 export async function patchCountLine(
   practiceId: number,
   sessionId: number,
@@ -272,6 +301,14 @@ export async function markCountReviewed(
   return data;
 }
 
+/** Offices this person may open on Weekly Counts. */
+export async function getWeeklyCountOffices(practiceId: number): Promise<number[] | 'all'> {
+  const { data } = await http.get<{ offices: number[] | 'all' }>(
+    `/practice/${practiceId}/inventory-counts/my-offices`
+  );
+  return data?.offices === 'all' ? 'all' : Array.isArray(data?.offices) ? data.offices : [];
+}
+
 /** Offices whose count results the signed-in person can see. */
 export async function getCountReviewOffices(practiceId: number): Promise<number[] | 'all'> {
   const { data } = await http.get<{ offices: number[] | 'all' }>(
@@ -291,6 +328,8 @@ export type CountAlertSettings = {
   shrinkTaskEnabled: boolean;
   shrinkPctLimit: number;
   accuracyPctLimit: number;
+  /** How many items the system puts on each office's weekly count (1–200, default 20). */
+  weeklyCountCap: number;
 };
 
 export async function getCountAlertSettings(practiceId: number): Promise<CountAlertSettings> {
