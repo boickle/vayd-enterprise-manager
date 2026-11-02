@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  listCatalogItemChanges,
   listInventoryItemHistory,
   type InventoryItemHistoryKind,
   type InventoryItemHistoryRow,
@@ -64,9 +65,12 @@ export default function InventoryItemHistory({
   practiceId,
   inventoryItemId,
   branches,
+  itemType = 'inventory',
 }: {
   practiceId: number;
+  /** Id of the item named by itemType (a procedure or lab id for those types). */
   inventoryItemId: number;
+  itemType?: 'inventory' | 'procedure' | 'lab';
   branches: Array<{ id: number; name: string }>;
 }) {
   const [kind, setKind] = useState<InventoryItemHistoryKind>('all');
@@ -76,6 +80,7 @@ export default function InventoryItemHistory({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const inventory = itemType === 'inventory';
 
   const load = useCallback(
     async (offset: number) => {
@@ -83,12 +88,18 @@ export default function InventoryItemHistory({
       setLoading(true);
       setError(null);
       try {
-        const res = await listInventoryItemHistory(practiceId, inventoryItemId, {
-          kind,
-          branchId: branchId === '' ? undefined : branchId,
-          limit: PAGE_SIZE,
-          offset,
-        });
+        const res =
+          itemType === 'inventory'
+            ? await listInventoryItemHistory(practiceId, inventoryItemId, {
+                kind,
+                branchId: branchId === '' ? undefined : branchId,
+                limit: PAGE_SIZE,
+                offset,
+              })
+            : await listCatalogItemChanges(practiceId, itemType, inventoryItemId, {
+                limit: PAGE_SIZE,
+                offset,
+              });
         if (seq !== requestSeq.current) return;
         setTotal(res.total);
         setRows((prev) => (offset === 0 ? res.rows : [...prev, ...res.rows]));
@@ -99,7 +110,7 @@ export default function InventoryItemHistory({
         if (seq === requestSeq.current) setLoading(false);
       }
     },
-    [practiceId, inventoryItemId, kind, branchId]
+    [practiceId, inventoryItemId, itemType, kind, branchId]
   );
 
   useEffect(() => {
@@ -110,9 +121,11 @@ export default function InventoryItemHistory({
     <div style={{ marginBottom: 20 }}>
       <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>History</h3>
       <p className="settings-muted" style={{ margin: '0 0 12px' }}>
-        Stock received, used, moved, and adjusted at every branch, plus changes people made to this
-        item. Changes are recorded from Oct 22, 2026 on; earlier edits were not tracked.
+        {inventory
+          ? 'Stock received, used, moved, and adjusted at every branch, plus changes people made to this item. Changes are recorded from Oct 22, 2026 on; earlier edits were not tracked.'
+          : `Changes people made to this ${itemType}, including its quantity price breaks. Changes are recorded from Nov 1, 2026 on; earlier edits were not tracked.`}
       </p>
+      {inventory ? (
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <label className="settings-label" style={{ margin: 0 }}>
           Show
@@ -142,6 +155,7 @@ export default function InventoryItemHistory({
           </select>
         </label>
       </div>
+      ) : null}
 
       {error ? <p className="settings-error">{error}</p> : null}
       {loading && rows.length === 0 ? (

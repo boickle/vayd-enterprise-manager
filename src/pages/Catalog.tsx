@@ -3205,15 +3205,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 >
                   Associations
                 </button>
-                {detail.itemType === 'inventory' && (
-                  <button
-                    type="button"
-                    className={`inv-detail-tab${detailTab === 'history' ? ' inv-detail-tab--active' : ''}`}
-                    onClick={() => setDetailTab('history')}
-                  >
-                    History
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`inv-detail-tab${detailTab === 'history' ? ' inv-detail-tab--active' : ''}`}
+                  onClick={() => setDetailTab('history')}
+                >
+                  History
+                </button>
               </div>
 
               {!canEditItem && (
@@ -3222,8 +3220,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {detailTab === 'history' && detail.itemType === 'inventory' && selected && (
+              {detailTab === 'history' && selected && (
                 <InventoryItemHistory
+                  itemType={detail.itemType}
                   practiceId={practiceId}
                   inventoryItemId={selected.itemId}
                   branches={branches.filter((b) => b.isActive !== false)}
