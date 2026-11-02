@@ -612,6 +612,29 @@ export async function listOnlineStoreItems(practiceId: number) {
   return data ?? [];
 }
 
+export type StorePriceComparisonItem = {
+  inventoryItemId: number;
+  /** Null when the item has no store price of its own and sells at the clinic price. */
+  onlineStorePrice: number | null;
+  clinicPrice: number | null;
+  /** Clinic price with the mail-order office's override applied. */
+  mailOrderOfficePrice: number | null;
+};
+
+export type StorePriceComparison = {
+  branchId: number;
+  branchName: string | null;
+  items: StorePriceComparisonItem[];
+};
+
+/** Store prices next to the mail-order office's prices (Settings → mail-order fill office). */
+export async function getStorePriceComparison(practiceId: number) {
+  const { data } = await http.get<StorePriceComparison>(
+    `/practice/${practiceId}/online-store/price-comparison`
+  );
+  return data;
+}
+
 export async function listOnlineStoreListings(
   practiceId: number,
   opts?: { includeRemoved?: boolean }

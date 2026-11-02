@@ -35,8 +35,10 @@ import {
   type StoreItemRow,
   type StoreOptionFillResult,
   type StoreSaleType,
+  getStorePriceComparison,
+  type StorePriceComparisonItem,
 } from '../api/onlineStore';
-import { uploadInventoryItemImage } from '../api/inventoryTools';
+import { patchPracticeInventoryItem, uploadInventoryItemImage } from '../api/inventoryTools';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import StoreDescriptionEditor from './store/StoreDescriptionEditor';
 import StoreGiftCardSettingsEditor from '../components/onlineStore/StoreGiftCardSettings';
@@ -744,6 +746,93 @@ function AutoshipControls({
   );
 }
 
+function formatMoney(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  return `$${Number(value).toFixed(2)}`;
+}
+
+/** Store price input for one option. Saves to the inventory item's online store price. */
+function StoreOptionPriceInput({
+  value,
+  label,
+  disabled,
+  onSave,
+}: {
+  value: number | null;
+  label: string;
+  disabled?: boolean;
+  onSave: (price: number) => void;
+}) {
+  const shown = value != null ? Number(value).toFixed(2) : '';
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => setDraft(shown), [shown]);
+  const commit = () => {
+    const next = Number(draft);
+    if (draft.trim() === '' || !Number.isFinite(next) || next < 0) {
+      setDraft(shown);
+      return;
+    }
+    const rounded = Math.round(next * 100) / 100;
+    if (value != null && Math.abs(rounded - Number(value)) < 0.005) {
+      setDraft(shown);
+      return;
+    }
+    onSave(rounded);
+  };
+  return (
+    <span className="store-option-price">
+      <span className="store-option-price__sign">$</span>
+      <input
+        className="settings-input"
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step={0.01}
+        value={draft}
+        disabled={disabled}
+        aria-label={`Online store price for ${label}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            setDraft(shown);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </span>
+  );
+}
+
+/** Store price vs the mail-order office: lower online is good for the client. */
+function StorePriceCompareBadge({
+  storePrice,
+  officePrice,
+}: {
+  storePrice: number | null;
+  officePrice: number | null;
+}) {
+  if (storePrice == null || officePrice == null) {
+    return <span className="store-price-compare store-price-compare--none">—</span>;
+  }
+  const diff = Math.round((Number(storePrice) - Number(officePrice)) * 100) / 100;
+  if (Math.abs(diff) < 0.005) {
+    return <span className="store-price-compare store-price-compare--same">Same</span>;
+  }
+  const pct = Number(officePrice) > 0 ? Math.round((Math.abs(diff) / Number(officePrice)) * 100) : null;
+  const amount = `$${Math.abs(diff).toFixed(2)}${pct != null ? ` (${pct}%)` : ''}`;
+  return diff < 0 ? (
+    <span className="store-price-compare store-price-compare--lower" title="The online store costs less">
+      ▼ {amount} less online
+    </span>
+  ) : (
+    <span className="store-price-compare store-price-compare--higher" title="The online store costs more">
+      ▲ {amount} more online
+    </span>
+  );
+}
+
 function packRank(pack: string): number {
   const order = ['Individual tablet', 'Bottle of 30', 'Bottle of 60', 'Bottle of 90', 'Bottle of 100'];
   const idx = order.findIndex((label) => pack.startsWith(label));
@@ -1011,18 +1100,29 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
   const [bulkAutoshipFrequency, setBulkAutoshipFrequency] = useState('monthly');
   const [itemPage, setItemPage] = useState(1);
   const [imageTick, setImageTick] = useState(0);
+  const [priceComparison, setPriceComparison] = useState<{
+    officeName: string | null;
+    byItem: Map<number, StorePriceComparisonItem>;
+  }>({ officeName: null, byItem: new Map() });
 
   const load = async () => {
-    const [m, i, listingsRows, c, cats] = await Promise.all([
+    const [m, i, listingsRows, c, cats, compare] = await Promise.all([
       listEcwidMaps(practiceId),
       listOnlineStoreItems(practiceId),
       listOnlineStoreListings(practiceId, { includeRemoved: true }),
       listStoreCoupons(practiceId),
       listStoreCategories(practiceId).catch(() => []),
+      getStorePriceComparison(practiceId).catch(() => null),
     ]);
     setMaps(m);
     setItems(i);
     setListings(listingsRows);
+    if (compare) {
+      setPriceComparison({
+        officeName: compare.branchName,
+        byItem: new Map(compare.items.map((row) => [row.inventoryItemId, row])),
+      });
+    }
     setCoupons(c);
     setManagedCategories(cats.map((row) => row.name));
     const next: Record<number, boolean> = {};
@@ -1224,6 +1324,44 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
       }
       setFlash(last ? `${listing.name} was removed from the store.` : `Removed ${label}.`);
       await load();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Writes the inventory item's online store price (same field as the catalog item page). */
+  const saveVariantStorePrice = async (variant: StoreAdminVariant, onlineStorePrice: number) => {
+    const id = variant.inventoryItemId;
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await patchPracticeInventoryItem(practiceId, id, { onlineStorePrice });
+      setListings((prev) =>
+        prev.map((row) =>
+          row.variants.some((item) => item.inventoryItemId === id)
+            ? {
+                ...row,
+                variants: row.variants.map((item) =>
+                  item.inventoryItemId === id ? { ...item, onlineStorePrice } : item
+                ),
+              }
+            : row
+        )
+      );
+      setItems((prev) =>
+        prev.map((item) => (item.inventoryItemId === id ? { ...item, onlineStorePrice } : item))
+      );
+      setPriceComparison((prev) => {
+        const current = prev.byItem.get(id);
+        if (!current) return prev;
+        const byItem = new Map(prev.byItem);
+        byItem.set(id, { ...current, onlineStorePrice });
+        return { ...prev, byItem };
+      });
+      setFlash(`${variantDisplayName(variant)} is now ${formatMoney(onlineStorePrice)} online.`);
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
@@ -2226,21 +2364,19 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
               setItemPage(1);
             }}
           />
-        <div className="store-items-table-wrap">
-        <table className="inv-catalog-results__table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Approval default</th>
-              <th>Highlight on home</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {pagedListings.map((listing) => (
-              <tr key={listing.listingId}>
-                <td style={{ verticalAlign: 'top', minWidth: 320 }}>
-                  <div className="store-add-workspace__option-main">
+        <div className="store-item-cards">
+          {pagedListings.map((listing) => {
+            const isGiftCard = listing.kind === 'gift_card';
+            const officeLabel = priceComparison.officeName
+              ? `${priceComparison.officeName} price`
+              : 'Mail-order office price';
+            return (
+              <article
+                key={listing.listingId}
+                className={`store-item-card${listing.listed === false ? ' is-removed' : ''}`}
+              >
+                <header className="store-item-card__head">
+                  <div className="store-item-card__title">
                     <StorePhotoUpload
                       src={withImageBust(masterImageSrc(practiceId, listing), imageTick)}
                       label={listing.name}
@@ -2248,27 +2384,153 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                       title={`Upload photo for ${listing.name}`}
                       onFile={(file) => void uploadListingPhoto(listing, file)}
                     />
-                    <div style={{ fontWeight: 600 }}>{listing.name}</div>
+                    <div>
+                      <h3>{listing.name}</h3>
+                      <div className="store-item-card__subtitle">
+                        {isGiftCard
+                          ? 'Gift card'
+                          : `${listing.variants.length} option${listing.variants.length === 1 ? '' : 's'}`}
+                        {listing.listed === false ? (
+                          <span className="store-item-card__tag">Removed from store</span>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
-                  <div className="store-add-workspace__field" style={{ marginTop: 8 }}>
-                    <span>Store categories</span>
-                    <StoreCategoryPicker
-                      value={listingCategoryNames(listing)}
-                      options={storeCategories}
+                  <div className="store-item-card__controls">
+                    {isGiftCard ? (
+                      <span className="settings-muted">No pet or approval needed</span>
+                    ) : (
+                      <div className="store-item-card__control">
+                        <span className="store-item-card__label">Approval</span>
+                        <select
+                          className="settings-input"
+                          value={listing.approvalTag}
+                          onChange={(e) => {
+                            const approvalTag = e.target.value as StoreItemRow['approvalTag'];
+                            void patchOnlineStoreListing(practiceId, listing.listingId, {
+                              approvalTag,
+                            }).then(() => load());
+                          }}
+                        >
+                          <option value="approved">Approved</option>
+                          <option value="needs_doctor_approval">Needs doctor approval</option>
+                        </select>
+                        <label
+                          className="store-item-card__check"
+                          title="Shoppers must log in and pick which pet this is for. Prescription items always require a pet."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={
+                              Boolean(listing.requiresPet) ||
+                              listing.approvalTag === 'needs_doctor_approval'
+                            }
+                            disabled={busy || listing.approvalTag === 'needs_doctor_approval'}
+                            onChange={(e) => {
+                              const requiresPet = e.target.checked;
+                              setListings((prev) =>
+                                prev.map((row) =>
+                                  row.listingId === listing.listingId
+                                    ? { ...row, requiresPet }
+                                    : row
+                                )
+                              );
+                              void patchOnlineStoreListing(practiceId, listing.listingId, {
+                                requiresPet,
+                              }).catch((err) => setError(apiErrorMessage(err)));
+                            }}
+                          />
+                          Requires a pet
+                        </label>
+                      </div>
+                    )}
+                    <div className="store-item-card__control">
+                      <span className="store-item-card__label">Home page</span>
+                      <label className="store-item-card__check">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(listing.featuredOnHome)}
+                          onChange={(e) => {
+                            const featuredOnHome = e.target.checked;
+                            void patchOnlineStoreListing(practiceId, listing.listingId, {
+                              featuredOnHome,
+                            }).then(() => load());
+                          }}
+                        />
+                        Highlight
+                      </label>
+                    </div>
+                    {listing.listed === false ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => void restoreToStore(listing)}
+                      >
+                        Restore to store
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn secondary store-item-card__remove"
+                        disabled={busy}
+                        onClick={() => void removeFromStore(listing)}
+                      >
+                        Remove from store
+                      </button>
+                    )}
+                  </div>
+                </header>
+
+                <div className="store-item-card__body">
+                  <div className="store-item-card__settings">
+                    <div className="store-add-workspace__field">
+                      <span>Store categories</span>
+                      <StoreCategoryPicker
+                        value={listingCategoryNames(listing)}
+                        options={storeCategories}
+                        disabled={busy}
+                        onChange={(next, added) => {
+                          if (added) void rememberCategory(added);
+                          setListings((prev) =>
+                            prev.map((row) =>
+                              row.listingId === listing.listingId
+                                ? { ...row, storeCategory: next[0] ?? null, storeCategories: next }
+                                : row
+                            )
+                          );
+                          void patchOnlineStoreListing(practiceId, listing.listingId, {
+                            storeCategories: next,
+                          })
+                            .then((updated) => {
+                              if (!updated) return;
+                              setListings((prev) =>
+                                prev.map((row) =>
+                                  row.listingId === listing.listingId
+                                    ? { ...row, ...updated }
+                                    : row
+                                )
+                              );
+                            })
+                            .catch((err) => setError(apiErrorMessage(err)));
+                        }}
+                      />
+                    </div>
+                    <StoreSaleEditor
+                      {...saleFieldsFromListing(listing)}
+                      saleActive={listing.saleActive}
                       disabled={busy}
-                      onChange={(next, added) => {
-                        if (added) void rememberCategory(added);
-                        setListings((prev) =>
-                          prev.map((row) =>
-                            row.listingId === listing.listingId
-                              ? { ...row, storeCategory: next[0] ?? null, storeCategories: next }
-                              : row
-                          )
-                        );
-                        void patchOnlineStoreListing(practiceId, listing.listingId, {
-                          storeCategories: next,
-                        })
-                          .then((updated) => {
+                      onChange={(next) => {
+                        const current = saleFieldsFromListing(listing);
+                        if (
+                          current.saleType === next.saleType &&
+                          current.saleValue === next.saleValue &&
+                          (current.saleEndsAt || null) === (next.saleEndsAt || null)
+                        ) {
+                          return;
+                        }
+                        void patchOnlineStoreListing(practiceId, listing.listingId, next).then(
+                          (updated) => {
                             if (!updated) return;
                             setListings((prev) =>
                               prev.map((row) =>
@@ -2277,57 +2539,36 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                                   : row
                               )
                             );
-                          })
-                          .catch((err) => setError(apiErrorMessage(err)));
+                          }
+                        );
                       }}
                     />
                   </div>
-                  <StoreSaleEditor
-                    {...saleFieldsFromListing(listing)}
-                    saleActive={listing.saleActive}
-                    disabled={busy}
-                    onChange={(next) => {
-                      const current = saleFieldsFromListing(listing);
-                      if (
-                        current.saleType === next.saleType &&
-                        current.saleValue === next.saleValue &&
-                        (current.saleEndsAt || null) === (next.saleEndsAt || null)
-                      ) {
-                        return;
-                      }
-                      void patchOnlineStoreListing(practiceId, listing.listingId, next).then(
-                        (updated) => {
+                  <div className="store-item-card__description">
+                    <span className="store-item-card__label">Description</span>
+                    <StoreDescriptionEditor
+                      value={listing.description}
+                      listings={listings}
+                      currentListingId={listing.listingId}
+                      disabled={busy}
+                      onSave={(description) => {
+                        void patchOnlineStoreListing(practiceId, listing.listingId, {
+                          description,
+                        }).then((updated) => {
                           if (!updated) return;
                           setListings((prev) =>
                             prev.map((row) =>
-                              row.listingId === listing.listingId
-                                ? { ...row, ...updated }
-                                : row
+                              row.listingId === listing.listingId ? { ...row, ...updated } : row
                             )
                           );
-                        }
-                      );
-                    }}
-                  />
-                  <StoreDescriptionEditor
-                    value={listing.description}
-                    listings={listings}
-                    currentListingId={listing.listingId}
-                    disabled={busy}
-                    onSave={(description) => {
-                      void patchOnlineStoreListing(practiceId, listing.listingId, {
-                        description,
-                      }).then((updated) => {
-                        if (!updated) return;
-                        setListings((prev) =>
-                          prev.map((row) =>
-                            row.listingId === listing.listingId ? { ...row, ...updated } : row
-                          )
-                        );
-                      });
-                    }}
-                  />
-                  {listing.kind === 'gift_card' ? (
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {isGiftCard ? (
+                  <div className="store-item-card__section">
                     <StoreGiftCardSettingsEditor
                       value={listing.giftCard}
                       disabled={busy}
@@ -2347,258 +2588,249 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                         );
                       }}
                     />
-                  ) : null}
-                  {listing.kind !== 'gift_card' && listing.variants.length > 1 ? (
-                    <StoreChoicesEditor
-                      key={`${listing.listingId}:${(listing.optionNames ?? []).join('|')}`}
-                      listing={listing}
-                      disabled={busy}
-                      onSave={async (body) => {
-                        const updated = await patchOnlineStoreListing(
-                          practiceId,
-                          listing.listingId,
-                          body
-                        );
-                        if (!updated) return;
-                        setListings((prev) =>
-                          prev.map((row) =>
-                            row.listingId === listing.listingId ? { ...row, ...updated } : row
-                          )
-                        );
-                      }}
-                    />
-                  ) : null}
-                  {listing.kind === 'gift_card' ? null : listing.variants.length ? (
-                    <div className="store-variant-groups">
-                      {groupVariantsByStrength(listing.variants).map((group) => (
-                        <div key={`${listing.listingId}:${group.key}`}>
-                          {group.strength ? (
-                            <div className="store-variant-group__strength">
-                              {group.strength}
-                            </div>
-                          ) : null}
-                          <ul className="store-variant-group__packs">
+                  </div>
+                ) : (
+                  <section className="store-item-card__section">
+                    <div className="store-item-card__section-head">
+                      <span className="store-item-card__label">Options &amp; prices</span>
+                      <button
+                        type="button"
+                        className="btn secondary store-item-card__add"
+                        disabled={busy}
+                        onClick={() => {
+                          setWorkspaceListing(listing);
+                          setAddStoreOpen(true);
+                          writeItemsParams({ product: listing.listingId });
+                        }}
+                      >
+                        + Add option
+                      </button>
+                    </div>
+                    {listing.variants.length > 1 ? (
+                      <StoreChoicesEditor
+                        key={`${listing.listingId}:${(listing.optionNames ?? []).join('|')}`}
+                        listing={listing}
+                        disabled={busy}
+                        onSave={async (body) => {
+                          const updated = await patchOnlineStoreListing(
+                            practiceId,
+                            listing.listingId,
+                            body
+                          );
+                          if (!updated) return;
+                          setListings((prev) =>
+                            prev.map((row) =>
+                              row.listingId === listing.listingId ? { ...row, ...updated } : row
+                            )
+                          );
+                        }}
+                      />
+                    ) : null}
+                    {listing.variants.length ? (
+                      <table className="store-option-table">
+                        <thead>
+                          <tr>
+                            <th>Option</th>
+                            <th className="is-num">Online store price</th>
+                            <th className="is-num">{officeLabel}</th>
+                            <th>Online vs. office</th>
+                            <th>Autoship</th>
+                            <th aria-label="Remove" />
+                          </tr>
+                        </thead>
+                        {groupVariantsByStrength(listing.variants).map((group) => (
+                          <tbody key={`${listing.listingId}:${group.key}`}>
+                            {group.strength ? (
+                              <tr className="store-option-table__group">
+                                <td colSpan={6}>{group.strength}</td>
+                              </tr>
+                            ) : null}
                             {group.variants.map((variant) => {
                               const href = storeVariantHref(variant, storeItemsPath());
+                              const name = variantDisplayName(variant);
+                              const compare = variant.inventoryItemId
+                                ? priceComparison.byItem.get(variant.inventoryItemId)
+                                : undefined;
+                              const storePrice =
+                                variant.onlineStorePrice != null
+                                  ? Number(variant.onlineStorePrice)
+                                  : null;
+                              const officePrice = compare?.mailOrderOfficePrice ?? null;
                               return (
-                                <li
+                                <tr
                                   key={
                                     variant.inventoryItemId
                                       ? `inv:${variant.inventoryItemId}`
                                       : `proc:${variant.procedureId}`
                                   }
                                 >
-                                  {variant.inventoryItemId ? (
-                                    <StorePhotoUpload
-                                      src={withImageBust(
-                                        variantImageSrc(practiceId, variant),
-                                        imageTick
-                                      )}
-                                      label={variantDisplayName(variant)}
-                                      disabled={busy}
-                                      title={`Upload photo for ${variantDisplayName(variant)}`}
-                                      onFile={(file) =>
-                                        void uploadVariantPhoto(listing, variant, file)
-                                      }
-                                    />
-                                  ) : (
-                                    <StorePhotoUpload
-                                      src={withImageBust(
-                                        masterImageSrc(practiceId, listing),
-                                        imageTick
-                                      )}
-                                      label={variantDisplayName(variant)}
-                                      disabled={busy}
-                                      title={`Procedures use the ${listing.name} photo. Click to upload it.`}
-                                      onFile={(file) => void uploadListingPhoto(listing, file)}
-                                    />
-                                  )}
-                                  {href ? (
-                                    <Link className="inv-catalog-results__text-btn" to={href}>
-                                      {variantDisplayName(variant)}
-                                    </Link>
-                                  ) : (
-                                    <span>{variantDisplayName(variant)}</span>
-                                  )}
-                                  {variant.pack &&
-                                  variant.pack !== 'Each' &&
-                                  !variantDisplayName(variant)
-                                    .toLowerCase()
-                                    .includes(variant.pack.toLowerCase()) ? (
-                                    <span className="settings-muted"> · {variant.pack}</span>
-                                  ) : null}
-                                  {variant.catalogItemType === 'procedure' ? (
-                                    <span className="settings-muted"> · procedure</span>
-                                  ) : null}
-                                  {!(Number(variant.onlineStorePrice) > 0) ? (
-                                    <span
-                                      className="store-variant-zero-price"
-                                      title="Options without a price are hidden from shoppers. Set a price on the item or remove this option."
-                                    >
-                                      $0 · hidden from shoppers
-                                    </span>
-                                  ) : null}
-                                  {variant.inventoryItemId ? (
-                                    <label className="store-variant-group__autoship">
-                                      <input
-                                        type="checkbox"
-                                        disabled={busy}
-                                        checked={Boolean(variant.recommendedFrequency)}
-                                        onChange={(e) => {
-                                          void patchVariantAutoship(
-                                            listing,
-                                            variant,
-                                            e.target.checked
-                                              ? variant.recommendedFrequency || 'monthly'
-                                              : null
-                                          );
-                                        }}
-                                      />
-                                      <span className="settings-muted">Autoship</span>
-                                      {variant.recommendedFrequency ? (
-                                        <select
-                                          className="settings-input"
+                                  <td>
+                                    <div className="store-option-table__name">
+                                      {variant.inventoryItemId ? (
+                                        <StorePhotoUpload
+                                          src={withImageBust(
+                                            variantImageSrc(practiceId, variant),
+                                            imageTick
+                                          )}
+                                          label={name}
                                           disabled={busy}
-                                          value={variant.recommendedFrequency}
+                                          title={`Upload photo for ${name}`}
+                                          onFile={(file) =>
+                                            void uploadVariantPhoto(listing, variant, file)
+                                          }
+                                        />
+                                      ) : (
+                                        <StorePhotoUpload
+                                          src={withImageBust(
+                                            masterImageSrc(practiceId, listing),
+                                            imageTick
+                                          )}
+                                          label={name}
+                                          disabled={busy}
+                                          title={`Procedures use the ${listing.name} photo. Click to upload it.`}
+                                          onFile={(file) => void uploadListingPhoto(listing, file)}
+                                        />
+                                      )}
+                                      <div>
+                                        {href ? (
+                                          <Link className="store-option-table__link" to={href}>
+                                            {name}
+                                          </Link>
+                                        ) : (
+                                          <span>{name}</span>
+                                        )}
+                                        <div className="settings-muted store-option-table__meta">
+                                          {[
+                                            variant.pack &&
+                                            variant.pack !== 'Each' &&
+                                            !name.toLowerCase().includes(variant.pack.toLowerCase())
+                                              ? variant.pack
+                                              : null,
+                                            variant.catalogItemType === 'procedure'
+                                              ? 'Procedure'
+                                              : null,
+                                            compare && compare.onlineStorePrice == null
+                                              ? 'No store price yet · uses clinic price'
+                                              : null,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(' · ')}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="is-num">
+                                    {variant.inventoryItemId ? (
+                                      <StoreOptionPriceInput
+                                        value={storePrice}
+                                        label={name}
+                                        disabled={busy}
+                                        onSave={(price) => void saveVariantStorePrice(variant, price)}
+                                      />
+                                    ) : (
+                                      <span title="Procedure prices are set on the procedure">
+                                        {formatMoney(storePrice)}
+                                      </span>
+                                    )}
+                                    {!(Number(variant.onlineStorePrice) > 0) ? (
+                                      <div
+                                        className="store-variant-zero-price"
+                                        title="Options without a price are hidden from shoppers. Set a price or remove this option."
+                                      >
+                                        Hidden from shoppers
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                  <td className="is-num store-option-table__office">
+                                    {variant.inventoryItemId ? formatMoney(officePrice) : '—'}
+                                  </td>
+                                  <td>
+                                    {variant.inventoryItemId ? (
+                                      <StorePriceCompareBadge
+                                        storePrice={storePrice}
+                                        officePrice={officePrice}
+                                      />
+                                    ) : (
+                                      <span className="store-price-compare store-price-compare--none">
+                                        —
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    {variant.inventoryItemId ? (
+                                      <label className="store-variant-group__autoship">
+                                        <input
+                                          type="checkbox"
+                                          disabled={busy}
+                                          checked={Boolean(variant.recommendedFrequency)}
+                                          aria-label={`Autoship ${name}`}
                                           onChange={(e) => {
                                             void patchVariantAutoship(
                                               listing,
                                               variant,
-                                              e.target.value
+                                              e.target.checked
+                                                ? variant.recommendedFrequency || 'monthly'
+                                                : null
                                             );
                                           }}
-                                        >
-                                          {autoshipFrequencyOptions(variant.recommendedFrequency).map((freq) => (
-                                            <option key={freq.value} value={freq.value}>
-                                              {freq.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      ) : null}
-                                    </label>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="store-variant-group__remove"
-                                    disabled={busy}
-                                    title="Remove this option"
-                                    aria-label={`Remove ${variant.pack}`}
-                                    onClick={() => void removeVariant(listing, variant)}
-                                  >
-                                    ×
-                                  </button>
-                                </li>
+                                        />
+                                        {variant.recommendedFrequency ? (
+                                          <select
+                                            className="settings-input"
+                                            disabled={busy}
+                                            value={variant.recommendedFrequency}
+                                            onChange={(e) => {
+                                              void patchVariantAutoship(
+                                                listing,
+                                                variant,
+                                                e.target.value
+                                              );
+                                            }}
+                                          >
+                                            {autoshipFrequencyOptions(
+                                              variant.recommendedFrequency
+                                            ).map((freq) => (
+                                              <option key={freq.value} value={freq.value}>
+                                                {freq.label}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <span className="settings-muted">Off</span>
+                                        )}
+                                      </label>
+                                    ) : (
+                                      <span className="settings-muted">—</span>
+                                    )}
+                                  </td>
+                                  <td className="store-option-table__remove-cell">
+                                    <button
+                                      type="button"
+                                      className="store-variant-group__remove"
+                                      disabled={busy}
+                                      title="Remove this option"
+                                      aria-label={`Remove ${name}`}
+                                      onClick={() => void removeVariant(listing, variant)}
+                                    >
+                                      ×
+                                    </button>
+                                  </td>
+                                </tr>
                               );
                             })}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="settings-muted" style={{ margin: '8px 0 0' }}>
-                      No options yet. Add inventory or procedures below.
-                    </p>
-                  )}
-                  {listing.kind !== 'gift_card' ? (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      style={{ marginTop: 8 }}
-                      disabled={busy}
-                      onClick={() => {
-                        setWorkspaceListing(listing);
-                        setAddStoreOpen(true);
-                        writeItemsParams({ product: listing.listingId });
-                      }}
-                    >
-                      + Add option
-                    </button>
-                  ) : null}
-                </td>
-                <td>
-                  {listing.kind === 'gift_card' ? (
-                    <span className="settings-muted">Gift card · no pet or approval needed</span>
-                  ) : (
-                    <>
-                      <select
-                        className="settings-input"
-                        value={listing.approvalTag}
-                        onChange={(e) => {
-                          const approvalTag = e.target.value as StoreItemRow['approvalTag'];
-                          void patchOnlineStoreListing(practiceId, listing.listingId, {
-                            approvalTag,
-                          }).then(() => load());
-                        }}
-                      >
-                        <option value="approved">Approved</option>
-                        <option value="needs_doctor_approval">Needs doctor approval</option>
-                      </select>
-                      <label
-                        className="settings-muted"
-                        style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}
-                        title="Shoppers must log in and pick which pet this is for. Prescription items always require a pet."
-                      >
-                        <input
-                          type="checkbox"
-                          checked={Boolean(listing.requiresPet) || listing.approvalTag === 'needs_doctor_approval'}
-                          disabled={busy || listing.approvalTag === 'needs_doctor_approval'}
-                          onChange={(e) => {
-                            const requiresPet = e.target.checked;
-                            setListings((prev) =>
-                              prev.map((row) =>
-                                row.listingId === listing.listingId ? { ...row, requiresPet } : row
-                              )
-                            );
-                            void patchOnlineStoreListing(practiceId, listing.listingId, {
-                              requiresPet,
-                            }).catch((err) => setError(apiErrorMessage(err)));
-                          }}
-                        />
-                        Requires a pet
-                      </label>
-                    </>
-                  )}
-                </td>
-                <td>
-                  <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(listing.featuredOnHome)}
-                      onChange={(e) => {
-                        const featuredOnHome = e.target.checked;
-                        void patchOnlineStoreListing(practiceId, listing.listingId, {
-                          featuredOnHome,
-                        }).then(() => load());
-                      }}
-                    />
-                    {listing.featuredOnHome ? 'On the home page' : 'Not on the home page'}
-                  </label>
-                </td>
-                <td>
-                  {listing.listed === false ? (
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={busy}
-                      onClick={() => void restoreToStore(listing)}
-                    >
-                      Restore to store
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={busy}
-                      onClick={() => void removeFromStore(listing)}
-                    >
-                      Remove from store
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                          </tbody>
+                        ))}
+                      </table>
+                    ) : (
+                      <p className="settings-muted" style={{ margin: '4px 0 0' }}>
+                        No options yet. Add inventory or procedures.
+                      </p>
+                    )}
+                  </section>
+                )}
+              </article>
+            );
+          })}
         </div>
         {pagedListings.length === 0 ? (
           <p className="settings-muted">
