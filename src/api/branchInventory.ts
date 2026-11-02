@@ -432,6 +432,23 @@ export async function listInventoryItemHistory(
   };
 }
 
+/** Edits and price break changes of a procedure or lab (no stock movements). */
+export async function listCatalogItemChanges(
+  practiceId: number,
+  itemType: 'procedure' | 'lab',
+  itemId: number,
+  params: { limit?: number; offset?: number }
+): Promise<{ total: number; rows: InventoryItemHistoryRow[] }> {
+  const { data } = await http.get<{ total: number; rows: InventoryItemHistoryRow[] }>(
+    `/practice/${practiceId}/${itemType === 'procedure' ? 'procedures' : 'labs'}/${itemId}/history`,
+    { params }
+  );
+  return {
+    total: typeof data?.total === 'number' ? data.total : 0,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+  };
+}
+
 export async function listBranchPriceOverrides(
   practiceId: number,
   branchId: number,
