@@ -202,6 +202,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // View-as is read-only, so the add button stays hidden there too.
   const canAddWeekly = !isFull && can(WEEKLY_ADD_PERMISSION) && readImpersonation() == null;
+  // Counters below inventory manager can't edit the catalog, so item names aren't links for them.
+  const canEditCatalog = can('catalog.item.edit');
 
   function showSheet(next: StaffCountSession) {
     setSession(next);
@@ -728,12 +730,18 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                     <tr key={`${line.id}:${draft?.key ?? saved?.id ?? idx}`} style={rowStyle}>
                       {idx === 0 && (
                         <td rowSpan={rowCount} style={{ verticalAlign: 'top' }}>
-                          <Link
-                            to={itemHref}
-                            style={{ fontWeight: 600, color: 'inherit', textDecoration: 'underline' }}
-                          >
-                            {line.name ?? `Item #${line.inventoryItemId}`}
-                          </Link>
+                          {canEditCatalog ? (
+                            <Link
+                              to={itemHref}
+                              style={{ fontWeight: 600, color: 'inherit', textDecoration: 'underline' }}
+                            >
+                              {line.name ?? `Item #${line.inventoryItemId}`}
+                            </Link>
+                          ) : (
+                            <span style={{ fontWeight: 600 }}>
+                              {line.name ?? `Item #${line.inventoryItemId}`}
+                            </span>
+                          )}
                           {line.code ? (
                             <div className="settings-muted" style={{ fontSize: 12 }}>
                               {line.code}
