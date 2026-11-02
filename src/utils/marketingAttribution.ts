@@ -1,6 +1,10 @@
 /**
  * Last-paid-click attribution for Google Ads / GA4.
  * Click IDs persist 90 days so a later organic/direct submit still carries the ad click.
+ *
+ * Ad clicks land on the Wix site, which forwards them to the portal through Google's
+ * cross-domain linker (`_gl`) and first-party cookies (`_gcl_aw`, `_gcl_gb`), not as
+ * a plain `?gclid=` on the portal URL.
  */
 
 export const MARKETING_ATTRIBUTION_STORAGE_KEY = 'vayd_marketing_attribution';
@@ -72,19 +76,75 @@ function readGaClientId(): string | undefined {
 function readGaSessionId(): string | undefined {
   if (typeof document === 'undefined') return undefined;
   const measurementId = (import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined)?.trim();
-  if (measurementId?.startsWith('G-')) {
-    const fromNamed = parseGaSessionIdFromCookie(readCookie(`_ga_${measurementId.slice(2)}`));
-    if (fromNamed) return fromNamed;
+  if (!measurementId?.startsWith('G-')) return undefined;
+  // Only this property. The Wix linker also copies `_ga_<other property>` onto the portal.
+  return parseGaSessionIdFromCookie(readCookie(`_ga_${measurementId.slice(2)}`));
+}
+
+/** Conversion-linker cookie: `GCL.<unix seconds>.<click id>`. */
+export function parseClickIdFromGclValue(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^GCL\.\d+\.(.+)$/.exec(value.trim());
+  if (!match?.[1]) return undefined;
+  let clickId = match[1];
+  try {
+    clickId = decodeURIComponent(clickId);
+  } catch {
+    /* keep raw */
   }
-  for (const part of document.cookie.split(';')) {
-    const name = part.trim().split('=')[0];
-    if (name && name.startsWith('_ga_') && name !== '_ga') {
-      const value = readCookie(name);
-      const sessionId = parseGaSessionIdFromCookie(value);
-      if (sessionId) return sessionId;
+  return cleanToken(clickId, 256);
+}
+
+/** Google linker segments are base64, with `.` used as padding. */
+export function decodeGlSegment(segment: string): string | undefined {
+  const normalized = segment
+    .trim()
+    .replace(/\.+$/g, '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  if (!normalized || !/^[A-Za-z0-9+/]+$/.test(normalized)) return undefined;
+  const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  try {
+    return atob(normalized + pad);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Click ids Google's site linker puts on the portal URL.
+ * `_gcl_aw` is the gclid, `_gcl_gb` is the gbraid, `_ga` is the client id.
+ */
+export function parseAttributionFromGl(search: string): Partial<MarketingAttribution> {
+  const raw = search.startsWith('?') ? search.slice(1) : search;
+  const gl = new URLSearchParams(raw).get('_gl');
+  if (!gl) return {};
+  const parts = gl.split('*');
+  const out: Partial<MarketingAttribution> = {};
+  for (let i = 2; i + 1 < parts.length; i += 2) {
+    const decoded = decodeGlSegment(parts[i + 1]);
+    if (!decoded) continue;
+    if (parts[i] === '_gcl_aw') {
+      const gclid = parseClickIdFromGclValue(decoded);
+      if (gclid) out.gclid = gclid;
+    } else if (parts[i] === '_gcl_gb') {
+      const gbraid = parseClickIdFromGclValue(decoded);
+      if (gbraid) out.gbraid = gbraid;
+    } else if (parts[i] === '_ga' && /^\d+\.\d+$/.test(decoded)) {
+      const gaClientId = cleanToken(decoded, 64);
+      if (gaClientId) out.gaClientId = gaClientId;
     }
   }
-  return undefined;
+  return out;
+}
+
+function readClickIdsFromAdsCookies(): Partial<MarketingAttribution> {
+  const out: Partial<MarketingAttribution> = {};
+  const gclid = parseClickIdFromGclValue(readCookie('_gcl_aw'));
+  const gbraid = parseClickIdFromGclValue(readCookie('_gcl_gb'));
+  if (gclid) out.gclid = gclid;
+  if (gbraid) out.gbraid = gbraid;
+  return out;
 }
 
 function isFresh(stored: MarketingAttribution | null): stored is MarketingAttribution {
@@ -165,12 +225,19 @@ function writeStored(value: MarketingAttribution): void {
 export function captureMarketingAttribution(
   search: string = typeof window !== 'undefined' ? window.location.search : '',
 ): MarketingAttribution {
-  const merged = mergeMarketingAttribution(readStored(), parseAttributionFromSearch(search));
+  const fromGl = parseAttributionFromGl(search);
+  const fromUrl = parseAttributionFromSearch(search);
+  // Explicit `?gclid=` wins, then the linker param, then the ads cookie.
+  const merged = mergeMarketingAttribution(readStored(), {
+    ...readClickIdsFromAdsCookies(),
+    ...fromGl,
+    ...fromUrl,
+  });
   const next: MarketingAttribution = {
     ...merged,
     capturedAt: Date.now(),
   };
-  const gaClientId = readGaClientId();
+  const gaClientId = readGaClientId() ?? fromGl.gaClientId;
   const gaSessionId = readGaSessionId();
   if (gaClientId) next.gaClientId = gaClientId;
   if (gaSessionId) next.gaSessionId = gaSessionId;
