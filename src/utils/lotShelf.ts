@@ -5,11 +5,17 @@
  */
 export function lotShelf(
   line: {
+    inventoryBranchId?: number | null;
+    inventoryLocationId?: number | null;
     catalogIsControlled?: boolean;
     controlledLocation?: { branchId: number; locationId: number; name: string } | null;
   },
   invoice: { inventoryBranchId?: number | null; inventoryLocationId?: number | null } | null | undefined
 ): { branchId: number | null; locationId: number | null; safeName: string | null } {
+  // A charge given its own shelf uses it (owner decision, Nov 2, 2026).
+  if (line.inventoryBranchId != null && line.inventoryLocationId != null) {
+    return { branchId: line.inventoryBranchId, locationId: line.inventoryLocationId, safeName: null };
+  }
   if (line.catalogIsControlled && line.controlledLocation) {
     return {
       branchId: line.controlledLocation.branchId,

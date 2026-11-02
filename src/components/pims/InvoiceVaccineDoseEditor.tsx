@@ -1,3 +1,4 @@
+import LineShelfSelect, { type ShelfChoice } from '../inventory/LineShelfSelect';
 import { useEffect, useState } from 'react';
 import {
   getInvoiceLineVaccineDefaults,
@@ -58,6 +59,8 @@ type Props = {
   hideLotPicker?: boolean;
   branchId?: number | null;
   locationId?: number | null;
+  /** Show a Location box for this charge's shelf; called when staff change it. */
+  onShelfChange?: (next: ShelfChoice) => void;
 };
 
 /**
@@ -74,6 +77,7 @@ export default function InvoiceVaccineDoseEditor({
   hideLotPicker,
   branchId,
   locationId,
+  onShelfChange,
 }: Props) {
   const encounterId = line.encounterId ?? null;
   const orderId = line.orderId ?? null;
@@ -283,6 +287,14 @@ export default function InvoiceVaccineDoseEditor({
   return (
     <div className="client-fin__vax-editor">
       {stockBanner}
+      {onShelfChange && !hideLotPicker ? (
+        <LineShelfSelect
+          practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+          locationId={locationId ?? null}
+          disabled={disabled}
+          onChange={onShelfChange}
+        />
+      ) : null}
       {lotPicker}
       <div className="client-fin__vax-grid">
         {!hideLotPicker ? (

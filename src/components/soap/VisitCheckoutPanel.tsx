@@ -89,10 +89,12 @@ import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShip
 import { attachTagalongLines, tagalongTaxHint } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
+import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { lotShelf } from '../../utils/lotShelf';
+import { changeLineShelf } from '../../utils/lineShelfChange';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
 import {
   PetRefillsButton,
@@ -421,6 +423,8 @@ function CheckoutInvoiceRxFields({
 
   const refillCount = refills.trim() === '' ? NaN : Number(refills);
   const providerId = line.providerEmployeeId ?? employeeId ?? null;
+  // The date wheel has no blur, so a pick saves once the new date is in state.
+  const saveAfterRefillPick = useRef(false);
   const missingFields = checkoutRxMissingFields({
     instructions,
     refills,
@@ -552,6 +556,14 @@ function CheckoutInvoiceRxFields({
     if (!canWriteRx || missingBeforeSave()) return;
     await persistRx();
   };
+
+  useEffect(() => {
+    if (!saveAfterRefillPick.current) return;
+    saveAfterRefillPick.current = false;
+    void persistExtrasIfReady();
+    // Runs once per committed refill expiration; the save reads the new state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refillExpiration]);
 
   const approveFoot =
     !disabled && !scriptApproved && (mailDoctorApproves || !canApprove) ? (
@@ -690,6 +702,7 @@ function CheckoutInvoiceRxFields({
               inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
               branchId={lotShelf(line, invoice).branchId}
               locationId={lotShelf(line, invoice).locationId}
+              onShelfChange={(next) => void changeLineShelf(invoice, line, next).then(onSaved, (e: unknown) => onError(apiErrorMessage(e)))}
               otherShelvesFrom={lotShelf(line, invoice).safeName}
               itemName={line.description}
               disabled={disabled || saving}
@@ -806,14 +819,15 @@ function CheckoutInvoiceRxFields({
         {Number.isFinite(refillCount) && refillCount > 0 ? (
           <label className={`client-fin__rx-field${highlight('refillExpiration') ? ' is-missing' : ''}`}>
             <span>Refill expiration *</span>
-            <input
-              type="date"
-              min={tomorrowInput()}
-              max={maxRefillExpirationInput()}
+            <ExpirationDateField
               value={refillExpiration}
               disabled={disabled || saving}
-              onChange={(e) => {
-                const next = e.target.value;
+              required
+              ariaLabel="Refill expiration"
+              wheelTitle="Refill expiration"
+              pickerLabel="Pick refill expiration"
+              onCommit={(iso) => {
+                const next = iso ?? '';
                 if (next && dateIsTodayOrBefore(next)) {
                   onError('Refill expiration must be after today.');
                   return;
@@ -821,11 +835,11 @@ function CheckoutInvoiceRxFields({
                 if (refillExpirationExceedsMax(next)) {
                   onError('Refill expiration cannot be more than 1 year from today.');
                   setRefillExpiration(maxRefillExpirationInput());
-                  return;
+                } else {
+                  setRefillExpiration(next);
                 }
-                setRefillExpiration(next);
+                saveAfterRefillPick.current = true;
               }}
-              onBlur={() => void persistExtrasIfReady()}
             />
           </label>
         ) : null}
@@ -2970,6 +2984,7 @@ export default function VisitCheckoutPanel({
                             providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
                             branchId={lotShelf(l, invoice).branchId ?? undefined}
                             locationId={lotShelf(l, invoice).locationId ?? undefined}
+                            onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                             disabled={disabled || !canEditLines}
                             onSelectLot={(lot) => {
                               void updateCounterInvoiceLine(invoice.id, l.id, {
@@ -3190,6 +3205,7 @@ export default function VisitCheckoutPanel({
                               providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
                               branchId={lotShelf(l, invoice).branchId ?? undefined}
                               locationId={lotShelf(l, invoice).locationId ?? undefined}
+                              onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                               disabled={disabled || !canEditLines}
                               onSelectLot={(lot) => {
                                 void updateCounterInvoiceLine(invoice.id, l.id, {
@@ -3220,6 +3236,7 @@ export default function VisitCheckoutPanel({
                                 providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
                                 branchId={lotShelf(l, invoice).branchId ?? undefined}
                                 locationId={lotShelf(l, invoice).locationId ?? undefined}
+                                onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                                 disabled={disabled || !canEditLines}
                                 onSelectLot={(lot) => {
                                   void updateCounterInvoiceLine(invoice.id, l.id, {
@@ -3236,6 +3253,7 @@ export default function VisitCheckoutPanel({
                               hideLotPicker={stock.linked}
                               branchId={lotShelf(l, invoice).branchId ?? undefined}
                               locationId={lotShelf(l, invoice).locationId ?? undefined}
+                              onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                               // A household line's order lives on the pet's own visit, not
                               // this chart's, so it lands here; show and track its dose too.
                               recorded={l.orderId ? vaccinationsByOrderId[l.orderId] ?? null : null}
@@ -3277,6 +3295,7 @@ export default function VisitCheckoutPanel({
                                 providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
                                 branchId={lotShelf(l, invoice).branchId ?? undefined}
                                 locationId={lotShelf(l, invoice).locationId ?? undefined}
+                                onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                                 disabled={disabled || !canEditLines}
                                 onSelectLot={(lot) => {
                                   void updateCounterInvoiceLine(invoice.id, l.id, {

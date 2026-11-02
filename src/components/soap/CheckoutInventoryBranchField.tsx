@@ -12,6 +12,24 @@ import {
   type VisitInvoice,
 } from '../../api/visitWorkflow';
 import { useAuth } from '../../auth/useAuth';
+import { appConfirm } from '../../utils/appDialog';
+import {
+  ALL_EXCEPT_CONTROLLED,
+  invoiceHasMovableItems,
+  setInvoiceShelf,
+} from '../../utils/lineShelfChange';
+
+/** Items already on the invoice move only if staff say so; controlled drugs never do. */
+async function moveExistingItems(invoice: VisitInvoice): Promise<boolean> {
+  if (!invoiceHasMovableItems(invoice)) return true;
+  return appConfirm({
+    title: 'Move the items already on this invoice?',
+    message:
+      'New items will use this location. Items already on the invoice can move too, or stay where they are. Controlled drugs keep their own location either way.',
+    confirmLabel: ALL_EXCEPT_CONTROLLED,
+    cancelLabel: 'Only new items',
+  });
+}
 
 type Props = {
   invoice: VisitInvoice | null;
@@ -145,7 +163,8 @@ export default function CheckoutInventoryBranchField({
         onInvoiceChange({ ...invoice, inventoryBranchId: next, inventoryLocationId: null });
         return;
       }
-      onInvoiceChange(await patchVisitInvoice(invoice.id, { inventoryBranchId: next }));
+      const moveExisting = await moveExistingItems(invoice);
+      onInvoiceChange(await setInvoiceShelf(invoice, { branchId: next }, { moveExisting }));
     } catch {
       /* parent checkout panel surfaces API errors on pay */
     }
@@ -160,7 +179,18 @@ export default function CheckoutInventoryBranchField({
         onInvoiceChange({ ...invoice, inventoryLocationId: next });
         return;
       }
-      onInvoiceChange(await patchVisitInvoice(invoice.id, { inventoryLocationId: next }));
+      if (invoice.inventoryBranchId == null) {
+        onInvoiceChange(await patchVisitInvoice(invoice.id, { inventoryLocationId: next }));
+        return;
+      }
+      const moveExisting = await moveExistingItems(invoice);
+      onInvoiceChange(
+        await setInvoiceShelf(
+          invoice,
+          { branchId: invoice.inventoryBranchId, locationId: next },
+          { moveExisting }
+        )
+      );
     } catch {
       /* parent checkout panel surfaces API errors on pay */
     }

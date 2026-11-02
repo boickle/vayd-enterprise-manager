@@ -6,6 +6,9 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { createStockRequest, transferBatch } from '../../api/inventoryOps';
+import { apiErrorMessage } from '../../api/http';
+import { loadInventoryItem } from '../../hooks/useStockItemGroups';
+import StockLotPicker from './StockLotPicker';
 import { appConfirm } from '../../utils/appDialog';
 
 export type TransferModalLoc = {
@@ -72,6 +75,10 @@ export default function ParTransferModal({
   const [qty, setQty] = useState('1');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Lot-tracked items: the person picks the lot they are taking from the From shelf.
+  const [trackLots, setTrackLots] = useState(false);
+  const [lotId, setLotId] = useState<number | null>(null);
+  const [lotNumber, setLotNumber] = useState('');
 
   const activeBranches = useMemo(
     () => branches.filter((b) => b.isActive !== false),
@@ -113,6 +120,26 @@ export default function ParTransferModal({
     const extra = start ? surplusQty(start.quantityOnHand, start.parLevel) : null;
     setQty(String(extra ?? (start && start.quantityOnHand > 0 ? start.quantityOnHand : 1)));
   }, [open, source, activeBranches]);
+
+  useEffect(() => {
+    if (!open || !source) return;
+    setTrackLots(false);
+    let canceled = false;
+    void loadInventoryItem(practiceId, source.inventoryItemId)
+      .then((inv) => {
+        if (!canceled) setTrackLots(inv.trackLots === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, [open, source, practiceId]);
+
+  // A different shelf has different bottles.
+  useEffect(() => {
+    setLotId(null);
+    setLotNumber('');
+  }, [open, source, fromBranchId, fromLocId]);
 
   useEffect(() => {
     if (!open || !source || fromBranchId === '') return;
@@ -195,6 +222,10 @@ export default function ParTransferModal({
       setError('Quantity must be positive');
       return;
     }
+    if (trackLots && lotId == null) {
+      setError(`Choose the lot you are taking from ${fromLoc?.name ?? 'the From location'}.`);
+      return;
+    }
     if (quantity > onHand) {
       const ok = await appConfirm({
         title: 'More than the source shows on hand',
@@ -226,13 +257,19 @@ export default function ParTransferModal({
       await transferBatch(practiceId, Number(fromBranchId), {
         fromBranchLocationId: Number(fromLocId),
         toBranchLocationId: Number(destLocId),
-        lines: [{ inventoryItemId: item.inventoryItemId, quantity }],
+        lines: [
+          {
+            inventoryItemId: item.inventoryItemId,
+            quantity,
+            ...(trackLots ? { inventoryLotBalanceId: lotId, lotNumber: lotNumber || null } : {}),
+          },
+        ],
         note,
       });
       onMoved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Transfer failed');
+      setError(apiErrorMessage(e) || (e instanceof Error ? e.message : 'Transfer failed'));
     } finally {
       setBusy(false);
     }
@@ -263,7 +300,9 @@ export default function ParTransferModal({
       onQueued?.();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not add to transfer list');
+      setError(
+        apiErrorMessage(e) || (e instanceof Error ? e.message : 'Could not add to transfer list')
+      );
     } finally {
       setBusy(false);
     }
@@ -353,6 +392,23 @@ export default function ParTransferModal({
               )}
             </select>
           </label>
+          {trackLots && fromBranchId !== '' && fromLocId !== '' ? (
+            <StockLotPicker
+              className="settings-label"
+              practiceId={practiceId}
+              inventoryItemId={item.inventoryItemId}
+              branchId={Number(fromBranchId)}
+              locationId={Number(fromLocId)}
+              required
+              label="Lot you are taking"
+              selectedLotId={lotId}
+              lotNumber={lotNumber}
+              onChange={(pick) => {
+                setLotId(pick.lotId);
+                setLotNumber(pick.lotNumber);
+              }}
+            />
+          ) : null}
           {fillMode ? (
             <p className="settings-muted" style={{ marginTop: 10 }}>
               To {toOfficeName} · {toLocName}

@@ -727,6 +727,9 @@ export type FirstCountProgress = {
       locationId: number;
       locationName: string;
       isDefault: boolean;
+      /** Items on this shelf's list: par, min / max, controlled, or already here. */
+      listItems?: number;
+      listControlled?: number;
       countedItems: number;
       countedControlled: number;
       lastCountedAt: string | null;
@@ -741,6 +744,8 @@ export type FirstCountSheetItem = {
   categoryName: string | null;
   unit: string | null;
   isControlled: boolean;
+  /** On this shelf's list (par, min / max, controlled, or already here). Missing = on the list. */
+  onList?: boolean;
   /** How staff count it: mL, by weighing the bottle, or both. */
   measure: 'volume' | 'weight' | 'both';
   weightUnit: 'g' | 'oz';

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { listBranchesFor } from '../utils/useOfficeBranches';
 import { useAuth } from '../auth/AuthProvider';
 import {
   addShipmentLine,
@@ -24,7 +25,6 @@ import {
 } from '../api/inventoryOps';
 import {
   listInventoryBranchLocations,
-  listPracticeBranches,
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../api/branchInventory';
@@ -324,7 +324,7 @@ export default function ReceiveShipmentPage() {
     void (async () => {
       try {
         const [b, s] = await Promise.all([
-          listPracticeBranches(practiceId),
+          listBranchesFor(practiceId, 'inventory.receive'),
           listSuppliers(practiceId),
         ]);
         if (cancelled) return;

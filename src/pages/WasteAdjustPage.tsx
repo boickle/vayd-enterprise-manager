@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { listBranchesFor } from '../utils/useOfficeBranches';
 import { useAuth } from '../auth/AuthProvider';
 import {
   getWasteAdmin,
@@ -8,7 +9,6 @@ import {
 } from '../api/inventoryOps';
 import {
   listInventoryBranchLocations,
-  listPracticeBranches,
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../api/branchInventory';
@@ -72,7 +72,7 @@ export default function WasteAdjustPage() {
   useEffect(() => {
     void (async () => {
       const [b, admin] = await Promise.all([
-        listPracticeBranches(practiceId),
+        listBranchesFor(practiceId, 'inventory.waste'),
         getWasteAdmin(practiceId),
       ]);
       setBranches(b.filter((x) => x.isActive !== false));

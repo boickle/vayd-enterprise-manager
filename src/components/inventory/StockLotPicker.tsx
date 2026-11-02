@@ -4,6 +4,7 @@ import {
   listInventoryLots,
   type InventoryLotBalance,
 } from '../../api/branchInventory';
+import { apiErrorMessage } from '../../api/http';
 import AddInventoryLotModal from './AddInventoryLotModal';
 import { ExpirationDateField, dateInputValue } from './ExpirationDateField';
 import './StockLotPicker.css';
@@ -327,7 +328,7 @@ export default function StockLotPicker({
                 onChange({ lotId: lot.id, lotNumber: lot.lotNumber, expirationDate: null });
               })
               .catch((err: unknown) =>
-                setShelfLotError(err instanceof Error ? err.message : 'Could not use shelf stock')
+                setShelfLotError(apiErrorMessage(err) || 'Could not use shelf stock')
               );
             return;
           }
@@ -381,7 +382,7 @@ export default function StockLotPicker({
               className={blocked ? 'stock-lot-picker__expired' : undefined}
             >
               {lotLabel(lot, showLocation)}
-              {useFirst?.id === lot.id ? ' · Use first' : ''}
+              {useFirst?.id === lot.id ? ' (recommended)' : ''}
             </option>
           );
         })}

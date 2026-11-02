@@ -226,10 +226,13 @@ import {
 } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
+import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { apiErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
+import { changeLineShelf } from '../../utils/lineShelfChange';
 // A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
 // invoice's office / shelf fields aren't shown on it (owner request, Oct 30, 2026).
 import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
@@ -6696,6 +6699,7 @@ export default function ClientFinancialWorkspace({
                                 inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                 branchId={lotShelf(line, selected).branchId}
                                 locationId={lotShelf(line, selected).locationId}
+                                onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                 otherShelvesFrom={lotShelf(line, selected).safeName}
                                 itemName={line.description}
                                 disabled={!canEdit || busy}
@@ -6946,6 +6950,7 @@ export default function ClientFinancialWorkspace({
                                     inventoryItemId={line.stockInventoryItemId ?? null}
                                     branchId={lotShelf(line, selected).branchId}
                                     locationId={lotShelf(line, selected).locationId}
+                                    onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                     otherShelvesFrom={lotShelf(line, selected).safeName}
                                     itemName={linkedStock.stockName}
                                     disabled={!canEdit || busy}
@@ -6993,6 +6998,7 @@ export default function ClientFinancialWorkspace({
                                   providerId={line.providerEmployeeId}
                                   branchId={lotShelf(line, selected).branchId ?? undefined}
                                   locationId={lotShelf(line, selected).locationId ?? undefined}
+                                  onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                   disabled={!canEdit || busy}
                                   onSelectLot={(lot) => {
                                     void patchLine(line, {
@@ -7009,6 +7015,7 @@ export default function ClientFinancialWorkspace({
                                 hideLotPicker={linkedStock.linked}
                                 branchId={lotShelf(line, selected).branchId ?? undefined}
                                 locationId={lotShelf(line, selected).locationId ?? undefined}
+                                onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                 recorded={recordedVaccine}
                                 onSaved={(saved) => {
                                   if (saved.encounterOrderId) {
@@ -7079,6 +7086,7 @@ export default function ClientFinancialWorkspace({
                                     inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                     branchId={lotShelf(line, selected).branchId}
                                     locationId={lotShelf(line, selected).locationId}
+                                    onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                     otherShelvesFrom={lotShelf(line, selected).safeName}
                                     itemName={line.description}
                                     disabled={!canEdit || busy}
@@ -7207,6 +7215,7 @@ export default function ClientFinancialWorkspace({
                                       providerId={line.providerEmployeeId}
                                       branchId={lotShelf(line, selected).branchId ?? undefined}
                                       locationId={lotShelf(line, selected).locationId ?? undefined}
+                                      onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                       disabled={!canEdit || busy}
                                       onSelectLot={(lot) => {
                                         void patchLine(line, {
@@ -7224,6 +7233,7 @@ export default function ClientFinancialWorkspace({
                                       inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                       branchId={lotShelf(line, selected).branchId}
                                       locationId={lotShelf(line, selected).locationId}
+                                      onShelfChange={selected ? (next) => void changeLineShelf(selected, line, next).then(setSelected, (e: unknown) => setError(apiErrorMessage(e))) : undefined}
                                       otherShelvesFrom={lotShelf(line, selected).safeName}
                                       itemName={line.description}
                                       disabled={!canEdit || busy}
@@ -7331,30 +7341,30 @@ export default function ClientFinancialWorkspace({
                                 {Number.isFinite(refillCount) && refillCount > 0 ? (
                                   <label className={`client-fin__rx-field${rxMissing('refillExpiration') ? ' is-missing' : ''}`}>
                                     <span>Refill expiration *</span>
-                                    <input
-                                      type="date"
-                                      min={tomorrowInput()}
-                                      max={maxRefillExpirationInput()}
+                                    <ExpirationDateField
                                       value={draft.refillExpiration}
-                                      onChange={(e) => {
-                                        const next = e.target.value;
+                                      required
+                                      ariaLabel="Refill expiration"
+                                      wheelTitle="Refill expiration"
+                                      pickerLabel="Pick refill expiration"
+                                      onCommit={(iso) => {
+                                        const next = iso ?? '';
                                         if (next && dateIsTodayOrBefore(next)) {
                                           setError('Refill expiration must be after today.');
                                           return;
                                         }
+                                        let refillExpiration = next;
                                         if (refillExpirationExceedsMax(next)) {
                                           setError(
                                             'Refill expiration cannot be more than 1 year from today.'
                                           );
-                                          patchSigDraft(line, {
-                                            refillExpiration: maxRefillExpirationInput(),
-                                          });
-                                          return;
+                                          refillExpiration = maxRefillExpirationInput();
+                                        } else {
+                                          setError(null);
                                         }
-                                        setError(null);
-                                        patchSigDraft(line, { refillExpiration: next });
+                                        patchSigDraft(line, { refillExpiration });
+                                        void persistRxExtras(line, { refillExpiration });
                                       }}
-                                      onBlur={() => void persistRxExtras(line)}
                                     />
                                   </label>
                                 ) : null}

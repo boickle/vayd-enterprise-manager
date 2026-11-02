@@ -40,3 +40,16 @@ export function useOfficeBranches(practiceId: number, keys: string[]) {
 
   return { branches, allowAll, loaded };
 }
+
+/**
+ * Every office (active or not) where the signed-in user holds `key`. Used by pages that pick
+ * one office to work in: an inventory manager for one office sees only that office
+ * (owner decision, Nov 2, 2026). If the lookup fails, all offices show; the server still checks.
+ */
+export async function listBranchesFor(practiceId: number, key: string): Promise<PracticeBranch[]> {
+  const [list, offices] = await Promise.all([
+    listPracticeBranches(practiceId),
+    fetchMyOffices(practiceId, key).catch(() => 'all' as const),
+  ]);
+  return offices === 'all' ? list : list.filter((b) => offices.includes(b.id));
+}

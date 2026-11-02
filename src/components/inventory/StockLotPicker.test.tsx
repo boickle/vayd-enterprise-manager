@@ -133,7 +133,7 @@ describe('CAT-10: first-expired-first-out suggestion', () => {
     expired: false,
   });
 
-  it('lists the soonest-expiring lot first and marks it "Use first"', async () => {
+  it('lists the soonest-expiring lot first and marks it "(recommended)"', async () => {
     const { listInventoryLots } = await import('../../api/branchInventory');
     vi.mocked(listInventoryLots).mockResolvedValueOnce([
       lot(3, 'LATE', '2028-01-01'),
@@ -148,8 +148,8 @@ describe('CAT-10: first-expired-first-out suggestion', () => {
     const names = options.map((o) => o.textContent ?? '');
     expect(names.findIndex((n) => n.includes('SOON'))).toBeLessThan(names.findIndex((n) => n.includes('LATE')));
     expect(names.findIndex((n) => n.includes('LATE'))).toBeLessThan(names.findIndex((n) => n.includes('NODATE')));
-    expect(screen.getByRole('option', { name: /Lot SOON.*Use first/ })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /Lot LATE.*Use first/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /Lot SOON.*\(recommended\)/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Lot LATE.*\(recommended\)/ })).toBeNull();
   });
 
   it('shows a small note, and still lets the newer lot be used, when an older lot has stock', async () => {

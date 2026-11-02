@@ -1,5 +1,6 @@
 import VaccineLotPicker from '../soap/VaccineLotPicker';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
+import type { ShelfChoice } from '../inventory/LineShelfSelect';
 import type { InventoryLotBalance } from '../../api/branchInventory';
 import type { InvoiceLineLot, StockDraw, VisitInvoiceLine } from '../../api/visitWorkflow';
 import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
@@ -18,6 +19,8 @@ type Props = {
   offerUncountedShelf?: boolean;
   /** Several lots on one line (not for vaccines). Without this the lot picker is single-lot as before. */
   onSaveLots?: (lots: InvoiceLineLot[]) => Promise<boolean | void> | boolean | void;
+  /** Show a Location box for this charge's shelf; called when staff change it. */
+  onShelfChange?: (next: ShelfChoice) => void;
 };
 
 /** Lot picker for the inventory SKU that actually decrements — not the billed service. */
@@ -32,6 +35,7 @@ export default function LinkedStockInvoiceDetails({
   onSelectLot,
   offerUncountedShelf = false,
   onSaveLots,
+  onShelfChange,
 }: Props) {
   const stock = linkedStockFromLine(line, stockDraw);
   if (!stock.linked || stock.stockId == null) return null;
@@ -55,6 +59,7 @@ export default function LinkedStockInvoiceDetails({
         disabled={disabled}
         {...lotEditorProps(line)}
         singleOnly={!onSaveLots || line.lotsSingleOnly === true}
+        onShelfChange={onShelfChange}
         onSaveLots={(lots) => onSaveLots?.(lots)}
         renderSingle={() => (
           <VaccineLotPicker

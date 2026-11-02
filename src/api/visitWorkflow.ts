@@ -176,6 +176,9 @@ export type VisitInvoiceLine = {
   excludeFromProduction?: boolean;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /** This charge's own office / shelf. Null follows the invoice (or the doctor's controlled shelf). */
+  inventoryBranchId?: number | null;
+  inventoryLocationId?: number | null;
   /**
    * When the line draws from several lots: each lot with its quantity. Empty or missing means the
    * single lot above. With several, the fields above are the lot with the most units.
@@ -1107,6 +1110,8 @@ export type CounterInvoiceLineInput = {
   catalogItemType?: string | null;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
+  /** This charge's own shelf; null follows the invoice again. Lots not on the new shelf are cleared. */
+  inventoryLocationId?: number | null;
   /** Several lots for one line; send [] to clear them. */
   lots?: InvoiceLineLot[];
   isCovered?: boolean;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listBranchesFor } from '../utils/useOfficeBranches';
 import { Link } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { usePermissions } from '../permissions/PermissionContext';
@@ -6,7 +7,6 @@ import {
   getFirstCountProgress,
   getFirstCountSheet,
   listInventoryBranchLocations,
-  listPracticeBranches,
   submitFirstCount,
   type FirstCountProgress,
   type FirstCountResult,
@@ -69,9 +69,14 @@ function sortForSheet(items: FirstCountSheetItem[]): FirstCountSheetItem[] {
   });
 }
 
+/** Items set up for this shelf (par, min / max, controlled, or already here). */
+function listedItems(items: FirstCountSheetItem[]) {
+  return items.filter((i) => i.onList !== false);
+}
+
 function scopeItems(items: FirstCountSheetItem[], scope: SheetScope) {
-  if (scope === 'controlled') return items.filter((i) => i.isControlled);
-  if (scope === 'uncounted') return items.filter((i) => !i.firstCountedAt);
+  if (scope === 'controlled') return listedItems(items).filter((i) => i.isControlled);
+  if (scope === 'uncounted') return listedItems(items).filter((i) => !i.firstCountedAt);
   return items;
 }
 
@@ -298,7 +303,8 @@ export default function FirstCountsPage() {
   if (!effective) {
     return <p className="settings-muted">{error ?? 'Loading…'}</p>;
   }
-  if (!can('inventory.count.baseline', 'all')) {
+  // Own offices are enough: the office list shows only those (owner decision, Nov 2, 2026).
+  if (!can('inventory.count.baseline')) {
     return (
       <div className="settings-card" style={{ padding: 16 }}>
         <h2 style={{ margin: '0 0 4px' }}>First / annual counts</h2>
@@ -346,7 +352,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
 
   useEffect(() => {
     loadProgress();
-    void listPracticeBranches(practiceId)
+    void listBranchesFor(practiceId, 'inventory.count.baseline')
       .then((list) => {
         const active = list.filter((b) => b.isActive !== false);
         setBranches(active);
@@ -429,6 +435,8 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return sortForSheet(items).filter((item) => {
+      // "All" shows every item; the other filters only what is set up for this shelf.
+      if (filter !== 'all' && item.onList === false) return false;
       if (filter === 'uncounted' && item.firstCountedAt) return false;
       if (filter === 'counted' && !item.firstCountedAt) return false;
       if (filter === 'controlled' && !item.isControlled) return false;
@@ -437,8 +445,9 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
     });
   }, [items, search, filter]);
 
-  const countedHere = items.filter((i) => i.firstCountedAt).length;
-  const controlledHere = items.filter((i) => i.isControlled);
+  const listed = listedItems(items);
+  const countedHere = listed.filter((i) => i.firstCountedAt).length;
+  const controlledHere = listed.filter((i) => i.isControlled);
   const controlledLeft = controlledHere.filter((i) => !i.firstCountedAt).length;
   const typedRows: FirstCountRow[] = useMemo(
     () =>
@@ -647,9 +656,9 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
             <tbody>
               {progress.branches.flatMap((b) =>
                 b.locations.map((loc) => {
+                  const controlledTotal = loc.listControlled ?? progress.controlledItems;
                   const controlledDone =
-                    progress.controlledItems === 0 ||
-                    loc.countedControlled >= progress.controlledItems;
+                    controlledTotal === 0 || loc.countedControlled >= controlledTotal;
                   return (
                     <tr
                       key={loc.locationId}
@@ -685,12 +694,12 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
                         {loc.isDefault ? <span className="settings-muted"> (default)</span> : null}
                       </td>
                       <td>
-                        {loc.countedItems} of {progress.totalItems}
+                        {loc.countedItems} of {loc.listItems ?? progress.totalItems}
                       </td>
                       <td
                         style={{ color: controlledDone ? '#166534' : '#b91c1c', fontWeight: 600 }}
                       >
-                        {loc.countedControlled} of {progress.controlledItems}
+                        {loc.countedControlled} of {controlledTotal}
                         {controlledDone ? ' ✓' : ''}
                       </td>
                       <td>{formatWhen(loc.lastCountedAt)}</td>
@@ -779,7 +788,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
               value={scope}
               onChange={(e) => setScope(e.target.value as SheetScope)}
             >
-              <option value="uncounted">Not counted yet ({items.length - countedHere})</option>
+              <option value="uncounted">Not counted yet ({listed.length - countedHere})</option>
               <option value="controlled">Controlled only ({controlledHere.length})</option>
               <option value="all">All items ({items.length})</option>
             </select>
@@ -895,12 +904,19 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
 
       {sheet ? (
         <p className="settings-muted" style={{ margin: '10px 0 0', fontSize: 13 }}>
-          <strong>{sheet.locationName}</strong>: {countedHere} of {items.length} items counted ·{' '}
+          <strong>{sheet.locationName}</strong>: {countedHere} of {listed.length} items counted ·{' '}
           <span style={{ color: controlledLeft ? '#b91c1c' : '#166534', fontWeight: 600 }}>
             {controlledLeft
               ? `${controlledLeft} controlled item${controlledLeft === 1 ? '' : 's'} still to count`
               : 'all controlled items counted'}
           </span>
+          {listed.length < items.length ? (
+            <>
+              {' '}
+              · Showing items with a par or min / max here, plus controlled drugs. Use{' '}
+              <strong>All</strong> to add something else.
+            </>
+          ) : null}
         </p>
       ) : null}
 

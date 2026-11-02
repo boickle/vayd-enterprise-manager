@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { InvoiceLineLot, VisitInvoiceLine } from '../../api/visitWorkflow';
 import { checkLotSplit, lotSplitSummary, type LotSplitRow } from '../../utils/lotSplit';
 import StockLotPicker from './StockLotPicker';
+import LineShelfSelect, { type ShelfChoice } from './LineShelfSelect';
 import { appConfirm } from '../../utils/appDialog';
 
 type Props = {
@@ -27,6 +28,8 @@ type Props = {
   renderSingle: () => ReactNode;
   /** Save the lots on the line. Return false when the save failed so the rows stay open. */
   onSaveLots: (lots: InvoiceLineLot[]) => Promise<boolean | void> | boolean | void;
+  /** Show a Location box for this charge's shelf; called when staff change it. */
+  onShelfChange?: (next: ShelfChoice) => void;
 };
 
 /** The line facts the editor needs, so each screen only adds its own lot shelf and save call. */
@@ -76,7 +79,57 @@ export default function MultiLotEditor({
   singleOnly = false,
   renderSingle,
   onSaveLots,
+  onShelfChange,
 }: Props) {
+  const shelfBox = onShelfChange ? (
+    <LineShelfSelect
+      practiceId={practiceId}
+      locationId={locationId ?? null}
+      disabled={disabled}
+      onChange={onShelfChange}
+    />
+  ) : null;
+  return (
+    <>
+      {shelfBox}
+      <MultiLotBody
+        practiceId={practiceId}
+        inventoryItemId={inventoryItemId}
+        branchId={branchId}
+        locationId={locationId}
+        otherShelvesFrom={otherShelvesFrom}
+        itemName={itemName}
+        disabled={disabled}
+        lineQty={lineQty}
+        lots={lots}
+        singleLotId={singleLotId}
+        singleLotNumber={singleLotNumber}
+        mustCoverAll={mustCoverAll}
+        singleOnly={singleOnly}
+        renderSingle={renderSingle}
+        onSaveLots={onSaveLots}
+      />
+    </>
+  );
+}
+
+function MultiLotBody({
+  practiceId,
+  inventoryItemId,
+  branchId,
+  locationId,
+  otherShelvesFrom,
+  itemName,
+  disabled,
+  lineQty,
+  lots,
+  singleLotId,
+  singleLotNumber,
+  mustCoverAll = false,
+  singleOnly = false,
+  renderSingle,
+  onSaveLots,
+}: Omit<Props, 'onShelfChange'>) {
   const stored = useMemo(() => lots ?? [], [lots]);
   const storedKey = JSON.stringify(stored);
   const [editing, setEditing] = useState(false);

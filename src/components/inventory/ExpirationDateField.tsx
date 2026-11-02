@@ -86,6 +86,8 @@ export function ExpirationDateField({
   onCommit,
   ariaLabel,
   className,
+  wheelTitle = 'Expiration date',
+  pickerLabel = 'Pick expiration date',
 }: {
   value: string | null | undefined;
   disabled?: boolean;
@@ -93,6 +95,10 @@ export function ExpirationDateField({
   onCommit: (iso: string | null) => void;
   ariaLabel?: string;
   className?: string;
+  /** Heading on the month / day / year wheel. */
+  wheelTitle?: string;
+  /** Screen-reader name of the calendar button. */
+  pickerLabel?: string;
 }) {
   const iso = dateInputValue(value);
   const display = iso ? isoToDisplay(iso) : '';
@@ -154,7 +160,7 @@ export function ExpirationDateField({
           type="button"
           className="stock-lot-exp__cal"
           disabled={disabled}
-          aria-label="Pick expiration date"
+          aria-label={pickerLabel}
           aria-expanded={wheelOpen}
           onClick={() => setWheelOpen((v) => !v)}
         >
@@ -162,7 +168,7 @@ export function ExpirationDateField({
         </button>
         {wheelOpen ? (
           <DateWheelPicker
-            title="Expiration date"
+            title={wheelTitle}
             value={iso}
             onChange={(next) => {
               setError(null);
