@@ -2,11 +2,14 @@
  * CAT-A9 missing cost filter: the inventory list can show only products whose cost is empty,
  * null, 0 or negative, so staff can find and fix them. The page runs for real; only HTTP is faked.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let itemRows: Record<number, Record<string, unknown>> = {};
+/** When set, the search endpoint pages through these rows by offset/limit (like the server). */
+let pagedRows: Record<string, unknown>[] | null = null;
+const searchParams: Record<string, unknown>[] = [];
 
 function inventoryRow(id: number, over: Record<string, unknown> = {}) {
   return {
@@ -22,15 +25,25 @@ function inventoryRow(id: number, over: Record<string, unknown> = {}) {
   };
 }
 
-function route(method: string, url: string) {
+function searchRow(item: Record<string, unknown>) {
+  return {
+    itemType: 'inventory',
+    inventoryItem: item,
+    name: `Item ${item.id}`,
+    code: null,
+    price: 50,
+  };
+}
+
+function route(method: string, url: string, params?: Record<string, unknown>) {
   if (method === 'get' && url.includes('/quantity-price-breaks/items/search')) {
-    return Object.keys(itemRows).map((id) => ({
-      itemType: 'inventory',
-      inventoryItem: itemRows[Number(id)],
-      name: `Item ${id}`,
-      code: null,
-      price: 50,
-    }));
+    searchParams.push(params ?? {});
+    if (pagedRows) {
+      const offset = Number(params?.offset ?? 0);
+      const limit = Number(params?.limit ?? 100);
+      return pagedRows.slice(offset, offset + limit).map(searchRow);
+    }
+    return Object.keys(itemRows).map((id) => searchRow(itemRows[Number(id)]));
   }
   if (method === 'get' && /\/inventory-items\/autoship-counts/.test(url)) return { counts: {} };
   if (method === 'get' && /\/settings$/.test(url)) return { 'inventory.onlineStoreImplemented': 'true' };
@@ -45,7 +58,10 @@ function route(method: string, url: string) {
 
 vi.mock('../api/http', () => {
   const make = (method: string) =>
-    vi.fn(async (url: string) => ({ data: route(method, url), status: 200 }));
+    vi.fn(async (url: string, cfg?: { params?: Record<string, unknown> }) => ({
+      data: route(method, url, cfg?.params),
+      status: 200,
+    }));
   return {
     http: { get: make('get'), post: make('post'), patch: make('patch'), put: make('put'), delete: make('delete') },
     apiBaseUrl: 'http://test',
@@ -67,6 +83,8 @@ vi.mock('../utils/practiceIdFromToken', () => ({ currentPracticeId: () => 1, res
 import Catalog from './Catalog';
 
 beforeEach(() => {
+  pagedRows = null;
+  searchParams.length = 0;
   itemRows = {
     1: inventoryRow(1, { cost: 12.5 }),
     2: inventoryRow(2, { cost: null }),
@@ -89,16 +107,48 @@ describe('CAT-A9 missing cost filter', () => {
     const toggle = screen.getByLabelText('Missing cost');
     expect(toggle).not.toBeChecked();
 
+    // The list reloads from the server after each toggle, so wait for it to settle.
     fireEvent.click(toggle);
     expect(toggle).toBeChecked();
-    expect(screen.queryByText('Item 1', { exact: true })).toBeNull();
-    expect(screen.getByText('Item 2', { exact: true })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Item 1', { exact: true })).toBeNull());
+    expect(await screen.findByText('Item 2', { exact: true })).toBeInTheDocument();
     expect(screen.getByText('Item 3', { exact: true })).toBeInTheDocument();
 
     fireEvent.click(toggle);
     expect(toggle).not.toBeChecked();
-    expect(screen.getByText('Item 1', { exact: true })).toBeInTheDocument();
+    expect(await screen.findByText('Item 1', { exact: true })).toBeInTheDocument();
     expect(screen.getByText('Item 2', { exact: true })).toBeInTheDocument();
     expect(screen.getByText('Item 3', { exact: true })).toBeInTheDocument();
   });
 });
+
+describe('CAT-A9 missing cost filter covers the whole catalog', () => {
+  it('pages through every inventory page with no search text and finds a null-cost row on page 2', async () => {
+    // Page 1 is a full page of priced products; page 2 is short and holds one product with no cost.
+    const page1 = Array.from({ length: 100 }, (_, i) => inventoryRow(i + 1, { cost: 20 }));
+    const page2 = [
+      inventoryRow(101, { cost: 20 }),
+      inventoryRow(102, { cost: null }),
+      inventoryRow(103, { cost: 20 }),
+    ];
+    pagedRows = [...page1, ...page2];
+
+    render(
+      <MemoryRouter>
+        <Catalog />
+      </MemoryRouter>
+    );
+    // No search text and "Show all" stays off: ticking Missing cost alone must still load.
+    fireEvent.click(await screen.findByLabelText('Missing cost'));
+
+    expect(await screen.findByText('Item 102', { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText('Item 1', { exact: true })).toBeNull();
+    expect(screen.queryByText('Item 101', { exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Load more/i })).toBeNull();
+
+    const offsets = searchParams.map((p) => Number(p.offset ?? 0));
+    expect(offsets).toEqual([0, 100]);
+    expect(searchParams.every((p) => p.types === 'inventory')).toBe(true);
+  });
+});
+
