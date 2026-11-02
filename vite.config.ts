@@ -25,6 +25,10 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
     exclude: ['node_modules', 'dist', 'cypress'],
+    // Vitest defaults to one worker per core. Four use half the memory for about
+    // three seconds more, and keep a busy machine from swapping (the API's jest
+    // did exactly that). Override with `vitest run --maxWorkers=N`.
+    maxWorkers: 4,
   },
   server: {
     port: 5173,
