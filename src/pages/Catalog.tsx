@@ -272,6 +272,12 @@ function catalogIsActive(row: SearchResultItem): boolean {
   return a !== false;
 }
 
+/** CAT-A9: a product with no usable cost (empty, null, 0 or negative). Non-products never match. */
+function isMissingInventoryCost(row: SearchResultItem): boolean {
+  if (row.itemType !== 'inventory') return false;
+  return !(catalogCost(row) > 0);
+}
+
 function formatUsd(n: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
@@ -513,6 +519,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const navigate = useNavigate();
   const typeFilter = typeFilterFromSearch(searchParams.toString());
   const [showArchived, setShowArchived] = useState(false);
+  /** CAT-A9: client-side filter over the loaded rows; no refetch when toggled. */
+  const [missingCostOnly, setMissingCostOnly] = useState(false);
+  const visibleSearchResults = missingCostOnly
+    ? searchResults.filter(isMissingInventoryCost)
+    : searchResults;
   const [createOpen, setCreateOpen] = useState(false);
   /** Once the user picks a tax level, changing the item type no longer resets it. */
   const createTaxTouched = useRef(false);
@@ -2658,6 +2669,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             />
             Show archived
           </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={missingCostOnly}
+              onChange={(e) => setMissingCostOnly(e.target.checked)}
+            />
+            Missing cost
+          </label>
           {canBulkPrice && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
             <input
@@ -2749,7 +2768,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               {searchQuery.trim() || showAllItems
                 ? searching
                   ? '…'
-                  : searchResults.length + bundleHits.length
+                  : visibleSearchResults.length + bundleHits.length
                 : 0}
             </span>
             <button
@@ -2787,13 +2806,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         {(searchQuery.trim() || showAllItems) &&
           !searching &&
           !searchError &&
-          searchResults.length === 0 &&
+          visibleSearchResults.length === 0 &&
           bundleHits.length === 0 && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
             No matches.
           </p>
         )}
-        {(searchResults.length > 0 || bundleHits.length > 0) && (
+        {(visibleSearchResults.length > 0 || bundleHits.length > 0) && (
           <div className="inv-catalog-results__table-scroll">
             <table className="inv-catalog-results__table">
               <thead>
@@ -2889,7 +2908,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     <td />
                   </tr>
                 ))}
-                {searchResults.map((row, i) => {
+                {visibleSearchResults.map((row, i) => {
                   const itemType = row.itemType;
                   const itemId = entityIdFromSelection(itemType, row);
                   const cost = catalogCost(row);
