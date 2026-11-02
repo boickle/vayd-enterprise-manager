@@ -13,7 +13,6 @@ import {
   type ScoutUserRole,
 } from '../api/users';
 import { fetchAllEmployees, fetchEmployee, type Employee } from '../api/appointmentSettings';
-import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { saveEmployees, type EmployeeDto } from '../api/employeesMutations';
 import { listTasks, reassignFromEmployee } from '../api/tasks';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
@@ -81,13 +80,11 @@ export default function AdminUsers() {
   );
 
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [doctors, setDoctors] = useState<Provider[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
 
   const [editing, setEditing] = useState<AdminManagedUser | null>(null);
   const [editRole, setEditRole] = useState('');
   const [editEmployeeId, setEditEmployeeId] = useState('');
-  const [editDoctorId, setEditDoctorId] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
   const [editEmail, setEditEmail] = useState('');
   const [deactivateToEmployeeId, setDeactivateToEmployeeId] = useState('');
@@ -100,7 +97,6 @@ export default function AdminUsers() {
   const [creating, setCreating] = useState(false);
   const [createEmail, setCreateEmail] = useState('');
   const [createAsEmployee, setCreateAsEmployee] = useState(false);
-  const [createDoctorId, setCreateDoctorId] = useState('');
   const [createPending, setCreatePending] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -151,10 +147,7 @@ export default function AdminUsers() {
     (async () => {
       setLookupsLoading(true);
       try {
-        const [emps, providers] = await Promise.all([
-          fetchAllEmployees(),
-          fetchPrimaryProviders(),
-        ]);
+        const emps = await fetchAllEmployees();
         if (cancelled) return;
         setEmployees(
           (Array.isArray(emps) ? emps : [])
@@ -164,13 +157,10 @@ export default function AdminUsers() {
               employeeOptionLabel(a).localeCompare(employeeOptionLabel(b)),
             ),
         );
-        setDoctors(
-          providers.slice().sort((a, b) => a.name.localeCompare(b.name)),
-        );
       } catch {
         if (!cancelled) {
           setMessage({
-            text: 'Unable to load employees/doctors for linking.',
+            text: 'Unable to load employees for linking.',
             kind: 'error',
           });
         }
@@ -222,7 +212,6 @@ export default function AdminUsers() {
     setEditing(user);
     setEditRole(String(user.role || 'employee'));
     setEditEmployeeId(user.employeeId != null ? String(user.employeeId) : '');
-    setEditDoctorId(user.doctorId != null ? String(user.doctorId) : '');
     setEditIsActive(user.isActive !== false);
     setEditEmail(user.email ?? '');
     setDeactivateToEmployeeId('');
@@ -269,7 +258,6 @@ export default function AdminUsers() {
     setCreating(true);
     setCreateEmail('');
     setCreateAsEmployee(false);
-    setCreateDoctorId('');
     setCreateError(null);
     setMessage(null);
   };
@@ -289,10 +277,7 @@ export default function AdminUsers() {
     setMessage(null);
     try {
       if (createAsEmployee) {
-        await createEmployeeUser(
-          email,
-          createDoctorId ? Number(createDoctorId) : undefined,
-        );
+        await createEmployeeUser(email);
         setMessage({
           text: `Employee user created for ${email}. A temporary password was emailed.`,
           kind: 'success',
@@ -307,8 +292,7 @@ export default function AdminUsers() {
       setCreating(false);
       setCreateEmail('');
       setCreateAsEmployee(false);
-      setCreateDoctorId('');
-      await loadUsers();
+        await loadUsers();
     } catch (err) {
       setCreateError(extractErr(err));
     } finally {
@@ -323,7 +307,6 @@ export default function AdminUsers() {
     setMessage(null);
     try {
       const nextEmployeeId = editEmployeeId ? Number(editEmployeeId) : null;
-      const nextDoctorId = editDoctorId ? Number(editDoctorId) : null;
       const payload: {
         email?: string;
         role?: string;
@@ -341,9 +324,6 @@ export default function AdminUsers() {
       }
       if (nextEmployeeId !== (editing.employeeId ?? null)) {
         payload.employeeId = nextEmployeeId;
-      }
-      if (nextDoctorId !== (editing.doctorId ?? null)) {
-        payload.doctorId = nextDoctorId;
       }
       if (editIsActive !== (editing.isActive !== false)) {
         payload.isActive = editIsActive;
@@ -738,22 +718,25 @@ export default function AdminUsers() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Doctor">
-                  <select
-                    className="input"
-                    value={editDoctorId}
-                    onChange={(e) => setEditDoctorId(e.target.value)}
-                    disabled={lookupsLoading}
-                  >
-                    <option value="">
-                      {lookupsLoading ? 'Loading doctors…' : 'No doctor linked'}
-                    </option>
-                    {doctors.map((doc) => (
-                      <option key={String(doc.id)} value={String(doc.id)}>
-                        {doc.name}
-                      </option>
-                    ))}
-                  </select>
+                <Field label="Works with">
+                  <div style={{ fontSize: 14 }}>
+                    {editing.doctorName ||
+                      (editing.doctorId != null ? `#${editing.doctorId}` : 'No doctor')}
+                    {editing.isDoctorDefault ? ' · default for this doctor' : ''}
+                  </div>
+                  {editing.employeeId != null ? (
+                    <a
+                      className="settings-muted"
+                      style={{ fontSize: 12 }}
+                      href={`/schedule/settings?tab=employee-directory&employee=${editing.employeeId}`}
+                    >
+                      Change on Settings → Staff → Profile
+                    </a>
+                  ) : (
+                    <span className="settings-muted" style={{ fontSize: 12 }}>
+                      Set on Settings → Staff → Profile once this login is linked to an employee.
+                    </span>
+                  )}
                 </Field>
                 <Field label="Status">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -854,7 +837,6 @@ export default function AdminUsers() {
                     checked={createAsEmployee}
                     onChange={(e) => {
                       setCreateAsEmployee(e.target.checked);
-                      if (!e.target.checked) setCreateDoctorId('');
                     }}
                   />
                   This user is an employee
@@ -862,26 +844,9 @@ export default function AdminUsers() {
                 {createAsEmployee && (
                   <>
                     <p className="settings-muted" style={{ margin: 0, fontSize: 13 }}>
-                      Email must match an active employee record. Optionally attach them to a
-                      doctor.
+                      Email must match an active employee record. Who they work with is set on
+                      Settings → Staff → Profile, where you can also create their login.
                     </p>
-                    <Field label="Attach to doctor (optional)">
-                      <select
-                        className="input"
-                        value={createDoctorId}
-                        onChange={(e) => setCreateDoctorId(e.target.value)}
-                        disabled={lookupsLoading}
-                      >
-                        <option value="">
-                          {lookupsLoading ? 'Loading doctors…' : 'No doctor selected'}
-                        </option>
-                        {doctors.map((doc) => (
-                          <option key={String(doc.id)} value={String(doc.id)}>
-                            {doc.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
                   </>
                 )}
                 {!createAsEmployee && (

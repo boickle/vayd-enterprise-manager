@@ -96,6 +96,8 @@ export type AdminManagedUser = {
   doctorId: number | null;
   employeeName: string | null;
   doctorName: string | null;
+  /** The doctor's default person (room loader emails, mail-order approval tasks). */
+  isDoctorDefault?: boolean;
   clientId?: number | null;
   clientName?: string | null;
   isActive: boolean;
@@ -151,5 +153,43 @@ export async function adminSendPasswordReset(
   userId: number,
 ): Promise<{ status: string }> {
   const { data } = await http.post(`/admin/users/${userId}/reset-password`);
+  return data;
+}
+
+/** An employee's login and who they work with (Settings → Staff → Profile). */
+export type StaffLogin = {
+  userId: number;
+  email: string | null;
+  isActive: boolean;
+  doctorId: number | null;
+  doctorName: string | null;
+  isDoctorDefault: boolean;
+};
+
+export async function getStaffLogin(practiceId: number, employeeId: number) {
+  const { data } = await http.get<StaffLogin | null>(
+    `/practice/${practiceId}/staff-logins/${employeeId}`
+  );
+  return data ?? null;
+}
+
+/** Practice manager and above. Marking someone the default clears it from the doctor's others. */
+export async function setStaffWorksWith(
+  practiceId: number,
+  employeeId: number,
+  body: { doctorId: number | null; isDoctorDefault: boolean }
+) {
+  const { data } = await http.put<StaffLogin | null>(
+    `/practice/${practiceId}/staff-logins/${employeeId}/works-with`,
+    body
+  );
+  return data ?? null;
+}
+
+/** Practice manager and above. Uses the employee's email and emails them a temporary password. */
+export async function createStaffLogin(practiceId: number, employeeId: number) {
+  const { data } = await http.post<{ message: string; login: StaffLogin | null }>(
+    `/practice/${practiceId}/staff-logins/${employeeId}`
+  );
   return data;
 }

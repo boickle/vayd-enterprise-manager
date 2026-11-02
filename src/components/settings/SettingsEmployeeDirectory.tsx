@@ -27,7 +27,18 @@ import {
 } from '../../api/branchInventory';
 import { appConfirm } from '../../utils/appDialog';
 import { listTasks, reassignFromEmployee } from '../../api/tasks';
-import { fetchAdminUsers, type AdminManagedUser } from '../../api/users';
+import {
+  createStaffLogin,
+  getStaffLogin,
+  setStaffWorksWith,
+  type StaffLogin,
+} from '../../api/users';
+import { usePermissions } from '../../permissions/PermissionContext';
+import {
+  displayNameForQuoLine,
+  useOpenPhoneLineDirectory,
+} from '../../hooks/useOpenPhoneLineDirectory';
+import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
@@ -193,6 +204,12 @@ export default function SettingsEmployeeDirectory({
   const [country, setCountry] = useState('');
   const [phone1, setPhone1] = useState('');
   const [phone2, setPhone2] = useState('');
+  const [quoLinePhone, setQuoLinePhone] = useState('');
+  /** Typing a number that isn't one of the Quo lines. */
+  const [quoCustom, setQuoCustom] = useState(false);
+  const [worksWithDoctorId, setWorksWithDoctorId] = useState<number | null>(null);
+  const [worksWithDefault, setWorksWithDefault] = useState(false);
+  const [creatingLogin, setCreatingLogin] = useState(false);
   const [roleIdsSelected, setRoleIdsSelected] = useState<number[]>([]);
   const [rolesCatalog, setRolesCatalog] = useState<EmployeeRole[]>([]);
   const [rolesEditEmployee, setRolesEditEmployee] = useState<Employee | null>(null);
@@ -212,7 +229,7 @@ export default function SettingsEmployeeDirectory({
   const [defaultBranchId, setDefaultBranchId] = useState<number | null>(null);
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
   const [practiceWide, setPracticeWide] = useState(false);
-  const [loginUser, setLoginUser] = useState<AdminManagedUser | null>(null);
+  const [loginUser, setLoginUser] = useState<StaffLogin | null>(null);
   const [loadedEmployee, setLoadedEmployee] = useState<Employee | null>(null);
   const [sigEditing, setSigEditing] = useState(false);
   const [sigDraft, setSigDraft] = useState<string | null>(null);
@@ -222,6 +239,23 @@ export default function SettingsEmployeeDirectory({
   const [deactivateOpenCount, setDeactivateOpenCount] = useState<number | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
+  const { can } = usePermissions();
+  /** Practice manager and above add employees and edit their records (owner decision, Nov 2, 2026). */
+  const canManageStaff = can('staff.employee.manage');
+  const canManageLogins = can('staff.login.manage');
+  const { lines: quoLines } = useOpenPhoneLineDirectory(isProvider);
+  const quoMatch = quoLinePhone.trim()
+    ? quoLines.find((line) => phonesMatchForQuo(line.phone, quoLinePhone))
+    : undefined;
+  const quoSelectValue = quoCustom || (quoLinePhone.trim() && !quoMatch)
+    ? '__custom__'
+    : (quoMatch?.phone ?? '');
+
+  const applyStaffLogin = (login: StaffLogin | null) => {
+    setLoginUser(login);
+    setWorksWithDoctorId(login?.doctorId ?? null);
+    setWorksWithDefault(login?.isDoctorDefault === true);
+  };
 
   const practiceWideRoleIds = useMemo(
     () => new Set(rolesCatalog.filter((r) => !r.isBranchSpecific).map((r) => r.id)),
@@ -279,7 +313,8 @@ export default function SettingsEmployeeDirectory({
     setPimsUserId('');
     setPimsType('VAYD');
     setIsProvider(false);
-    setLoginUser(null);
+    applyStaffLogin(null);
+    setQuoLinePhone('');
     setLoadedEmployee(null);
     setAddress1('');
     setAddress2('');
@@ -340,6 +375,8 @@ export default function SettingsEmployeeDirectory({
     setCountry(str(r.country));
     setPhone1(str(r.phone1));
     setPhone2(str(r.phone2));
+    setQuoLinePhone(str(r.quoLinePhone));
+    setQuoCustom(false);
     setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
   };
 
@@ -410,8 +447,7 @@ export default function SettingsEmployeeDirectory({
               .catch(() => [])
           )
       ).then((lists) => setControlledLocationOptions(lists.flat()));
-      const linked = await fetchAdminUsers({ employeeId: id }).catch(() => []);
-      setLoginUser(linked.find((u) => u.employeeId === id) ?? linked[0] ?? null);
+      applyStaffLogin(await getStaffLogin(DEFAULT_PRACTICE_ID, id).catch(() => null));
       if (seedBranch != null) {
         try {
           const locs = await listInventoryBranchLocations(DEFAULT_PRACTICE_ID, seedBranch);
@@ -542,6 +578,7 @@ export default function SettingsEmployeeDirectory({
       country: blankToNull(country),
       phone1: blankToNull(phone1),
       phone2: blankToNull(phone2),
+      quoLinePhone: blankToNull(quoLinePhone),
       practice,
       isActive: true,
       isDeleted: false,
@@ -651,6 +688,18 @@ export default function SettingsEmployeeDirectory({
       await saveEmployees(merged);
       await saveProviderSignature(editingId, signatureImage);
       await saveOfficeAndRoles(editingId);
+      if (
+        loginUser &&
+        (worksWithDoctorId !== (loginUser.doctorId ?? null) ||
+          worksWithDefault !== loginUser.isDoctorDefault)
+      ) {
+        applyStaffLogin(
+          await setStaffWorksWith(DEFAULT_PRACTICE_ID, editingId, {
+            doctorId: worksWithDoctorId,
+            isDoctorDefault: worksWithDoctorId != null && worksWithDefault,
+          })
+        );
+      }
       const refreshed = await fetchEmployee(editingId);
       setLoadedEmployee(refreshed);
       onMessage?.('Employee updated.', 'success');
@@ -659,6 +708,24 @@ export default function SettingsEmployeeDirectory({
       onMessage?.(extractErr(err), 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createLogin = async () => {
+    if (editingId == null) return;
+    if (email.trim() !== str(loadedEmployee?.email).trim()) {
+      onMessage?.('Save the new email first, then create the login.', 'error');
+      return;
+    }
+    setCreatingLogin(true);
+    try {
+      const res = await createStaffLogin(DEFAULT_PRACTICE_ID, editingId);
+      applyStaffLogin(res?.login ?? null);
+      onMessage?.(`Login created. ${email.trim()} was emailed a temporary password.`, 'success');
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setCreatingLogin(false);
     }
   };
 
@@ -755,6 +822,18 @@ export default function SettingsEmployeeDirectory({
       return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
     });
   }, [rows]);
+
+  /** Active scheduling providers someone can work with. */
+  const doctorOptions = useMemo(
+    () =>
+      sorted.filter(
+        (emp) =>
+          emp.id !== editingId &&
+          // The current link stays listed even if that doctor is inactive.
+          ((emp.isProvider === true && empActive(emp)) || emp.id === loginUser?.doctorId)
+      ),
+    [sorted, editingId, loginUser?.doctorId]
+  );
 
   const selectEmployee = (id: number) => {
     onSelectedEmployeeIdChange?.(id);
@@ -891,9 +970,11 @@ export default function SettingsEmployeeDirectory({
             </select>
           </label>
           <div className="settings-employee-hub__toolbar-actions">
-            <button type="button" className="btn" onClick={openAdd}>
-              Add
-            </button>
+            {canManageStaff ? (
+              <button type="button" className="btn" onClick={openAdd}>
+                Add
+              </button>
+            ) : null}
             <button type="button" className="btn secondary" onClick={() => void load()}>
               Refresh
             </button>
@@ -1061,7 +1142,7 @@ export default function SettingsEmployeeDirectory({
                         {emailLocked ? (
                           <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
                             This is their login email.{' '}
-                            <a href={`/admin/users?user=${loginUser.id}`}>Edit it on Users</a>
+                            <a href={`/admin/users?user=${loginUser.userId}`}>Edit it on Users</a>
                             . It must be unique among all users.
                           </p>
                         ) : (
@@ -1079,6 +1160,47 @@ export default function SettingsEmployeeDirectory({
                           onChange={(e) => setPhone1(e.target.value)}
                         />
                       </label>
+                      {isProvider ? (
+                        <label>
+                          <span className="label">Quo line</span>
+                          <select
+                            className="input"
+                            value={quoSelectValue}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '__custom__') {
+                                setQuoCustom(true);
+                                if (quoMatch) setQuoLinePhone('');
+                                return;
+                              }
+                              setQuoCustom(false);
+                              setQuoLinePhone(v);
+                            }}
+                          >
+                            <option value="">None (use Phone)</option>
+                            {quoLines.map((line) => (
+                              <option key={line.phone} value={line.phone}>
+                                {displayNameForQuoLine(line)} · {formatDisplayPhone(line.phone)}
+                              </option>
+                            ))}
+                            <option value="__custom__">Other number…</option>
+                          </select>
+                          {quoSelectValue === '__custom__' ? (
+                            <input
+                              className="input"
+                              type="tel"
+                              style={{ marginTop: 6 }}
+                              value={quoLinePhone}
+                              placeholder="+1 (207) 555-0123"
+                              onChange={(e) => setQuoLinePhone(e.target.value)}
+                            />
+                          ) : null}
+                          <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                            Texts to their clients come from this line. Blank uses Phone, then the
+                            practice line.
+                          </p>
+                        </label>
+                      ) : null}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                         <input
                           type="checkbox"
@@ -1088,6 +1210,85 @@ export default function SettingsEmployeeDirectory({
                         <span>Scheduling provider</span>
                       </label>
                     </div>
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Login and works with</legend>
+                    {loginUser ? (
+                      <>
+                        <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                          Signs in as <strong>{loginUser.email ?? '—'}</strong>
+                          {loginUser.isActive ? '' : ' (login turned off)'}.
+                        </p>
+                        {isProvider ? (
+                          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                            Doctors don’t work with another doctor. Their team is whoever picks them
+                            here.
+                          </p>
+                        ) : (
+                          <div className="settings-employee-modal__grid">
+                            <label>
+                              <span className="label">Works with</span>
+                              <select
+                                className="input"
+                                value={worksWithDoctorId ?? ''}
+                                disabled={!canManageStaff}
+                                onChange={(e) => {
+                                  const v = e.target.value === '' ? null : Number(e.target.value);
+                                  setWorksWithDoctorId(v);
+                                  if (v == null) setWorksWithDefault(false);
+                                }}
+                              >
+                                <option value="">No doctor</option>
+                                {doctorOptions.map((doc) => (
+                                  <option key={doc.id} value={doc.id}>
+                                    {employeeDisplayName(doc)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={worksWithDefault && worksWithDoctorId != null}
+                                disabled={!canManageStaff || worksWithDoctorId == null}
+                                onChange={(e) => setWorksWithDefault(e.target.checked)}
+                              />
+                              <span>Default for this doctor</span>
+                            </label>
+                          </div>
+                        )}
+                        {!isProvider ? (
+                          <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                            Room loader emails for this doctor go out from their default, and
+                            mail-order approval tasks go to them. One default per doctor: checking
+                            this takes it from whoever had it. With no default, their Lead
+                            Technician, then a Technician, is used.
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                          No login yet.{' '}
+                          {email.trim()
+                            ? `Creating one emails ${email.trim()} a temporary password.`
+                            : 'Add an email and save first.'}
+                        </p>
+                        {canManageLogins ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={creatingLogin || !email.trim() || editingId == null}
+                            onClick={() => void createLogin()}
+                          >
+                            {creatingLogin ? 'Creating…' : 'Create login'}
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </fieldset>
 
                   <fieldset className="settings-employee-modal__fieldset">
@@ -1154,7 +1355,12 @@ export default function SettingsEmployeeDirectory({
                   </fieldset>
 
                   <div className="settings-employee-hub__form-actions">
-                    <button type="submit" className="btn" disabled={saving}>
+                    <button
+                      type="submit"
+                      className="btn"
+                      disabled={saving || !canManageStaff}
+                      title={canManageStaff ? undefined : 'Practice manager and above edit employees'}
+                    >
                       {saving ? 'Saving…' : 'Save profile'}
                     </button>
                     {editingId != null ? (
