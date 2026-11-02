@@ -123,6 +123,10 @@ export default function InventoryLayout({
   const canAbandonedCarts = isAdmin || holdsAbandonedCarts;
   const canMailQueue = isAdmin || holdsMailQueue;
   const canAutoships = isAdmin || holdsAutoships;
+  // First / Annual Counts follows its own permission, so a doctor who manages their home branch
+  // can count controlled drugs without being a practice manager.
+  const holdsBaseline = useCan('inventory.count.baseline');
+  const canFirstCounts = isAdmin || holdsBaseline;
   const holdsCostReview = useCan('inventory.cost_review.manage');
   const canCostReview = isAdmin || holdsCostReview;
   const canSeeGiftCards = isAdmin || holdsGiftCardAdmin;
@@ -203,12 +207,20 @@ export default function InventoryLayout({
     [`${basePath}/receive`, `${basePath}/move`, `${basePath}/transfer-list`].some(
       (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
     );
-  const setupItems: NavItem[] = [
-    { to: `${basePath}/par-levels`, label: 'Par Levels' },
-    { to: `${basePath}/first-counts`, label: 'First / Annual Counts' },
-    { to: `${basePath}/store-import`, label: 'Online Store Import' },
-    { to: `${basePath}/autoship-import`, label: 'Auto-ship Import' },
-  ];
+  const firstCountsItem: NavItem = {
+    to: `${basePath}/first-counts`,
+    label: 'First / Annual Counts',
+  };
+  const setupItems: NavItem[] = canSetup
+    ? [
+        { to: `${basePath}/par-levels`, label: 'Par Levels' },
+        firstCountsItem,
+        { to: `${basePath}/store-import`, label: 'Online Store Import' },
+        { to: `${basePath}/autoship-import`, label: 'Auto-ship Import' },
+      ]
+    : canFirstCounts
+      ? [firstCountsItem]
+      : [];
   const manageItems: NavItem[] = [
     { to: `${basePath}/par-review`, label: 'Par Review' },
     ...(canCostReview
@@ -256,7 +268,7 @@ export default function InventoryLayout({
               </NavLink>
             ) : null}
             {canManage ? <InventoryNavGroup label="Manage" items={manageItems} /> : null}
-            {canSetup ? (
+            {setupItems.length > 0 ? (
               <InventoryNavGroup
                 label="Setup"
                 items={setupItems}
