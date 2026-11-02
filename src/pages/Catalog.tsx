@@ -229,6 +229,8 @@ function catalogSellUnit(row: SearchResultItem): string {
 type CatalogTypeFilter = ItemType | 'all' | 'bundle';
 
 const CATALOG_PAGE_SIZE = 100;
+/** CAT-A9: safety cap on the full-catalog scan for missing cost (50 pages = 5,000 products). */
+const MISSING_COST_MAX_PAGES = 50;
 
 function defaultStockLocation(stock?: InventoryBranchStock | null) {
   const locs = stock?.locations ?? [];
@@ -270,6 +272,12 @@ function catalogIsActive(row: SearchResultItem): boolean {
   if (!e) return true;
   const a = (e as Record<string, unknown>).isActive;
   return a !== false;
+}
+
+/** CAT-A9: a product with no usable cost (empty, null, 0 or negative). Non-products never match. */
+function isMissingInventoryCost(row: SearchResultItem): boolean {
+  if (row.itemType !== 'inventory') return false;
+  return !(catalogCost(row) > 0);
 }
 
 function formatUsd(n: number): string {
@@ -513,6 +521,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const navigate = useNavigate();
   const typeFilter = typeFilterFromSearch(searchParams.toString());
   const [showArchived, setShowArchived] = useState(false);
+  /** CAT-A9: when on, the list is every product with a missing cost, loaded across all pages. */
+  const [missingCostOnly, setMissingCostOnly] = useState(false);
+  /** The list shows results once there is a search, Show all, or the missing-cost scan. */
+  const listActive = Boolean(searchQuery.trim() || showAllItems || missingCostOnly);
   const [createOpen, setCreateOpen] = useState(false);
   /** Once the user picks a tax level, changing the item type no longer resets it. */
   const createTaxTouched = useRef(false);
@@ -1251,12 +1263,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }, [stockLinkQuery, practiceId, selected?.itemId]);
 
   const fetchCatalogPage = useCallback(
-    (offset: number, limit: number) =>
+    (offset: number, limit: number, typesOverride?: ItemType[]) =>
       searchItems(searchQuery.trim(), practiceId, limit, {
         includeInactive: showArchived,
         all: showAllItems,
         offset,
-        types: typeFilter === 'all' || typeFilter === 'bundle' ? undefined : [typeFilter],
+        types:
+          typesOverride ??
+          (typeFilter === 'all' || typeFilter === 'bundle' ? undefined : [typeFilter]),
       }),
     [searchQuery, practiceId, showArchived, showAllItems, typeFilter]
   );
@@ -1264,7 +1278,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   useEffect(() => {
     const q = searchQuery.trim();
     // Price-list users see bundles in this list; editors open the bundle view instead.
-    if ((!q && !showAllItems) || (typeFilter === 'bundle' && !priceListOnly)) {
+    // Missing cost loads with no search text too: it scans the whole inventory list.
+    if ((!q && !showAllItems && !missingCostOnly) || (typeFilter === 'bundle' && !priceListOnly)) {
       setSearchResults([]);
       setBundleHits([]);
       setSearchError(null);
@@ -1275,12 +1290,31 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     const t = window.setTimeout(async () => {
       setSearching(true);
       setSearchError(null);
+      /** Missing cost: page through every inventory row (stops on a short page or the cap). */
+      const loadItemRows = async (): Promise<{ rows: SearchResultItem[]; capped: boolean }> => {
+        if (typeFilter === 'bundle') return { rows: [], capped: false };
+        if (!missingCostOnly) {
+          return { rows: await fetchCatalogPage(0, CATALOG_PAGE_SIZE), capped: false };
+        }
+        // Lab and procedure tabs have no products to check.
+        if (typeFilter !== 'all' && typeFilter !== 'inventory') return { rows: [], capped: false };
+        const all: SearchResultItem[] = [];
+        for (let page = 0; page < MISSING_COST_MAX_PAGES; page++) {
+          const batch = await fetchCatalogPage(
+            page * CATALOG_PAGE_SIZE,
+            CATALOG_PAGE_SIZE,
+            ['inventory'],
+          );
+          if (searchSeq.current !== seq) break;
+          all.push(...batch);
+          if (batch.length < CATALOG_PAGE_SIZE) return { rows: all, capped: false };
+        }
+        return { rows: all, capped: true };
+      };
       try {
-        const [rows, bundles] = await Promise.all([
-          typeFilter === 'bundle'
-            ? Promise.resolve([] as Awaited<ReturnType<typeof fetchCatalogPage>>)
-            : fetchCatalogPage(0, CATALOG_PAGE_SIZE),
-          typeFilter === 'all' || typeFilter === 'bundle'
+        const [{ rows, capped }, bundles] = await Promise.all([
+          loadItemRows(),
+          (typeFilter === 'all' || typeFilter === 'bundle') && !missingCostOnly
             ? listBundles({
                 kind: 'bundle',
                 includeArchived: showArchived,
@@ -1289,8 +1323,15 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             : Promise.resolve([] as Bundle[]),
         ]);
         if (searchSeq.current !== seq) return;
-        setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
-        setHasMoreResults(rows.length === CATALOG_PAGE_SIZE);
+        const typed = applyCatalogTypeFilter(rows, typeFilter);
+        setSearchResults(missingCostOnly ? typed.filter(isMissingInventoryCost) : typed);
+        // The missing-cost list is complete in one go, so there is no "Load more".
+        setHasMoreResults(!missingCostOnly && rows.length === CATALOG_PAGE_SIZE);
+        if (capped) {
+          setSearchError(
+            `Only the first ${MISSING_COST_MAX_PAGES * CATALOG_PAGE_SIZE} products were checked for missing cost. Search by name to narrow the list.`,
+          );
+        }
         const needle = q.toLowerCase();
         setBundleHits(
           q
@@ -1317,7 +1358,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       }
     }, 300);
     return () => window.clearTimeout(t);
-  }, [searchQuery, showAllItems, showArchived, typeFilter, fetchCatalogPage, priceListOnly]);
+  }, [searchQuery, showAllItems, showArchived, typeFilter, fetchCatalogPage, priceListOnly, missingCostOnly]);
 
   async function loadMoreCatalogRows() {
     const seq = searchSeq.current;
@@ -2658,6 +2699,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             />
             Show archived
           </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={missingCostOnly}
+              onChange={(e) => setMissingCostOnly(e.target.checked)}
+            />
+            Missing cost
+          </label>
           {canBulkPrice && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
             <input
@@ -2746,7 +2795,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             )}
             <span className="inv-catalog-results__count">
               {hasMoreResults ? 'Showing:' : 'Total count:'}{' '}
-              {searchQuery.trim() || showAllItems
+              {listActive
                 ? searching
                   ? '…'
                   : searchResults.length + bundleHits.length
@@ -2772,19 +2821,19 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           </div>
         </div>
 
-        {!searchQuery.trim() && !showAllItems && (
+        {!listActive && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
             Type to search, or choose Show all to list every item.
           </p>
         )}
-        {(searchQuery.trim() || showAllItems) &&
+        {listActive &&
           !searching &&
           searchError && (
           <p className="settings-error-message" style={{ marginTop: 0 }}>
             {searchError}
           </p>
         )}
-        {(searchQuery.trim() || showAllItems) &&
+        {listActive &&
           !searching &&
           !searchError &&
           searchResults.length === 0 &&
@@ -3056,7 +3105,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             </table>
           </div>
         )}
-        {hasMoreResults && !searching && (
+        {hasMoreResults && !searching && !missingCostOnly && (
           <button
             type="button"
             className="btn secondary"
