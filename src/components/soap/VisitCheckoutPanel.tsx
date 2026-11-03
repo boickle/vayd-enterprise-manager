@@ -1872,7 +1872,7 @@ export default function VisitCheckoutPanel({
     run('authorize', async () => {
       if (!invoice) return;
       onInvoiceChange(await authorizeSavedCard(invoice.id));
-      setNote('Card authorized. Future appointments stay on the books until you convert this to payment.');
+      setNote('Card authorized. Future appointments stay on the books until you run payment from the authorization.');
     });
 
   const convertAuthorization = () =>
@@ -1886,7 +1886,7 @@ export default function VisitCheckoutPanel({
         void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
         throw e;
       }
-      setNote('Authorization converted to payment.');
+      setNote('Payment run from authorization.');
     });
 
   const tapToPay = () =>
@@ -3600,8 +3600,9 @@ export default function VisitCheckoutPanel({
                     className="soap-btn"
                     disabled={payDisabled}
                     onClick={convertAuthorization}
+                    data-testid="prepay-run-payment-from-authorization"
                   >
-                    <CreditCard size={14} /> Convert Authorization to Payment
+                    <CreditCard size={14} /> Run Payment from Authorization
                   </button>
                 ) : (
                   <button

@@ -51,7 +51,7 @@ function invoiceById(world: EmrWorld, id: string) {
 const cardTenders = (inv: { tenders?: Tender[] }) =>
   (inv.tenders ?? []).filter((t) => !t.voidedAt && t.stripePaymentIntentId);
 
-describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay invoice)', () => {
+describe('EMR-01-6: Run Payment from Authorization captures the new total (legacy prepay invoice)', () => {
   let world: EmrWorld;
   before(() => seedEmrWorld().then((w) => (world = w)));
   after(() => cleanEmrWorld());
@@ -79,7 +79,10 @@ describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay 
 
     // Pick the inventory branch and location explicitly: the shared test DB may hold several.
     chooseCheckoutInventoryShelf();
-    cy.contains('button', 'Convert Authorization to Payment').should('not.be.disabled').click();
+    cy.get('[data-testid="prepay-run-payment-from-authorization"]')
+      .should('contain.text', 'Run Payment from Authorization')
+      .and('not.be.disabled')
+      .click();
     // The Paid badge is present but can sit under a fixed header, so check it exists.
     cy.contains(/paid/i, { timeout: 30000 }).should('exist');
 
@@ -97,7 +100,8 @@ describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay 
 
 /** None of the old prepay controls (D1) appear for a visit paid through its estimate. */
 function noPrepayButtons() {
-  cy.contains('button', 'Convert Authorization to Payment').should('not.exist');
+  // The old prepay button now has the estimate flow's wording, so look for it by its test id.
+  cy.get('[data-testid="prepay-run-payment-from-authorization"]').should('not.exist');
   cy.contains('button', 'Authorize card').should('not.exist');
   cy.contains('button', /^\s*Save card\s*$/).should('not.exist');
 }
