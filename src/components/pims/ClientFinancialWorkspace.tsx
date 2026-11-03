@@ -258,6 +258,7 @@ import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
 import './ClientFinancialWorkspace.css';
 import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export type FinancialPet = {
   id: number;
@@ -3683,11 +3684,12 @@ export default function ClientFinancialWorkspace({
         patientId: linePatientId,
         providerEmployeeId,
         miscCharge: true,
-      });
+      }, { duplicates: 'skip' });
       setSelected(next);
       await refreshList(next.id);
     } catch (e: unknown) {
-      setError(apiErr(e));
+      // A refill copied in automatically never adds the item a second time; nothing to report.
+      if (!isDuplicateItemSkipped(e)) setError(apiErr(e));
     } finally {
       setBusy(false);
     }
@@ -6483,7 +6485,8 @@ export default function ClientFinancialWorkspace({
                                   isCovered: line.isCovered,
                                   listUnitPrice: line.listUnitPrice ?? null,
                                   miscCharge: true,
-                                });
+                                  // The same units split over two lines, not a second entry.
+                                }, { duplicates: 'allow' });
                                 const created = (invoice.lines ?? []).filter(
                                   (row) =>
                                     !row.isDeleted &&

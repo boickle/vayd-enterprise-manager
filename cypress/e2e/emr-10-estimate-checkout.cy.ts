@@ -145,7 +145,7 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
         expect(i.request.body.catalogItemType).to.eq('procedure');
       });
       cy.get('[role="dialog"]', { timeout: 20000 }).within(() => {
-        cy.contains('Already on this visit');
+        cy.contains('Already entered for this pet');
         cy.contains('Estimate: Private cremation - small');
         cy.contains('button', 'Add anyway').should('exist');
         cy.contains('button', 'Cancel').click();
