@@ -152,7 +152,31 @@ export const signChart = (encounterId: string) =>
 export function addChargeVia(placeholder: string, name: string) {
   cy.get(`input[placeholder="${placeholder}"]`, { timeout: 30000 }).first().clear().type(name);
   cy.contains('[role="option"], li, button', name, { timeout: 20000 }).first().click();
-  cy.contains('.soap-invoice-line', name, { timeout: 20000 }).should('exist');
+  // The box empties itself only once the order was created (an error leaves the text in it).
+  cy.get(`input[placeholder="${placeholder}"]`, { timeout: 30000 }).first().should('have.value', '');
+}
+
+/**
+ * Enters the weight in pounds. The weight box lives under the Objective tab (and a second, hidden copy sits in
+ * the document view), so open Objective when the tabs are showing and use the visible box.
+ */
+export function openObjective() {
+  cy.get('[aria-label="SOAP sections"], .soap-doc-section, input[placeholder="e.g. 12.4"]', { timeout: 40000 }).should('exist');
+  cy.get('body').then(($b) => {
+    const tab = $b.find('[role="tab"]:contains("Objective")');
+    if (tab.length) cy.wrap(tab.first()).click();
+  });
+}
+
+export function enterWeightLb(value: string) {
+  openObjective();
+  cy.get('input[placeholder="e.g. 12.4"]:visible', { timeout: 20000 }).first().clear().type(value).blur();
+  cy.contains('label:visible', 'Lb').find('input[type="radio"]').check();
+}
+
+/** The wrap-up picks its Gmail mailbox after the page loads; sending before that says no mailbox is connected. */
+export function waitForRecapMailbox() {
+  cy.contains(/Through info@vetatyourdoor\.com/, { timeout: 30000 });
 }
 
 /** Stands in for Gmail; every send is captured in memory and never leaves the machine. */
@@ -241,7 +265,7 @@ export function stubCardPayments(pet: EmrPet) {
 
   cy.intercept('POST', '**/visit-payments/*/terminal/checkout', (req) => {
     const invoiceId = String(req.url.match(/visit-payments\/([^/]+)\/terminal\/checkout/)?.[1]);
-    void settle('reader', invoiceId).then(({ invoice, cents }) =>
+    return settle('reader', invoiceId).then(({ invoice, cents }) =>
       req.reply({
         checkoutId: 'emr-checkout-1',
         invoiceId,
@@ -261,11 +285,11 @@ export function stubCardPayments(pet: EmrPet) {
   });
   cy.intercept('POST', '**/visit-payments/*/terminal/checkout/sync', (req) => {
     const invoiceId = String(req.url.match(/visit-payments\/([^/]+)\/terminal/)?.[1]);
-    void getInvoice(invoiceId).then((invoice) => req.reply({ paid: invoice.status === 'paid', invoice }));
+    return getInvoice(invoiceId).then((invoice) => req.reply({ paid: invoice.status === 'paid', invoice }));
   });
   cy.intercept('POST', '**/visit-payments/*/charge-saved-card', (req) => {
     const invoiceId = String(req.url.match(/visit-payments\/([^/]+)\/charge-saved-card/)?.[1]);
-    void settle('saved', invoiceId).then(({ invoice }) => req.reply(invoice));
+    return settle('saved', invoiceId).then(({ invoice }) => req.reply(invoice));
   });
   return { calls: () => calls };
 }
