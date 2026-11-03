@@ -501,15 +501,18 @@ export default function EuthanasiaEstimateModal({
           >
             Save estimate
           </button>
-          <button
-            type="button"
-            className="soap-btn ghost"
-            onClick={() => setCardModalOpen(true)}
-            disabled={!estimate || sending}
-          >
-            <CreditCard size={15} />
-            {estimateHasCard(estimate) ? 'Replace card on file' : 'Take card by phone'}
-          </button>
+          {/* Only a euthanasia visit's estimate takes a card (owner decision, Nov 3, 2026). */}
+          {estimate?.isEuthanasia === true && (
+            <button
+              type="button"
+              className="soap-btn ghost"
+              onClick={() => setCardModalOpen(true)}
+              disabled={sending}
+            >
+              <CreditCard size={15} />
+              {estimateHasCard(estimate) ? 'Replace card on file' : 'Take card by phone'}
+            </button>
+          )}
           <button
             type="button"
             className="soap-btn ghost"
@@ -549,7 +552,7 @@ export default function EuthanasiaEstimateModal({
           </button>
         </div>
 
-        {cardModalOpen && estimate && (
+        {cardModalOpen && estimate?.isEuthanasia === true && (
           <EstimateCardModal
             estimateId={estimate.id}
             clientName={clientName}

@@ -15,7 +15,7 @@ vi.mock('./EstimateCardModal', () => ({ default: () => null }));
 vi.mock('../../api/visitEstimates', async (orig) => ({
   ...(await orig<typeof import('../../api/visitEstimates')>()),
   getEstimateForAppointment: vi.fn(),
-  setEstimateLineDecision: vi.fn(),
+  getEstimateSettlePreview: vi.fn(async () => null),
   settleEstimate: vi.fn(),
   authorizeEstimate: vi.fn(),
   markEstimateDeclined: vi.fn(),
@@ -28,8 +28,9 @@ const estimate = {
   stripePaymentIntentId: 'pi_hold',
   lastChargeStatus: 'requires_capture',
   savedPaymentMethodId: 'pm_card',
+  isEuthanasia: true,
   lines: [
-    { id: 'l1', description: 'Euthanasia', qty: 1, unitPrice: 475, amount: 475, taxAmount: 0, isCovered: false, decision: 'accepted' },
+    { id: 'l1', description: 'Euthanasia', qty: 1, unitPrice: 475, amount: 475, taxAmount: 0, isCovered: false },
   ],
 } as any;
 
@@ -55,7 +56,7 @@ describe('EMR-12 checkout: changes of mind', () => {
     await waitFor(() => expect(markEstimateDeclined).toHaveBeenCalledWith('e1'));
     const note = await screen.findByTestId('estimate-settle-notice');
     expect(note.textContent).toMatch(/hold was released and nothing was charged/);
-    expect(screen.queryByRole('button', { name: /Convert to invoice/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Run Payment from Authorization/ })).toBeNull();
     expect(settleEstimate).not.toHaveBeenCalled();
     expect(onSettled).not.toHaveBeenCalled();
   });
@@ -65,7 +66,7 @@ describe('EMR-12 checkout: changes of mind', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Family declined/ }));
     fireEvent.click(screen.getByRole('button', { name: /Keep the estimate/ }));
     expect(markEstimateDeclined).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: /Convert to invoice/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Run Payment from Authorization/ })).toBeTruthy();
   });
 
   it('after settling, an expired hold is reported to staff', async () => {
@@ -77,7 +78,7 @@ describe('EMR-12 checkout: changes of mind', () => {
     });
     const onSettled = vi.fn();
     render(<EstimateSettlePanel appointmentId={5} onSettled={onSettled} />);
-    fireEvent.click(await screen.findByRole('button', { name: /Convert to invoice & take payment/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Run Payment from Authorization/ }));
     await waitFor(() => expect(onSettled).toHaveBeenCalledWith('inv-1'));
     expect((await screen.findByTestId('estimate-settle-notice')).textContent).toMatch(/hold .* had expired/);
   });
@@ -85,7 +86,7 @@ describe('EMR-12 checkout: changes of mind', () => {
   it('after a normal settle the panel goes away', async () => {
     vi.mocked(settleEstimate).mockResolvedValue({ id: 'inv-1', total: 475, status: 'paid' });
     const { container } = render(<EstimateSettlePanel appointmentId={5} />);
-    fireEvent.click(await screen.findByRole('button', { name: /Convert to invoice & take payment/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Run Payment from Authorization/ }));
     await waitFor(() => expect(container.innerHTML).toBe(''));
   });
 });

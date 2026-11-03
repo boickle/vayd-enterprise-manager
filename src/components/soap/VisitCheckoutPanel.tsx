@@ -3550,6 +3550,8 @@ export default function VisitCheckoutPanel({
               // pet's visit opened it, and the estimate may be on another pet's appointment.
               appointmentId={visitAppointmentId ?? invoice?.appointmentId ?? null}
               disabled={disabled || busy != null}
+              // The bubble's final bill includes the invoice's own lines: read it again when they change.
+              invoiceKey={invoice ? `${invoice.id}|${invoice.total}|${invoice.amountPaid}|${invoice.lines?.length ?? 0}` : null}
               onSettled={(invoiceId) => {
                 void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
               }}

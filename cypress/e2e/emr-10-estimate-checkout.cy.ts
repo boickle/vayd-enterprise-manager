@@ -6,9 +6,13 @@ import { cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/e
  * EMR-10-9 (owner decision D4, Nov 2, 2026): euthanasia visit with a hold, full flow.
  *
  * The doctor orders cremation on the SOAP while the estimate already has it: the duplicate warning
- * lists the estimate line and the doctor cancels (nothing is added). At checkout the estimate's items
- * are listed; staff decline the clay paw with the family, accept the rest, and settle. The invoice
- * has the accepted lines only, and one capture equal to them.
+ * lists the estimate line and the doctor cancels (nothing is added).
+ *
+ * Changed by the owner decisions of Nov 3, 2026: no per-item Accept / Decline at checkout. The family
+ * changes their mind about the clay paw before checkout and staff take it off the estimate by hand.
+ * Checkout lists the items read-only and the bubble says what the owner approved ($515) and that the
+ * bill is $40 less, so the rest of the hold is released. "Run Payment from Authorization" takes one
+ * capture equal to the bill.
  *
  *   EMR_DB=vayd_api_test CYPRESS_EMR_DB=vayd_api_test npx cypress run --spec cypress/e2e/emr-10-estimate-checkout.cy.ts
  *
@@ -97,7 +101,7 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
     }
   });
 
-  it('cancelled duplicate adds nothing; declined clay paw is not billed; one capture of the accepted total', () => {
+  it('cancelled duplicate adds nothing; the clay paw taken off is not billed; one capture of the bill', () => {
     const { appointmentId, patientId, estimateId } = world.euthanasia;
     const clientId = world.client.id;
 
@@ -153,16 +157,25 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
       });
     });
 
-    // Checkout: the items are listed; the family declines the clay paw and accepts the rest.
+    // Before checkout the family changes their mind about the clay paw: staff take it off the estimate.
+    emrApi(world, 'GET', `/visit-estimates/${estimateId}?practiceId=${world.practiceId}`).then((res) => {
+      const clay = (res.body.lines as Array<{ id: string; description: string }>).find((l) => l.description === 'Clay paw print');
+      expect(clay, 'clay line on the quote').to.exist;
+      emrApi(world, 'DELETE', `/visit-estimates/${estimateId}/lines/${clay!.id}?practiceId=${world.practiceId}`).then((del) =>
+        expect(del.status).to.be.lessThan(300),
+      );
+    });
+
+    // Checkout: the items are listed read-only (no Accept / Decline); the bubble explains the money.
     signIn(world, `/schedule/soap/${appointmentId}/${patientId}/checkout?clientId=${clientId}`);
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
-    cy.get('[data-testid="estimate-settle-line"]').should('have.length', 3);
-    cy.contains('button', 'Convert to invoice & take payment').should('be.disabled');
-    cy.contains('[data-testid="estimate-settle-line"]', 'Clay paw print').find('button').contains('Decline').click();
-    cy.contains('[data-testid="estimate-settle-line"]', 'Clay paw print').find('button[aria-pressed="true"]').should('contain.text', 'Decline');
-    cy.contains('button', /Accept the 2 remaining items/).click();
-    cy.get('[data-testid="estimate-settle-accepted-total"]', { timeout: 20000 }).should('have.text', '$475.00');
-    cy.contains('button', 'Convert to invoice & take payment').should('not.be.disabled').click();
+    cy.get('[data-testid="estimate-settle-line"]').should('have.length', 2);
+    cy.get('[data-testid="estimate-settle-line"] button').should('not.exist');
+    cy.get('[data-testid="estimate-authorization-bubble"]', { timeout: 20000 })
+      .should('contain.text', 'This owner approved $515.00')
+      .and('contain.text', 'it will be charged when you click "Run Payment from Authorization".')
+      .and('contain.text', '$40.00 less than authorized — the rest of the hold is released.');
+    cy.contains('button', 'Run Payment from Authorization').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
 
     invoiceForAppointment(world, appointmentId).then((inv) => {
@@ -175,9 +188,7 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
       expect(cards, 'one capture').to.have.length(1);
       expect(Number(cards[0].amount)).to.eq(475);
     });
-    emrSql(`SELECT decision FROM visit_estimate_lines WHERE "estimateId" = '${estimateId}' AND description = 'Clay paw print'`).should(
-      'eq',
-      'declined',
-    );
+    // The decision column is kept but unused.
+    emrSql(`SELECT count(*) FROM visit_estimate_lines WHERE "estimateId" = '${estimateId}' AND decision IS NOT NULL`).should('eq', '0');
   });
 });

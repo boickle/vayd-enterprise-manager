@@ -14,8 +14,6 @@ export type VisitEstimateStatus =
   | 'declined'
   | 'expired';
 
-export type EstimateLineDecision = 'accepted' | 'declined';
-
 export type VisitEstimateLine = {
   id: string;
   practiceId: number;
@@ -44,9 +42,6 @@ export type VisitEstimateLine = {
   taxAmount: number;
   /** Virtual: inventory/procedure catalog flag. Missing means no pencil. */
   catalogAllowPriceChange?: boolean;
-  /** Checkout Accept / Decline with the family (D4). Null until decided. */
-  decision?: EstimateLineDecision | null;
-  decidedAt?: string | null;
   created: string;
   updated: string;
 };
@@ -77,6 +72,13 @@ export type VisitEstimate = {
   expiresAt: string | null;
   convertedInvoiceId: string | null;
   convertedAt: string | null;
+  /**
+   * A euthanasia visit's quote (euthanasia appointment type or consent invite). Only these take a
+   * card or a hold (owner decision, Nov 3, 2026); others are informational.
+   */
+  isEuthanasia?: boolean;
+  /** When the family signed (or staff recorded) the euthanasia consent for this visit. */
+  consentSignedAt?: string | null;
   lines: VisitEstimateLine[];
   created: string;
   updated: string;
@@ -172,19 +174,6 @@ export async function addEstimateLine(
   );
 }
 
-/** Checkout, family present: accept or decline one quoted line (D4). `null` clears it. */
-export async function setEstimateLineDecision(
-  estimateId: string,
-  lineId: string,
-  decision: EstimateLineDecision | null
-): Promise<VisitEstimate> {
-  const { data } = await http.patch<VisitEstimate>(
-    `/visit-estimates/${estimateId}/lines/${lineId}/decision`,
-    { practiceId: practiceId(), decision }
-  );
-  return data;
-}
-
 export async function updateEstimateLine(
   estimateId: string,
   lineId: string,
@@ -243,17 +232,18 @@ export async function convertEstimateToInvoice(
 }
 
 /**
- * Convert, finalize, and take the held money in one call — the post-visit button.
- * Captures less when the final bill came in under the quote, charges the
- * difference to the same card when it came in over.
+ * "Run Payment from Authorization": convert, finalize, and take the held money in one call.
+ * Captures less when the final bill came in under the hold, charges the difference to the same
+ * card when it came in over. With no lines left it makes no invoice (`id: null`) and releases
+ * the hold. Euthanasia estimates only.
  */
 export async function settleEstimate(
   estimateId: string
 ): Promise<{
-  id: string;
+  id: string | null;
   total: number;
   status: string;
-  /** Set when the card hold had expired and the saved card was charged instead (EMR-12). */
+  /** A note for staff: the hold had expired and the card was charged instead, or nothing was billed. */
   holdNotice?: string;
 }> {
   const { data } = await http.post(`/visit-estimates/${estimateId}/settle`, {
@@ -262,7 +252,26 @@ export async function settleEstimate(
   return data;
 }
 
-/** Card by phone: Stripe authorization hold for the quoted total. */
+/** What "Run Payment from Authorization" would take. Reads only; nothing is charged. */
+export type EstimateSettlePreview = {
+  estimateId: string;
+  isEuthanasia: boolean;
+  held: boolean;
+  authorizedAmount: number;
+  consentSignedAt: string | null;
+  finalAmount: number;
+  /** finalAmount minus the hold: positive is charged on top, negative is released. */
+  difference: number;
+};
+
+export async function getEstimateSettlePreview(estimateId: string): Promise<EstimateSettlePreview> {
+  const { data } = await http.get<EstimateSettlePreview>(
+    `/visit-estimates/${estimateId}/settle-preview?practiceId=${practiceId()}`
+  );
+  return data;
+}
+
+/** Card by phone: Stripe authorization hold for the quoted total. Euthanasia estimates only. */
 export async function createEstimateSetupIntent(
   estimateId: string,
   input?: { customerEmail?: string | null; customerName?: string | null }
