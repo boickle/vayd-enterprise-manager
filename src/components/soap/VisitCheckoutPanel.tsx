@@ -1901,7 +1901,8 @@ export default function VisitCheckoutPanel({
         const dollars = (session.amountCents / 100).toFixed(2);
         const dest = selectedReader?.label ?? 'the selected reader';
         setNote(
-          `Sent $${dollars} to ${dest}. Present the card on the reader — this screen updates when payment succeeds.`
+          session.notice ??
+            `Sent $${dollars} to ${dest}. Present the card on the reader — this screen updates when payment succeeds.`
         );
       } catch (e) {
         // The reader may have collected while this panel still showed the
