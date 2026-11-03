@@ -8,6 +8,7 @@ import {
   openEncounter,
   signInEmr,
   soapPath,
+  visitInvoice,
 } from '../support/emrCoreVisitWorld';
 
 /**
@@ -51,9 +52,19 @@ describe('EMR-13-5: tech saves second on a dose the vet changed', () => {
         dose('R-1000');
         signInEmr('technician', soapPath(dog, clientId));
         cy.contains(dog.name, { timeout: 40000 });
-        cy.contains('.soap-dose-row', 'Rabies vaccine', { timeout: 40000 }).then(($row) => {
-          if (!$row.find('.soap-dose-body').length) cy.wrap($row).find('button').first().click();
+        // The dose form is not a row of its own: it sits in the drawer under the checkout line for this order
+        // (VisitCheckoutPanel -> VisitDoseAndRxSection embedded, no row header). Find that line by order id (other
+        // specs add Rabies lines to this pet too), open it, and work inside the open drawer.
+        visitInvoice(dog).then((inv) => {
+          const line = (inv.lines as Array<{ id: string; orderId?: string | null; isDeleted?: boolean }>).find(
+            (l) => l.orderId === order.id && !l.isDeleted,
+          );
+          expect(line, 'checkout line for the rabies order').to.exist;
+          cy.get(`#checkout-line-${line!.id} .soap-invoice-line-expand`, { timeout: 40000 }).then(($btn) => {
+            if ($btn.attr('aria-expanded') !== 'true') cy.wrap($btn).click({ scrollBehavior: 'center' });
+          });
         });
+        cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row', { timeout: 20000 }).should('exist');
         cy.contains('label', 'Rabies tag', { timeout: 20000 }).find('input').should('have.value', 'R-1000');
 
         // Meanwhile the vet saves tag 123 from the laptop, based on the version they loaded.

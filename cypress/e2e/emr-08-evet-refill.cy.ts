@@ -45,7 +45,9 @@ describe('EMR-08-6: eVet prescription refill at checkout', () => {
     // Add Carprofen to Juniper's open invoice.
     cy.get(`input[placeholder="Add a charge for ${rx.petName}"]`, { timeout: 40000 }).first().click().type(rx.itemName);
     cy.contains('button', rx.itemName, { timeout: 20000 }).click();
-    cy.contains('button', 'Check refills', { timeout: 20000 }).should('exist').click();
+    // The invoice table has a sticky header row and the page a fixed app header; Cypress's default scroll puts the
+    // button at the top edge, under them. Centre it in the scrolling area instead (no force needed).
+    cy.contains('button', 'Check refills', { timeout: 20000 }).should('exist').click({ scrollBehavior: 'center' });
 
     // The picker lists the eVet Rx with its refills and directions.
     cy.contains('.inv-refill h3', `Refills for ${rx.itemName}`, { timeout: 20000 });
