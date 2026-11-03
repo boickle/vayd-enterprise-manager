@@ -17,7 +17,9 @@ import {
   stubRecapDraft,
   visitInvoice,
   waitForRecapMailbox,
-  writeRecapDraft,
+  recordDoses,
+  seedRecapDraft,
+  waitForRecapDraft,
   type EmrPet,
 } from '../support/emrCoreVisitWorld';
 
@@ -62,11 +64,26 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     cy.get('[aria-label="Pets at this visit"]', { timeout: 40000 }).should('contain.text', 'Birch').and('contain.text', 'Clover');
 
     // Each order is on its own pet's chart, and the three tabs share one invoice with each line on the right pet.
-    const expected: Record<string, { items: string[]; amount: number; tax: number }> = {
-      Aspen: { items: ['Wellness exam', 'Rabies vaccine'], amount: 85, tax: 3.3 },
-      Birch: { items: ['Wellness exam', 'Fecal test'], amount: 90, tax: 4.95 },
-      Clover: { items: ['Wellness exam', 'Nail trim', 'Rabies vaccine'], amount: 105, tax: 3.3 },
+    // Expected amounts come from the prices placed above; tax is 5.5% on the taxable items (exam, fecal test).
+    const book: Record<string, Array<{ item: string; price: number; qty: number; taxable: boolean }>> = {
+      Aspen: [{ item: 'Wellness exam', price: 65, qty: 1, taxable: true }, { item: 'Rabies vaccine', price: 28, qty: 1, taxable: false }],
+      Birch: [{ item: 'Wellness exam', price: 65, qty: 1, taxable: true }, { item: 'Fecal test', price: 30, qty: 1, taxable: true }],
+      Clover: [
+        { item: 'Wellness exam', price: 65, qty: 1, taxable: true },
+        { item: 'Nail trim', price: 10, qty: 2, taxable: false },
+        { item: 'Rabies vaccine', price: 28, qty: 1, taxable: false },
+      ],
     };
+    const expected: Record<string, { items: string[]; amount: number; tax: number }> = {};
+    for (const [name, rows] of Object.entries(book)) {
+      expected[name] = {
+        items: rows.map((r) => r.item),
+        amount: rows.reduce((n, r) => n + r.price * r.qty, 0),
+        tax: rows.reduce((n, r) => n + (r.taxable ? r.price * r.qty * 0.055 : 0), 0),
+      };
+    }
+    const totalAmount = Object.values(expected).reduce((n, e) => n + e.amount, 0);
+    const totalTax = Object.values(expected).reduce((n, e) => n + e.tax, 0);
     for (const [name, want] of Object.entries(expected)) {
       emrApi<Array<{ name: string; patientId: number }>>('veterinarian', 'GET', `/soap-encounters/${encounterIds[name]}/orders?practiceId=${w().practiceId}`).then((orders) => {
         expect(orders.map((o) => o.name).sort(), `${name}'s orders`).to.deep.eq(want.items.map(itemName).sort());
@@ -81,8 +98,8 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
         expect(mine.map((l) => l.description).sort(), `${name}'s lines`).to.deep.eq(want.items.map(itemName).sort());
         expect(mine.reduce((n, l) => n + Number(l.amount), 0)).to.be.closeTo(want.amount, 0.005);
       }
-      expect(Number(inv.subtotal)).to.eq(280);
-      expect(Number(inv.taxTotal)).to.be.closeTo(11.55, 0.01);
+      expect(Number(inv.subtotal)).to.eq(totalAmount);
+      expect(Number(inv.taxTotal)).to.be.closeTo(totalTax, 0.03);
     });
 
     // The checkout screen groups the bill by pet, with each pet's total in its heading.
@@ -91,20 +108,22 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     cy.contains('h1', 'Checkout', { timeout: 30000 });
     cy.contains('One bill for 3 pets');
     for (const [name, want] of Object.entries(expected)) {
-      const taxed = (want.amount + want.tax).toFixed(2);
+      const cents = Math.round((want.amount + want.tax) * 100);
+      const taxed = `${((cents - 1) / 100).toFixed(2)}|\\$${(cents / 100).toFixed(2)}|\\$${((cents + 1) / 100).toFixed(2)}`;
       cy.get(`#soap-invoice-pet-${pet(name).patientId}`, { timeout: 30000 }).within(() => {
         cy.contains(name);
         want.items.forEach((item) => cy.contains(itemName(item)));
         cy.contains(new RegExp(`\\$${want.amount.toFixed(2)}|\\$${taxed}`));
       });
     }
-    cy.contains('.soap-invoice-row', 'Subtotal').should('contain.text', '$280.00');
-    cy.contains('.soap-invoice-row', 'Sales tax').should('contain.text', '$11.5');
+    cy.contains('.soap-invoice-row', 'Subtotal').should('contain.text', `$${totalAmount.toFixed(2)}`);
+    cy.contains('.soap-invoice-row', 'Sales tax').should('contain.text', `$${Math.floor(totalTax)}.`);
   });
 
   it('EMR-11-5: A and B signed, C still a draft: A and B locked, C editable', () => {
     const { clientId } = household();
     ['Aspen', 'Birch'].forEach((name) => {
+      recordDoses(encounterIds[name]);
       readyToSign(encounterIds[name]);
       signChart(encounterIds[name]);
     });
@@ -147,8 +166,15 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     const draft = stubRecapDraft((id) => names.get(id) ?? `pet ${id}`);
     cy.intercept('POST', '**/client-email').as('recapDecision');
 
+    recordDoses(encounterIds.Clover);
     readyToSign(encounterIds.Clover);
     signChart(encounterIds.Clover);
+    // The recap draft names all three pets, each with its own items (the AI writer is not called).
+    seedRecapDraft(
+      encounterIds.Clover,
+      'Visit recap for Aspen, Birch and Clover',
+      '<p><strong>Aspen</strong>: exam, rabies vaccine.</p><p><strong>Birch</strong>: exam, fecal test.</p><p><strong>Clover</strong>: exam, nail trim x2, rabies vaccine.</p>',
+    );
 
     signInEmr('veterinarian', soapPath(pet('Aspen'), clientId, '/wrap-up'));
     cy.contains('h1', 'Wrap up visit', { timeout: 40000 });
@@ -162,7 +188,7 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
 
     // The recap draft is asked for once, for all three pets, and names each of them.
     waitForRecapMailbox();
-    writeRecapDraft();
+    waitForRecapDraft();
     cy.contains('button', 'Send to client').should('not.be.disabled').click();
     cy.wait('@recapDecision').then((call) => {
       const body = call.request.body;

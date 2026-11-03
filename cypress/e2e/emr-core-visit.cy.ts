@@ -17,7 +17,8 @@ import {
   stubRecapDraft,
   visitInvoice,
   waitForRecapMailbox,
-  writeRecapDraft,
+  seedRecapDraft,
+  waitForRecapDraft,
 } from '../support/emrCoreVisitWorld';
 
 /**
@@ -44,6 +45,7 @@ describe('EMR-11-1: wellness visit, card reader', () => {
       addOrder(enc.id, w.items.examId, 'Wellness exam', 65);
       addOrder(enc.id, w.items.rabiesId, 'Rabies vaccine', 28);
       addOrder(enc.id, w.items.da2ppId, 'DA2PP vaccine', 32);
+      seedRecapDraft(enc.id, 'Visit recap', `<p><strong>${dog.name}</strong>: wellness exam, rabies and DA2PP vaccines.</p>`);
       signInEmr('veterinarian', soapPath(dog, clientId));
       cy.contains(dog.name, { timeout: 40000 });
       cy.contains(itemName('Wellness exam'), { timeout: 30000 });
@@ -72,7 +74,7 @@ describe('EMR-11-1: wellness visit, card reader', () => {
       cy.contains('h1', 'Wrap up visit', { timeout: 30000 });
       cy.contains(dog.name);
       waitForRecapMailbox();
-      writeRecapDraft();
+      waitForRecapDraft();
       cy.contains('button', 'Send to client').should('not.be.disabled').click();
       cy.wrap(null).should(() => expect(gmail.sent()).to.have.length(1));
       cy.contains('button', 'Sign & lock SOAP').should('not.be.disabled').click();
