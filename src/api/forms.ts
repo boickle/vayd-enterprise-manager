@@ -101,6 +101,9 @@ export type FormInvite = {
   communicationLogId?: number | null;
   chartDocumentId?: number | null;
   created: string;
+  /** Only on the response to sending: false when the invite was created but the email failed (EMR-A5). */
+  emailSent?: boolean;
+  emailError?: string | null;
 };
 
 export async function sendFormInvite(body: {

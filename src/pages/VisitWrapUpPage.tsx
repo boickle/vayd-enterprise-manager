@@ -216,7 +216,8 @@ export default function VisitWrapUpPage() {
         if (canceled) return;
         const petIds = data.pets.map((p) => p.patientId);
         setSelectedPetIds(new Set(petIds));
-        setRecipients(data.clientEmails.join(', '));
+        // "Do not email" clients: leave the box empty so nothing goes out by default (EMR-A4).
+        setRecipients(data.clientDoNotEmail ? '' : data.clientEmails.join(', '));
         setLoading(false);
 
         if (data.clientEmailDelivery?.status) {
@@ -973,6 +974,13 @@ export default function VisitWrapUpPage() {
                   placeholder="owner@example.com, other@example.com"
                   onChange={(e) => setRecipients(e.target.value)}
                 />
+                {wrapUp?.clientDoNotEmail && (
+                  <span className="soap-wrapup-field-hint" role="alert" data-testid="wrapup-do-not-email-warning">
+                    <MailX size={13} /> This client is marked &ldquo;Do not email&rdquo;, so their address was not filled in.
+                    Type an address only if the client asked for this email.
+                    {wrapUp.clientEmails.length > 0 ? ` On file: ${wrapUp.clientEmails.join(', ')}.` : ''}
+                  </span>
+                )}
                 <span className="soap-wrapup-field-hint">
                   Both owners when two are on file. Separate more addresses with commas.
                 </span>

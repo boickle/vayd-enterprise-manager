@@ -5,8 +5,6 @@
 import { http } from './http';
 import type { ForwardBookingDisposition } from './forwardBookingDisposition';
 import {
-  getEncounter,
-  updateEncounter,
   type HouseholdRosterEntry,
   type SoapEncounterMode,
   type SoapEncounterStatus,
@@ -60,6 +58,8 @@ export type VisitWrapUp = {
   clientId: number | null;
   clientName: string | null;
   clientEmails: string[];
+  /** An owner on this visit is marked "Do not email" (EMR-A4). Older servers omit it. */
+  clientDoNotEmail?: boolean;
   provider: { id: number; name: string | null; email: string | null } | null;
   emailDraft: { subject: string; body: string };
   clientEmailDelivery: ClientEmailDelivery | null;
@@ -75,7 +75,17 @@ export async function getVisitWrapUp(encounterId: string): Promise<VisitWrapUp> 
     `/soap-encounters/${encodeURIComponent(encounterId)}/wrap-up`,
     { params: { practiceId: pid() } }
   );
-  return data;
+  if (!data || typeof data !== 'object') throw new Error('Could not load the visit wrap-up.');
+  // Missing lists/draft from an odd response become empty ones instead of crashing the screen.
+  return {
+    ...data,
+    clientEmails: Array.isArray(data.clientEmails) ? data.clientEmails : [],
+    pets: Array.isArray(data.pets) ? data.pets : [],
+    emailDraft: {
+      subject: typeof data.emailDraft?.subject === 'string' ? data.emailDraft.subject : '',
+      body: typeof data.emailDraft?.body === 'string' ? data.emailDraft.body : '',
+    },
+  };
 }
 
 export type ReminderSourceType = 'inventory' | 'procedure' | 'lab';
@@ -213,28 +223,40 @@ export async function generateClientRecap(
   encounterId: string,
   patientIds?: number[]
 ): Promise<{ subject: string; body: string }> {
-  const { data } = await http.post<{ subject: string; body: string }>(
+  const { data } = await http.post<unknown>(
     `/soap-encounters/${encodeURIComponent(encounterId)}/scribe/client-recap`,
     { practiceId: pid(), ...(patientIds?.length ? { patientIds } : {}) }
   );
-  return data;
+  return normalizeClientRecap(data);
 }
 
+/**
+ * The AI writer's answer is not trusted to have a shape: a missing or non-text subject/body
+ * would otherwise land in page state and crash the screen. Anything unusable is an error the
+ * caller shows, never a half-filled draft. Extra fields (pet breakdowns, usage) are ignored.
+ */
+export function normalizeClientRecap(data: unknown): { subject: string; body: string } {
+  const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+  const subject = typeof obj?.subject === 'string' ? obj.subject : '';
+  const body = typeof obj?.body === 'string' ? obj.body : '';
+  if (!subject.trim() && !body.trim()) {
+    throw new Error('The recap writer returned nothing usable. Try Regenerate again, or write the recap by hand.');
+  }
+  return { subject, body };
+}
+
+/**
+ * Saves the recap draft. Goes to its own endpoint (not the SOAP PATCH) so a draft typed after
+ * the chart is signed is kept: the recap is correspondence, not the medical record.
+ */
 export async function persistClientRecapDraft(
   encounterId: string,
   draft: { subject: string; body: string }
 ): Promise<void> {
-  const enc = await getEncounter(encounterId);
-  const prev =
-    enc.subjective && typeof enc.subjective === 'object'
-      ? (enc.subjective as Record<string, unknown>)
-      : {};
-  await updateEncounter(encounterId, {
-    subjective: {
-      ...prev,
-      clientEmailSubject: draft.subject.trim() ? draft.subject : null,
-      clientEmailBody: draft.body.trim() ? draft.body : null,
-    },
+  await http.put(`/soap-encounters/${encodeURIComponent(encounterId)}/recap-draft`, {
+    practiceId: pid(),
+    subject: draft.subject,
+    body: draft.body,
   });
 }
 
