@@ -831,6 +831,9 @@ function VaccineRow({
               </button>
             ) : null}
             <DymoLink label="Send treatment label to DYMO" />
+            {recorded ? (
+              <RecordHistoryLink entityType="encounter_order" entityId={order.id} label="Dose history" />
+            ) : null}
           </div>
         </div>
       )}
