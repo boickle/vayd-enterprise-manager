@@ -78,10 +78,11 @@ describe('EMR-05-6: a double-clicked refund is applied once', () => {
 
     cy.intercept('POST', '**/tenders/*/refund').as('refund');
     signIn(world, `/schedule/clients?clientId=${world.client.id}&tab=financial&invoice=${world.visit.invoiceId}`);
-    cy.contains('.client-fin__paid-line', /card/i, { timeout: 40000 }).contains('button', 'Refund').click();
+    // Scout receipt: the card line reads like "Visa •••• 4242"; only a refundable card payment has a Refund button.
+    cy.contains('.client-fin__paid-line', 'Refund', { timeout: 40000 }).contains('button', 'Refund').click();
     cy.get('.client-fin__refund-panel').within(() => {
-      cy.contains('label', 'Amount').find('input').clear().type('100');
-      cy.contains('label', 'Reason').find('input').type('Client declined the vaccine');
+      cy.contains('label', 'Amount (partial or full)').find('input').clear().type('100');
+      cy.contains('label', 'Reason (optional)').find('input').type('Client declined the vaccine');
       cy.contains('button', 'Process refund').dblclick();
     });
     cy.wait('@refund');

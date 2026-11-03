@@ -1,6 +1,7 @@
 /// <reference types="cypress" />
 import '../support/e2e';
 import { cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/emrWorld';
+import { stubGmailCapture } from '../support/emrCoreVisitWorld';
 
 /**
  * EMR-04-6: pay links on screen. Staff opens the client's Billing, makes the email link and then the
@@ -10,7 +11,7 @@ import { cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/e
  *
  *   EMR_DB=vayd_api_test CYPRESS_EMR_DB=vayd_api_test npx cypress run --spec cypress/e2e/emr-04-pay-links.cy.ts
  *
- * The dev API must use the same test database. Nothing is sent: the compose dialogs are read and closed.
+ * The dev API must use the same test database. Gmail is stubbed in the browser (the test database has no mailbox); the email send is intercepted and captured, never real.
  * Payments are simulated with signed payment_intent.succeeded webhooks (task emrStripeWebhook), which is
  * what Stripe sends when a Checkout link is paid; local dev receives no real webhooks.
  */
@@ -86,6 +87,7 @@ describe('EMR-04-6: one pay link per balance; a second payment becomes credit wi
   });
 
   it('email and text carry the same URL; the first payment pays; the second shows as credit with a Billing task', () => {
+    const gmail = stubGmailCapture();
     cy.intercept('POST', '**/visit-payments/client/*/pay-link').as('payLink');
     signIn(world, billingPath(world));
 
@@ -98,9 +100,12 @@ describe('EMR-04-6: one pay link per balance; a second payment becomes credit wi
       cy.wrap(emailUrl).as('emailUrl');
     });
     cy.get<string>('@emailUrl').then((emailUrl) => {
-      cy.get('[role="dialog"]').invoke('html').should('contain', emailUrl.split('/').pop() ?? emailUrl);
+      cy.contains('button', 'Send email', { timeout: 30000 }).should('not.be.disabled').click();
+      cy.wrap(null).should(() => {
+        expect(gmail.sent(), 'captured emails').to.have.length(1);
+        expect(String(gmail.sent()[0].bodyText ?? '') + String(gmail.sent()[0].bodyHtml ?? '')).to.contain(emailUrl);
+      });
     });
-    cy.get('[role="dialog"]').contains('button', 'Cancel').click();
     cy.get('[role="dialog"]').should('not.exist');
 
     // Text pay link for the same balance: the same URL, in the SMS text.
