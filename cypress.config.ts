@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import * as os from 'os';
 import { createRequire } from 'module';
+import { createHmac } from 'crypto';
 
 export default defineConfig({
   chromeWebSecurity: false, // RL-03-13/14 type into the cross-origin Stripe card iframe (test mode)
@@ -127,6 +128,59 @@ export default defineConfig({
             fs.unlinkSync(emrWorldFile);
           }
           return null;
+        },
+        /**
+         * EMR-04-6 / EMR-05-6: post a signed payment_intent.succeeded to the dev API, the way Stripe would after a
+         * Checkout pay link is paid (local dev gets no real webhooks). Signed with the API's own
+         * STRIPE_WEBHOOK_SECRET (env, else the API checkout's .env). Only with an EMR test database set.
+         */
+        async emrStripeWebhook(input: {
+          apiUrl: string;
+          paymentIntentId: string;
+          amountCents: number;
+          metadata: Record<string, string>;
+        }) {
+          if (!emrDb || !/test/i.test(emrDb) || /vayd_api_local|prod/i.test(emrDb)) {
+            throw new Error('Set EMR_DB to a test database before simulating Stripe webhooks.');
+          }
+          let secret = process.env.STRIPE_WEBHOOK_SECRET || '';
+          const envFile = path.join(emrApiDir, '.env');
+          if (!secret && fs.existsSync(envFile)) {
+            const line = fs
+              .readFileSync(envFile, 'utf8')
+              .split('\n')
+              .find((l) => /^\s*STRIPE_WEBHOOK_SECRET\s*=/.test(l));
+            secret = (line?.split('=').slice(1).join('=') ?? '').trim().replace(/^['"]|['"]$/g, '');
+          }
+          if (!secret) throw new Error('No STRIPE_WEBHOOK_SECRET for the dev API.');
+          const created = Math.floor(Date.now() / 1000);
+          const event = {
+            id: `evt_emr_cy_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+            object: 'event',
+            api_version: '2024-06-20',
+            created,
+            livemode: false,
+            type: 'payment_intent.succeeded',
+            data: {
+              object: {
+                id: input.paymentIntentId,
+                object: 'payment_intent',
+                amount: input.amountCents,
+                amount_received: input.amountCents,
+                currency: 'usd',
+                status: 'succeeded',
+                metadata: input.metadata,
+              },
+            },
+          };
+          const body = JSON.stringify(event);
+          const v1 = createHmac('sha256', secret).update(`${created}.${body}`, 'utf8').digest('hex');
+          const res = await fetch(`${input.apiUrl.replace(/\/+$/, '')}/stripe/webhooks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${created},v1=${v1}` },
+            body,
+          });
+          return { status: res.status, body: await res.text() };
         },
       });
 
