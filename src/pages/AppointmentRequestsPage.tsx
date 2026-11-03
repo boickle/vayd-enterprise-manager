@@ -732,7 +732,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
       const applySubmissionRows = (
         items: AppointmentRequestSubmissionItem[],
-        conversions: { converted: number; totalRequests: number } | null,
+        conversions: {
+          converted: number;
+          totalRequests: number;
+          convertedToHold?: number;
+        } | null,
         opts: { isPartialBackfill?: boolean },
       ) => {
         const previousRows = rowsRef.current;
@@ -762,8 +766,13 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
         if (conversions && conversions.totalRequests > 0) {
           const rate = ((conversions.converted / conversions.totalRequests) * 100).toFixed(1);
+          const holds = conversions.convertedToHold ?? 0;
+          const holdNote =
+            holds > 0
+              ? ` ${holds} ${holds === 1 ? 'is still a hold' : 'are still holds'}.`
+              : '';
           setConversionsBanner(
-            `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).`,
+            `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).${holdNote}`,
           );
         } else if (!silent && !opts.isPartialBackfill) {
           setConversionsBanner(null);
