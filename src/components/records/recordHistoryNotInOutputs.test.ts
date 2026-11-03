@@ -70,6 +70,8 @@ describe('EMR-07b: the prescription history stays off records, labels and the cl
     const chart = read('components/pims/PimsPatientDetailView.tsx');
     expect(chart).toMatch(/showRecordHistoryTab \? \(\[\['history', 'History'\]\]/);
     expect(chart).toMatch(/mrTab === 'history' && showRecordHistoryTab/);
+    // the History tab button itself must not print either
+    expect(chart).toMatch(/id === 'history' \? ' record-history' : ''/);
   });
 
   it('the records sent out and the chart print never read the pet history or lab history', () => {
