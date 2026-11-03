@@ -1866,7 +1866,14 @@ export default function VisitCheckoutPanel({
   const convertAuthorization = () =>
     run('capture', async () => {
       if (!invoice) return;
-      onInvoiceChange(await captureAuthorization(invoice.id));
+      try {
+        onInvoiceChange(await captureAuthorization(invoice.id));
+      } catch (e) {
+        // Part may already be captured (the bill grew past the hold and the rest was
+        // declined): reload so the paid amount and balance due are current.
+        void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
+        throw e;
+      }
       setNote('Authorization converted to payment.');
     });
 
