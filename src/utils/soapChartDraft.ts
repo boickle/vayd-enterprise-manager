@@ -103,3 +103,12 @@ export function mergeParkedSoapDraft(
     planNotes: pick(parked.planNotes, server.planNotes),
   };
 }
+
+/** A save failed for lack of signal: keep what was typed on this device until it can be sent. */
+export function holdUnsavedSoapDraft(
+  encounterId: string,
+  live: SoapChartDraft,
+  lastSaved: SoapChartDraft
+): void {
+  writeSoapChartDraft(encounterId, mergeParkedSoapDraft(live, lastSaved));
+}
