@@ -299,7 +299,7 @@ function checkoutRxMissingMessage(field: CheckoutRxMissingField, refills: string
 }
 
 /** Same Rx block as the client invoice: sig on the left, lot/refills on the right, Approve lower right. */
-function CheckoutInvoiceRxFields({
+export function CheckoutInvoiceRxFields({
   line,
   invoice,
   encounterId,
@@ -614,80 +614,6 @@ function CheckoutInvoiceRxFields({
             >
               Save sig
             </button>
-          ) : line.instructionsEnteredByName ? (
-            <span className="client-fin__entered">
-              Entered by {line.instructionsEnteredByName}
-            </span>
-          ) : null}
-          {line.instructions || line.rxApprovedAt ? (
-            <RecordHistoryLink entityType="invoice_line" entityId={line.id} />
-          ) : null}
-          {dymoSource ? (
-            <SendRxLabelButton
-              className="client-fin__dymo"
-              disabled={!scriptApproved || saving}
-              source={{
-                ...dymoSource,
-                instructions,
-                refill: Number.isFinite(refillCount) ? refillCount : recorded?.refill ?? 0,
-                refillExpiration: refillExpiration || recorded?.refillExpiration,
-                discardAfter,
-                acuity: acuity || recorded?.acuity,
-                onSavePrescription: async (value) => {
-                  if (!canWriteRx) {
-                    const rxNumber = await ensurePrintRxNumber({
-                      existingNumber: recorded?.rxNumber,
-                      patientId: dymoSource.patientId ?? undefined,
-                      name: value.name,
-                      inventoryItemId: line.catalogItemId,
-                      instructions: value.instructions,
-                      refill: value.refill,
-                      startDate: value.startDate,
-                      refillExpiration: value.refillExpiration,
-                      acuity: value.acuity,
-                    });
-                    return { rxNumber };
-                  }
-                  const saved = await saveOrderPrescription(encounterId!, orderId!, {
-                    name: value.name,
-                    strength: value.strength,
-                    instructions: value.instructions,
-                    refill: value.refill,
-                    refillExpiration: toRxDatePayload(
-                      value.refillExpiration ||
-                        refillExpiration ||
-                        recorded?.refillExpiration,
-                    ),
-                    startDate: toRxDatePayload(value.startDate) || undefined,
-                    acuity:
-                      value.acuity === 'acute' || value.acuity === 'chronic'
-                        ? value.acuity
-                        : undefined,
-                    employeeId: employeeId ?? undefined,
-                  });
-                  onPrescriptionSaved(saved);
-                  onSaved(
-                    await updateCounterInvoiceLine(invoice.id, line.id, {
-                      instructions: value.instructions.trim() || null,
-                      refillCount: value.refill,
-                    }),
-                  );
-                  if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
-                  const rxNumber = await ensurePrintRxNumber({
-                    existingNumber: saved.rxNumber,
-                    patientId: dymoSource.patientId ?? undefined,
-                    name: value.name,
-                    inventoryItemId: line.catalogItemId,
-                    instructions: value.instructions,
-                    refill: value.refill,
-                    startDate: value.startDate,
-                    refillExpiration: value.refillExpiration,
-                    acuity: value.acuity,
-                  });
-                  return { rxNumber };
-                },
-              }}
-            />
           ) : null}
         </span>
         <textarea
@@ -699,6 +625,11 @@ function CheckoutInvoiceRxFields({
           onBlur={() => void persistSig()}
         />
         <DirectionsLimitHint value={instructions} className="client-fin__sig-limit" />
+        {!needsSigSave && line.instructionsEnteredByName ? (
+          <span className="client-fin__entered client-fin__sig-entered">
+            Entered by {line.instructionsEnteredByName}
+          </span>
+        ) : null}
       </label>
       <div className="client-fin__rx-extras">
         {line.trackLots && !mailed && !hideLotPicker ? (
@@ -773,29 +704,6 @@ function CheckoutInvoiceRxFields({
         <label className={`client-fin__rx-field client-fin__refill${highlight('refillCount') ? ' is-missing' : ''}`}>
           <span>
             # refills *
-            {patientId != null ? (
-              <BookPatientChartButton
-                patientId={String(patientId)}
-                patientName={patientName?.trim() || 'Patient'}
-                practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                practiceTz={PRACTICE_TZ}
-                showAlerts
-                label="View details"
-                className="client-fin__details-link"
-                onApplyRefillExpiration={(dateInput) => {
-                  if (dateIsTodayOrBefore(dateInput)) {
-                    onError('Refill expiration must be after today.');
-                    return;
-                  }
-                  if (refillExpirationExceedsMax(dateInput)) {
-                    onError('Refill expiration cannot be more than 1 year from today.');
-                    setRefillExpiration(maxRefillExpirationInput());
-                    return;
-                  }
-                  setRefillExpiration(dateInput);
-                }}
-              />
-            ) : null}
           </span>
           <input
             className="client-fin__refill-input"
@@ -905,6 +813,101 @@ function CheckoutInvoiceRxFields({
         ) : null}
         </>
         )}
+      </div>
+      <div className="client-fin__rx-actions">
+        {dymoSource ? (
+          <SendRxLabelButton
+            className="client-fin__dymo"
+            disabled={!scriptApproved || saving}
+            source={{
+              ...dymoSource,
+              instructions,
+              refill: Number.isFinite(refillCount) ? refillCount : recorded?.refill ?? 0,
+              refillExpiration: refillExpiration || recorded?.refillExpiration,
+              discardAfter,
+              acuity: acuity || recorded?.acuity,
+              onSavePrescription: async (value) => {
+                if (!canWriteRx) {
+                  const rxNumber = await ensurePrintRxNumber({
+                    existingNumber: recorded?.rxNumber,
+                    patientId: dymoSource.patientId ?? undefined,
+                    name: value.name,
+                    inventoryItemId: line.catalogItemId,
+                    instructions: value.instructions,
+                    refill: value.refill,
+                    startDate: value.startDate,
+                    refillExpiration: value.refillExpiration,
+                    acuity: value.acuity,
+                  });
+                  return { rxNumber };
+                }
+                const saved = await saveOrderPrescription(encounterId!, orderId!, {
+                  name: value.name,
+                  strength: value.strength,
+                  instructions: value.instructions,
+                  refill: value.refill,
+                  refillExpiration: toRxDatePayload(
+                    value.refillExpiration ||
+                      refillExpiration ||
+                      recorded?.refillExpiration,
+                  ),
+                  startDate: toRxDatePayload(value.startDate) || undefined,
+                  acuity:
+                    value.acuity === 'acute' || value.acuity === 'chronic'
+                      ? value.acuity
+                      : undefined,
+                  employeeId: employeeId ?? undefined,
+                });
+                onPrescriptionSaved(saved);
+                onSaved(
+                  await updateCounterInvoiceLine(invoice.id, line.id, {
+                    instructions: value.instructions.trim() || null,
+                    refillCount: value.refill,
+                  }),
+                );
+                if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
+                const rxNumber = await ensurePrintRxNumber({
+                  existingNumber: saved.rxNumber,
+                  patientId: dymoSource.patientId ?? undefined,
+                  name: value.name,
+                  inventoryItemId: line.catalogItemId,
+                  instructions: value.instructions,
+                  refill: value.refill,
+                  startDate: value.startDate,
+                  refillExpiration: value.refillExpiration,
+                  acuity: value.acuity,
+                });
+                return { rxNumber };
+              },
+            }}
+          />
+        ) : null}
+        {patientId != null ? (
+          <BookPatientChartButton
+            patientId={String(patientId)}
+            patientName={patientName?.trim() || 'Patient'}
+            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+            practiceTz={PRACTICE_TZ}
+            showAlerts
+            label="View details"
+            className="client-fin__details-link"
+            onApplyRefillExpiration={(dateInput) => {
+              if (dateIsTodayOrBefore(dateInput)) {
+                onError('Refill expiration must be after today.');
+                return;
+              }
+              if (refillExpirationExceedsMax(dateInput)) {
+                onError('Refill expiration cannot be more than 1 year from today.');
+                setRefillExpiration(maxRefillExpirationInput());
+                return;
+              }
+              setRefillExpiration(dateInput);
+            }}
+          />
+        ) : null}
+        {line.instructions || line.rxApprovedAt ? (
+          <RecordHistoryLink entityType="invoice_line" entityId={line.id} />
+        ) : null}
       </div>
       {approveFoot || children ? (
         <div className="client-fin__rx-fulfill client-fin__rx-fulfill--foot">
