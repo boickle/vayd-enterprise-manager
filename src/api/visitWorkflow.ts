@@ -7,6 +7,7 @@ import { apiBaseUrl, http } from './http';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 import { appAlert } from '../utils/appDialog';
 import { LOTS_CLEARED_MESSAGE } from '../utils/lotSplit';
+import { sendWithDuplicateWarning, type DuplicateOptions } from '../utils/duplicateItemWarning';
 
 export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 
@@ -598,13 +599,19 @@ export async function createOrder(
     bundleSaleId?: string;
     sourceBundleId?: number;
     sourceBundleName?: string;
-  }
+  },
+  opts?: DuplicateOptions
 ): Promise<EncounterOrder> {
-  const { data } = await http.post<EncounterOrder>(
-    `/soap-encounters/${encodeURIComponent(encounterId)}/orders`,
-    { practiceId: pid(), ...body }
+  return sendWithDuplicateWarning(
+    async (confirmDuplicate) => {
+      const { data } = await http.post<EncounterOrder>(
+        `/soap-encounters/${encodeURIComponent(encounterId)}/orders`,
+        { practiceId: pid(), ...body, ...(confirmDuplicate ? { confirmDuplicate: true } : {}) }
+      );
+      return data;
+    },
+    { ...opts, itemName: body.name }
   );
-  return data;
 }
 
 export async function updateOrder(
@@ -1508,13 +1515,19 @@ export async function unlockVisitInvoice(invoiceId: string): Promise<VisitInvoic
 
 export async function addCounterInvoiceLine(
   invoiceId: string,
-  body: CounterInvoiceLineInput
+  body: CounterInvoiceLineInput,
+  opts?: DuplicateOptions
 ): Promise<VisitInvoice> {
-  const { data } = await http.post<VisitInvoice>(
-    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines`,
-    { practiceId: pid(), ...body }
+  return sendWithDuplicateWarning(
+    async (confirmDuplicate) => {
+      const { data } = await http.post<VisitInvoice>(
+        `/visit-invoices/${encodeURIComponent(invoiceId)}/lines`,
+        { practiceId: pid(), ...body, ...(confirmDuplicate ? { confirmDuplicate: true } : {}) }
+      );
+      return data;
+    },
+    { ...opts, itemName: body.description }
   );
-  return data;
 }
 
 /** One lot an invoice line draws from, and how many units come from it. */

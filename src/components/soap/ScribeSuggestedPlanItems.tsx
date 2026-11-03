@@ -23,6 +23,7 @@ import { appDeclineHow } from '../../utils/appDialog';
 import { offRecordDeclineNote } from '../../api/declinedTreatments';
 import { AddReminderForm } from './WrapUpReminders';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -474,6 +475,9 @@ function PlanItemSearchRow({
       } catch {
         /* The plan picks it up on the next reload. */
       }
+    } catch (e) {
+      // Cancel on the duplicate warning (D4) adds nothing.
+      if (!isDuplicateItemSkipped(e)) throw e;
     } finally {
       setAdding(false);
     }

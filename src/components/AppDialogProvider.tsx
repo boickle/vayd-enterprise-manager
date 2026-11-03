@@ -281,6 +281,13 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
                             : 'Please confirm')}
                     </h2>
                     <p className="app-dialog__body">{req.message}</p>
+                    {req.kind === 'confirm' && req.listItems?.length ? (
+                      <ul className="app-dialog__list">
+                        {req.listItems.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : null}
                     {req.kind === 'prompt' ? (
                       promptMultiline ? (
                         <textarea

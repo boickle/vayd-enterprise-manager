@@ -140,7 +140,9 @@ describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bi
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
     noPrepayButtons();
-    cy.contains('button', 'Convert to invoice & take payment').click();
+    // EMR-10 (D4): staff accept each quoted item with the family before collecting.
+    cy.contains('button', /Accept the 2 remaining items/).click();
+    cy.contains('button', 'Convert to invoice & take payment').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
 
     invoiceForAppointment(world, appointmentId).then((inv) => {
@@ -221,7 +223,9 @@ describe('EMR-02-6: phone path for families who cannot use the online form', () 
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
     noPrepayButtons();
-    cy.contains('button', 'Convert to invoice & take payment').click();
+    // EMR-10 (D4): staff accept each quoted item with the family before collecting.
+    cy.contains('button', /Accept the 2 remaining items/).click();
+    cy.contains('button', 'Convert to invoice & take payment').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
 
     invoiceForAppointment(world, appointmentId).then((inv) => {

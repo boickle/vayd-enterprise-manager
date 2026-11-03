@@ -11,6 +11,7 @@ import { apiErrorMessage } from '../../api/http';
 import ConsentAnswersView from '../consent/ConsentAnswersView';
 import { parseConsentWeightChange } from '../../utils/consentWeightAlert';
 import EuthanasiaEstimateModal from './EuthanasiaEstimateModal';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export default function EuthanasiaConsentPanel({
   appointmentId,
@@ -172,21 +173,28 @@ export default function EuthanasiaConsentPanel({
       for (const item of items) {
         const alreadyPaidClay = Boolean(paid && /clay/i.test(item.name));
         const alreadyPaidMemorial = Boolean(memorialPaid && !alreadyPaidClay);
-        await createOrder(encounterId, {
-          name: item.name,
-          catalogItemId: item.itemId,
-          catalogItemType: item.itemType,
-          qty: 1,
-          note:
-            alreadyPaidClay || alreadyPaidMemorial
-              ? `From euthanasia consent — already paid $${Number(
-                  (alreadyPaidClay ? paid?.amount : memorialPaid?.amount) ?? 0,
-                ).toFixed(2)}${
-                  (alreadyPaidClay ? paid?.stripePaymentIntentId : memorialPaid?.stripePaymentIntentId)
-                    ? ` (${alreadyPaidClay ? paid?.stripePaymentIntentId : memorialPaid?.stripePaymentIntentId})`
-                    : ''
-                }`
-              : 'From euthanasia consent',
+        // Automatic (D4): an item already on this visit for this pet is skipped, never doubled.
+        await createOrder(
+          encounterId,
+          {
+            name: item.name,
+            catalogItemId: item.itemId,
+            catalogItemType: item.itemType,
+            qty: 1,
+            note:
+              alreadyPaidClay || alreadyPaidMemorial
+                ? `From euthanasia consent — already paid $${Number(
+                    (alreadyPaidClay ? paid?.amount : memorialPaid?.amount) ?? 0,
+                  ).toFixed(2)}${
+                    (alreadyPaidClay ? paid?.stripePaymentIntentId : memorialPaid?.stripePaymentIntentId)
+                      ? ` (${alreadyPaidClay ? paid?.stripePaymentIntentId : memorialPaid?.stripePaymentIntentId})`
+                      : ''
+                  }`
+                : 'From euthanasia consent',
+          },
+          { duplicates: 'skip' },
+        ).catch((e: unknown) => {
+          if (!isDuplicateItemSkipped(e)) throw e;
         });
       }
       onAddedToPlan?.();
