@@ -169,7 +169,8 @@ export const signChart = (encounterId: string) =>
 /** Types the item name into a "Add a charge" box and picks it; waits for the line on the bill. */
 export function addChargeVia(placeholder: string, name: string) {
   cy.get(`input[placeholder="${placeholder}"]`, { timeout: 30000 }).first().clear().type(name);
-  cy.contains('[role="option"], li, button', name, { timeout: 20000 }).first().click();
+  // Not the "Add as note: <typed text>" row: it is always listed and contains the name too ($0 note order).
+  cy.contains('[role="option"]:not(.soap-plan-result-note), li, button:not(.soap-plan-result-note)', name, { timeout: 20000 }).first().click();
   // The box empties itself only once the order was created (an error leaves the text in it).
   cy.get(`input[placeholder="${placeholder}"]`, { timeout: 30000 }).first().should('have.value', '');
 }
@@ -313,9 +314,9 @@ export function stubCardPayments(pet: EmrPet) {
 }
 
 /**
- * Puts an accepted order (and so a bill line) on a chart, at an explicit price. The SOAP page's own search box
- * priced the seeded items at $0 in the first runs (so no bill was opened), so the specs place orders through the
- * API, the same call the box makes, and use the screens to check what they produced.
+ * Puts an accepted order (and so a bill line) on a chart, at an explicit price. (The $0 lines in the first runs
+ * came from addChargeVia clicking the search box's "Add as note" row, not from the catalog result; fixed there.)
+ * The specs place orders through the API, the same call the box makes, and use the screens to check the result.
  */
 export function addOrder(encounterId: string, itemId: number, name: string, unitPrice: number, opts: { qty?: number; kind?: 'treatment' | 'med'; confirmDuplicate?: boolean } = {}) {
   return emrApi<{ id: string; name: string }>('veterinarian', 'POST', `/soap-encounters/${encounterId}/orders`, {

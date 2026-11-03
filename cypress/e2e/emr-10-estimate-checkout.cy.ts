@@ -118,11 +118,14 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
       expect(enc.status).to.be.lessThan(300);
       signIn(world, `/schedule/soap/${appointmentId}/${patientId}?clientId=${clientId}`);
       cy.intercept('POST', '**/soap-encounters/*/orders').as('addOrder');
+      cy.intercept('GET', '**/room-loader/items/search*').as('planSearch');
       cy.get('input[placeholder="Type here to add a charge, or a note…"]', { timeout: 40000 })
         .first()
         .type(cremationName);
-      // Pick the exact item by its full unique name (the tag makes it unique among search results).
-      cy.contains('.soap-plan-result .soap-plan-result-name', cremationName, { timeout: 20000 })
+      cy.wait('@planSearch');
+      // Pick the catalog result by its full unique name. The "Add as note: <typed text>" row is always
+      // in the list and also contains the name, so leave it out (clicking it creates a $0 note order).
+      cy.contains('.soap-plan-result:not(.soap-plan-result-note) .soap-plan-result-name', cremationName, { timeout: 20000 })
         .closest('.soap-plan-result')
         .click();
       cy.wait('@addOrder').then((i) => {

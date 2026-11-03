@@ -256,3 +256,52 @@ describe('EMR-10-8 duplicate warning dialog', () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * F14 / F4 (EMR-10-9, EMR-11 Cypress): the catalog result sends the procedure id and its price; only the
+ * always-present "Add as note: <typed text>" row sends no catalogItemId and $0. That row also contains the
+ * typed name, so a spec must leave it out (`.soap-plan-result:not(.soap-plan-result-note)`).
+ */
+describe('EMR-10-9 SOAP plan search: catalog result vs the note row', () => {
+  const NAME = 'Private cremation EMRTEST-1';
+  // Shape of GET /room-loader/items/search for a procedure (ProcedureMapper sets id via BaseMapper).
+  const apiHit = {
+    name: NAME,
+    code: NAME,
+    itemType: 'procedure',
+    price: 125,
+    originalPrice: 125,
+    procedure: { id: 872, name: NAME, code: NAME, price: 125, pimsType: 'EMRTEST', isActive: true, isDeleted: false },
+  } as any;
+
+  async function typeFullName() {
+    vi.mocked(searchItems).mockResolvedValue([apiHit]);
+    post.mockResolvedValue({ data: { ...order, name: NAME, catalogItemId: 872, unitPrice: 125 } } as any);
+    renderSoap('plan');
+    fireEvent.change(screen.getByPlaceholderText('Type here to add a charge, or a note…'), {
+      target: { value: NAME },
+    });
+    await screen.findByText(NAME, { selector: '.soap-plan-result-name' }, { timeout: 2000 });
+  }
+
+  it('the spec selector picks the catalog row, which posts catalogItemId and the price', async () => {
+    await typeFullName();
+    const rows = Array.from(
+      document.querySelectorAll('.soap-plan-result:not(.soap-plan-result-note) .soap-plan-result-name'),
+    ).filter((el) => el.textContent?.includes(NAME));
+    expect(rows).toHaveLength(1);
+    fireEvent.click(rows[0].closest('.soap-plan-result')!);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sentBodies()[0]).toMatchObject({ catalogItemId: 872, catalogItemType: 'procedure', unitPrice: 125 });
+  });
+
+  it('the note row also contains the name and posts no catalogItemId at $0 (what the specs caught)', async () => {
+    await typeFullName();
+    const note = document.querySelector('.soap-plan-result-note .soap-plan-result-name')!;
+    expect(note.textContent).toContain(NAME);
+    fireEvent.click(note.closest('button')!);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(sentBodies()[0].catalogItemId).toBeUndefined();
+    expect(sentBodies()[0]).toMatchObject({ kind: 'note', catalogItemType: 'custom', unitPrice: 0 });
+  });
+});
