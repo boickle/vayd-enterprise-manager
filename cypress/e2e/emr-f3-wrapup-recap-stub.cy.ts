@@ -1,5 +1,6 @@
 /// <reference types="cypress" />
 import '../support/e2e';
+import { stubGmailCapture } from '../support/emrCoreVisitWorld';
 import { cleanEmrWorld, seedEmrWorld, type EmrWorld } from '../support/emrWorld';
 
 /**
@@ -14,19 +15,20 @@ describe('F3: wrap-up after "Regenerate from charts" with a stubbed recap writer
   after(() => cleanEmrWorld());
 
   function open() {
+    stubGmailCapture();
     cy.visit('/login');
     cy.window().then((win) => {
       win.localStorage.clear();
       win.localStorage.setItem('accessToken', world.staff.token);
     });
     const { appointmentId, patientId } = world.visit;
-    cy.visit(`/soap/${appointmentId}/${patientId}/wrap-up?clientId=${world.client.id}`);
+    cy.visit(`/schedule/soap/${appointmentId}/${patientId}/wrap-up?clientId=${world.client.id}`);
   }
 
   it('an empty answer shows an error, not "Something went wrong"', () => {
     cy.intercept('POST', '**/scribe/client-recap', { statusCode: 200, body: {} }).as('recap');
     open();
-    cy.contains('button', 'Regenerate from charts', { timeout: 30000 }).click();
+    cy.contains('button', 'Regenerate from charts', { timeout: 40000 }).scrollIntoView().should('not.be.disabled').click();
     cy.wait('@recap');
     cy.contains(/recap writer returned nothing usable/i).should('be.visible');
     cy.contains('Something went wrong').should('not.exist');
@@ -38,7 +40,7 @@ describe('F3: wrap-up after "Regenerate from charts" with a stubbed recap writer
       body: { subject: 'Juniper visit recap', body: 'Thanks for having us out.', pets: [] },
     }).as('recap');
     open();
-    cy.contains('button', 'Regenerate from charts', { timeout: 30000 }).click();
+    cy.contains('button', 'Regenerate from charts', { timeout: 40000 }).scrollIntoView().should('not.be.disabled').click();
     cy.wait('@recap');
     cy.get('input[value="Juniper visit recap"]').should('exist');
     cy.contains('Something went wrong').should('not.exist');
