@@ -2271,7 +2271,7 @@ export default function RoutingAnalyticsPage() {
               <Card sx={{ mb: 3 }}>
                 <CardHeader
                   title="Request → appointment conversions"
-                  subheader="Public appointment requests that were converted into actual appointments for the selected date range."
+                  subheader="Public appointment requests for the selected date range. A hold stays in its own row until that visit becomes a real appointment."
                 />
                 <CardContent>
                   <TableContainer component={Paper} variant="outlined">
@@ -2295,6 +2295,12 @@ export default function RoutingAnalyticsPage() {
                             <Typography variant="body2" component="span" color="success.main">
                               {requestSubmissionConversions.converted}
                             </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Converted to hold</TableCell>
+                          <TableCell align="right">
+                            {requestSubmissionConversions.convertedToHold ?? 0}
                           </TableCell>
                         </TableRow>
                         <TableRow>
