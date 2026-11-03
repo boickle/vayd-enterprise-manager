@@ -1944,6 +1944,8 @@ export type TerminalCheckoutSession = {
   expiresAt: string;
   targetDeviceId: string | null;
   invoice?: VisitInvoice;
+  /** F19: e.g. "The reader is already showing this charge; finish it on the reader." */
+  notice?: string;
 };
 
 export type TerminalPresence = {

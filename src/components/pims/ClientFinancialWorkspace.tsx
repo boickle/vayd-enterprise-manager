@@ -4667,7 +4667,8 @@ export default function ClientFinancialWorkspace({
       setTerminalJob(session.checkoutId);
       if (session.invoice) setSelected(session.invoice);
       setNote(
-        `Sent ${money(session.amountCents / 100)} to ${selectedReader?.label ?? 'the selected reader'}.`,
+        session.notice ??
+          `Sent ${money(session.amountCents / 100)} to ${selectedReader?.label ?? 'the selected reader'}.`,
       );
     } catch (e: unknown) {
       if (/already paid/i.test(apiErr(e)) && selected) {
