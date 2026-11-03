@@ -27,6 +27,11 @@ const PLAN_BOX = 'textarea[data-soap-field="planNotes"]';
 
 function openPlan() {
   cy.get('body', { timeout: 40000 }).then(($b) => {
+    // The page opens in AI Scribe mode, where the plan is a rich-text box; Manual mode has the plain plan textarea.
+    const manual = $b.find('.soap-mode-switch button:contains("Manual")');
+    if (manual.length) cy.wrap(manual.first()).click();
+  });
+  cy.get('body').then(($b) => {
     const tab = $b.find('[role="tab"]:contains("Plan")');
     if (tab.length) cy.wrap(tab.first()).click();
   });
@@ -76,45 +81,6 @@ describe('EMR-A10-1: SOAP save while offline', () => {
   });
 });
 
-describe('EMR-A10-2: charge while offline', () => {
-  it('says "Not charged", does not retry by itself, and one manual retry makes one charge', () => {
-    const w = emrWorld();
-    const { clientId, pets } = w.households.twostaff;
-    const [dog] = pets;
-    const stub = stubCardPayments(dog);
-
-    openEncounter(dog, clientId).then((enc) => {
-      addOrder(enc.id, w.items.examId, 'Wellness exam', 65, { confirmDuplicate: true });
-      giveInvoiceItsShelf(dog);
-      signInEmr('veterinarian', soapPath(dog, clientId, '/checkout'));
-      cy.contains('h1', 'Checkout', { timeout: 40000 });
-
-      // Declared after the stub, so it wins for the first charge only.
-      cy.intercept({ method: 'POST', url: '**/visit-payments/*/charge-saved-card', times: 1 }, { forceNetworkError: true }).as('offlineCharge');
-      cy.contains('button', 'Card on file', { timeout: 30000 }).should('not.be.disabled').click();
-      cy.wait('@offlineCharge');
-      cy.contains('Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns.');
-      cy.get('[data-testid="offline-banner"]').should('exist');
-
-      // No automatic retry: wait, then confirm nothing was charged.
-      cy.wait(3000);
-      cy.wrap(null).should(() => expect(stub.calls(), 'no charge yet').to.have.length(0));
-      visitInvoice(dog).then((inv) => expect(inv.status).to.not.eq('paid'));
-
-      // Connection back: the staff member tries again by hand; exactly one charge.
-      cy.window().then((win) => win.dispatchEvent(new win.Event('online')));
-      cy.contains('button', 'Card on file').should('not.be.disabled').click();
-      cy.contains(/Charged the card on file|Paid/i, { timeout: 30000 });
-      cy.wrap(null).should(() => expect(stub.calls()).to.deep.eq(['saved']));
-      visitInvoice(dog).then((inv) => {
-        expect(inv.status).to.eq('paid');
-        const cardTenders = ((inv as any).tenders ?? []).filter((t: any) => t.method === 'card' && !t.isDeleted);
-        if (cardTenders.length) expect(cardTenders).to.have.length(1);
-      });
-    });
-  });
-});
-
 describe('EMR-A10-3: tablet and phone layouts', () => {
   const sizes: Array<[string, number, number]> = [
     ['iPad portrait', 768, 1024],
@@ -159,6 +125,53 @@ describe('EMR-A10-3: tablet and phone layouts', () => {
         cy.contains('button', 'Tap to Pay', { timeout: 30000 }).scrollIntoView().should('be.visible');
         cy.contains('button', 'Card on file').scrollIntoView().should('be.visible');
         noSideScroll();
+      });
+    });
+  });
+});
+
+// Last: it pays the household's invoice, and the layout walk above needs that invoice open.
+describe('EMR-A10-2: charge while offline', () => {
+  it('says "Not charged", does not retry by itself, and one manual retry makes one charge', () => {
+    const w = emrWorld();
+    const { clientId, pets } = w.households.twostaff;
+    const [dog] = pets;
+    const stub = stubCardPayments(dog);
+
+    openEncounter(dog, clientId).then((enc) => {
+      addOrder(enc.id, w.items.examId, 'Wellness exam', 65, { confirmDuplicate: true });
+      giveInvoiceItsShelf(dog);
+      signInEmr('veterinarian', soapPath(dog, clientId, '/checkout'));
+      cy.contains('h1', 'Checkout', { timeout: 40000 });
+
+      // Declared after the stub, so it is asked first. While offline it drops the connection (and Chrome's own silent
+      // retry of a dropped POST); once back online it does nothing, so the request falls through to the stub above.
+      let offline = true;
+      cy.intercept('POST', '**/visit-payments/*/charge-saved-card', (req) => {
+        if (offline) req.destroy();
+      }).as('offlineCharge');
+      cy.contains('button', 'Card on file', { timeout: 30000 }).should('not.be.disabled').click();
+      cy.wait('@offlineCharge');
+      cy.contains('Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns.');
+      cy.get('[data-testid="offline-banner"]').should('exist');
+
+      // No automatic retry: wait, then confirm nothing was charged.
+      cy.wait(3000);
+      cy.wrap(null).should(() => expect(stub.calls(), 'no charge yet').to.have.length(0));
+      visitInvoice(dog).then((inv) => expect(inv.status).to.not.eq('paid'));
+
+      // Connection back: the staff member tries again by hand; exactly one charge.
+      cy.then(() => {
+        offline = false;
+      });
+      cy.window().then((win) => win.dispatchEvent(new win.Event('online')));
+      cy.contains('button', 'Card on file').should('not.be.disabled').click();
+      cy.contains(/Charged the card on file|Paid/i, { timeout: 30000 });
+      cy.wrap(null).should(() => expect(stub.calls()).to.deep.eq(['saved']));
+      visitInvoice(dog).then((inv) => {
+        expect(inv.status).to.eq('paid');
+        const cardTenders = ((inv as any).tenders ?? []).filter((t: any) => t.method === 'card' && !t.isDeleted);
+        if (cardTenders.length) expect(cardTenders).to.have.length(1);
       });
     });
   });
