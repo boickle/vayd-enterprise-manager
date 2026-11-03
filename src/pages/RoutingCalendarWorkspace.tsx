@@ -52,7 +52,12 @@ function readStoredSplitPct(): number {
  * Routing + practice calendar side by side. Routing keeps its own React state; the calendar
  * is a separate Scheduler instance from `/schedule/scheduler`. Preview sync uses sessionStorage + a window event.
  */
-export default function RoutingCalendarWorkspace() {
+export default function RoutingCalendarWorkspace({
+  startRoutingCollapsed = false,
+}: {
+  /** Open with Get Best Route minimized (calendar-only view, e.g. Schedule follow-ups). */
+  startRoutingCollapsed?: boolean;
+} = {}) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const calendarPaneRef = useRef<HTMLDivElement>(null);
   const [routingPct, setRoutingPct] = useState(readStoredSplitPct);
@@ -62,7 +67,7 @@ export default function RoutingCalendarWorkspace() {
   const [showEmbeddedCalendar, setShowEmbeddedCalendar] = useState(
     () => !isMobileRoutingViewport() || mobileRoutingNeedsEmbeddedCalendar()
   );
-  const [routingCollapsed, setRoutingCollapsed] = useState(false);
+  const [routingCollapsed, setRoutingCollapsed] = useState(startRoutingCollapsed);
 
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_MQ);

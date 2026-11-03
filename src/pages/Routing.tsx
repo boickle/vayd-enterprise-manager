@@ -2986,6 +2986,20 @@ export default function Routing({
       }
 
       const typeName = (() => {
+        // Schedule follow-ups picks a real visit type on the card; other forward
+        // bookings keep the default (usually HOLD).
+        if (intent.origin === 'follow_up_planner' && intent.appointmentTypeId != null) {
+          const plannerTypeName = routingPickerTypeNameForAppointmentType(
+            routingAppointmentTypes,
+            intent.appointmentTypeId,
+            intent.appointmentTypeName
+          );
+          if (plannerTypeName) {
+            setScheduleBookTypeId(Number(intent.appointmentTypeId));
+            setRoutingApptStatsTypeKey(plannerTypeName);
+            return plannerTypeName;
+          }
+        }
         const fallback = defaultRoutingAppointmentTypeSelection(routingAppointmentTypes);
         if (fallback) {
           setScheduleBookTypeId(fallback.id);
@@ -3789,6 +3803,8 @@ export default function Routing({
       const clientId = householdVisitClientId;
       if (!clientId) return [];
       if (!shouldWarnHouseholdVisitsOnRoutingSearch({ clientId })) return [];
+      // Schedule follow-ups already shows the household's upcoming visits beside the search.
+      if (readRoutingForwardBookingIntent()?.origin === 'follow_up_planner') return [];
 
       const ri = readRoutingRescheduleIntent();
       // Exclude every visit we're moving (all selected household pets), not just the anchor.

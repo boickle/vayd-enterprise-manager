@@ -78,8 +78,12 @@ export type RoutingForwardBookingIntentV1 = {
    * Prevents stale sessionStorage from hijacking unrelated routing books.
    */
   workspaceActive?: boolean;
-  /** When set, return-to-list SMS uses the care outreach template after hold book. */
-  origin?: 'care_outreach' | 'schedule_loader' | 'waitlist';
+  /**
+   * When set, return-to-list SMS uses the care outreach template after hold book.
+   * `follow_up_planner`: started from Schedule follow-ups at checkout. The calendar stays
+   * on the page and reports the booking back instead of navigating to a list.
+   */
+  origin?: 'care_outreach' | 'schedule_loader' | 'waitlist' | 'follow_up_planner';
   /** Pet names for care outreach SMS (household book from care outreach list). */
   careOutreachPetNames?: string[];
   /** When true, care outreach SMS after hold book uses past-due wording. */
@@ -142,6 +146,10 @@ export function readRoutingForwardBookingIntent(): RoutingForwardBookingIntentV1
     const { appointmentTypeId: _omitId, appointmentTypeName: _omitName, householdEntries, ...rest } = o;
     const intent: RoutingForwardBookingIntentV1 = {
       ...rest,
+      // Schedule follow-ups chose this type on purpose (it is not the row's source type).
+      ...(o.origin === 'follow_up_planner' && o.appointmentTypeId != null
+        ? { appointmentTypeId: o.appointmentTypeId, appointmentTypeName: o.appointmentTypeName }
+        : {}),
       ...(householdEntries?.length
         ? {
             householdEntries: householdEntries.map(

@@ -25,7 +25,8 @@ import {
   joinPetNames,
 } from '../utils/forwardBookingDisposition';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
-import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
+import ScheduleFollowUpsButton from '../components/followUps/ScheduleFollowUpsButton';
+import ScheduleFollowUpsPlanner from '../components/followUps/ScheduleFollowUpsPlanner';
 import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
 import { fetchAppointmentById } from '../api/appointments';
 import { getEuthanasiaConsentStatus } from '../api/consent';
@@ -80,6 +81,7 @@ export default function VisitCheckoutPage() {
   const deathWrapUpRequestedRef = useRef(false);
   /** Euthanasia appointment or consent on file; null until checked. */
   const [isDeathVisit, setIsDeathVisit] = useState<boolean | null>(null);
+  const [followUpsOpen, setFollowUpsOpen] = useState(false);
   const soapPath = `/schedule/soap/${appointmentId}/${patientId}${
     clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
   }`;
@@ -304,13 +306,19 @@ export default function VisitCheckoutPage() {
             {followUpPendingNames ? ` Still to do: ${followUpPendingNames}.` : ''}
           </p>
           {wrapUp && pets.length > 0 ? (
-            <WrapUpForwardBooking
-              pets={pets}
-              clientId={wrapUp.clientId}
-              providerId={wrapUp.provider?.id ?? null}
-              returnTo={`/schedule/soap/${appointmentId}/${patientId}/checkout`}
-              onSaved={loadWrapUp}
-            />
+            <>
+              <ScheduleFollowUpsButton pets={pets} onOpen={() => setFollowUpsOpen(true)} />
+              <ScheduleFollowUpsPlanner
+                // Remount per open so a reopened planner reloads the household fresh.
+                key={followUpsOpen ? 'open' : 'closed'}
+                open={followUpsOpen}
+                wrapUp={wrapUp}
+                practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                tz={DEFAULT_PRACTICE_TIMEZONE}
+                onClose={() => setFollowUpsOpen(false)}
+                onSaved={loadWrapUp}
+              />
+            </>
           ) : (
             <p className="soap-hint">No charts on this visit yet.</p>
           )}

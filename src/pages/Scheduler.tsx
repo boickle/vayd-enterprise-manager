@@ -1,5 +1,11 @@
 // src/pages/Scheduler.tsx — Practice-wide appointment calendar (GET /appointments/range)
 import {
+  FOLLOW_UP_PLANNER_PREVIEW_CLEAR_EVENT,
+  FOLLOW_UP_PLANNER_PREVIEW_EVENT,
+  notifyFollowUpPlannerBooked,
+  parseFollowUpPlannerPreviewEvent,
+} from '../components/followUps/plannerEvents';
+import {
   createContext,
   lazy,
   Suspense,
@@ -3591,6 +3597,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [modalAppt, setModalAppt] = useState<Appointment | null>(null);
   const [editAppt, setEditAppt] = useState<Appointment | null>(null);
   const [editTimePreview, setEditTimePreview] = useState<EditVisitTimePreview | null>(null);
+  /** Edit-time preview started by Schedule follow-ups: view-only, no Adjust time popover. */
+  const [plannerPreviewOnly, setPlannerPreviewOnly] = useState(false);
   const [editPlacementMode, setEditPlacementMode] = useState(false);
   const [editSidebarMountEl, setEditSidebarMountEl] = useState<HTMLDivElement | null>(null);
   const editSidebarMountRef = useCallback((node: HTMLDivElement | null) => {
@@ -8675,6 +8683,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       closeBookModal();
 
+      // Schedule follow-ups (checkout) runs this calendar inside its own page: report the
+      // booking back and stay put rather than navigating to the forward booking list.
+      if (fbiAtBook?.origin === 'follow_up_planner' && savedId != null && !wasReschedule) {
+        clearRoutingPersistenceAfterSchedulerBook();
+        clearRoutingCalendarPreview();
+        setRoutingPreview(null);
+        clearRoutingRescheduleIntent();
+        clearRoutingForwardBookingIntent();
+        notifySchedulingToolsNavCountsRefresh();
+        const providerIdNum = Number(detail?.primaryProviderId);
+        notifyFollowUpPlannerBooked({
+          appointmentId: savedId,
+          startIso: bookSlot?.start?.isValid ? bookSlot.start.toUTC().toISO() : null,
+          endIso: bookSlot?.end?.isValid ? bookSlot.end.toUTC().toISO() : null,
+          primaryProviderId: Number.isFinite(providerIdNum) ? providerIdNum : null,
+        });
+        return;
+      }
+
       const scheduleLoaderBookReturn =
         isScheduleLoaderCalendarPreview(previewAtBook) &&
         savedId != null &&
@@ -10519,6 +10546,40 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     },
     [editAppt, view, editPreviewTypeFields, editPreviewOriginalFields]
   );
+
+  // Schedule follow-ups → "View in calendar" on a housemate's visit: draw the visit with
+  // the added pets' time as the usual dashed preview (embedded calendar only).
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onPreview = (event: Event) => {
+      const d = parseFollowUpPlannerPreviewEvent(event);
+      if (!d) return;
+      const preview = buildEditVisitTimePreview(d.appointmentId, d.startIso, d.endIso, PRACTICE_TZ, {
+        kind: 'time',
+        originalAppointmentStart: d.originalStartIso,
+        originalAppointmentEnd: d.originalEndIso,
+      });
+      if (!preview) return;
+      setPlannerPreviewOnly(true);
+      setEditTimePreview(preview);
+      writeEditVisitTimePreview(preview);
+      setAnchorDate(preview.practiceDateKey);
+      if (view === 'month') setView('week');
+      driveSoftRefreshRef.current = true;
+      setDriveRefreshNonce((n) => n + 1);
+    };
+    const onClear = () => {
+      setPlannerPreviewOnly(false);
+      setEditTimePreview(null);
+      clearEditVisitTimePreview();
+    };
+    window.addEventListener(FOLLOW_UP_PLANNER_PREVIEW_EVENT, onPreview);
+    window.addEventListener(FOLLOW_UP_PLANNER_PREVIEW_CLEAR_EVENT, onClear);
+    return () => {
+      window.removeEventListener(FOLLOW_UP_PLANNER_PREVIEW_EVENT, onPreview);
+      window.removeEventListener(FOLLOW_UP_PLANNER_PREVIEW_CLEAR_EVENT, onClear);
+    };
+  }, [embedInRoutingWorkspace, view]);
 
   const handleViewPlacement = useCallback(
     (startUtc: string, endUtc: string) => {
@@ -13688,6 +13749,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         )}
 
       {editTimePreview &&
+        !plannerPreviewOnly &&
         editPreviewPopoverPos &&
         createPortal(
           <div
