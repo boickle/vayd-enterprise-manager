@@ -6,10 +6,14 @@ import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /**
  * What the history is asked for. A prescription by its own id, or by the SOAP order or invoice
- * line it was written on (before the prescription row exists). Vaccine doses (EMR-A2) will add
- * their own type here.
+ * line it was written on (before the prescription row exists). A vaccine dose edited after
+ * sign-off (EMR-A2) is asked for by its log id, or by the same order or invoice line.
  */
-export type RecordHistoryEntityType = 'prescription' | 'encounter_order' | 'invoice_line';
+export type RecordHistoryEntityType =
+  | 'prescription'
+  | 'vaccination'
+  | 'encounter_order'
+  | 'invoice_line';
 
 export type RecordHistoryEntry = {
   id: string;
