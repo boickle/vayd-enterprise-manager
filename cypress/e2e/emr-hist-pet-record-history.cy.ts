@@ -44,17 +44,32 @@ describe('EMR-HIST: pet record History on the chart', () => {
   it('EMR-HIST-2: the History is hidden when the chart prints', () => {
     cy.contains('[role="tab"]', /^History$/, { timeout: 40000 }).click();
     cy.get('[aria-label="Pet record history"]', { timeout: 20000 }).should('be.visible');
-    // Real print emulation (Chrome DevTools), then read the computed display. A stylesheet scan with
-    // instanceof fails because the app runs in another window than the spec.
-    const emulate = (media: string) =>
-      Cypress.automation('remote:debugger:protocol', {
-        command: 'Emulation.setEmulatedMedia',
-        params: { media },
-      });
-    cy.wrap(emulate('print'), { log: false });
-    cy.get('[aria-label="Pet record history"]').should('have.css', 'display', 'none');
-    cy.contains('[role="tab"]', /^History$/).should('have.css', 'display', 'none');
-    cy.wrap(emulate(''), { log: false });
+    // The History panel and its tab both carry .record-history, and a print rule loaded on this page
+    // hides .record-history. (CDP print emulation doesn't reach the app frame in Cypress, so check
+    // the loaded print rule and the classes instead.) Rules are matched by type/text, not instanceof,
+    // because the app runs in another window than the spec.
+    cy.get('[aria-label="Pet record history"]').should('have.class', 'record-history');
+    cy.contains('[role="tab"]', /^History$/).should('have.class', 'record-history');
+    cy.document().then((doc) => {
+      let hidesOnPrint = false;
+      for (const sheet of Array.from(doc.styleSheets)) {
+        let rules: CSSRuleList;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        for (const rule of Array.from(rules)) {
+          const media = rule as CSSMediaRule;
+          if (rule.type !== 4 || !/\bprint\b/.test(media.media?.mediaText ?? '')) continue;
+          for (const inner of Array.from(media.cssRules)) {
+            const style = inner as CSSStyleRule;
+            if (/\.record-history\b/.test(style.selectorText ?? '') && style.style?.display === 'none') hidesOnPrint = true;
+          }
+        }
+      }
+      expect(hidesOnPrint, 'a loaded @media print rule hides .record-history').to.eq(true);
+    });
     cy.get('[aria-label="Pet record history"]').should('be.visible');
   });
 
