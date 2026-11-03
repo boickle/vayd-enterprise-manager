@@ -3535,9 +3535,9 @@ export default function VisitCheckoutPanel({
 
           {showPayment && !isPaid && !isVoid && (
             <EstimateSettlePanel
-              // Before any charge there is no invoice yet; the estimate still has to show,
-              // since on a euthanasia visit it is the bill.
-              appointmentId={invoice?.appointmentId ?? visitAppointmentId}
+              // The open chart's appointment first: a household invoice belongs to whichever
+              // pet's visit opened it, and the estimate may be on another pet's appointment.
+              appointmentId={visitAppointmentId ?? invoice?.appointmentId ?? null}
               disabled={disabled || busy != null}
               onSettled={(invoiceId) => {
                 void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
@@ -3763,6 +3763,18 @@ export default function VisitCheckoutPanel({
             </>
           ) : null}
         </>
+      )}
+
+      {/* No invoice yet (nothing charged): the estimate is still the bill on a euthanasia
+          visit, so staff must see it and be able to convert it. */}
+      {!invoice && showPayment && (
+        <EstimateSettlePanel
+          appointmentId={visitAppointmentId}
+          disabled={disabled || busy != null}
+          onSettled={(invoiceId) => {
+            void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
+          }}
+        />
       )}
 
       {showPayment ? (

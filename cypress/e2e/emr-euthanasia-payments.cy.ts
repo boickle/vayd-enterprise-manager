@@ -69,15 +69,17 @@ describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay 
 
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Vaccine - FVRCP', { timeout: 40000 })
-      .parents('[class*="soap-invoice-line"]')
-      .first()
+      .closest('.soap-invoice-line')
       .find('button[title="Remove from checkout"]')
       .click();
     cy.on('window:confirm', () => true);
+    // Wait until the removal has saved (the screen total updates after the DELETE returns).
+    cy.contains('Total', { timeout: 20000 }).parent().should('contain.text', '$90.00');
     invoiceById(world, invoiceId).its('total').then((t) => expect(Number(t)).to.eq(90));
 
     cy.contains('button', 'Convert Authorization to Payment').click();
-    cy.contains(/paid/i, { timeout: 30000 }).should('be.visible');
+    // The Paid badge is present but can sit under a fixed header, so check it exists.
+    cy.contains(/paid/i, { timeout: 30000 }).should('exist');
 
     invoiceById(world, invoiceId).then((inv) => {
       expect(inv.status).to.eq('paid');
