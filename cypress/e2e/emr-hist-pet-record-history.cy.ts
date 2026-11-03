@@ -44,24 +44,18 @@ describe('EMR-HIST: pet record History on the chart', () => {
   it('EMR-HIST-2: the History is hidden when the chart prints', () => {
     cy.contains('[role="tab"]', /^History$/, { timeout: 40000 }).click();
     cy.get('[aria-label="Pet record history"]', { timeout: 20000 }).should('be.visible');
-    cy.document().then((doc) => {
-      const rules = Array.from(doc.styleSheets).flatMap((sheet) => {
-        try {
-          return Array.from(sheet.cssRules);
-        } catch {
-          return [];
-        }
+    // Real print emulation (Chrome DevTools), then read the computed display. A stylesheet scan with
+    // instanceof fails because the app runs in another window than the spec.
+    const emulate = (media: string) =>
+      Cypress.automation('remote:debugger:protocol', {
+        command: 'Emulation.setEmulatedMedia',
+        params: { media },
       });
-      const printHides = rules.some(
-        (r) =>
-          r instanceof CSSMediaRule &&
-          /print/.test(r.conditionText ?? r.media.mediaText) &&
-          Array.from(r.cssRules).some(
-            (inner) => inner instanceof CSSStyleRule && /\.record-history\b/.test(inner.selectorText) && inner.style.display === 'none',
-          ),
-      );
-      expect(printHides, 'print stylesheet hides .record-history').to.equal(true);
-    });
+    cy.wrap(emulate('print'), { log: false });
+    cy.get('[aria-label="Pet record history"]').should('have.css', 'display', 'none');
+    cy.contains('[role="tab"]', /^History$/).should('have.css', 'display', 'none');
+    cy.wrap(emulate(''), { log: false });
+    cy.get('[aria-label="Pet record history"]').should('be.visible');
   });
 
   it('EMR-HIST-3: the history never reaches the medical record the outputs are built from', () => {

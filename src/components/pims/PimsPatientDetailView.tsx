@@ -3275,7 +3275,7 @@ export default function PimsPatientDetailView({
               type="button"
               role="tab"
               aria-selected={mrTab === id}
-              className={`pims-patient-detail__tab${mrTab === id ? ' pims-patient-detail__tab--active' : ''}`}
+              className={`pims-patient-detail__tab${mrTab === id ? ' pims-patient-detail__tab--active' : ''}${id === 'history' ? ' record-history' : ''}`}
               onClick={() => setMrTab(id as MrTab)}
             >
               {label}
