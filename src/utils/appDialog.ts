@@ -13,6 +13,8 @@ export type AppDialogOptions = {
   defaultValue?: string;
   placeholder?: string;
   requireReason?: boolean;
+  /** Confirm only: short lines listed under the message (e.g. what is already on the visit). */
+  listItems?: string[];
 };
 
 export type DeclineHowResult = { recordOnChart: boolean; note: string };
@@ -69,7 +71,8 @@ function nativeFallback(req: AppDialogRequest): AppDialogResult {
     if (req.requireReason && !note.trim()) return null;
     return { recordOnChart: false, note };
   }
-  return window.confirm(req.message);
+  const list = req.listItems?.length ? `\n\n${req.listItems.map((l) => `• ${l}`).join('\n')}` : '';
+  return window.confirm(`${req.message}${list}`);
 }
 
 async function run(req: AppDialogRequest): Promise<AppDialogResult> {

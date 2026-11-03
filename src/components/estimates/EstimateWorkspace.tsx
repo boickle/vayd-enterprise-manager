@@ -44,6 +44,7 @@ import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { useCan } from '../../permissions/PermissionContext';
 import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 import './EstimateWorkspace.css';
 
 export type EstimatePet = {
@@ -275,7 +276,8 @@ export default function EstimateWorkspace({
         setBundleHits([]);
         searchRef.current?.focus();
       } catch (e) {
-        setError(apiErrorMessage(e));
+        // Cancel on the duplicate warning (D4) adds nothing and needs no message.
+        if (!isDuplicateItemSkipped(e)) setError(apiErrorMessage(e));
       } finally {
         setBusy(false);
       }
@@ -322,7 +324,8 @@ export default function EstimateWorkspace({
               /* use bundle catalog price */
             }
           }
-          next = await addEstimateLine(estimate.id, {
+          // Cancel on the duplicate warning skips this line; the rest of the bundle still goes on.
+          const added = await addEstimateLine(estimate.id, {
             description: line.name,
             qty: line.quantity,
             unitPrice: priced.unitFinal,
@@ -335,7 +338,11 @@ export default function EstimateWorkspace({
             bundleSaleId,
             sourceBundleId: resolution.bundleId,
             sourceBundleName: resolution.bundleName,
+          }).catch((e: unknown) => {
+            if (isDuplicateItemSkipped(e)) return null;
+            throw e;
           });
+          if (added) next = added;
         }
         onChange(next);
         setQuery('');

@@ -70,6 +70,7 @@ import VirtualTerminalModal from './VirtualTerminalModal';
 import CheckoutReminders from './CheckoutReminders';
 import { usesLegacyEuthanasiaPrepay } from '../../utils/euthanasiaPrepay';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 import MembershipCancelInvoiceOffer from './MembershipCancelInvoiceOffer';
 import ControlledDoseFields from './ControlledDoseFields';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
@@ -1390,7 +1391,8 @@ export default function VisitCheckoutPanel({
       if (onInvoiceShouldRefresh) onInvoiceShouldRefresh();
       else if (invoice?.id) onInvoiceChange(await getInvoice(invoice.id));
     } catch (e) {
-      setError(apiErrorMessage(e));
+      // Cancel on the duplicate warning (D4) adds nothing and needs no message.
+      if (!isDuplicateItemSkipped(e)) setError(apiErrorMessage(e));
     } finally {
       setEarlierDeclineBusyId(null);
     }

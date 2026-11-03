@@ -4,6 +4,7 @@
 // which copies the quoted lines onto a real invoice at the visit.
 import { http } from './http';
 import { VISIT_WORKFLOW_PRACTICE_ID } from './visitWorkflow';
+import { sendWithDuplicateWarning, type DuplicateOptions } from '../utils/duplicateItemWarning';
 
 export type VisitEstimateStatus =
   | 'draft'
@@ -12,6 +13,8 @@ export type VisitEstimateStatus =
   | 'converted'
   | 'declined'
   | 'expired';
+
+export type EstimateLineDecision = 'accepted' | 'declined';
 
 export type VisitEstimateLine = {
   id: string;
@@ -41,6 +44,9 @@ export type VisitEstimateLine = {
   taxAmount: number;
   /** Virtual: inventory/procedure catalog flag. Missing means no pencil. */
   catalogAllowPriceChange?: boolean;
+  /** Checkout Accept / Decline with the family (D4). Null until decided. */
+  decision?: EstimateLineDecision | null;
+  decidedAt?: string | null;
   created: string;
   updated: string;
 };
@@ -151,11 +157,30 @@ export async function createVisitEstimate(input: {
 
 export async function addEstimateLine(
   estimateId: string,
-  input: UpsertEstimateLineInput
+  input: UpsertEstimateLineInput,
+  opts?: DuplicateOptions
 ): Promise<VisitEstimate> {
-  const { data } = await http.post<VisitEstimate>(
-    `/visit-estimates/${estimateId}/lines`,
-    { practiceId: practiceId(), ...input }
+  return sendWithDuplicateWarning(
+    async (confirmDuplicate) => {
+      const { data } = await http.post<VisitEstimate>(
+        `/visit-estimates/${estimateId}/lines`,
+        { practiceId: practiceId(), ...input, ...(confirmDuplicate ? { confirmDuplicate: true } : {}) }
+      );
+      return data;
+    },
+    { ...opts, itemName: input.description }
+  );
+}
+
+/** Checkout, family present: accept or decline one quoted line (D4). `null` clears it. */
+export async function setEstimateLineDecision(
+  estimateId: string,
+  lineId: string,
+  decision: EstimateLineDecision | null
+): Promise<VisitEstimate> {
+  const { data } = await http.patch<VisitEstimate>(
+    `/visit-estimates/${estimateId}/lines/${lineId}/decision`,
+    { practiceId: practiceId(), decision }
   );
   return data;
 }

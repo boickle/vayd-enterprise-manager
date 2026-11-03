@@ -41,6 +41,14 @@
   white-space: pre-wrap;
 }
 
+.app-dialog__list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #334155;
+}
+
 .app-dialog__field--tight {
   margin-top: 0;
 }

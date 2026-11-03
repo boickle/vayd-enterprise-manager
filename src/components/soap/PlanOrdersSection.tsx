@@ -29,6 +29,7 @@ import {
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
 import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
 import { apiErrorMessage } from '../../api/http';
+import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 import { appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
@@ -358,7 +359,11 @@ export default function PlanOrdersSection({
       setBundleHits([]);
       setOpen(false);
     } catch (e: unknown) {
-      if (!(e instanceof Error && e.message === 'Coverage choice cancelled')) {
+      // Cancel on the duplicate warning (D4) adds nothing and needs no message.
+      if (
+        !(e instanceof Error && e.message === 'Coverage choice cancelled') &&
+        !isDuplicateItemSkipped(e)
+      ) {
         setSearchError(apiErrorMessage(e) || 'Could not add item');
       }
     } finally {
@@ -390,77 +395,83 @@ export default function PlanOrdersSection({
         );
       }
       for (const line of resolution.lines) {
-        const searchItem = {
-          name: line.name,
-          itemType: line.itemType,
-          price: line.unitPrice,
-          originalPrice: line.listUnitPrice,
-          ...(line.itemType === 'lab'
-            ? { lab: { id: line.catalogItemId, name: line.name, price: line.listUnitPrice } }
-            : line.itemType === 'inventory'
-              ? {
-                  inventoryItem: {
-                    id: line.catalogItemId,
-                    name: line.name,
-                    price: line.listUnitPrice,
-                  },
-                }
-              : {
-                  procedure: {
-                    id: line.catalogItemId,
-                    name: line.name,
-                    price: line.listUnitPrice,
-                  },
-                }),
-        } as SearchableItem;
+        try {
+          const searchItem = {
+            name: line.name,
+            itemType: line.itemType,
+            price: line.unitPrice,
+            originalPrice: line.listUnitPrice,
+            ...(line.itemType === 'lab'
+              ? { lab: { id: line.catalogItemId, name: line.name, price: line.listUnitPrice } }
+              : line.itemType === 'inventory'
+                ? {
+                    inventoryItem: {
+                      id: line.catalogItemId,
+                      name: line.name,
+                      price: line.listUnitPrice,
+                    },
+                  }
+                : {
+                    procedure: {
+                      id: line.catalogItemId,
+                      name: line.name,
+                      price: line.listUnitPrice,
+                    },
+                  }),
+          } as SearchableItem;
 
-        if (resolution.fixedPrice) {
-          created.push(
-            await createOrder(encounterId, {
-              name: line.name,
-              kind: kindForCatalogSearchItem(searchItem),
-              catalogItemId: line.catalogItemId,
-              catalogItemType: line.itemType as EncounterOrderCatalogType,
-              unitPrice: 0,
-              qty: line.quantity,
-              state: 'accepted',
-              ...bundle,
-            }),
-          );
-          continue;
-        }
+          if (resolution.fixedPrice) {
+            created.push(
+              await createOrder(encounterId, {
+                name: line.name,
+                kind: kindForCatalogSearchItem(searchItem),
+                catalogItemId: line.catalogItemId,
+                catalogItemType: line.itemType as EncounterOrderCatalogType,
+                unitPrice: 0,
+                qty: line.quantity,
+                state: 'accepted',
+                ...bundle,
+              }),
+            );
+            continue;
+          }
 
-        const { order, pricingItem } = await createOrderFromSearchItem({
-          encounterId,
-          item: searchItem,
-          patientId: canPrice ? patientId : undefined,
-          practiceId,
-          clientId,
-          bundle,
-        });
-        storePricing(order.id, pricingItem);
-        const pct = Number(resolution.discountPercent);
-        const bundleOff = Number.isFinite(pct) && pct > 0;
-        if (line.quantity !== 1 || bundleOff) {
-          const catalogPrice = getCatalogLinePrice(pricingItem, line.quantity);
-          const isCovered = catalogPrice.isCovered;
-          const unitFinal =
-            bundleOff && !isCovered
-              ? Math.min(
-                  catalogPrice.unitFinal,
-                  Math.round(line.listUnitPrice * (1 - Math.min(pct, 100) / 100) * 100) / 100,
-                )
-              : catalogPrice.unitFinal;
-          created.push(
-            await updateOrder(encounterId, order.id, {
-              qty: line.quantity,
-              unitPrice: unitFinal,
-              isCovered,
-              automaticDiscount: true,
-            }),
-          );
-        } else {
-          created.push(order);
+          const { order, pricingItem } = await createOrderFromSearchItem({
+            encounterId,
+            item: searchItem,
+            patientId: canPrice ? patientId : undefined,
+            practiceId,
+            clientId,
+            bundle,
+          });
+          storePricing(order.id, pricingItem);
+          const pct = Number(resolution.discountPercent);
+          const bundleOff = Number.isFinite(pct) && pct > 0;
+          if (line.quantity !== 1 || bundleOff) {
+            const catalogPrice = getCatalogLinePrice(pricingItem, line.quantity);
+            const isCovered = catalogPrice.isCovered;
+            const unitFinal =
+              bundleOff && !isCovered
+                ? Math.min(
+                    catalogPrice.unitFinal,
+                    Math.round(line.listUnitPrice * (1 - Math.min(pct, 100) / 100) * 100) / 100,
+                  )
+                : catalogPrice.unitFinal;
+            created.push(
+              await updateOrder(encounterId, order.id, {
+                qty: line.quantity,
+                unitPrice: unitFinal,
+                isCovered,
+                automaticDiscount: true,
+              }),
+            );
+          } else {
+            created.push(order);
+          }
+        } catch (e: unknown) {
+          // Cancel on the duplicate warning skips this line; the rest of the bundle still goes on.
+          if (isDuplicateItemSkipped(e)) continue;
+          throw e;
         }
       }
       await reloadOrders([...orders, ...created]);
