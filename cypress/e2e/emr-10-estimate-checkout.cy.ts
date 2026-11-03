@@ -103,7 +103,10 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
       unitPrice: 40,
       catalogItemId: clayId,
       catalogItemType: 'procedure',
-    }).then((res) => expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300));
+    }).then((res) => {
+      cy.log(`clay line POST ${res.status}: ${JSON.stringify(res.body)}`);
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
+    });
     emrApi(world, 'POST', `/visit-estimates/${estimateId}/accept`, { practiceId: world.practiceId });
     emrApi(world, 'POST', `/visit-estimates/${estimateId}/authorize`, { practiceId: world.practiceId }).then((res) => {
       expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
@@ -114,10 +117,19 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
     emrApi(world, 'POST', '/soap-encounters', { practiceId: world.practiceId, appointmentId, patientId, clientId }).then((enc) => {
       expect(enc.status).to.be.lessThan(300);
       signIn(world, `/schedule/soap/${appointmentId}/${patientId}?clientId=${clientId}`);
+      cy.intercept('POST', '**/soap-encounters/*/orders').as('addOrder');
       cy.get('input[placeholder="Type here to add a charge, or a note…"]', { timeout: 40000 })
         .first()
-        .type(cremationName.slice(0, 40));
-      cy.contains('.soap-plan-result', cremationName, { timeout: 20000 }).click();
+        .type(cremationName);
+      // Pick the exact item by its full unique name (the tag makes it unique among search results).
+      cy.contains('.soap-plan-result .soap-plan-result-name', cremationName, { timeout: 20000 })
+        .closest('.soap-plan-result')
+        .click();
+      cy.wait('@addOrder').then((i) => {
+        cy.log(`addOrder ${i.response?.statusCode}: ${JSON.stringify(i.request.body)}`);
+        expect(i.request.body.catalogItemId, 'ordered the cremation procedure').to.eq(cremationId);
+        expect(i.request.body.catalogItemType).to.eq('procedure');
+      });
       cy.get('[role="dialog"]', { timeout: 20000 }).within(() => {
         cy.contains('Already on this visit');
         cy.contains('Estimate: Private cremation - small');
