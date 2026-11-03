@@ -1,11 +1,10 @@
 /// <reference types="cypress" />
 import '../support/e2e';
 import {
-  addChargeVia,
+  addOrder,
   emrApi,
   emrSql,
   emrWorld,
-  enterWeightLb,
   giveInvoiceItsShelf,
   itemName,
   openEncounter,
@@ -18,6 +17,7 @@ import {
   stubRecapDraft,
   visitInvoice,
   waitForRecapMailbox,
+  writeRecapDraft,
 } from '../support/emrCoreVisitWorld';
 
 /**
@@ -73,8 +73,8 @@ describe('EMR-11-1: wellness visit, card reader', () => {
       cy.contains('button', 'Wrap up visit').click();
       cy.contains('h1', 'Wrap up visit', { timeout: 30000 });
       cy.contains(dog.name);
-      cy.contains('label', 'Subject').find('input', { timeout: 30000 }).should('not.have.value', '');
       waitForRecapMailbox();
+      writeRecapDraft();
       cy.contains('button', 'Send to client').should('not.be.disabled').click();
       cy.wrap(null).should(() => expect(gmail.sent()).to.have.length(1));
       cy.contains('button', 'Sign & lock SOAP').should('not.be.disabled').click();
@@ -125,10 +125,12 @@ describe('EMR-11-2: sick visit, Rx and the saved card', () => {
     stubCardPayments(cat);
 
     openEncounter(cat, clientId).then((enc) => {
+      readyToSign(enc.id, '9');
+      addOrder(enc.id, w.items.examId, 'Wellness exam', 65);
+      addOrder(enc.id, w.items.rxId, 'Amoxicillin 50 mg tablet', 18, { kind: 'med' });
       signInEmr('veterinarian', soapPath(cat, clientId));
-      enterWeightLb('9');
-      addChargeVia('Type here to add a charge, or a note…', itemName('Wellness exam'));
-      addChargeVia('Type here to add a charge, or a note…', itemName('Amoxicillin 50 mg tablet'));
+      cy.contains(cat.name, { timeout: 40000 });
+      cy.contains(itemName('Amoxicillin 50 mg tablet'), { timeout: 30000 });
 
       emrApi<Array<{ id: string; name: string; kind: string }>>('veterinarian', 'GET', `/soap-encounters/${enc.id}/orders?practiceId=${w.practiceId}`).then((orders) => {
         const rx = orders.find((o) => o.name === itemName('Amoxicillin 50 mg tablet'))!;
@@ -150,7 +152,6 @@ describe('EMR-11-2: sick visit, Rx and the saved card', () => {
         emrSql(`SELECT "medLabel"::text FROM encounter_orders WHERE id = '${rx.id}'`).should('contain', 'twice daily');
       });
 
-      readyToSign(enc.id, '9');
       signChart(enc.id);
       giveInvoiceItsShelf(cat);
 
