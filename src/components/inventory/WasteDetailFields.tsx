@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { fetchAllEmployees } from '../../api/appointmentSettings';
+import './WasteDetailFields.css';
 
 export type WasteReasonOption = { code: string; label: string };
 export type WasteMethodOption = { code: string; label: string };
@@ -115,21 +116,23 @@ export default function WasteDetailFields({
   return (
     <>
       {reasons ? (
-        <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
-          <legend>Reason</legend>
-          {reasons.map((r) => (
-            <label key={r.code} className="settings-checkbox-item">
-              <input
-                type="radio"
-                name={`${idPrefix}reason`}
-                checked={reasonCode === r.code}
-                onChange={() => onReasonChange?.(r.code)}
-              />
-              <span>{r.label}</span>
-            </label>
-          ))}
+        <fieldset className="waste-fields__group">
+          <legend className="waste-fields__legend">Reason</legend>
+          <div className="waste-fields__options">
+            {reasons.map((r) => (
+              <label key={r.code} className="waste-fields__option">
+                <input
+                  type="radio"
+                  name={`${idPrefix}reason`}
+                  checked={reasonCode === r.code}
+                  onChange={() => onReasonChange?.(r.code)}
+                />
+                <span>{r.label}</span>
+              </label>
+            ))}
+          </div>
           {showReasonExplanation && reasonExplanation ? (
-            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+            <p className="waste-fields__note">
               Why: {reasonExplanation}{' '}
               <button type="button" style={linkButton} onClick={() => onReasonChange?.(reasonCode)}>
                 Edit
@@ -140,29 +143,33 @@ export default function WasteDetailFields({
       ) : null}
 
       {offerDisposal ? (
-        <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginTop: 12 }}>
-          <legend>Disposal method</legend>
+        <fieldset className="waste-fields__group">
+          <legend className="waste-fields__legend">Disposal method</legend>
           {isControlled ? (
-            <p className="settings-muted" style={{ margin: '0 0 6px' }}>
-              Required for controlled drugs.
-            </p>
+            <p className="waste-fields__hint">Required for controlled drugs.</p>
           ) : null}
-          {methods.map((m) => (
-            <label key={m.code} className="settings-checkbox-item">
-              <input
-                type="radio"
-                name={`${idPrefix}disposal`}
-                required={isControlled}
-                checked={disposalCode === m.code}
-                onChange={() => onDisposalChange(m.code)}
-              />
-              <span>{m.label}</span>
-            </label>
-          ))}
+          <div className="waste-fields__options">
+            {methods.map((m) => (
+              <label key={m.code} className="waste-fields__option">
+                <input
+                  type="radio"
+                  name={`${idPrefix}disposal`}
+                  required={isControlled}
+                  checked={disposalCode === m.code}
+                  onChange={() => onDisposalChange(m.code)}
+                />
+                <span>{m.label}</span>
+              </label>
+            ))}
+          </div>
           {showDisposalExplanation && disposalExplanation ? (
-            <p className="settings-muted" style={{ margin: '6px 0 0' }}>
+            <p className="waste-fields__note">
               How: {disposalExplanation}{' '}
-              <button type="button" style={linkButton} onClick={() => onDisposalChange(disposalCode)}>
+              <button
+                type="button"
+                style={linkButton}
+                onClick={() => onDisposalChange(disposalCode)}
+              >
                 Edit
               </button>
             </p>
@@ -171,7 +178,7 @@ export default function WasteDetailFields({
       ) : null}
 
       {isControlled ? (
-        <label className="settings-label" style={{ marginTop: 12 }}>
+        <label className="waste-fields__witness">
           Witness (optional)
           <select
             className="settings-input"
