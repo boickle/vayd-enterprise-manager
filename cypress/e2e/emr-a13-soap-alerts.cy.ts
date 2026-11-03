@@ -25,7 +25,7 @@ describe('EMR-A13-4: patient alerts at the top of the SOAP', () => {
       win.localStorage.clear();
       win.localStorage.setItem('accessToken', world.staff.token);
     });
-    cy.visit(`/soap/${world.visit.appointmentId}/${world.visit.patientId}`);
+    cy.visit(`/schedule/soap/${world.visit.appointmentId}/${world.visit.patientId}`);
     cy.get('[data-testid="soap-patient-alerts"]', { timeout: 30000 })
       .should('contain.text', 'ALLERGY: penicillin')
       .and('contain.text', 'BITES');
