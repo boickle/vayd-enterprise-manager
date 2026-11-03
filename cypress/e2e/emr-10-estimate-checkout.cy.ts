@@ -86,8 +86,15 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
     }),
   );
   after(() => {
-    if (world) emrSql(`DELETE FROM procedures WHERE "pimsType" = 'EMRTEST' AND "pimsId" LIKE '${world.tag}-%'`);
+    // Settling posts chart treatment lines that point at these procedures: clean the world first,
+    // then any treatment lines still on the test procedures, then the procedures.
     cleanEmrWorld();
+    if (world) {
+      const mine = `SELECT id FROM procedures WHERE "pimsType" = 'EMRTEST' AND "pimsId" LIKE '${world.tag}-%'`;
+      emrSql(`UPDATE invoice_items SET "treatmentItemId" = NULL WHERE "treatmentItemId" IN (SELECT id FROM treatment_items WHERE "procedureId" IN (${mine}))`);
+      emrSql(`DELETE FROM treatment_items WHERE "procedureId" IN (${mine})`);
+      emrSql(`DELETE FROM procedures WHERE id IN (${mine})`);
+    }
   });
 
   it('cancelled duplicate adds nothing; declined clay paw is not billed; one capture of the accepted total', () => {
