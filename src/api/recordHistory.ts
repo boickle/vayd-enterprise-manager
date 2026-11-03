@@ -12,6 +12,7 @@ import { currentPracticeId } from '../utils/practiceIdFromToken';
 export type RecordHistoryEntityType =
   | 'prescription'
   | 'vaccination'
+  | 'lab_result'
   | 'encounter_order'
   | 'invoice_line';
 
@@ -19,6 +20,11 @@ export type RecordHistoryEntry = {
   id: string;
   at: string;
   kind: string;
+  /** Which record the step belongs to (the pet's History lists several kinds together). */
+  entityType?: 'prescription' | 'vaccination' | 'lab_result';
+  entityId?: string | null;
+  /** What the record is: "Rx #1203", "Rabies 3yr dose", "Heartworm snap". */
+  subject?: string;
   actorName: string | null;
   actorRole: string | null;
   forName: string | null;
@@ -35,6 +41,19 @@ export async function getRecordHistory(
 ): Promise<RecordHistoryEntry[]> {
   const { data } = await http.get<RecordHistoryEntry[]>('/record-history', {
     params: { practiceId: currentPracticeId(), entityType, entityId: String(entityId) },
+  });
+  return data;
+}
+
+/**
+ * Every logged step for one pet, newest first: prescriptions, vaccine doses edited after
+ * sign-off, in-house lab results entered, edited and completed. Staff only (client logins 403).
+ */
+export async function getPatientRecordHistory(
+  patientId: string | number
+): Promise<RecordHistoryEntry[]> {
+  const { data } = await http.get<RecordHistoryEntry[]>('/record-history/patient', {
+    params: { practiceId: currentPracticeId(), patientId: Number(patientId) },
   });
   return data;
 }

@@ -57,3 +57,38 @@
     display: none !important;
   }
 }
+
+/* The pet's History tab on the chart (staff only). */
+.patient-record-history {
+  display: flex;
+  width: 100%;
+  font-size: 13px;
+}
+
+.patient-record-history__note {
+  margin: 0 0 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.patient-record-history__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.patient-record-history__table th,
+.patient-record-history__table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.patient-record-history__table time {
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.patient-record-history__kind {
+  font-weight: 600;
+}

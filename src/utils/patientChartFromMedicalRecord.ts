@@ -750,8 +750,23 @@ export function buildChartRowsFromMedicalRecord(
       formDocByCommLog.set(logId, docId);
     }
   }
+  /**
+   * EMR-A12-3: on the EMR chart an imported (eVet) dose is its own row with the lot, tag and vet,
+   * in place of the eVet treatment line it was recorded on, so each dose shows once. A Scout dose
+   * (no pimsId) stays on its visit-charge row, which already carries the lot.
+   */
+  const dosedTreatmentRowIds = new Set<string>();
   const keep = (row: ChartRow) => {
     if (!emrOnly) return true;
+    if (row.source === 'vaccination' && row.id.startsWith('vaccination:')) return true;
+    if (
+      row.source === 'treatment' &&
+      dosedTreatmentRowIds.has(row.id) &&
+      !row.removed &&
+      !row.isDeclined
+    ) {
+      return false;
+    }
     if (!EMR_SOURCES.has(row.source)) return false;
     if (row.source === 'treatment' && isStockInventoryName(row.description)) return false;
     return true;
@@ -1013,6 +1028,11 @@ export function buildChartRowsFromMedicalRecord(
   for (const v of mr.vaccinationLogs ?? []) {
     const o = asObj(v);
     if (!o) continue;
+    if (emrOnly) {
+      if (pickStr(o.pimsId) == null) continue;
+      const treatmentItemId = asObj(o.treatmentItem)?.id;
+      if (treatmentItemId != null) dosedTreatmentRowIds.add(`treatment:${treatmentItemId}`);
+    }
     const id = o.id != null ? String(o.id) : `vx-${out.length}`;
     const serviceDateIso =
       pickStr(o.dateVaccinated) ?? pickStr(o.serviceDate) ?? pickStr(o.administeredDate);
