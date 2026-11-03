@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
 import { loadStripePublishableKey } from '../../api/practicePublicConfig';
+import { isNetworkError, NOT_CHARGED_OFFLINE_MESSAGE } from '../../api/http';
 import { chargeKeyedCard, type VisitInvoice } from '../../api/visitWorkflow';
 import './VirtualTerminalModal.css';
 
@@ -91,6 +92,10 @@ export default function VirtualTerminalModal({
       });
       onPaid(invoice);
     } catch (e) {
+      if (isNetworkError(e)) {
+        setError(NOT_CHARGED_OFFLINE_MESSAGE);
+        return;
+      }
       const message =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         (e instanceof Error ? e.message : '') ||

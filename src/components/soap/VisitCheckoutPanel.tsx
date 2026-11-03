@@ -139,6 +139,7 @@ import { PermissionGate } from '../../permissions/PermissionGate';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
 import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import '../pims/ClientFinancialWorkspace.css';
+import { paymentErrorMessage } from '../../api/http';
 import {
   addCalendarYear,
   dateForInput,
@@ -1781,7 +1782,8 @@ export default function VisitCheckoutPanel({
     try {
       await fn();
     } catch (e) {
-      setError(apiErrorMessage(e));
+      // A charge that died on the network is "not charged"; never retried here (the server's idempotency keys make a manual retry safe).
+      setError(key === 'saved' || key === 'terminal' ? paymentErrorMessage(e) : apiErrorMessage(e));
     } finally {
       setBusy(null);
     }

@@ -11,6 +11,7 @@ import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
 import UserMenu, { type UserMenuExtra } from './components/UserMenu';
 import NavbarGlobalSearch from './components/NavbarGlobalSearch';
+import OfflineBanner from './components/OfflineBanner';
 import NavbarScheduleHorizontalNav from './components/NavbarScheduleHorizontalNav';
 import { getAccessiblePages } from './app-pages';
 import { CATALOG_HOME, INVENTORY_HOME } from './utils/catalogInventoryNav';
@@ -524,6 +525,7 @@ export default function App() {
           Not production — you are using a development or staging environment
         </div>
       )}
+      {token && !isClient ? <OfflineBanner /> : null}
       {token && !isClient ? <SmsDeliveryFailureBanner /> : null}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
