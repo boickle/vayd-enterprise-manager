@@ -24,7 +24,7 @@ import {
   Banknote,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
-import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import ScheduleFollowUpsLauncher from '../components/followUps/ScheduleFollowUpsLauncher';
 import { FORWARD_BOOKING_CREATED_EVENT } from '../utils/forwardBookingCreateLink';
 import {
   getVisibleScoutTabs,
@@ -501,12 +501,10 @@ export default function ScheduleLayout() {
       </div>
 
       {forwardBookingModalOpen ? (
-        <CreateForwardBookingModal
+        // Same Schedule follow-ups window as checkout and Start/End Visit.
+        <ScheduleFollowUpsLauncher
           onClose={() => setForwardBookingModalOpen(false)}
-          onCreated={() => {
-            setForwardBookingModalOpen(false);
-            window.dispatchEvent(new Event(FORWARD_BOOKING_CREATED_EVENT));
-          }}
+          onSaved={() => window.dispatchEvent(new Event(FORWARD_BOOKING_CREATED_EVENT))}
         />
       ) : null}
     </div>

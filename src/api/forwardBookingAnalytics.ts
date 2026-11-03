@@ -12,6 +12,17 @@ export type ForwardBookingAnalyticsProviderDay = {
   primaryProviderName: string;
   totalAppointments: number;
   forwardBooked: number;
+  /** Saved follow-up choice on these visits. Older servers omit it. */
+  handled?: ForwardBookingHandledCounts;
+};
+
+/** How the follow-up was handled; `noChoice` = nothing saved for the visit. */
+export type ForwardBookingHandledCounts = {
+  bookedAtVisit: number;
+  alreadyBooked: number;
+  sentToCls: number;
+  labsPending: number;
+  noChoice: number;
 };
 
 export type ForwardBookingAnalyticsResponse = {
@@ -22,6 +33,10 @@ export type ForwardBookingAnalyticsResponse = {
   forwardBooked: number;
   forwardBookedPercent: number | null;
   byProviderDay: ForwardBookingAnalyticsProviderDay[];
+  /** Visits marked "Not appropriate" (all providers; outside the percentage). */
+  notAppropriate: number | null;
+  /** Confirmation texts sent from Schedule follow-ups (all providers). */
+  confirmationTexts: number | null;
 };
 
 /**
@@ -47,5 +62,7 @@ export async function fetchForwardBookingAnalytics(params: {
     forwardBookedPercent:
       data?.forwardBookedPercent == null ? null : Number(data.forwardBookedPercent),
     byProviderDay: Array.isArray(data?.byProviderDay) ? data.byProviderDay : [],
+    notAppropriate: data?.notAppropriate == null ? null : Number(data.notAppropriate),
+    confirmationTexts: data?.confirmationTexts == null ? null : Number(data.confirmationTexts),
   };
 }

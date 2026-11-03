@@ -1,6 +1,10 @@
 import { DateTime } from 'luxon';
+import { applyMergeFields, withClinicDefaults } from '../../utils/messageTemplateFields';
+import { SYSTEM_TEMPLATE_SEEDS } from '../../utils/messageTemplateSeeds';
 import {
   bookingUndoOpen,
+  confirmationTextParts,
+  tidyMergedText,
   buildFollowUpConfirmationText,
   confirmationSendProvider,
   dispositionModeForOutcomes,
@@ -178,5 +182,41 @@ describe('undo window', () => {
   it('is open for 10 seconds', () => {
     expect(bookingUndoOpen(0, 9_999)).toBe(true);
     expect(bookingUndoOpen(0, 10_000)).toBe(false);
+  });
+});
+
+describe('Settings template for the confirmation text', () => {
+  const seed = SYSTEM_TEMPLATE_SEEDS.find(
+    (t) => t.systemKey === 'follow_up_booked_confirmation_sms'
+  )!;
+  const booking: ConfirmationBooking = {
+    start: day('2026-11-16T09:00'),
+    windowStart: day('2026-11-16T09:00'),
+    windowEnd: day('2026-11-16T11:00'),
+    petNames: ['Marvin'],
+    provider: { id: 1, name: 'Priya Patel', lastName: 'Patel' },
+  };
+  const render = (args: Parameters<typeof buildFollowUpConfirmationText>[0]) => {
+    const parts = confirmationTextParts(args);
+    return tidyMergedText(
+      applyMergeFields(
+        seed.body,
+        withClinicDefaults({
+          client_first_name: args.clientFirstName ?? '',
+          booked_visits: parts.bookedVisits,
+          other_follow_ups: parts.otherFollowUps,
+          clinic_name: args.practiceName,
+        })
+      )
+    );
+  };
+
+  it('the seed wording matches the built-in text, with and without CL/labs lines', () => {
+    const base = { clientFirstName: 'Ada', practiceName: 'Vet At Your Door', bookings: [booking] };
+    expect(render(base)).toBe(buildFollowUpConfirmationText(base));
+    const withMore = { ...base, labsPetNames: ['Biscuit'] };
+    expect(render(withMore)).toBe(buildFollowUpConfirmationText(withMore));
+    const noName = { ...base, clientFirstName: null };
+    expect(render(noName)).toBe(buildFollowUpConfirmationText(noName));
   });
 });

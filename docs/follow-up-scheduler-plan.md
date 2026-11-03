@@ -11,10 +11,10 @@ Mockup: https://claude.ai/artifact/7XcLmuRuqdGUYgo3Xbay6p (fake data, and public
 | 2. Planner window on checkout | Done: `ScheduleFollowUpsPlanner.tsx`, `ScheduleFollowUpsButton.tsx`; replaces `WrapUpForwardBooking` on `VisitCheckoutPage.tsx` |
 | 3. Find a time without leaving | Done: embedded `RoutingCalendarWorkspace`; `Scheduler.tsx` reports planner bookings via `plannerEvents.ts` and stays put |
 | 4. Add a pet to a household visit | Done: `plannerActions.addPetsToUpcomingVisit`, later-stop check in `visitImpact.ts` |
-| 5. Text the owner | Done, except the editable Settings template (`follow_up_booked_confirmation_sms`), not added yet |
+| 5. Text the owner | Done, including the editable Settings template `follow_up_booked_confirmation_sms` (merge fields `{{booked_visits}}`, `{{other_follow_ups}}`; seeded in app and API) |
 | Visit type + history minutes | Done: required visit type per card (and per pet added to a household visit); lengths from the provider's 30-day history (`plannerTiming.ts`); Routing keeps the planner's type |
-| 6. Start/End Visit + left-nav | Not started |
-| 7. Measure | Not started |
+| 6. Start/End Visit + left-nav | Done: Start/End Visit opens the planner (its window steps aside while it is open); left-nav "+ Forward Booking" opens `ScheduleFollowUpsLauncher` (find a pet or owner, then the planner with no visit). The header menu "+ Forward Book" and the forward booking list still use the old Add forward booking form. |
+| 7. Measure | Done from saved data, no new tracking: Forward Booking analytics adds "How follow-ups were handled" (booked at the visit, already booked, sent to the CLs, labs pending, no choice) plus not-appropriate count and confirmation texts sent. Not measured: planner opens and undos. |
 
 Clicked through on the local API and `vayd_api_local` (Nov 3, 2026): planner load, reminders, upcoming visits, add a pet to a household visit (appointment created, visit lengthened by history minutes, Undo then lock), View in calendar (dashed preview), Find a time prefill (type, minutes, provider), Done (dispositions saved), the owner text (not sent), read-only reopen, and clean-up of search rows when the page closes mid-search. Not completed on local data: a Routing booking, because local schedules return no openings.
 

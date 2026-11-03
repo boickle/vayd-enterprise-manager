@@ -49,6 +49,15 @@ export const SYSTEM_TEMPLATE_SEEDS: MessageTemplateSeed[] = [
     body: 'Hi {{client_first_name}}, following up on the request to schedule {{pets}} visit in {{timeframe}}. Would {{date_label}}, between {{window_start}} and {{window_end}} work for you?',
   },
   {
+    systemKey: 'follow_up_booked_confirmation_sms',
+    name: 'Follow-ups booked at the visit',
+    description: 'Text from Schedule follow-ups confirming the visits booked before the team left.',
+    channel: 'sms',
+    category: 'scheduling',
+    subject: '',
+    body: "Hi {{client_first_name}}, thanks for having us today! Here's what we booked:\n{{booked_visits}}\n\n{{other_follow_ups}}\n\nReply to this text if anything needs to change. – {{clinic_name}}",
+  },
+  {
     systemKey: 'forward_booking_email_subject',
     name: 'Forward booking — email subject',
     description: 'Subject line when Forward Booking is sent as email.',

@@ -11,6 +11,8 @@ import type { ForwardBookingDispositionMode } from '../../api/forwardBookingDisp
 import { fetchClientAppointmentsStaff } from '../../api/pimsAppointments';
 import type { Appointment } from '../../api/roomLoader';
 import { getVisitReminders, type VisitWrapUp } from '../../api/visitWrapUp';
+import { listEncounters } from '../../api/visitWorkflow';
+import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { clientDoNotSmsFromRecord } from '../../utils/doNotSmsWarning';
 import { forwardBookingDispositionIsComplete } from '../../utils/forwardBookingDisposition';
 import { appointmentArrivalWindowIsosForSms } from '../../utils/forwardBookingSmsMessage';
@@ -161,19 +163,114 @@ export function groupUpcomingVisits(
 }
 
 /**
+ * What the planner is opened for. Checkout passes the visit's wrap-up, Start/End Visit the
+ * calendar rows, and the left-nav shortcut just a client (no visit, every pet optional).
+ */
+export type PlannerVisitInput = {
+  clientId: number | null;
+  clientName: string | null;
+  provider: { id: number; name: string | null } | null;
+  /** Pets on the visit being wrapped up; empty when there is no visit. */
+  pets: {
+    patientId: number;
+    name: string;
+    species?: string | null;
+    appointmentId: number;
+    /** Looked up by appointment when not given. */
+    soapEncounterId?: string | null;
+    disposition?: ForwardBookingDisposition | null;
+  }[];
+  clientEmails?: string[];
+  clientDoNotEmail?: boolean;
+};
+
+export function plannerVisitFromWrapUp(w: VisitWrapUp): PlannerVisitInput {
+  return {
+    clientId: w.clientId,
+    clientName: w.clientName,
+    provider: w.provider ? { id: w.provider.id, name: w.provider.name } : null,
+    pets: w.pets.map((p) => ({
+      patientId: Number(p.patientId),
+      name: p.patientName,
+      species: p.species ?? null,
+      appointmentId: Number(p.appointmentId),
+      soapEncounterId: p.soapEncounterId,
+      disposition: p.forwardBookingDisposition,
+    })),
+    clientEmails: w.clientEmails,
+    clientDoNotEmail: w.clientDoNotEmail,
+  };
+}
+
+/** Start/End Visit: the anchor appointment plus the same-day household rows it shows. */
+export function plannerVisitFromAppointments(
+  anchor: Appointment,
+  householdRows: readonly Appointment[]
+): PlannerVisitInput {
+  const rows = householdRows.length ? householdRows : [anchor];
+  const c = anchor.client;
+  const p = anchor.primaryProvider;
+  return {
+    clientId: c?.id != null ? Number(c.id) : null,
+    clientName: [str(c?.firstName), str(c?.lastName)].filter(Boolean).join(' ') || null,
+    provider:
+      p?.id != null
+        ? {
+            id: Number(p.id),
+            name: [str(p.firstName), str(p.lastName)].filter(Boolean).join(' ') || null,
+          }
+        : null,
+    pets: rows.flatMap((a) =>
+      patientsForAppointment(a)
+        .filter((pt) => Number.isFinite(Number(pt.id)))
+        .map((pt) => ({
+          patientId: Number(pt.id),
+          name: str(pt.name) ?? `Patient ${pt.id}`,
+          species: null,
+          appointmentId: Number(a.id),
+          disposition: a.forwardBookingDisposition ?? null,
+        }))
+    ),
+  };
+}
+
+/** Left-nav shortcut: a household with no visit being wrapped up. */
+export function plannerVisitForClient(
+  clientId: number,
+  clientName: string | null
+): PlannerVisitInput {
+  return { clientId, clientName, provider: null, pets: [] };
+}
+
+/**
  * Everything the planner shows, loaded in parallel. A failed side load (reminders,
  * providers) degrades to empty rather than blocking follow-ups.
  */
 export async function loadFollowUpPlannerData(args: {
-  wrapUp: VisitWrapUp;
+  visit: PlannerVisitInput;
   practiceId: number;
   tz: string;
 }): Promise<FollowUpPlannerData> {
-  const { wrapUp, tz } = args;
-  const clientId = wrapUp.clientId;
+  const { tz } = args;
+  const visit = args.visit;
+  const clientId = visit.clientId;
   if (clientId == null) throw new Error('This visit has no client on file.');
   const now = DateTime.now().setZone(tz);
-  const todayIds = new Set(wrapUp.pets.map((p) => Number(p.appointmentId)));
+  const todayIds = new Set(visit.pets.map((p) => Number(p.appointmentId)));
+
+  // The chart copy of the follow-up choice is what lets the chart be completed, so find
+  // each pet's chart when the caller only knows the appointment.
+  const visitPets = await Promise.all(
+    visit.pets.map(async (p) => {
+      if (p.soapEncounterId) return p;
+      const enc = await listEncounters({
+        appointmentId: p.appointmentId,
+        patientId: p.patientId,
+      }).catch(() => []);
+      return { ...p, soapEncounterId: enc[0]?.id ?? null };
+    })
+  );
+  const firstEncounter = visitPets.find((p) => p.soapEncounterId)?.soapEncounterId ?? null;
 
   const [clientPayload, appts, providers, visitReminders, appointmentTypes] = await Promise.all([
     fetchClientByIdStaff(clientId).catch(() => null),
@@ -183,21 +280,21 @@ export async function loadFollowUpPlannerData(args: {
       end: now.plus({ months: 24 }).toUTC().toISO()!,
     }).catch(() => [] as Appointment[]),
     fetchPrimaryProviders().catch(() => [] as Provider[]),
-    wrapUp.pets[0]?.soapEncounterId
-      ? getVisitReminders(wrapUp.pets[0].soapEncounterId).catch(() => ({ pets: [] }))
+    firstEncounter
+      ? getVisitReminders(firstEncounter).catch(() => ({ pets: [] }))
       : Promise.resolve({ pets: [] }),
     fetchAllAppointmentTypes(args.practiceId).catch(() => [] as AppointmentType[]),
   ]);
 
-  const todayPets: PlannerPet[] = wrapUp.pets.map((p) => ({
+  const todayPets: PlannerPet[] = visitPets.map((p) => ({
     patientId: Number(p.patientId),
-    name: p.patientName,
+    name: p.name,
     species: p.species ?? null,
     onTodaysVisit: true,
     appointmentId: Number(p.appointmentId),
-    soapEncounterId: p.soapEncounterId,
-    savedMode: forwardBookingDispositionIsComplete(p.forwardBookingDisposition)
-      ? p.forwardBookingDisposition!.mode
+    soapEncounterId: p.soapEncounterId ?? null,
+    savedMode: forwardBookingDispositionIsComplete(p.disposition ?? null)
+      ? p.disposition!.mode
       : null,
   }));
   const todaySet = new Set(todayPets.map((p) => p.patientId));
@@ -241,19 +338,25 @@ export async function loadFollowUpPlannerData(args: {
 
   const client = (clientPayload ?? {}) as Record<string, unknown>;
   const plannerProviders = providers.map(plannerProviderFromApi);
-  const todayProviderId = wrapUp.provider?.id ?? null;
+  const todayProviderId = visit.provider?.id ?? null;
   if (todayProviderId != null && !plannerProviders.some((p) => p.id === todayProviderId)) {
-    plannerProviders.unshift({ id: todayProviderId, name: wrapUp.provider?.name ?? 'Provider' });
+    plannerProviders.unshift({ id: todayProviderId, name: visit.provider?.name ?? 'Provider' });
   }
 
   return {
     tz,
     today: now,
     clientId,
-    clientName: wrapUp.clientName,
-    clientFirstName: str(client.firstName) ?? str(wrapUp.clientName?.split(/\s+/)[0]),
+    clientName:
+      visit.clientName ??
+      ([str(client.firstName), str(client.lastName)].filter(Boolean).join(' ') || null),
+    clientFirstName: str(client.firstName) ?? str(visit.clientName?.split(/\s+/)[0]),
     clientPhone: str(client.phone1) ?? str(client.phone2),
-    clientEmails: wrapUp.clientDoNotEmail ? [] : (wrapUp.clientEmails ?? []),
+    clientEmails:
+      visit.clientDoNotEmail || client.doNotEmail === true
+        ? []
+        : (visit.clientEmails ??
+          [str(client.email), str(client.secondEmail)].filter((e): e is string => !!e)),
     doNotSms: clientDoNotSmsFromRecord(clientPayload),
     pets,
     remindersByPet,

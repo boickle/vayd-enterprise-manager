@@ -951,3 +951,37 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Left-nav launcher: find the household first. */
+.fup-launcher {
+  position: absolute;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, 92vw);
+}
+.fup-launcher__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.fup-launcher__list button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--fup-line);
+  background: var(--fup-card);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--fup-ink);
+  cursor: pointer;
+}
+.fup-launcher__list button:hover,
+.fup-launcher__list button:focus-visible {
+  border-color: var(--fup-accent-strong);
+  background: var(--fup-accent-soft);
+}

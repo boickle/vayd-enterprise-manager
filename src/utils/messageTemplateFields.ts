@@ -36,6 +36,18 @@ export const MERGE_FIELDS: MergeField[] = [
   { id: 'minutes_away', label: 'Minutes away', group: 'Visit', sample: '15' },
   { id: 'tech_first_name', label: 'Technician first name', group: 'Visit', sample: 'Alex' },
   { id: 'timeframe', label: 'Follow-up timeframe', group: 'Visit', sample: 'the next 2–3 weeks' },
+  {
+    id: 'booked_visits',
+    label: 'Visits booked (one line each)',
+    group: 'Visit',
+    sample: '• Fluffy & Angel: Tue, Nov 2, 2027, arriving between 9:00 AM and 11:00 AM with Dr. Patel',
+  },
+  {
+    id: 'other_follow_ups',
+    label: 'Other follow-ups (CLs, labs)',
+    group: 'Visit',
+    sample: "We'll reach out around December 2026 to schedule Pepper.",
+  },
   { id: 'hold_deadline', label: 'Hold deadline', group: 'Visit', sample: '5:00 PM today' },
   { id: 'amount', label: 'Amount due', group: 'Visit', sample: '$128.40' },
   { id: 'invoice_labels', label: 'Invoice label', group: 'Visit', sample: 'Invoice 1042' },

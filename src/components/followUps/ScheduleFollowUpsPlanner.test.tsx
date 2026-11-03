@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { DateTime } from 'luxon';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Appointment } from '../../api/roomLoader';
-import type { VisitWrapUp } from '../../api/visitWrapUp';
 import type { FollowUpPlannerData } from './plannerData';
 import { notifyFollowUpPlannerBooked } from './plannerEvents';
 
@@ -203,18 +202,18 @@ vi.mock('../../api/branchInventory', async (orig) => ({
 
 import ScheduleFollowUpsPlanner from './ScheduleFollowUpsPlanner';
 
-const wrapUp = {
+const visit = {
   clientId: 50,
   clientName: 'Ada Okafor',
   pets: [],
-  provider: { id: 7, name: 'Priya Patel', email: null },
-} as unknown as VisitWrapUp;
+  provider: { id: 7, name: 'Priya Patel' },
+};
 
 function renderPlanner(onClose = vi.fn(), onSaved = vi.fn()) {
   render(
     <ScheduleFollowUpsPlanner
       open
-      wrapUp={wrapUp}
+      visit={visit}
       practiceId={1}
       tz={TZ}
       onClose={onClose}
@@ -410,7 +409,7 @@ describe('Schedule follow-ups planner', () => {
     const { unmount } = render(
       <ScheduleFollowUpsPlanner
         open
-        wrapUp={wrapUp}
+        visit={visit}
         practiceId={1}
         tz={TZ}
         onClose={vi.fn()}

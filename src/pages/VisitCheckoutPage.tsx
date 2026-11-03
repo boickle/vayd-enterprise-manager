@@ -27,6 +27,7 @@ import {
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import ScheduleFollowUpsButton from '../components/followUps/ScheduleFollowUpsButton';
 import ScheduleFollowUpsPlanner from '../components/followUps/ScheduleFollowUpsPlanner';
+import { plannerVisitFromWrapUp } from '../components/followUps/plannerData';
 import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
 import { fetchAppointmentById } from '../api/appointments';
 import { getEuthanasiaConsentStatus } from '../api/consent';
@@ -307,12 +308,19 @@ export default function VisitCheckoutPage() {
           </p>
           {wrapUp && pets.length > 0 ? (
             <>
-              <ScheduleFollowUpsButton pets={pets} onOpen={() => setFollowUpsOpen(true)} />
+              <ScheduleFollowUpsButton
+                pets={pets.map((p) => ({
+                  key: String(p.patientId),
+                  name: p.patientName,
+                  disposition: p.forwardBookingDisposition,
+                }))}
+                onOpen={() => setFollowUpsOpen(true)}
+              />
               <ScheduleFollowUpsPlanner
                 // Remount per open so a reopened planner reloads the household fresh.
                 key={followUpsOpen ? 'open' : 'closed'}
                 open={followUpsOpen}
-                wrapUp={wrapUp}
+                visit={plannerVisitFromWrapUp(wrapUp)}
                 practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                 tz={DEFAULT_PRACTICE_TIMEZONE}
                 onClose={() => setFollowUpsOpen(false)}

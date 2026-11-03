@@ -1,5 +1,5 @@
 import { ArrowRight, CalendarPlus } from 'lucide-react';
-import type { VisitWrapUpPet } from '../../api/visitWrapUp';
+import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { forwardBookingDispositionIsComplete } from '../../utils/forwardBookingDisposition';
 import { forwardBookingModeOption } from '../forwardBooking/ForwardBookingDecisionFields';
 import './ScheduleFollowUpsPlanner.css';
@@ -14,22 +14,19 @@ export default function ScheduleFollowUpsButton({
   onOpen,
   disabled,
 }: {
-  pets: VisitWrapUpPet[];
+  pets: { key: string; name: string; disposition: ForwardBookingDisposition | null }[];
   onOpen: () => void;
   disabled?: boolean;
 }) {
-  const done = (p: VisitWrapUpPet) =>
-    forwardBookingDispositionIsComplete(p.forwardBookingDisposition);
+  const done = (p: (typeof pets)[number]) => forwardBookingDispositionIsComplete(p.disposition);
   const allDone = pets.length > 0 && pets.every(done);
   return (
     <div className="fup-cta">
       <div className="fup-cta__pets">
         {pets.map((p) => (
-          <span key={p.patientId} className={`fup-cta__pet${done(p) ? ' is-done' : ''}`}>
-            {done(p) ? '✓' : '○'} {p.patientName}
-            {done(p)
-              ? ` · ${forwardBookingModeOption(p.forwardBookingDisposition!.mode)?.label ?? ''}`
-              : ''}
+          <span key={p.key} className={`fup-cta__pet${done(p) ? ' is-done' : ''}`}>
+            {done(p) ? '✓' : '○'} {p.name}
+            {done(p) ? ` · ${forwardBookingModeOption(p.disposition!.mode)?.label ?? ''}` : ''}
           </span>
         ))}
       </div>

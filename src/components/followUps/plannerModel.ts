@@ -238,15 +238,24 @@ export function confirmationSendProvider(
   return first.provider;
 }
 
-export function buildFollowUpConfirmationText(args: {
+export type ConfirmationTextArgs = {
   clientFirstName: string | null;
   practiceName: string;
   bookings: readonly ConfirmationBooking[];
   /** Pets the CLs will call about, with the month they will reach out. */
   clMentions?: readonly { petNames: string[]; around: DateTime }[];
   labsPetNames?: readonly string[];
-}): string {
-  const hi = args.clientFirstName?.trim() ? `Hi ${args.clientFirstName.trim()}` : 'Hi';
+};
+
+/**
+ * The pieces the text is built from, which are also the merge fields of the editable
+ * `follow_up_booked_confirmation_sms` template: one line per booked visit, and one
+ * sentence for anything sent to the CLs or waiting on labs.
+ */
+export function confirmationTextParts(args: ConfirmationTextArgs): {
+  bookedVisits: string;
+  otherFollowUps: string;
+} {
   const lines = sortConfirmationBookings(args.bookings).map((b) => {
     const joining = b.joiningPetNames?.length
       ? ` (same visit as ${joinNames(b.joiningPetNames)})`
@@ -264,10 +273,25 @@ export function buildFollowUpConfirmationText(args: {
       `We'll be in touch about ${joinNames(args.labsPetNames)} once lab results are back.`
     );
   }
+  return { bookedVisits: lines.join('\n'), otherFollowUps: extra.join(' ') };
+}
+
+/** Blank merge fields can leave a stray comma or extra blank lines; tidy them. */
+export function tidyMergedText(text: string): string {
+  return text
+    .replace(/^Hi\s+,/, 'Hi,')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Built-in wording; Settings → message templates can replace it. */
+export function buildFollowUpConfirmationText(args: ConfirmationTextArgs): string {
+  const { bookedVisits, otherFollowUps } = confirmationTextParts(args);
+  const hi = args.clientFirstName?.trim() ? `Hi ${args.clientFirstName.trim()}` : 'Hi';
   return [
     `${hi}, thanks for having us today! Here's what we booked:`,
-    lines.join('\n'),
-    ...(extra.length ? ['', extra.join(' ')] : []),
+    bookedVisits,
+    ...(otherFollowUps ? ['', otherFollowUps] : []),
     '',
     `Reply to this text if anything needs to change. – ${args.practiceName}`,
   ].join('\n');

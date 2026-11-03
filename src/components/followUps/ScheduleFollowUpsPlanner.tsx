@@ -5,11 +5,12 @@ import { CalendarPlus, X } from 'lucide-react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { listPracticeBranches } from '../../api/branchInventory';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
-import type { VisitWrapUp } from '../../api/visitWrapUp';
 import { dispatchRoutingFocusHouseholdVisit } from '../../utils/bookingHouseholdVisitWarning';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { dismissRoutingForwardBookingWorkspace } from '../../utils/routingForwardBookingIntent';
 import { ClientContactComposeModal } from '../ClientContactComposeModal';
+import { applySystemTemplateIfCustom } from '../../utils/messageTemplateCache';
+import { withClinicDefaults } from '../../utils/messageTemplateFields';
 import { forwardBookingModeOption } from '../forwardBooking/ForwardBookingDecisionFields';
 import {
   addPetsToUpcomingVisit,
@@ -30,6 +31,7 @@ import {
 import {
   loadFollowUpPlannerData,
   type FollowUpPlannerData,
+  type PlannerVisitInput,
   type PlannerPet,
   type UpcomingVisit,
 } from './plannerData';
@@ -43,6 +45,8 @@ import {
   BOOKING_UNDO_MS,
   bookingUndoOpen,
   buildFollowUpConfirmationText,
+  confirmationTextParts,
+  tidyMergedText,
   confirmationSendProvider,
   dispositionModeForOutcomes,
   joinNames,
@@ -145,7 +149,8 @@ function fmtWindow(a: DateTime, b: DateTime) {
 
 type Props = {
   open: boolean;
-  wrapUp: VisitWrapUp;
+  /** Build with plannerVisitFromWrapUp / plannerVisitFromAppointments / plannerVisitForClient. */
+  visit: PlannerVisitInput;
   practiceId: number;
   tz: string;
   onClose: () => void;
@@ -161,7 +166,7 @@ type Props = {
  */
 export default function ScheduleFollowUpsPlanner({
   open,
-  wrapUp,
+  visit,
   practiceId,
   tz,
   onClose,
@@ -201,6 +206,9 @@ export default function ScheduleFollowUpsPlanner({
   const [expandedRems, setExpandedRems] = useState<Record<string, boolean>>({});
   const [savedOnce, setSavedOnce] = useState(false);
   const seq = useRef(1);
+  /** Read once per opening: callers may rebuild `visit` on every render. */
+  const visitRef = useRef(visit);
+  visitRef.current = visit;
   const links = useRef(new SourceVisitLinks());
   const statsFor = useRef(createProviderStatsCache()).current;
   /** Visit length per new card, from the card's provider history. */
@@ -216,7 +224,7 @@ export default function ScheduleFollowUpsPlanner({
     if (!open || data) return;
     let on = true;
     setLoadError(null);
-    loadFollowUpPlannerData({ wrapUp, practiceId, tz })
+    loadFollowUpPlannerData({ visit: visitRef.current, practiceId, tz })
       .then((d) => {
         if (!on) return;
         setData(d);
@@ -246,7 +254,7 @@ export default function ScheduleFollowUpsPlanner({
     return () => {
       on = false;
     };
-  }, [open, data, wrapUp, practiceId, tz]);
+  }, [open, data, practiceId, tz]);
 
   // Staff and branches only when labs pending is used.
   const usesLabs = Object.values(placements).some((p) => p.includes(LABS));
@@ -881,23 +889,34 @@ export default function ScheduleFollowUpsPlanner({
   const clCards = cards.filter((c) => c.status === 'cl' && petsIn(c.key).length > 0);
   const labsPets = petsIn(LABS);
 
-  const buildText = useCallback(
-    () =>
-      buildFollowUpConfirmationText({
-        clientFirstName: data?.clientFirstName ?? null,
-        practiceName: PRACTICE_NAME,
-        bookings,
-        clMentions: mention.cl
-          ? clCards.map((c) => ({
-              petNames: petsIn(c.key).map((p) => p.name),
-              around: plannerTargetDate(c.interval, data!.today),
-            }))
-          : [],
-        labsPetNames: mention.labs ? labsPets.map((p) => p.name) : [],
-      }),
+  const buildText = useCallback(() => {
+    const args = {
+      clientFirstName: data?.clientFirstName ?? null,
+      practiceName: PRACTICE_NAME,
+      bookings,
+      clMentions: mention.cl
+        ? clCards.map((c) => ({
+            petNames: petsIn(c.key).map((p) => p.name),
+            around: plannerTargetDate(c.interval, data!.today),
+          }))
+        : [],
+      labsPetNames: mention.labs ? labsPets.map((p) => p.name) : [],
+    };
+    const parts = confirmationTextParts(args);
+    // Wording edited in Settings → message templates wins over the built-in text.
+    return tidyMergedText(
+      applySystemTemplateIfCustom(
+        'follow_up_booked_confirmation_sms',
+        withClinicDefaults({
+          client_first_name: args.clientFirstName ?? '',
+          booked_visits: parts.bookedVisits,
+          other_follow_ups: parts.otherFollowUps,
+        }),
+        buildFollowUpConfirmationText(args)
+      )
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [bookings, mention, clCards.length, labsPets.length, data]
-  );
+  }, [bookings, mention, clCards.length, labsPets.length, data]);
   useEffect(() => {
     if (step === 'review' && !textEdited) setReviewText(buildText());
   }, [step, textEdited, buildText]);
@@ -1305,7 +1324,9 @@ export default function ScheduleFollowUpsPlanner({
                 : readOnly
                   ? 'Follow-ups'
                   : 'Schedule follow-ups'}
-              {wrapUp.clientName ? ` · ${wrapUp.clientName}` : ''}
+              {(data?.clientName ?? visit.clientName)
+                ? ` · ${data?.clientName ?? visit.clientName}`
+                : ''}
             </h2>
             <div className="fup-muted">
               {readOnly
@@ -1471,46 +1492,48 @@ export default function ScheduleFollowUpsPlanner({
         ) : (
           <div className="fup-body">
             <aside className="fup-tray">
-              <div className="fup-tray__sec" {...dropProps('__tray')}>
-                <h3>Today&apos;s visit · needs a plan</h3>
-                {trayToday.length ? (
-                  trayToday.map((p) => (
-                    <button
-                      key={p.patientId}
-                      type="button"
-                      className="fup-pet"
-                      draggable
-                      onDragStart={() => (dragRef.current = { petId: p.patientId, from: null })}
-                      onClick={(e) => openMenu(p.patientId, null, e.currentTarget)}
-                    >
+              {todayPets.length ? (
+                <div className="fup-tray__sec" {...dropProps('__tray')}>
+                  <h3>Today&apos;s visit · needs a plan</h3>
+                  {trayToday.length ? (
+                    trayToday.map((p) => (
+                      <button
+                        key={p.patientId}
+                        type="button"
+                        className="fup-pet"
+                        draggable
+                        onDragStart={() => (dragRef.current = { petId: p.patientId, from: null })}
+                        onClick={(e) => openMenu(p.patientId, null, e.currentTarget)}
+                      >
+                        {avatar(p)}
+                        <span className="fup-pet__txt">
+                          <span className="fup-pet-name">{p.name}</span>
+                          <span className="fup-pet-meta">{p.species ?? 'Tap to choose'}</span>
+                        </span>
+                        <span className="fup-grip" aria-hidden="true">
+                          ⋮⋮
+                        </span>
+                        <span className="fup-pet__rems">{remList(p, null)}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="fup-ok">✓ Every pet on today&apos;s visit has a card</div>
+                  )}
+                  {savedToday.map((p) => (
+                    <div key={p.patientId} className="fup-pet is-saved">
                       {avatar(p)}
                       <span className="fup-pet__txt">
                         <span className="fup-pet-name">{p.name}</span>
-                        <span className="fup-pet-meta">{p.species ?? 'Tap to choose'}</span>
+                        <span className="fup-pet-meta">
+                          Saved: {forwardBookingModeOption(p.savedMode!)?.label}
+                        </span>
                       </span>
-                      <span className="fup-grip" aria-hidden="true">
-                        ⋮⋮
-                      </span>
-                      <span className="fup-pet__rems">{remList(p, null)}</span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="fup-ok">✓ Every pet on today&apos;s visit has a card</div>
-                )}
-                {savedToday.map((p) => (
-                  <div key={p.patientId} className="fup-pet is-saved">
-                    {avatar(p)}
-                    <span className="fup-pet__txt">
-                      <span className="fup-pet-name">{p.name}</span>
-                      <span className="fup-pet-meta">
-                        Saved: {forwardBookingModeOption(p.savedMode!)?.label}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-              </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div className="fup-tray__sec">
-                <h3>Rest of household · optional</h3>
+                <h3>{todayPets.length ? 'Rest of household · optional' : 'Household'}</h3>
                 {trayOther.length ? (
                   trayOther.map((p) => (
                     <button
