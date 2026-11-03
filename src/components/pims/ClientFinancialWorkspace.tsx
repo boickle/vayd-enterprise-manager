@@ -4953,7 +4953,7 @@ export default function ClientFinancialWorkspace({
     if (!selected) return;
     const reason = await askVoidReason(
       'Void invoice?',
-      'Enter a reason for voiding this invoice. Payments on it will be voided too. ' +
+      'Enter a reason for voiding this invoice. Card payments must be refunded first; other payments on it will be voided too. ' +
         "Its items will stay on the pet's chart marked voided, and any membership benefits it used will be returned.",
     );
     if (!reason) return;

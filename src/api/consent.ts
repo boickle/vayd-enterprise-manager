@@ -297,7 +297,12 @@ export async function submitEuthanasiaConsent(body: {
   signatureDataUrl: string;
   signedName: string;
   paymentMethodId?: string;
-}): Promise<{ ok: boolean; submittedAt: string }> {
+}): Promise<{
+  ok: boolean;
+  submittedAt: string;
+  /** Staff had already settled the bill: the card was not charged here (F6). */
+  paymentNotice?: string;
+}> {
   const { data } = await publicConsentClient.post('/consent/euthanasia/submit', body);
   return data;
 }
@@ -358,13 +363,13 @@ export type EuthanasiaRdvmUiStatus = 'none' | 'needed' | 'sent';
 export async function getEuthanasiaConsentStatuses(
   appointmentIds: number[],
 ): Promise<{
-  statuses: Record<number, 'none' | 'sent' | 'complete'>;
+  statuses: Record<number, 'none' | 'sent' | 'complete' | 'withdrawn'>;
   rdvm: Record<number, EuthanasiaRdvmUiStatus>;
 }> {
   const ids = appointmentIds.filter((id) => Number.isFinite(id) && id > 0);
   if (!ids.length) return { statuses: {}, rdvm: {} };
   const { data } = await http.get<{
-    statuses: Record<number, 'none' | 'sent' | 'complete'>;
+    statuses: Record<number, 'none' | 'sent' | 'complete' | 'withdrawn'>;
     rdvm?: Record<number, EuthanasiaRdvmUiStatus>;
   }>('/consent/euthanasia/statuses', {
     params: { appointmentIds: ids.join(',') },

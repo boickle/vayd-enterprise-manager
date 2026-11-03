@@ -249,7 +249,13 @@ export async function convertEstimateToInvoice(
  */
 export async function settleEstimate(
   estimateId: string
-): Promise<{ id: string; total: number; status: string }> {
+): Promise<{
+  id: string;
+  total: number;
+  status: string;
+  /** Set when the card hold had expired and the saved card was charged instead (EMR-12). */
+  holdNotice?: string;
+}> {
   const { data } = await http.post(`/visit-estimates/${estimateId}/settle`, {
     practiceId: practiceId(),
   });
