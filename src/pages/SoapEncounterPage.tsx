@@ -68,6 +68,7 @@ import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import SoapAddendaSection from '../components/soap/SoapAddendaSection';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
+import { usesLegacyEuthanasiaPrepay } from '../utils/euthanasiaPrepay';
 import EuthanasiaConsentPanel from '../components/soap/EuthanasiaConsentPanel';
 import ConsentWeightAlert from '../components/consent/ConsentWeightAlert';
 import { type ConsentWeightChange } from '../utils/consentWeightAlert';
@@ -2420,7 +2421,8 @@ export default function SoapEncounterPage() {
         </aside>
       </div>
 
-      {showEuthanasia && encounter && (
+      {/* D1: the old prepay card capture only finishes invoices that already use it. */}
+      {showEuthanasia && encounter && usesLegacyEuthanasiaPrepay(invoice) && (
         <EuthanasiaPrepayModal
           appointmentId={appointmentId}
           clientId={encounter.clientId}

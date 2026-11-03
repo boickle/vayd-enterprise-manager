@@ -90,3 +90,145 @@ describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay 
     });
   });
 });
+
+/** None of the old prepay controls (D1) appear for a visit paid through its estimate. */
+function noPrepayButtons() {
+  cy.contains('button', 'Convert Authorization to Payment').should('not.exist');
+  cy.contains('button', 'Authorize card').should('not.exist');
+  cy.contains('button', /^\s*Save card\s*$/).should('not.exist');
+}
+
+function invoiceForAppointment(world: EmrWorld, appointmentId: number) {
+  return emrApi(world, 'GET', `/visit-invoices/by-appointment/${appointmentId}?practiceId=${world.practiceId}`).then((res) => {
+    expect(res.status).to.eq(200);
+    return invoiceById(world, res.body.id);
+  });
+}
+
+describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bill', () => {
+  let world: EmrWorld;
+  before(() => seedEmrWorld().then((w) => (world = w)));
+  after(() => cleanEmrWorld());
+
+  it('consent hold, doctor charts, End Visit, settle: one charge, no duplicate lines', () => {
+    const { appointmentId, patientId, estimateId, estimateTotal } = world.euthanasia;
+    // The hold the signed consent form places (the same authorize the form calls once the card is
+    // attached; the public form itself is covered by the EMR-03 specs).
+    emrApi(world, 'POST', `/visit-estimates/${estimateId}/accept`, { practiceId: world.practiceId });
+    emrApi(world, 'POST', `/visit-estimates/${estimateId}/authorize`, { practiceId: world.practiceId }).then((res) => {
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
+      expect(Number(res.body.authorizedAmount)).to.eq(estimateTotal);
+    });
+
+    // The doctor opens and charts the SOAP (a note; the quoted items are the bill).
+    emrApi(world, 'POST', '/soap-encounters', { practiceId: world.practiceId, appointmentId, patientId, clientId: world.client.id }).then((enc) => {
+      expect(enc.status).to.be.lessThan(300);
+      emrApi(world, 'PATCH', `/soap-encounters/${enc.body.id}`, {
+        practiceId: world.practiceId,
+        subjective: 'Family present. Peaceful passing at home.',
+      });
+    });
+
+    // End Visit (what the scheduler's End Visit saves): no charge happens here, the estimate owns it.
+    emrApi(world, 'POST', `/visits/${appointmentId}/completed`, { practiceId: world.practiceId }).then((res) => {
+      expect(res.status).to.be.lessThan(300);
+      expect(res.body.euthanasiaCharge?.attempted ?? false).to.eq(false);
+    });
+
+    signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
+    cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
+    noPrepayButtons();
+    cy.contains('button', 'Convert to invoice & take payment').click();
+    cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
+
+    invoiceForAppointment(world, appointmentId).then((inv) => {
+      expect(inv.status).to.eq('paid');
+      expect(Number(inv.total)).to.eq(estimateTotal);
+      expect(Number(inv.amountPaid)).to.eq(estimateTotal);
+      const live = (inv.lines ?? []).filter((l) => !l.isDeleted);
+      expect(live.map((l) => l.description).sort()).to.deep.eq(['Euthanasia - at home', 'Private cremation - small']);
+      const cards = cardTenders(inv);
+      expect(cards).to.have.length(1);
+      expect(Number(cards[0].amount)).to.eq(estimateTotal);
+    });
+    noPrepayButtons();
+  });
+});
+
+describe('EMR-02-6: phone path for families who cannot use the online form', () => {
+  let world: EmrWorld;
+  let secondWitnessId: number;
+  before(() =>
+    seedEmrWorld().then((w) => {
+      world = w;
+      // More than a day out, and no card yet: the liaison takes it by phone.
+      emrSql(`UPDATE appointments SET "appointmentStart" = now() + interval '3 days', "appointmentEnd" = now() + interval '3 days 1 hour' WHERE id = ${w.euthanasia.appointmentId}`);
+      emrSql(`UPDATE visit_estimates SET "savedPaymentMethodId" = NULL WHERE id = '${w.euthanasia.estimateId}'`);
+      // A second staff member to witness oral consent (invented).
+      emrSql(
+        `INSERT INTO employees ("firstName","lastName",email,"isProvider","practiceId","pimsId","pimsType","isActive","isDeleted")
+         VALUES ('Tamsin','Reedly','${w.tag}+witness@vayd.test',false,${w.practiceId},'${w.tag}-witness','EMRTEST',true,false) RETURNING id`,
+      ).then((id) => (secondWitnessId = Number(id)));
+    }),
+  );
+  after(() => {
+    if (secondWitnessId) emrSql(`DELETE FROM employees WHERE id = ${secondWitnessId}`);
+    cleanEmrWorld();
+  });
+
+  it('card by phone, hold only inside 24 h, oral consent with two witnesses, one charge equal to the bill', () => {
+    const { appointmentId, patientId, estimateId, estimateTotal } = world.euthanasia;
+
+    // The liaison opens the estimate from the scheduler's Euthanasia consent and sees "Take card".
+    signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
+    cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
+    cy.contains('button', 'Take card').should('be.visible');
+    noPrepayButtons();
+
+    // "Take card" saves the card on the estimate (EstimateCardModal confirms it in Stripe, then saves it).
+    emrApi(world, 'POST', `/visit-estimates/${estimateId}/payment-method`, {
+      practiceId: world.practiceId,
+      paymentMethodId: world.savedCard.paymentMethodId,
+    }).then((res) => {
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
+      expect(res.body.savedPaymentMethodId).to.eq(world.savedCard.paymentMethodId);
+      // Three days out: no hold yet.
+      expect(res.body.lastChargeStatus).not.to.eq('requires_capture');
+    });
+
+    // The visit moves inside 24 h; the sweep places the hold (the same authorize it calls).
+    emrSql(`UPDATE appointments SET "appointmentStart" = now() - interval '30 minutes', "appointmentEnd" = now() + interval '30 minutes' WHERE id = ${appointmentId}`);
+    emrApi(world, 'POST', `/visit-estimates/${estimateId}/authorize`, { practiceId: world.practiceId }).then((res) => {
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
+      expect(res.body.lastChargeStatus).to.eq('requires_capture');
+    });
+
+    // At the visit the doctor records oral consent heard by two staff.
+    emrApi(world, 'POST', '/consent/euthanasia/witness', {
+      appointmentId,
+      patientId,
+      method: 'oral',
+      witnessEmployeeIds: [world.staff.employeeId, secondWitnessId],
+    }).then((res) => {
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
+      expect(JSON.stringify(res.body)).to.match(/oral/i);
+      expect(JSON.stringify(res.body)).to.match(/Tamsin|Reedly|Oakhollow/);
+    });
+
+    emrApi(world, 'POST', `/visits/${appointmentId}/completed`, { practiceId: world.practiceId });
+    signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
+    cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
+    noPrepayButtons();
+    cy.contains('button', 'Convert to invoice & take payment').click();
+    cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
+
+    invoiceForAppointment(world, appointmentId).then((inv) => {
+      expect(inv.status).to.eq('paid');
+      expect(Number(inv.amountPaid)).to.eq(estimateTotal);
+      const cards = cardTenders(inv);
+      expect(cards).to.have.length(1);
+      expect(Number(cards[0].amount)).to.eq(Number(inv.total));
+    });
+    noPrepayButtons();
+  });
+});
