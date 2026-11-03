@@ -4,7 +4,13 @@
 // settled on End Visit and checkout. Mirrors the backend wrap-up endpoints.
 import { http } from './http';
 import type { ForwardBookingDisposition } from './forwardBookingDisposition';
-import { getEncounter, updateEncounter, type HouseholdRosterEntry, type SoapEncounterStatus } from './visitWorkflow';
+import {
+  getEncounter,
+  updateEncounter,
+  type HouseholdRosterEntry,
+  type SoapEncounterMode,
+  type SoapEncounterStatus,
+} from './visitWorkflow';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const pid = () => currentPracticeId();
@@ -29,6 +35,8 @@ export type ClientEmailDelivery = {
 /** One pet's finished chart, read-only for the wrap-up review. */
 export type VisitWrapUpPet = HouseholdRosterEntry & {
   status: SoapEncounterStatus;
+  /** Record type; decides who may sign it (EMR-07). Older servers omit it: treat as a full SOAP. */
+  mode?: SoapEncounterMode;
   /** Signature on a locked chart: who signed it and when. */
   completedAt: string | null;
   completedByName: string | null;

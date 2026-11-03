@@ -40,6 +40,7 @@ import { useBriefRecorder } from '../hooks/useBriefRecorder';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import ScribeSuggestedPlanItems from '../components/soap/ScribeSuggestedPlanItems';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
+import { SignOffNotice, useSignOffBlock } from '../components/soap/SignOffGate';
 import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
@@ -536,6 +537,9 @@ export default function MedicalNoteEncounterPage() {
     void copyText([...charts, recap].filter(Boolean).join('\n\n'), 'all');
   };
 
+  // A medical note is signed by a vet or a licensed technician (EMR-07, D2).
+  const signOffBlocked = useSignOffBlock(['medical_note']);
+
   const wrapUp = async () => {
     if (wrapping) return;
     // Sign off every pet who got a note today; a housemate left blank is simply not signed.
@@ -635,10 +639,12 @@ export default function MedicalNoteEncounterPage() {
           <Link className="soap-btn" to="/schedule/home">
             <ArrowLeft size={15} /> Schedule
           </Link>
+          <SignOffNotice mode="medical_note" />
           <button
             type="button"
             className="soap-btn primary"
-            disabled={wrapping || !anyWritten}
+            disabled={wrapping || !anyWritten || Boolean(signOffBlocked)}
+            title={signOffBlocked ?? undefined}
             onClick={() => void wrapUp()}
           >
             <Lock size={15} />

@@ -638,6 +638,9 @@ function VaccineRow({
         manufacturer: manufacturer.trim() || undefined,
         vaccineType: vaccineType || undefined,
         inventoryLotBalanceId: lotBalanceId,
+        // The visit's vet is the vet of record, not whoever typed the dose in (EMR-07: a rabies
+        // dose needs a licensed veterinarian with a license number).
+        ...(providerId != null ? { employeeId: providerId } : {}),
         ...(lotQoh != null && lotQoh <= 0
           ? { lotZeroOverrideReason: zeroOverrideReason.trim() }
           : {}),
