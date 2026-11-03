@@ -15,7 +15,7 @@
  * The world: one client (Wren Fairweather, phone + email on the reserved .test domain, so nothing is delivered)
  * with a euthanasia appointment (pet Pippin: 'sent' estimate of 475.00 with the saved card on it, no hold, and an
  * unsigned consent invite token) and an ordinary appointment (pet Juniper: OPEN visit invoice of 150.00 with the
- * saved card on it). The saved card is only the reference pm_card_visa on cus_emr_world: no card was created at
+ * saved card on it), plus an eVet Carprofen prescription for Juniper (`evetRx`, EMR-08). The saved card is only the reference pm_card_visa on cus_emr_world: no card was created at
  * Stripe, so a run against real Stripe test mode needs that customer/card created there first.
  */
 export type EmrWorld = {
@@ -36,6 +36,20 @@ export type EmrWorld = {
     consentPath: string;
   };
   visit: { appointmentId: number; patientId: number; petName: string; invoiceId: string; invoiceTotal: number };
+  /**
+   * EMR-08: an eVet prescription for Juniper with 3 refills. Like every eVet import it has no pet or item on it;
+   * it reaches Juniper only through planItem_Id = her eVet treatment line for `itemName` (a medication).
+   */
+  evetRx: {
+    patientId: number;
+    petName: string;
+    itemId: number;
+    itemName: string;
+    prescriptionId: number;
+    rxNumber: number;
+    instructions: string;
+    refills: number;
+  };
 };
 
 export const seedEmrWorld = (): Cypress.Chainable<EmrWorld> => cy.task<EmrWorld>('seedEmrWorld', null, { timeout: 120000 });
