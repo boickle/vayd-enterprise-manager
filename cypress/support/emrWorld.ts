@@ -50,6 +50,18 @@ export type EmrWorld = {
     instructions: string;
     refills: number;
   };
+  /**
+   * EMR-A12: 20 imported eVet vaccinations on Juniper, newest first (Rabies, DA2PP, Bordetella, Leptospirosis in turn),
+   * each with a lot, the vet only as the linked employee (no name or license on the dose), as the eVet importer stores them.
+   */
+  evetVaccines: {
+    patientId: number;
+    petName: string;
+    vetName: string;
+    vetLicense: string;
+    itemIds: number[];
+    doses: { lot: string; name: string }[];
+  };
 };
 
 export const seedEmrWorld = (): Cypress.Chainable<EmrWorld> => cy.task<EmrWorld>('seedEmrWorld', null, { timeout: 120000 });

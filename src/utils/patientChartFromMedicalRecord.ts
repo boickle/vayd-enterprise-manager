@@ -324,11 +324,16 @@ function formResponseLines(responses: unknown[]): string[] {
 
 function vaccinationLogSummary(o: Record<string, unknown>): string {
   const inv = asObj(o.inventoryItem);
+  // eVet-imported doses carry no name of their own: it is on the treatment item (EMR-A12).
+  const treatmentItem = asObj(o.treatmentItem);
+  const viaTreatmentItem =
+    pickStr(asObj(treatmentItem?.inventoryItem)?.name) ?? pickStr(asObj(treatmentItem?.procedure)?.name);
   return (
     pickStr(o.vaccineName) ??
     pickStr(o.name) ??
     pickStr(o.description) ??
     (inv ? pickStr(inv.name) : null) ??
+    viaTreatmentItem ??
     'Vaccination'
   );
 }
