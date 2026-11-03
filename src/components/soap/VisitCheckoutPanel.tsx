@@ -68,6 +68,7 @@ import { createOrderFromSearchItem } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from './TerminalReaderPicker';
 import VirtualTerminalModal from './VirtualTerminalModal';
 import CheckoutReminders from './CheckoutReminders';
+import { usesLegacyEuthanasiaPrepay } from '../../utils/euthanasiaPrepay';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
 import MembershipCancelInvoiceOffer from './MembershipCancelInvoiceOffer';
 import ControlledDoseFields from './ControlledDoseFields';
@@ -1866,7 +1867,14 @@ export default function VisitCheckoutPanel({
   const convertAuthorization = () =>
     run('capture', async () => {
       if (!invoice) return;
-      onInvoiceChange(await captureAuthorization(invoice.id));
+      try {
+        onInvoiceChange(await captureAuthorization(invoice.id));
+      } catch (e) {
+        // Part may already be captured (the bill grew past the hold and the rest was
+        // declined): reload so the paid amount and balance due are current.
+        void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
+        throw e;
+      }
       setNote('Authorization converted to payment.');
     });
 
@@ -1910,6 +1918,8 @@ export default function VisitCheckoutPanel({
     invoice?.status !== 'open' ||
     (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
+  // D1: the old prepay (Save card / Authorize / Convert) only for invoices that already use it.
+  const legacyPrepay = usesLegacyEuthanasiaPrepay(invoice);
   const canChangePrice = useCan('invoice.price.change');
   const canReopen = useCan('invoice.reopen');
   const canOverrideRefillProduction = useCan('invoice.refill.production.override');
@@ -2195,7 +2205,7 @@ export default function VisitCheckoutPanel({
             })}
           </span>
         ) : null}
-        {invoice?.isEuthanasiaPrepay && (
+        {legacyPrepay && invoice && (
           <span className="soap-invoice-badge euthanasia">
             {invoice.lastChargeStatus === 'requires_capture' ? 'authorized' : 'euthanasia auth'}
           </span>
@@ -3514,7 +3524,7 @@ export default function VisitCheckoutPanel({
             </div>
           ) : null}
 
-          {showPayment && invoice && status === 'open' && !invoice.isEuthanasiaPrepay && (
+          {showPayment && invoice && status === 'open' && !legacyPrepay && (
             <MembershipCancelInvoiceOffer
               invoice={invoice}
               patientIds={membershipEndsPatientIds}
@@ -3540,7 +3550,7 @@ export default function VisitCheckoutPanel({
             />
           )}
 
-          {showPayment && !isPaid && !isVoid && !invoice?.isEuthanasiaPrepay && !hasSavedCard && (
+          {showPayment && !isPaid && !isVoid && !legacyPrepay && !hasSavedCard && (
             <label className="soap-checkout-consent">
               <input
                 type="checkbox"
@@ -3559,7 +3569,7 @@ export default function VisitCheckoutPanel({
           {showPayment ? (
             <>
           <div className="soap-checkout-actions">
-            {!isPaid && !isVoid && invoice?.isEuthanasiaPrepay && (
+            {!isPaid && !isVoid && legacyPrepay && invoice && (
               <>
                 <button
                   type="button"
@@ -3591,7 +3601,7 @@ export default function VisitCheckoutPanel({
                 )}
               </>
             )}
-            {!isPaid && !isVoid && !invoice?.isEuthanasiaPrepay && (
+            {!isPaid && !isVoid && !legacyPrepay && (
               <>
                 <button
                   type="button"

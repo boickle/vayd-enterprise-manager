@@ -52,7 +52,6 @@ import {
 } from '../api/employeeGoals';
 import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import {
-  createInvoice,
   fetchCalendarPaymentIndex,
   fetchSoapCalendarEncounterIndex,
   fetchSoapCalendarLockIndex,
@@ -11591,15 +11590,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             let invoice: 'new' | string = 'new';
             try {
               const existing = await getInvoiceByAppointment(appointmentId);
+              // Euthanasia visits are paid through their estimate (D1), so they open an
+              // ordinary bill here; the old prepay invoice is no longer created.
               if (existing?.id && existing.isDeleted !== true && existing.status !== 'void') {
                 invoice = existing.id;
-              } else if (isEuthanasiaAppointment(appt)) {
-                const created = await createInvoice({
-                  appointmentId,
-                  clientId: Number(client.id),
-                  isEuthanasiaPrepay: true,
-                });
-                invoice = created.id;
               }
             } catch {
               /* open a new Scout invoice */
