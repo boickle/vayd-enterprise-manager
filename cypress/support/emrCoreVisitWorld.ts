@@ -312,8 +312,45 @@ export function addOrder(encounterId: string, itemId: number, name: string, unit
   });
 }
 
-/** Writes the recap draft (the AI call is stubbed) and waits for it to land in the form. */
-export function writeRecapDraft() {
-  cy.contains('button', 'Regenerate from charts', { timeout: 30000 }).should('not.be.disabled').click();
-  cy.contains('label', 'Subject').find('input', { timeout: 30000 }).should('not.have.value', '');
+/**
+ * Stores the recap draft on the chart, the way the wrap-up page saves one, so the page opens with a draft and never
+ * calls the AI writer. (The AI route is also stubbed as a safety net.)
+ */
+export function seedRecapDraft(encounterId: string, subject: string, bodyHtml: string) {
+  const w = emrWorld();
+  return emrApi<{ subjective?: Record<string, unknown> | null }>('veterinarian', 'GET', `/soap-encounters/${encounterId}?practiceId=${w.practiceId}`).then((enc) =>
+    emrApi('veterinarian', 'PATCH', `/soap-encounters/${encounterId}`, {
+      practiceId: w.practiceId,
+      subjective: { ...(enc.subjective && typeof enc.subjective === 'object' ? enc.subjective : {}), clientEmailSubject: subject, clientEmailBody: bodyHtml },
+    }),
+  );
+}
+
+/** Waits for the recap form to show its seeded draft. */
+export function waitForRecapDraft() {
+  cy.contains('label', 'Subject', { timeout: 40000 }).find('input').should('not.have.value', '');
+}
+
+/** Records every rabies / DA2PP dose on the chart (lot and tag), so the chart can be signed. */
+export function recordDoses(encounterId: string, tag = 'T-0042') {
+  const w = emrWorld();
+  const next = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
+  return emrApi<Array<{ id: string; name: string }>>('veterinarian', 'GET', `/soap-encounters/${encounterId}/orders?practiceId=${w.practiceId}`).then((orders) => {
+    const jobs: Array<[string, { lotNumber: string; lotBalanceId: number }, string | undefined]> = [
+      [itemName('Rabies vaccine'), w.lots.rabies, tag],
+      [itemName('DA2PP vaccine'), w.lots.da2pp, undefined],
+    ];
+    for (const [name, lot, t] of jobs) {
+      const order = orders.find((o) => o.name === name);
+      if (!order) continue;
+      emrApi('veterinarian', 'PUT', `/soap-encounters/${encounterId}/orders/${order.id}/vaccination`, {
+        practiceId: w.practiceId,
+        nextVaccinationDate: next,
+        inventoryLotBalanceId: lot.lotBalanceId,
+        lotNumber: lot.lotNumber,
+        ...(t ? { tagNumber: t } : {}),
+        employeeId: w.employees.veterinarian,
+      });
+    }
+  });
 }
