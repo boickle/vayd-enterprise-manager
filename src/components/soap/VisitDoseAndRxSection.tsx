@@ -40,6 +40,8 @@ import RxLabelModal, { type RxLabelPrescriptionInput } from './RxLabelModal';
 import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import RecordHistoryLink from '../records/RecordHistoryLink';
+import { useCan } from '../../permissions/PermissionContext';
 import {
   clampRefillExpiration,
   maxRefillExpirationInput,
@@ -891,6 +893,9 @@ function PrescriptionRow({
   const [conflict, setConflict] = useState<RecordConflict | null>(null);
   const [prefilled, setPrefilled] = useState(false);
   const [showLabel, setShowLabel] = useState(false);
+  // EMR-07b: a technician saves the directions for the visit's vet. The API records the
+  // appointment's vet as prescriber; the visit provider is sent in case that vet isn't licensed.
+  const canPrescribe = useCan('rx.sig.enter');
 
   useEffect(() => {
     if (!recorded) return;
@@ -959,6 +964,7 @@ function PrescriptionRow({
         refillExpiration: labelValues?.refillExpiration || refillExpiration || undefined,
         startDate: labelValues?.startDate || startDate || undefined,
         acuity: labelValues?.acuity === 'acute' || labelValues?.acuity === 'chronic' ? labelValues.acuity : acuity,
+        ...(!canPrescribe && providerId != null ? { employeeId: providerId } : {}),
       });
       if (labelValues) {
         setName(labelValues.name);
@@ -1177,6 +1183,7 @@ function PrescriptionRow({
                 setShowLabel(true);
               }}
             />
+            {recorded ? <RecordHistoryLink entityType="encounter_order" entityId={order.id} /> : null}
           </div>
         </div>
       )}

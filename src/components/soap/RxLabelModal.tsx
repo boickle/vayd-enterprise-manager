@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, RefreshCw, X } from 'lucide-react';
 import { fetchEmployee } from '../../api/appointmentSettings';
+import { recordRxLabelPrinted } from '../../api/recordHistory';
 import {
   DIRECTIONS_MAX_LINES,
   directionsFitsLabel,
@@ -275,6 +276,8 @@ export default function RxLabelModal({
       const label = await saveAndBuildLabel();
       await printPrescriptionLabel(printerName, label);
       window.localStorage.setItem(LAST_PRINTER_KEY, printerName);
+      // EMR-07b: staff-only prescription history ("Label printed by …, Rx #…"). Never on the label.
+      await recordRxLabelPrinted(label.prescriptionNumber);
       setSuccess(true);
       onPrinted?.(printerName);
     } catch (e) {

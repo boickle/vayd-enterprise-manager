@@ -177,6 +177,7 @@ import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent'
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
 import SendRxLabelButton from '../soap/SendRxLabelButton';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import RecordHistoryLink from '../records/RecordHistoryLink';
 import {
   Card,
   DetailHeader,
@@ -4407,6 +4408,11 @@ export default function PimsPatientDetailView({
                                     return { rxNumber };
                                   },
                                 }}
+                              />
+                              <RecordHistoryLink
+                                entityType="prescription"
+                                entityId={rx.id}
+                                className="pims-patient-detail__linkish"
                               />
                             </div>
                           </td>
