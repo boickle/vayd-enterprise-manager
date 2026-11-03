@@ -1,6 +1,7 @@
 /**
- * EMR-10-8 (owner decision D4, Nov 2, 2026): the same catalog item for the same pet on the same
- * visit comes back 409 from the API with the entries already there. The SOAP order add, the
+ * EMR-10-8 (owner decision D4, Nov 2, 2026; scope changed Nov 3, 2026): the same catalog item for
+ * the same pet entered on the same invoice the same day (SOAP or direct, counter sales included),
+ * or already on the visit's estimate, comes back 409 from the API with the entries already there. The SOAP order add, the
  * estimate editor and the checkout add-line show those entries with "Add anyway": it resends the
  * request with `confirmDuplicate: true`. Cancel adds nothing.
  */
@@ -52,7 +53,7 @@ const conflict = () =>
       data: {
         statusCode: 409,
         code: 'duplicate_item',
-        message: 'This item is already on this visit for this pet.',
+        message: 'This item was already entered for this pet today on this invoice.',
         duplicates: DUPLICATES,
       },
     },
@@ -124,7 +125,9 @@ async function search(placeholder: string) {
 
 async function expectWarningListsEntries() {
   const dialog = await screen.findByRole('dialog');
-  expect(dialog.textContent).toContain('Already on this visit');
+  expect(dialog.textContent).toContain('Already entered for this pet');
+  // The server says what counts as a duplicate (this invoice today, or the visit's estimate).
+  expect(dialog.textContent).toContain('already entered for this pet today on this invoice');
   expect(dialog.textContent).toContain('Estimate: Private cremation');
   return dialog;
 }
@@ -179,7 +182,7 @@ describe('EMR-10-8 duplicate warning dialog', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       expect(post).toHaveBeenCalledTimes(1);
       expect(onChange).not.toHaveBeenCalled();
-      expect(screen.queryByText(/Not added|already on this visit/i)).toBeNull();
+      expect(screen.queryByText(/Not added|already entered/i)).toBeNull();
     });
   }
 
@@ -241,6 +244,20 @@ describe('EMR-10-8 duplicate warning dialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(isDuplicateItemSkipped(await cancelled)).toBe(true);
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('a split of one line (mail order): duplicates "allow" sends confirmDuplicate at once and never asks', async () => {
+    post.mockResolvedValue({ data: { id: 'inv-1' } } as any);
+    render(<AppDialogProvider>{null}</AppDialogProvider>);
+    const result = await addCounterInvoiceLine(
+      'inv-1',
+      { description: 'Carprofen 75mg', qty: 10, catalogItemId: 12, catalogItemType: 'inventory' } as any,
+      { duplicates: 'allow' }
+    );
+    expect(result).toEqual({ id: 'inv-1' });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(sentBodies()[0]).toMatchObject({ confirmDuplicate: true });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('automatic paths skip: duplicates "skip" never asks and never resends', async () => {
