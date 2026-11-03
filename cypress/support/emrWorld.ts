@@ -62,6 +62,17 @@ export type EmrWorld = {
     itemIds: number[];
     doses: { lot: string; name: string }[];
   };
+  /**
+   * EMR-HIST: three logged steps on Juniper for the staff-only History tab, newest first: a lab result
+   * completed (`labText`), a rabies dose edited after sign-off (`doseText`), the eVet Rx label printed (`rxText`).
+   */
+  recordHistory: {
+    patientId: number;
+    petName: string;
+    labText: string;
+    doseText: string;
+    rxText: string;
+  };
 };
 
 export const seedEmrWorld = (): Cypress.Chainable<EmrWorld> => cy.task<EmrWorld>('seedEmrWorld', null, { timeout: 120000 });

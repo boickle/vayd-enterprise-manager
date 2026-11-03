@@ -8,7 +8,7 @@ vi.mock('./http', () => ({
 }));
 vi.mock('../utils/practiceIdFromToken', () => ({ currentPracticeId: () => 1 }));
 
-import { getRecordHistory, recordRxLabelPrinted } from './recordHistory';
+import { getPatientRecordHistory, getRecordHistory, recordRxLabelPrinted } from './recordHistory';
 
 beforeEach(() => {
   post.mockReset();
@@ -42,6 +42,14 @@ describe('EMR-07b: record history API', () => {
     await getRecordHistory('invoice_line', 'line-1');
     expect(get).toHaveBeenCalledWith('/record-history', {
       params: { practiceId: 1, entityType: 'invoice_line', entityId: 'line-1' },
+    });
+  });
+
+  it('EMR-HIST: asks for one pet\'s whole history', async () => {
+    get.mockResolvedValue({ data: [] });
+    await getPatientRecordHistory('42');
+    expect(get).toHaveBeenCalledWith('/record-history/patient', {
+      params: { practiceId: 1, patientId: 42 },
     });
   });
 });

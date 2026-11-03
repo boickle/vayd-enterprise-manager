@@ -178,6 +178,8 @@ import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCa
 import SendRxLabelButton from '../soap/SendRxLabelButton';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import RecordHistoryLink from '../records/RecordHistoryLink';
+import PatientRecordHistoryPanel from '../records/PatientRecordHistoryPanel';
+import { usePermissions } from '../../permissions/PermissionContext';
 import {
   Card,
   DetailHeader,
@@ -1189,7 +1191,9 @@ type MrTab =
   | 'prescriptions'
   | 'wellness'
   | 'soaps'
-  | 'labs';
+  | 'labs'
+  /** Staff-only log of prescription, vaccine-dose and lab-result changes (owner decision Nov 3, 2026). */
+  | 'history';
 
 type Props = {
   patientId: string;
@@ -1287,6 +1291,12 @@ export default function PimsPatientDetailView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mrTab, setMrTab] = useState<MrTab>('byDate');
+  const { effective: permissionsEffective } = usePermissions();
+  /** The History tab is for staff logins only; it never shows to a client or on any output. */
+  const showRecordHistoryTab = Boolean(
+    permissionsEffective &&
+      (permissionsEffective.employeeId != null || permissionsEffective.isPlatformAdmin)
+  );
   const [headerEdit, setHeaderEdit] = useState<'pet' | 'alerts' | null>(null);
   const [dateStart, setDateStart] = useState('2000-01-01');
   const [dateEnd, setDateEnd] = useState(() => new Date().toISOString().slice(0, 10));
@@ -3257,6 +3267,7 @@ export default function PimsPatientDetailView({
               ['groups', 'By category'],
               ['monitoring', `Anesthesia (${monitoringCount})`],
               ['byDateDetail', 'Row details'],
+              ...(showRecordHistoryTab ? ([['history', 'History']] as const) : []),
             ] as const
           ).map(([id, label]) => (
             <button
@@ -4549,6 +4560,10 @@ export default function PimsPatientDetailView({
               ))
             )}
           </div>
+        )}
+
+        {mrTab === 'history' && showRecordHistoryTab && (
+          <PatientRecordHistoryPanel patientId={patientId} />
         )}
 
         {mrTab === 'wellness' && (

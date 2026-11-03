@@ -22,7 +22,7 @@ function filesUnder(rel: string): string[] {
   return out;
 }
 
-const HISTORY = /recordHistory|RecordHistoryLink|record-history/;
+const HISTORY = /recordHistory|RecordHistoryLink|PatientRecordHistory|record-history/;
 
 /** What prints or sends the record, and the Rx label. */
 const OUTPUTS = [
@@ -60,5 +60,24 @@ describe('EMR-07b: the prescription history stays off records, labels and the cl
     expect(read('components/records/RecordHistoryLink.css')).toMatch(
       /@media print\s*{\s*\.record-history\s*{\s*display:\s*none/
     );
+  });
+
+  // EMR-HIST (owner decision Nov 3, 2026): the pet's History tab, which also lists lab results.
+  it('the pet History panel hides itself when printed and only staff see the tab', () => {
+    expect(read('components/records/PatientRecordHistoryPanel.tsx')).toMatch(
+      /className="record-history patient-record-history"/
+    );
+    const chart = read('components/pims/PimsPatientDetailView.tsx');
+    expect(chart).toMatch(/showRecordHistoryTab \? \(\[\['history', 'History'\]\]/);
+    expect(chart).toMatch(/mrTab === 'history' && showRecordHistoryTab/);
+  });
+
+  it('the records sent out and the chart print never read the pet history or lab history', () => {
+    for (const file of OUTPUTS) {
+      expect({ file, uses: /getPatientRecordHistory|lab_result['"]?\s*,\s*entityId/.test(read(file)) }).toEqual({
+        file,
+        uses: false,
+      });
+    }
   });
 });
