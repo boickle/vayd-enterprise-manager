@@ -675,6 +675,23 @@ function EditableUnitPrice({
 export const EditableUnitPriceForTest = EditableUnitPrice;
 
 /** The line amount after any discount; a membership discount gets a short "Member 10%" tag. */
+/** EMR-A3: the manual account credit button is only for staff who hold account_credit.post. */
+export function AddCreditButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  const mayPostCredit = useCan('account_credit.post');
+  if (!mayPostCredit) return null;
+  return (
+    <button
+      type="button"
+      className="client-fin__btn-ghost"
+      onClick={onClick}
+      disabled={disabled}
+      title="Add a credit on this account"
+    >
+      Add credit
+    </button>
+  );
+}
+
 export function LineAmount({
   line,
 }: {
@@ -5203,15 +5220,7 @@ export default function ClientFinancialWorkspace({
               <button type="button" className="client-fin__btn" onClick={() => startNewInvoice()} disabled={busy}>
                 New invoice
               </button>
-              <button
-                type="button"
-                className="client-fin__btn-ghost"
-                onClick={() => void addManualAccountCredit()}
-                disabled={busy}
-                title="Add a credit on this account"
-              >
-                Add credit
-              </button>
+              <AddCreditButton onClick={() => void addManualAccountCredit()} disabled={busy} />
             </div>
           </div>
           <div className="client-fin__pay-links client-fin__pay-links--ledger">
