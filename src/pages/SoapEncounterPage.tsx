@@ -92,6 +92,7 @@ import ScribeSuggestedPlanItems, {
 import { appConfirm } from '../utils/appDialog';
 import {
   clearSoapChartDraft,
+  holdUnsavedSoapDraft,
   mergeParkedSoapDraft,
   readSoapChartDraft,
   soapChartDraftIsNewer,
@@ -1366,6 +1367,24 @@ export default function SoapEncounterPage() {
           return false;
         }
         if (isNetworkError(e)) {
+          // Hold the typed text on this device right away (not only on the 8s flush),
+          // in Scribe and Manual mode alike, so a reload before signal returns keeps it.
+          if (lastSavedRef.current?.encounterId === id) {
+            holdUnsavedSoapDraft(
+              id,
+              snapshotSoapDraft({
+                subjective: subjectiveRef.current,
+                email: emailDraftRef.current,
+                objectiveNotes: objectiveNotesRef.current,
+                reasoning: reasoningRef.current,
+                planNotes: planNotesRef.current,
+                vitals: vitalsRef.current,
+                exam: examRef.current,
+                linkedProblemIds: linkedProblemIdsRef.current,
+              }),
+              lastSavedRef.current.draft
+            );
+          }
           setNotSavedOffline(true);
           return false;
         }
