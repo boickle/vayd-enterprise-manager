@@ -31,6 +31,7 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
     const { clientId, pets } = w.households.rxtech;
     const [dog] = pets;
     const sig = '1 tab PO q12h with food';
+    const discardAfter = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
 
     emrApi<{ id: string }>('technician', 'POST', '/soap-encounters', {
       practiceId: w.practiceId,
@@ -66,19 +67,21 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
               if ($btn.attr('aria-expanded') !== 'true') cy.wrap($btn).click({ scrollBehavior: 'center' });
             });
           });
-          cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row', { timeout: 20000 }).should('exist');
+          cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match', { timeout: 20000 }).should('exist');
         };
         // 1. The technician writes the directions on the SOAP.
         signInEmr('technician', soapPath(dog, clientId));
         cy.contains(dog.name, { timeout: 40000 });
         openRxDrawer();
-        cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row').within(() => {
+        // A medication's drawer shows the checkout Rx form (VisitCheckoutPanel), not the dose-row form.
+        cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match').within(() => {
+          cy.get('textarea').clear().type(sig);
+          cy.contains('button', 'Save sig').click();
+          cy.contains('.client-fin__entered', 'Entered by', { timeout: 20000 }).should('exist');
+          cy.contains('label', 'refills').find('input').clear().type('2');
           cy.get('select[aria-label="Acute or chronic prescription"]').select('acute');
-          cy.contains('label', 'Refills').find('input[type="number"]').clear().type('2');
-          cy.get('textarea').first().clear().type(sig);
-          cy.contains('button', /Save Rx|Update Rx/).click();
-          cy.contains('button', 'Update Rx', { timeout: 20000 }).should('exist');
-          cy.contains('label', 'Refills').find('input[type="number"]').should('have.value', '2');
+          cy.contains('label', 'Discard after').find('input[type="date"]').type(discardAfter);
+          cy.contains('button', 'Save Rx').should('not.be.disabled').click();
         });
 
         // The prescriber is the visit's vet, not the technician.
@@ -86,18 +89,12 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
           `SELECT "employee_Id" || '|' || instructions || '|' || refill FROM prescriptions WHERE "encounterOrderId" = '${order.id}' AND "isDeleted" = false`
         ).should('eq', `${w.employees.veterinarian}|${sig}|2`);
 
-        // 2. The technician approves the script for dispensing (rx.invoice.approve, as before).
-        visitInvoice(dog).then((inv) => {
-          const line = inv.lines.find(
-            (l) => l.description.includes('Carprofen 75mg') && !l.isDeleted
-          );
-          expect(line, 'Carprofen line on the visit invoice').to.not.equal(undefined);
-          emrRequest('technician', 'PATCH', `/visit-invoices/${inv.id}/lines/${line!.id}`, {
-            practiceId: w.practiceId,
-            rxApproved: true,
-          })
-            .its('status')
-            .should('eq', 200);
+        // 2. The technician approves the script for dispensing with the form's Approve button (rx.invoice.approve).
+        // Saving the Rx collapses the drawer, so open it again first.
+        openRxDrawer();
+        cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match').within(() => {
+          cy.get('.client-fin__btn-approve').click();
+          cy.contains('.client-fin__entered', 'Approved', { timeout: 20000 }).should('exist');
         });
 
         // 3. The label prints (the label screens log it right after printing).
@@ -116,7 +113,7 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
           signInEmr('technician', soapPath(dog, clientId));
           cy.contains(dog.name, { timeout: 40000 });
           openRxDrawer();
-          cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row').within(() => {
+          cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match').within(() => {
               cy.contains('button', 'History').click();
               cy.get('[aria-label="Record history"] li', { timeout: 20000 }).should(
                 'have.length',
