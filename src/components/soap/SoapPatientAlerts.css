@@ -1,0 +1,24 @@
+.soap-patient-alerts {
+  margin: 8px 16px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 2px solid #ef4444;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.soap-patient-alerts__label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.soap-patient-alerts__by {
+  font-weight: 400;
+}

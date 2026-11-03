@@ -66,6 +66,7 @@ import {
 import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
+import SoapPatientAlerts from '../components/soap/SoapPatientAlerts';
 import SoapAddendaSection from '../components/soap/SoapAddendaSection';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
@@ -1895,6 +1896,8 @@ export default function SoapEncounterPage() {
           )}
         </div>
       </header>
+
+      <SoapPatientAlerts profile={patientProfile} patientName={patientName} />
 
       {notSavedOffline && (
         <div className="soap-error soap-error-banner" role="status" data-testid="soap-not-saved">
