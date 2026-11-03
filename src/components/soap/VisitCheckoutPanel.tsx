@@ -90,6 +90,7 @@ import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShippingTypes';
 import { attachTagalongLines, tagalongTaxHint } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import RecordHistoryLink from '../records/RecordHistoryLink';
 import StockLotPicker from '../inventory/StockLotPicker';
 import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
@@ -617,6 +618,9 @@ function CheckoutInvoiceRxFields({
             <span className="client-fin__entered">
               Entered by {line.instructionsEnteredByName}
             </span>
+          ) : null}
+          {line.instructions || line.rxApprovedAt ? (
+            <RecordHistoryLink entityType="invoice_line" entityId={line.id} />
           ) : null}
           {dymoSource ? (
             <SendRxLabelButton

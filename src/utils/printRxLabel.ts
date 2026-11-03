@@ -1,4 +1,5 @@
 import { fetchEmployee } from '../api/appointmentSettings';
+import { recordRxLabelPrinted } from '../api/recordHistory';
 import type { RxLabelPrescriptionInput } from '../components/soap/RxLabelModal';
 import {
   DIRECTIONS_MAX_LINES,
@@ -216,6 +217,8 @@ export async function printRxLabelDirect(input: DirectRxLabelInput): Promise<str
   };
   await printPrescriptionLabel(printerName, label);
   window.localStorage.setItem(LAST_DYMO_PRINTER_KEY, printerName);
+  // EMR-07b: staff-only prescription history ("Label printed by …, Rx #…"). Never on the label.
+  await recordRxLabelPrinted(rxNumber);
   return printerName;
 }
 
