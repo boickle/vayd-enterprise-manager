@@ -19,13 +19,13 @@ import {
  * refused with "Changed by Emr veterinarian, reload", what the technician typed is still in the box, and the
  * vet's tag 123 is still the saved tag. "Reload their version" then shows tag 123.
  *
- * Seed: vayd-api test/scripts/emr-core-visit-seed.ts (household "signoff", pet Fennel). See emrCoreVisitWorld.ts.
+ * Seed: vayd-api test/scripts/emr-core-visit-seed.ts (household "twostaff", pet Basil, its own visit so a signed chart elsewhere cannot lock it). See emrCoreVisitWorld.ts.
  * Nothing reaches Stripe or email.
  */
 describe('EMR-13-5: tech saves second on a dose the vet changed', () => {
   it('shows "Changed by <vet>, reload", keeps the typed serial number, and keeps the vet\'s tag', () => {
     const w = emrWorld();
-    const { clientId, pets } = w.households.signoff;
+    const { clientId, pets } = w.households.twostaff;
     const [dog] = pets;
     const next = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
 
