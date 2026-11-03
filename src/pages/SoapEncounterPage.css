@@ -3656,12 +3656,46 @@ a.soap-header-client:hover {
   flex-direction: column;
   gap: 12px;
 }
+/* Checkout drawer sits in a narrow column (~520px): stack sig, fields, actions. */
 .soap-checkout-invoice-rx-match {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr);
-  gap: 12px 20px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
   width: 100%;
+  min-width: 0;
+}
+.client-fin__line-meta.soap-checkout-invoice-rx-match .client-fin__rx-extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 8px 12px;
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+}
+.soap-checkout-invoice-rx-match .client-fin__sig-label {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.soap-checkout-invoice-rx-match .client-fin__refill input {
+  width: 100%;
+  max-width: 6rem;
+}
+.soap-checkout-invoice-rx-match .client-fin__sig-entered {
+  display: block;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.soap-checkout-invoice-rx-match .client-fin__rx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.soap-checkout-invoice-rx-match .client-fin__rx-actions:empty {
+  display: none;
 }
 .soap-checkout-invoice-rx-match .client-fin__sig textarea {
   border: 1px solid #cbd5e1;
@@ -3693,8 +3727,7 @@ a.soap-header-client:hover {
   font-weight: 400;
 }
 @media (max-width: 720px) {
-  .soap-checkout-invoice-rx,
-  .soap-checkout-invoice-rx-match {
+  .soap-checkout-invoice-rx {
     grid-template-columns: 1fr;
   }
 }
