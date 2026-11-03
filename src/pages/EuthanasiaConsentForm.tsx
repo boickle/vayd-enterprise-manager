@@ -613,7 +613,12 @@ export default function EuthanasiaConsentForm() {
       setDone(true);
     } catch (err) {
       const message = axiosMessage(err) || 'Could not submit the form.';
-      if (/card|pay/i.test(message)) {
+      if (/already been checked out/i.test(message)) {
+        // The visit was checked out while the form was open: nothing was recorded or charged.
+        // Show the message on its own, as the link does when opened after checkout.
+        setError(message);
+        setForm(null);
+      } else if (/card|pay/i.test(message)) {
         showFieldIssue({ field: 'payment', message });
       } else {
         setError(message);

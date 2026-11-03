@@ -64,7 +64,8 @@ describe('EMR-12-8: family declines at the door', () => {
     // Checkout: the estimate shows the hold; the family says no.
     signIn(world, `/schedule/soap/${appointmentId}/${patientId}/checkout?clientId=${clientId}`);
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
-    cy.contains('$475.00 is held on their card').should('exist');
+    // Nov 3, 2026: a signed consent with a hold shows the authorization bubble (date the form was signed).
+    cy.get('[data-testid="estimate-authorization-bubble"]', { timeout: 20000 }).should('contain.text', 'This owner approved $475.00 on');
     cy.contains('button', 'Family declined').click();
     cy.contains('The $475.00 hold comes off their card').should('exist');
     cy.contains('button', 'Yes, the family declined').click();
@@ -72,7 +73,7 @@ describe('EMR-12-8: family declines at the door', () => {
     cy.get('[data-testid="estimate-settle-notice"]', { timeout: 30000 })
       .should('contain.text', 'hold was released and nothing was charged');
     cy.contains('Estimate given to the family').should('not.exist');
-    cy.contains('button', 'Convert to invoice & take payment').should('not.exist');
+    cy.contains('button', 'Run Payment from Authorization').should('not.exist');
 
     // Staff cancel the visit (the scheduler's Cancel sets this status).
     emrSql(`UPDATE appointments SET "confirmStatusName" = 'Canceled Appointment' WHERE id = ${appointmentId}`);
@@ -108,7 +109,7 @@ describe('EMR-12-8: family declines at the door', () => {
 
     // Reloading checkout shows no estimate to collect and no charge.
     signIn(world, `/schedule/soap/${appointmentId}/${patientId}/checkout?clientId=${clientId}`);
-    cy.contains('button', 'Convert to invoice & take payment').should('not.exist');
-    cy.contains('$475.00 is held on their card').should('not.exist');
+    cy.contains('button', 'Run Payment from Authorization').should('not.exist');
+    cy.get('[data-testid="estimate-authorization-bubble"]').should('not.exist');
   });
 });

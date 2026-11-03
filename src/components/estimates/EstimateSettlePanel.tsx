@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, CreditCard, ShieldCheck, X } from 'lucide-react';
+import { CreditCard, FileText, ShieldCheck, X } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
 import {
   authorizeEstimate,
+  convertEstimateToInvoice,
   getEstimateForAppointment,
+  getEstimateSettlePreview,
   hasLiveAuthorization,
   markEstimateDeclined,
-  setEstimateLineDecision,
   settleEstimate,
-  type EstimateLineDecision,
+  type EstimateSettlePreview,
   type VisitEstimate,
   type VisitEstimateLine,
 } from '../../api/visitEstimates';
@@ -20,39 +21,69 @@ type Props = {
   clientName?: string | null;
   clientEmail?: string | null;
   disabled?: boolean;
+  /** Changes whenever the visit invoice changes, so the final-bill figure is read again. */
+  invoiceKey?: string | number | null;
   /** The bill this estimate became, so the parent can reload it. */
   onSettled?: (invoiceId: string) => void;
 };
 
+export const RUN_PAYMENT_LABEL = 'Run Payment from Authorization';
+
 const money = (n: number) =>
   Number(n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+const longDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
 /** What the line adds to the bill, tax included. Covered lines add nothing. */
 const lineCharge = (l: VisitEstimateLine) =>
   l.isCovered ? 0 : (Number(l.amount) || 0) + (Number(l.taxAmount) || 0);
 
 /**
- * The quote, at checkout. Renders nothing unless a live estimate is attached to
- * this visit, so it stays out of the way on ordinary appointments.
+ * The checkout bubble for a euthanasia estimate with a card authorization (owner decision,
+ * Nov 3, 2026): what the owner approved and when, and what the button will take.
+ */
+export function authorizationBubbleText(preview: EstimateSettlePreview): string[] {
+  const signed = preview.consentSignedAt ? ` on ${longDate(preview.consentSignedAt)}` : '';
+  const lines = [
+    `This owner approved ${money(preview.authorizedAmount)}${signed} — it will be charged when you click "${RUN_PAYMENT_LABEL}".`,
+  ];
+  if (preview.difference > 0.005) {
+    lines.push(
+      `An additional ${money(preview.difference)} will be charged to the same card when you click the button.`
+    );
+  } else if (preview.difference < -0.005) {
+    lines.push(`${money(-preview.difference)} less than authorized — the rest of the hold is released.`);
+  }
+  return lines;
+}
+
+/**
+ * The quote, at checkout. Renders nothing unless a live estimate is attached to this visit.
  *
- * Owner decision D4: the items are listed and staff mark each Accept or Decline
- * with the family present, like the Room Loader. Declined items never reach the
- * invoice, and only the accepted total is taken from the hold.
+ * Owner decisions (Nov 3, 2026): there is no per-item Accept / Decline here. The family chose their
+ * items on the consent form (or staff added or removed them by hand), so every line on the quote is
+ * billed. Only a euthanasia estimate takes a card: for those the bubble says what the owner
+ * approved, and money moves only when staff click "Run Payment from Authorization". Any other
+ * estimate is informational: its items can be copied to the invoice, and payment is taken at
+ * checkout as usual.
  *
- * The hold is normally placed by the nightly sweep; the button here is for the
- * visit that got moved up, or the card that arrived late.
+ * The hold is normally placed by the sweep about a day before the visit; "Authorize now" is for
+ * the visit that got moved up, or the card that arrived late.
  */
 export default function EstimateSettlePanel({
   appointmentId,
   clientName,
   clientEmail,
   disabled,
+  invoiceKey,
   onSettled,
 }: Props) {
   const [estimate, setEstimate] = useState<VisitEstimate | null>(null);
-  const [busy, setBusy] = useState<'authorize' | 'settle' | 'decide' | 'decline' | null>(null);
+  const [preview, setPreview] = useState<EstimateSettlePreview | null>(null);
+  const [busy, setBusy] = useState<'authorize' | 'settle' | 'convert' | 'decline' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Shown after the panel's work is done: a lapsed hold (EMR-12), or a declined estimate. */
+  /** Shown after the panel's work is done: a lapsed hold (EMR-12), nothing to bill, or a decline. */
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDecline, setConfirmDecline] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
@@ -76,6 +107,35 @@ export default function EstimateSettlePanel({
     };
   }, [appointmentId]);
 
+  const euthanasia = estimate?.isEuthanasia === true;
+  const held = hasLiveAuthorization(estimate);
+  const previewKey = estimate
+    ? `${estimate.id}|${estimate.total}|${estimate.authorizedAmount}|${estimate.lastChargeStatus}|${
+        estimate.lines?.length ?? 0
+      }|${invoiceKey ?? ''}`
+    : '';
+
+  useEffect(() => {
+    const id = estimate?.id;
+    if (!id || !euthanasia || !held) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    void getEstimateSettlePreview(id)
+      .then((next) => {
+        if (!cancelled) setPreview(next);
+      })
+      .catch(() => {
+        if (!cancelled) setPreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // previewKey covers every estimate field the preview depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey, euthanasia, held]);
+
   const authorize = useCallback(async () => {
     if (!estimate) return;
     setBusy('authorize');
@@ -89,35 +149,31 @@ export default function EstimateSettlePanel({
     }
   }, [estimate]);
 
-  const decide = useCallback(
-    async (lineIds: string[], decision: EstimateLineDecision | null) => {
-      if (!estimate || !lineIds.length) return;
-      setBusy('decide');
-      setError(null);
-      try {
-        let next = estimate;
-        for (const lineId of lineIds) {
-          next = await setEstimateLineDecision(estimate.id, lineId, decision);
-        }
-        setEstimate(next);
-      } catch (e) {
-        setError(apiErrorMessage(e));
-      } finally {
-        setBusy(null);
-      }
-    },
-    [estimate]
-  );
-
   const settle = useCallback(async () => {
     if (!estimate) return;
     setBusy('settle');
     setError(null);
     try {
       const invoice = await settleEstimate(estimate.id);
-      onSettled?.(invoice.id);
-      // The hold had lapsed at Stripe: the saved card was charged instead. Staff should know.
+      if (invoice.id) onSettled?.(invoice.id);
+      // The hold had lapsed (the saved card was charged instead), or nothing was left to bill.
       setNotice(invoice.holdNotice ?? null);
+      setEstimate(null);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [estimate, onSettled]);
+
+  /** Informational estimate: copy its items onto the visit invoice. Nothing is charged. */
+  const convert = useCallback(async () => {
+    if (!estimate) return;
+    setBusy('convert');
+    setError(null);
+    try {
+      const invoice = await convertEstimateToInvoice(estimate.id);
+      onSettled?.(invoice.id);
       setEstimate(null);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -153,17 +209,60 @@ export default function EstimateSettlePanel({
     ) : null;
   }
 
-  const held = hasLiveAuthorization(estimate);
   const total = Number(estimate.total) || 0;
   const heldAmount = Number(estimate.authorizedAmount) || 0;
   const hasCard = Boolean(estimate.savedPaymentMethodId);
   const lines = estimate.lines ?? [];
-  const undecided = lines.filter((l) => l.decision !== 'accepted' && l.decision !== 'declined');
-  const allDecided = undecided.length === 0;
-  const acceptedTotal = lines
-    .filter((l) => l.decision === 'accepted')
-    .reduce((sum, l) => sum + lineCharge(l), 0);
   const showPets = new Set(lines.map((l) => l.patientId ?? null)).size > 1;
+
+  const lineList =
+    lines.length > 0 ? (
+      <div className="estimate-settle-lines" data-testid="estimate-settle-lines">
+        {lines.map((l) => (
+          <div key={l.id} className="estimate-settle-line" data-testid="estimate-settle-line">
+            <div className="estimate-settle-line-name">
+              <span>{l.description}</span>
+              {showPets && l.patientName ? <em>{l.patientName}</em> : null}
+              {Number(l.qty) !== 1 ? <em>× {Number(l.qty)}</em> : null}
+            </div>
+            <span className="estimate-settle-line-amount">
+              {l.isCovered ? 'Covered' : money(lineCharge(l))}
+            </span>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <p className="estimate-settle-hint">No items are left on this estimate.</p>
+    );
+
+  if (!euthanasia) {
+    return (
+      <div className="estimate-settle" data-testid="estimate-settle-informational">
+        <div className="estimate-settle-head">
+          <span>Estimate given to the family</span>
+          <strong>{money(total)}</strong>
+        </div>
+        <p className="estimate-settle-status">
+          For information only: no card is held for this estimate. Take payment at checkout as usual.
+        </p>
+        {lineList}
+        {error && <div className="soap-error">{error}</div>}
+        {lines.length > 0 && (
+          <div className="estimate-settle-actions">
+            <button
+              type="button"
+              className="soap-btn ghost"
+              disabled={disabled || busy != null}
+              onClick={() => void convert()}
+            >
+              <FileText size={14} />
+              {busy === 'convert' ? 'Adding…' : 'Add estimate items to the invoice'}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="estimate-settle">
@@ -172,94 +271,23 @@ export default function EstimateSettlePanel({
         <strong>{money(total)}</strong>
       </div>
 
-      <p className="estimate-settle-status">
-        {held
-          ? allDecided && acceptedTotal + 0.005 < heldAmount
-            ? `${money(heldAmount)} is held on their card. Only the accepted ${money(
-                acceptedTotal
-              )} is taken; the rest of the hold is released.`
-            : heldAmount + 0.005 < total
-              ? `${money(heldAmount)} is held on their card. The rest is charged when you take payment.`
-              : `${money(heldAmount)} is held on their card. Nothing has been taken yet.`
-          : hasCard
-            ? 'A card is saved. No hold has been placed yet.'
-            : 'No card on file for this estimate.'}
-      </p>
-
-      {lines.length > 0 && (
-        <div className="estimate-settle-lines" data-testid="estimate-settle-lines">
-          <p className="estimate-settle-hint">
-            Go through each item with the family and mark it Accept or Decline. Declined items are
-            not billed.
-          </p>
-          {lines.map((l) => {
-            const accepted = l.decision === 'accepted';
-            const declined = l.decision === 'declined';
-            return (
-              <div
-                key={l.id}
-                className={`estimate-settle-line${declined ? ' is-declined' : ''}${
-                  accepted ? ' is-accepted' : ''
-                }`}
-                data-testid="estimate-settle-line"
-              >
-                <div className="estimate-settle-line-name">
-                  <span>{l.description}</span>
-                  {showPets && l.patientName ? <em>{l.patientName}</em> : null}
-                  {Number(l.qty) !== 1 ? <em>× {Number(l.qty)}</em> : null}
-                </div>
-                <span className="estimate-settle-line-amount">
-                  {l.isCovered ? 'Covered' : money(lineCharge(l))}
-                </span>
-                <div
-                  className="estimate-settle-line-choice"
-                  role="group"
-                  aria-label={l.description}
-                >
-                  <button
-                    type="button"
-                    className={`estimate-settle-choice accept${accepted ? ' on' : ''}`}
-                    aria-pressed={accepted}
-                    disabled={disabled || busy != null}
-                    onClick={() => void decide([l.id], accepted ? null : 'accepted')}
-                  >
-                    <Check size={13} /> Accept
-                  </button>
-                  <button
-                    type="button"
-                    className={`estimate-settle-choice decline${declined ? ' on' : ''}`}
-                    aria-pressed={declined}
-                    disabled={disabled || busy != null}
-                    onClick={() => void decide([l.id], declined ? null : 'declined')}
-                  >
-                    <X size={13} /> Decline
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          <div className="estimate-settle-accepted">
-            <span>Accepted</span>
-            <strong data-testid="estimate-settle-accepted-total">{money(acceptedTotal)}</strong>
-          </div>
-          {!allDecided && (
-            <button
-              type="button"
-              className="soap-btn ghost estimate-settle-accept-rest"
-              disabled={disabled || busy != null}
-              onClick={() =>
-                void decide(
-                  undecided.map((l) => l.id),
-                  'accepted'
-                )
-              }
-            >
-              <Check size={14} /> Accept the{' '}
-              {undecided.length === 1 ? 'remaining item' : `${undecided.length} remaining items`}
-            </button>
-          )}
+      {held && preview ? (
+        <div className="estimate-settle-bubble" role="note" data-testid="estimate-authorization-bubble">
+          {authorizationBubbleText(preview).map((text) => (
+            <p key={text}>{text}</p>
+          ))}
         </div>
+      ) : (
+        <p className="estimate-settle-status">
+          {held
+            ? `${money(heldAmount)} is held on their card. Nothing has been taken yet.`
+            : hasCard
+              ? 'A card is saved. No hold has been placed yet.'
+              : 'No card on file for this estimate.'}
+        </p>
       )}
+
+      {lineList}
 
       {error && <div className="soap-error">{error}</div>}
 
@@ -299,18 +327,12 @@ export default function EstimateSettlePanel({
         <button
           type="button"
           className="soap-btn"
-          disabled={disabled || busy != null || total <= 0 || !allDecided}
-          title={
-            !allDecided
-              ? 'Accept or decline every item first'
-              : hasCard
-                ? ''
-                : 'Take a card before collecting'
-          }
+          disabled={disabled || busy != null}
+          title={hasCard ? '' : 'Take a card before collecting'}
           onClick={() => void settle()}
         >
           <CreditCard size={14} />
-          {busy === 'settle' ? 'Collecting…' : 'Convert to invoice & take payment'}
+          {busy === 'settle' ? 'Collecting…' : RUN_PAYMENT_LABEL}
         </button>
       </div>
 

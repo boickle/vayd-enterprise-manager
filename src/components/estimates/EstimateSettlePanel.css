@@ -59,7 +59,7 @@
 
 .estimate-settle-line {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 10px;
   padding: 6px 0;
@@ -67,11 +67,6 @@
   font-size: 13px;
 }
 
-.estimate-settle-line.is-declined .estimate-settle-line-name span,
-.estimate-settle-line.is-declined .estimate-settle-line-amount {
-  color: #94a3b8;
-  text-decoration: line-through;
-}
 
 .estimate-settle-line-name {
   display: flex;
@@ -90,60 +85,13 @@
   color: #0f172a;
 }
 
-.estimate-settle-line-choice {
-  display: inline-flex;
-  gap: 4px;
-}
 
-.estimate-settle-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border: 1px solid #cbd5e1;
-  border-radius: 999px;
-  background: #fff;
-  font-size: 12px;
-  color: #334155;
-  cursor: pointer;
-}
 
-.estimate-settle-choice:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 
-.estimate-settle-choice.accept.on {
-  border-color: #16a34a;
-  background: #dcfce7;
-  color: #166534;
-}
 
-.estimate-settle-choice.decline.on {
-  border-color: #dc2626;
-  background: #fee2e2;
-  color: #991b1b;
-}
 
-.estimate-settle-accepted {
-  display: flex;
-  justify-content: space-between;
-  padding-top: 8px;
-  font-size: 13px;
-  color: #334155;
-}
 
-.estimate-settle-accepted strong {
-  font-variant-numeric: tabular-nums;
-  color: #0f172a;
-}
 
-.estimate-settle-accept-rest {
-  margin-top: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 
 .estimate-settle-notice {
   font-size: 13px;
@@ -170,4 +118,23 @@
   margin: 0;
   font-size: 12.5px;
   color: #7f1d1d;
+}
+
+.estimate-settle-bubble {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #1e3a8a;
+}
+
+.estimate-settle-bubble p {
+  margin: 0;
+}
+
+.estimate-settle-bubble p + p {
+  margin-top: 4px;
 }

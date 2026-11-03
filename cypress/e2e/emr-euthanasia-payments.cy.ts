@@ -142,9 +142,12 @@ describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bi
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
     noPrepayButtons();
-    // EMR-10 (D4): staff accept each quoted item with the family before collecting.
-    cy.contains('button', /Accept the 2 remaining items/).click();
-    cy.contains('button', 'Convert to invoice & take payment').should('not.be.disabled').click();
+    // Nov 3, 2026: no per-item Accept / Decline. No consent form was signed here, so the bubble has no date.
+    cy.get('[data-testid="estimate-authorization-bubble"]', { timeout: 20000 }).should(
+      'have.text',
+      `This owner approved $${estimateTotal.toFixed(2)} — it will be charged when you click "Run Payment from Authorization".`,
+    );
+    cy.contains('button', 'Run Payment from Authorization').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
 
     invoiceForAppointment(world, appointmentId).then((inv) => {
@@ -230,9 +233,13 @@ describe('EMR-02-6: phone path for families who cannot use the online form', () 
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
     noPrepayButtons();
-    // EMR-10 (D4): staff accept each quoted item with the family before collecting.
-    cy.contains('button', /Accept the 2 remaining items/).click();
-    cy.contains('button', 'Convert to invoice & take payment').should('not.be.disabled').click();
+    // Nov 3, 2026: the bubble names the day the oral consent was recorded (today); the click charges.
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    cy.get('[data-testid="estimate-authorization-bubble"]', { timeout: 20000 }).should(
+      'contain.text',
+      `This owner approved $${estimateTotal.toFixed(2)} on ${today} — it will be charged when you click "Run Payment from Authorization".`,
+    );
+    cy.contains('button', 'Run Payment from Authorization').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
 
     invoiceForAppointment(world, appointmentId).then((inv) => {
