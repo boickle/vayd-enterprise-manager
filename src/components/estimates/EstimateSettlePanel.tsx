@@ -5,6 +5,7 @@ import {
   authorizeEstimate,
   getEstimateForAppointment,
   hasLiveAuthorization,
+  markEstimateDeclined,
   setEstimateLineDecision,
   settleEstimate,
   type EstimateLineDecision,
@@ -49,8 +50,11 @@ export default function EstimateSettlePanel({
   onSettled,
 }: Props) {
   const [estimate, setEstimate] = useState<VisitEstimate | null>(null);
-  const [busy, setBusy] = useState<'authorize' | 'settle' | 'decide' | null>(null);
+  const [busy, setBusy] = useState<'authorize' | 'settle' | 'decide' | 'decline' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Shown after the panel's work is done: a lapsed hold (EMR-12), or a declined estimate. */
+  const [notice, setNotice] = useState<string | null>(null);
+  const [confirmDecline, setConfirmDecline] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
 
   useEffect(() => {
@@ -58,6 +62,7 @@ export default function EstimateSettlePanel({
       setEstimate(null);
       return;
     }
+    setNotice(null);
     let cancelled = false;
     void getEstimateForAppointment(appointmentId)
       .then((next) => {
@@ -111,6 +116,8 @@ export default function EstimateSettlePanel({
     try {
       const invoice = await settleEstimate(estimate.id);
       onSettled?.(invoice.id);
+      // The hold had lapsed at Stripe: the saved card was charged instead. Staff should know.
+      setNotice(invoice.holdNotice ?? null);
       setEstimate(null);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -119,7 +126,32 @@ export default function EstimateSettlePanel({
     }
   }, [estimate, onSettled]);
 
-  if (!estimate) return null;
+  /** The family said no at the door: release the hold, withdraw the consent, charge nothing. */
+  const decline = useCallback(async () => {
+    if (!estimate) return;
+    setBusy('decline');
+    setError(null);
+    try {
+      await markEstimateDeclined(estimate.id);
+      setConfirmDecline(false);
+      setNotice(
+        'Estimate declined. The card hold was released and nothing was charged. The signed consent is marked withdrawn. Cancel the visit if it will not go ahead.'
+      );
+      setEstimate(null);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [estimate]);
+
+  if (!estimate) {
+    return notice ? (
+      <div className="estimate-settle estimate-settle-notice" role="status" data-testid="estimate-settle-notice">
+        {notice}
+      </div>
+    ) : null;
+  }
 
   const held = hasLiveAuthorization(estimate);
   const total = Number(estimate.total) || 0;
@@ -253,6 +285,17 @@ export default function EstimateSettlePanel({
             {busy === 'authorize' ? 'Placing hold…' : 'Authorize now'}
           </button>
         )}
+        {!confirmDecline && (
+          <button
+            type="button"
+            className="soap-btn ghost danger"
+            disabled={disabled || busy != null}
+            title="The family decided not to go ahead. Releases the hold; nothing is charged."
+            onClick={() => setConfirmDecline(true)}
+          >
+            <X size={14} /> Family declined
+          </button>
+        )}
         <button
           type="button"
           className="soap-btn"
@@ -270,6 +313,31 @@ export default function EstimateSettlePanel({
           {busy === 'settle' ? 'Collecting…' : 'Convert to invoice & take payment'}
         </button>
       </div>
+
+      {confirmDecline && (
+        <div className="estimate-settle-decline" role="group" aria-label="Confirm the family declined">
+          <p>
+            Decline this estimate? {held ? `The ${money(heldAmount)} hold comes off their card` : 'Nothing is held'},
+            nothing is charged, and the signed consent is marked withdrawn.
+          </p>
+          <button
+            type="button"
+            className="soap-btn danger"
+            disabled={disabled || busy != null}
+            onClick={() => void decline()}
+          >
+            {busy === 'decline' ? 'Declining…' : 'Yes, the family declined'}
+          </button>
+          <button
+            type="button"
+            className="soap-btn ghost"
+            disabled={busy != null}
+            onClick={() => setConfirmDecline(false)}
+          >
+            Keep the estimate
+          </button>
+        </div>
+      )}
 
       {cardOpen && (
         <EstimateCardModal

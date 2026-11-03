@@ -3336,7 +3336,9 @@ function SchedulerEuthanasiaConsentIcon({
   status: EuthanasiaConsentUiStatus;
 }) {
   const title =
-    status === 'complete'
+    status === 'withdrawn'
+      ? 'Euthanasia consent: withdrawn (the family declined)'
+      : status === 'complete'
       ? 'Euthanasia consent: on file'
       : status === 'sent'
         ? 'Euthanasia consent: sent, waiting for client'
@@ -3351,7 +3353,9 @@ function SchedulerEuthanasiaConsentIcon({
         .join(' ')}
       title={title}
       aria-hidden
-      style={{ backgroundColor: PRE_APPT_STATUS_COLOR[status] }}
+      style={{
+        backgroundColor: status === 'withdrawn' ? '#64748b' : PRE_APPT_STATUS_COLOR[status],
+      }}
     >
       EC
     </span>

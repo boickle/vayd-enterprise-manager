@@ -260,7 +260,8 @@ export function offeringForProvider(
 export const EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT =
   'vayd:euthanasia-consent-status-changed';
 
-export type EuthanasiaConsentUiStatus = 'none' | 'sent' | 'complete';
+/** `withdrawn`: the family signed, then declined at the door (EMR-12). */
+export type EuthanasiaConsentUiStatus = 'none' | 'sent' | 'complete' | 'withdrawn';
 
 export function notifyEuthanasiaConsentStatusChanged(): void {
   if (typeof window === 'undefined') return;

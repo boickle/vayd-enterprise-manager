@@ -153,6 +153,8 @@ export default function EuthanasiaConsentForm() {
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<FieldIssue | null>(null);
   const [done, setDone] = useState(false);
+  /** F6: the practice already settled the bill, so the card was not charged here. */
+  const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
   const [form, setForm] = useState<FormPayload | null>(null);
   const [signature, setSignature] = useState('');
   const today = useMemo(() => todayParts(), []);
@@ -556,7 +558,7 @@ export default function EuthanasiaConsentForm() {
         }
         paymentMethodId = await createPaymentMethodRef.current();
       }
-      await submitEuthanasiaConsent({
+      const submitted = await submitEuthanasiaConsent({
         token,
         signedName: clientName,
         signatureDataUrl: signature,
@@ -607,6 +609,7 @@ export default function EuthanasiaConsentForm() {
           saveCardOnFile: true,
         },
       });
+      setPaymentNotice(submitted?.paymentNotice ?? null);
       setDone(true);
     } catch (err) {
       const message = axiosMessage(err) || 'Could not submit the form.';
@@ -633,10 +636,14 @@ export default function EuthanasiaConsentForm() {
       <div className="consent-page">
         <div className="consent-card">
           <h1>Thank you</h1>
-          <p>
-            We received your consent for {pet}. If you have questions before the visit, please
-            call us.
-          </p>
+          {paymentNotice ? (
+            <p data-testid="consent-payment-notice">{paymentNotice}</p>
+          ) : (
+            <p>
+              We received your consent for {pet}. If you have questions before the visit, please
+              call us.
+            </p>
+          )}
         </div>
       </div>
     );
