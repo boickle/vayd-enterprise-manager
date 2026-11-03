@@ -1,6 +1,6 @@
 /// <reference types="cypress" />
 import '../support/e2e';
-import { cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/emrWorld';
+import { chooseCheckoutInventoryShelf, cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/emrWorld';
 
 /**
  * EMR-01-6, EMR-02-5, EMR-02-6: euthanasia money on screen.
@@ -77,7 +77,9 @@ describe('EMR-01-6: Convert Authorization captures the new total (legacy prepay 
     cy.contains('Total', { timeout: 20000 }).parent().should('contain.text', '$90.00');
     invoiceById(world, invoiceId).its('total').then((t) => expect(Number(t)).to.eq(90));
 
-    cy.contains('button', 'Convert Authorization to Payment').click();
+    // Pick the inventory branch and location explicitly: the shared test DB may hold several.
+    chooseCheckoutInventoryShelf();
+    cy.contains('button', 'Convert Authorization to Payment').should('not.be.disabled').click();
     // The Paid badge is present but can sit under a fixed header, so check it exists.
     cy.contains(/paid/i, { timeout: 30000 }).should('exist');
 

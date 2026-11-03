@@ -76,3 +76,32 @@ export function emrApi(
     failOnStatusCode: false,
   });
 }
+
+/**
+ * Chooses the checkout's inventory branch and location explicitly, so an open invoice can be paid
+ * whatever number of branches/locations the shared test database holds (the pay and Convert buttons
+ * stay disabled with "Choose the branch and location inventory is drawn from" until both are set).
+ * Picks the location marked "(default)" when there is one, otherwise the first. Call it on the
+ * checkout screen before clicking Convert / Pay / Charge.
+ */
+export function chooseCheckoutInventoryShelf(): void {
+  const pickFirstOrDefault = ($select: JQuery<HTMLElement>) => {
+    const options = $select.find('option').toArray().filter((o) => (o as HTMLOptionElement).value !== '') as HTMLOptionElement[];
+    const preferred = options.find((o) => /\(default\)/.test(o.text)) ?? options[0];
+    return preferred.value;
+  };
+  cy.contains('label', /^\s*Branch/, { timeout: 40000 })
+    .find('select')
+    .should('not.be.disabled')
+    .then(($branch) => {
+      if (!$branch.val()) cy.wrap($branch).select(pickFirstOrDefault($branch));
+    });
+  cy.contains('label', /^\s*Location/)
+    .find('select')
+    .should('not.be.disabled')
+    .should(($loc) => expect($loc.find('option').length, 'location options loaded').to.be.greaterThan(1))
+    .then(($loc) => {
+      if (!$loc.val()) cy.wrap($loc).select(pickFirstOrDefault($loc));
+    });
+  cy.contains('label', /^\s*Location/).find('select').should(($loc) => expect($loc.val(), 'location chosen').to.not.eq(''));
+}
