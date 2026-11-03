@@ -35,7 +35,7 @@ export type EmrCoreWorld = {
   lots: Record<'rabies' | 'da2pp', { lotNumber: string; lotBalanceId: number }>;
   employees: Record<EmrCoreRole, number>;
   auth: Record<EmrCoreRole, { Authorization: string; token: string }>;
-  households: Record<'well' | 'sick' | 'cash' | 'multi' | 'signoff', EmrHousehold>;
+  households: Record<'well' | 'sick' | 'cash' | 'multi' | 'signoff' | 'rxtech' | 'twostaff', EmrHousehold>;
 };
 
 export function emrWorld(): EmrCoreWorld {
