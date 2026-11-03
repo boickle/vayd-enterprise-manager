@@ -293,3 +293,27 @@ export function stubCardPayments(pet: EmrPet) {
   });
   return { calls: () => calls };
 }
+
+/**
+ * Puts an accepted order (and so a bill line) on a chart, at an explicit price. The SOAP page's own search box
+ * priced the seeded items at $0 in the first runs (so no bill was opened), so the specs place orders through the
+ * API, the same call the box makes, and use the screens to check what they produced.
+ */
+export function addOrder(encounterId: string, itemId: number, name: string, unitPrice: number, opts: { qty?: number; kind?: 'treatment' | 'med' } = {}) {
+  return emrApi<{ id: string; name: string }>('veterinarian', 'POST', `/soap-encounters/${encounterId}/orders`, {
+    practiceId: emrWorld().practiceId,
+    name: itemName(name),
+    kind: opts.kind ?? 'treatment',
+    catalogItemId: itemId,
+    catalogItemType: 'inventory',
+    qty: opts.qty ?? 1,
+    unitPrice,
+    state: 'accepted',
+  });
+}
+
+/** Writes the recap draft (the AI call is stubbed) and waits for it to land in the form. */
+export function writeRecapDraft() {
+  cy.contains('button', 'Regenerate from charts', { timeout: 30000 }).should('not.be.disabled').click();
+  cy.contains('label', 'Subject').find('input', { timeout: 30000 }).should('not.have.value', '');
+}

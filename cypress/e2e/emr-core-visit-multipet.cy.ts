@@ -1,7 +1,7 @@
 /// <reference types="cypress" />
 import '../support/e2e';
 import {
-  addChargeVia,
+  addOrder,
   emrApi,
   emrSql,
   emrWorld,
@@ -17,6 +17,7 @@ import {
   stubRecapDraft,
   visitInvoice,
   waitForRecapMailbox,
+  writeRecapDraft,
   type EmrPet,
 } from '../support/emrCoreVisitWorld';
 
@@ -45,24 +46,20 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
   it('EMR-11-4: one SOAP per pet, orders on the right pet, one invoice grouped by pet', () => {
     const { clientId } = household();
     const aspen = pet('Aspen');
+    const it = w().items;
+    const put = (name: string, itemId: number, item: string, price: number, qty = 1) =>
+      addOrder(encounterIds[name], itemId, item, price, { qty });
+    put('Aspen', it.examId, 'Wellness exam', 65);
+    put('Aspen', it.rabiesId, 'Rabies vaccine', 28);
+    put('Birch', it.examId, 'Wellness exam', 65);
+    put('Birch', it.fecalId, 'Fecal test', 30);
+    put('Clover', it.examId, 'Wellness exam', 65);
+    put('Clover', it.nailId, 'Nail trim', 10, 2);
+    put('Clover', it.rabiesId, 'Rabies vaccine', 28);
+
+    // One SOAP per pet: all three pet tabs are on the chart.
     signInEmr('veterinarian', soapPath(aspen, clientId));
-
-    const chargeFor = (name: string, item: string) => addChargeVia(`Add a charge for ${name}`, itemName(item));
     cy.get('[aria-label="Pets at this visit"]', { timeout: 40000 }).should('contain.text', 'Birch').and('contain.text', 'Clover');
-
-    chargeFor('Aspen', 'Wellness exam');
-    chargeFor('Aspen', 'Rabies vaccine');
-    chargeFor('Birch', 'Wellness exam');
-    chargeFor('Birch', 'Fecal test');
-    chargeFor('Clover', 'Wellness exam');
-    chargeFor('Clover', 'Nail trim');
-    chargeFor('Clover', 'Rabies vaccine');
-
-    // Clover's nail trim is two.
-    emrApi<Array<{ id: string; name: string }>>('veterinarian', 'GET', `/soap-encounters/${encounterIds.Clover}/orders?practiceId=${w().practiceId}`).then((orders) => {
-      const nail = orders.find((o) => o.name === itemName('Nail trim'))!;
-      emrApi('veterinarian', 'PATCH', `/soap-encounters/${encounterIds.Clover}/orders/${nail.id}`, { practiceId: w().practiceId, qty: 2 });
-    });
 
     // Each order is on its own pet's chart, and the three tabs share one invoice with each line on the right pet.
     const expected: Record<string, { items: string[]; amount: number; tax: number }> = {
@@ -164,10 +161,11 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     }
 
     // The recap draft is asked for once, for all three pets, and names each of them.
-    cy.contains('label', 'Subject').find('input', { timeout: 30000 }).should('not.have.value', '');
     waitForRecapMailbox();
+    writeRecapDraft();
     cy.contains('button', 'Send to client').should('not.be.disabled').click();
-    cy.wait('@recapDecision').its('request.body').then((body) => {
+    cy.wait('@recapDecision').then((call) => {
+      const body = call.request.body;
       expect(body.status).to.eq('sent');
       const covered = (body.patientIds ?? household().pets.map((p) => p.patientId)) as number[];
       expect([...covered].sort()).to.deep.eq(household().pets.map((p) => p.patientId).sort());
