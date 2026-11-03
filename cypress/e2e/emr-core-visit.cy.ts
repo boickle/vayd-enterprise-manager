@@ -39,16 +39,14 @@ describe('EMR-11-1: wellness visit, card reader', () => {
 
     // Check in: the encounter exists once the SOAP is opened.
     openEncounter(dog, clientId).then((enc) => {
+      // Vitals (weight 52 lb, follow-up answered) and the exam and two vaccines as orders on the bill.
+      readyToSign(enc.id, '52');
+      addOrder(enc.id, w.items.examId, 'Wellness exam', 65);
+      addOrder(enc.id, w.items.rabiesId, 'Rabies vaccine', 28);
+      addOrder(enc.id, w.items.da2ppId, 'DA2PP vaccine', 32);
       signInEmr('veterinarian', soapPath(dog, clientId));
-
-      // Vitals: weight in pounds.
-      enterWeightLb('52');
-
-      // The exam and the two vaccines go on the bill as orders.
-      const box = 'Type here to add a charge, or a note…';
-      addChargeVia(box, itemName('Wellness exam'));
-      addChargeVia(box, itemName('Rabies vaccine'));
-      addChargeVia(box, itemName('DA2PP vaccine'));
+      cy.contains(dog.name, { timeout: 40000 });
+      cy.contains(itemName('Wellness exam'), { timeout: 30000 });
 
       // Doses: each vaccine with its lot; the rabies one with a tag (the same save the dose form makes).
       emrApi<Array<{ id: string; name: string }>>('veterinarian', 'GET', `/soap-encounters/${enc.id}/orders?practiceId=${w.practiceId}`).then((orders) => {
