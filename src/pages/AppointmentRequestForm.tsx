@@ -9039,10 +9039,14 @@ export default function AppointmentRequestForm() {
             Thank You!
           </h1>
           <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '16px' }}>
-            {submitSuccessKind === 'online_confirmed'
+            {submitSuccessKind === 'online_held_pending_handling'
+              ? "We've held your appointment. Please check your email for details — we'll confirm once we review your pet's records to make sure we're the right fit."
+              : submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : 'We are working on booking your appointment and will be in touch shortly.'}
-            {submitSuccessKind === 'online_confirmed' && formData.joinWaitlistIfSooner
+            {(submitSuccessKind === 'online_confirmed' ||
+              submitSuccessKind === 'online_held_pending_handling') &&
+            formData.joinWaitlistIfSooner
               ? ' We’ll also reach out if an earlier time opens up.'
               : ''}
           </p>
