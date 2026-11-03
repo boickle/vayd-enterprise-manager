@@ -166,15 +166,16 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     const draft = stubRecapDraft((id) => names.get(id) ?? `pet ${id}`);
     cy.intercept('POST', '**/client-email').as('recapDecision');
 
-    recordDoses(encounterIds.Clover);
-    readyToSign(encounterIds.Clover);
-    signChart(encounterIds.Clover);
     // The recap draft names all three pets, each with its own items (the AI writer is not called).
+    // Saved before Clover is signed: a locked chart refuses edits (see the EMR-11 finding on recap autosave after lock).
     seedRecapDraft(
       encounterIds.Clover,
       'Visit recap for Aspen, Birch and Clover',
       '<p><strong>Aspen</strong>: exam, rabies vaccine.</p><p><strong>Birch</strong>: exam, fecal test.</p><p><strong>Clover</strong>: exam, nail trim x2, rabies vaccine.</p>',
     );
+    recordDoses(encounterIds.Clover);
+    readyToSign(encounterIds.Clover);
+    signChart(encounterIds.Clover);
 
     signInEmr('veterinarian', soapPath(pet('Aspen'), clientId, '/wrap-up'));
     cy.contains('h1', 'Wrap up visit', { timeout: 40000 });
