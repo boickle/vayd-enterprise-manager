@@ -552,9 +552,71 @@ http.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Offline detection. A request that never got an HTTP answer (dropped connection, no signal, timeout)
+ * is a network error; a 4xx/5xx is not. The banner shows while the browser says it is offline or the last
+ * request failed this way, and clears when the browser is back online or a request succeeds.
+ */
+export function isNetworkError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  if (axios.isCancel(e)) return false;
+  const err = e as { isAxiosError?: boolean; response?: unknown; code?: string; request?: unknown };
+  if (!err.isAxiosError || err.response) return false;
+  return err.code === 'ERR_NETWORK' || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || Boolean(err.request);
+}
+
+const browserOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false;
+let requestFailedOffline = false;
+let browserOffline = !browserOnline();
+const networkListeners = new Set<() => void>();
+const emitNetwork = () => networkListeners.forEach((fn) => fn());
+
+export function isOffline(): boolean {
+  return browserOffline || requestFailedOffline;
+}
+
+export function subscribeNetworkStatus(fn: () => void): () => void {
+  networkListeners.add(fn);
+  return () => networkListeners.delete(fn);
+}
+
+function setNetworkState(next: { browserOffline?: boolean; requestFailedOffline?: boolean }) {
+  const before = isOffline();
+  if (next.browserOffline !== undefined) browserOffline = next.browserOffline;
+  if (next.requestFailedOffline !== undefined) requestFailedOffline = next.requestFailedOffline;
+  if (before !== isOffline()) emitNetwork();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => setNetworkState({ browserOffline: true }));
+  window.addEventListener('online', () =>
+    setNetworkState({ browserOffline: false, requestFailedOffline: false })
+  );
+}
+
+/** For tests. */
+export function resetNetworkStatusForTests() {
+  browserOffline = !browserOnline();
+  requestFailedOffline = false;
+  emitNetwork();
+}
+
+export const NOT_CHARGED_OFFLINE_MESSAGE =
+  'Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns.';
+
+/** Payment errors: a dropped connection gets the plain "not charged" message; anything else is unchanged. */
+export function paymentErrorMessage(e: unknown): string {
+  return isNetworkError(e) ? NOT_CHARGED_OFFLINE_MESSAGE : apiErrorMessage(e);
+}
+
 http.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    setNetworkState({ requestFailedOffline: false });
+    return res;
+  },
   async (error: AxiosError) => {
+    if (isNetworkError(error)) setNetworkState({ requestFailedOffline: true });
+    else if (error?.response) setNetworkState({ requestFailedOffline: false });
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
     // Handle 401 Unauthorized - try to refresh token

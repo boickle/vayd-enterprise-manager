@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { isNetworkError } from '../api/http';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowRight,
@@ -419,6 +420,9 @@ export default function SoapEncounterPage() {
   const [showPromptOverrides, setShowPromptOverrides] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // A save that failed only because the connection dropped. The typed text stays on the page (and in the
+  // local chart draft); the 8s flush and the browser's `online` event retry it.
+  const [notSavedOffline, setNotSavedOffline] = useState(false);
   const [showEuthanasia, setShowEuthanasia] = useState(false);
   const [planToast, setPlanToast] = useState<string | null>(null);
   const planToastTimerRef = useRef<number | null>(null);
@@ -1328,6 +1332,7 @@ export default function SoapEncounterPage() {
           allowBlankFields: opts?.allowBlankFields,
         });
         setEncounter(updated);
+        setNotSavedOffline(false);
         if (lastSavedRef.current?.encounterId === id) {
           const next = { ...lastSavedRef.current.draft, at: updated.updated };
           if (nextPatch.subjective !== undefined) {
@@ -1358,6 +1363,10 @@ export default function SoapEncounterPage() {
           setError(
             `${labels.join(' and ')} was edited by someone else, so your change was not saved. Their version is now on screen — re-apply your edit if it still belongs.`
           );
+          return false;
+        }
+        if (isNetworkError(e)) {
+          setNotSavedOffline(true);
           return false;
         }
         setError(e instanceof Error ? e.message : 'Failed to save');
@@ -1430,10 +1439,12 @@ export default function SoapEncounterPage() {
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', flush);
+    window.addEventListener('online', flush);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', flush);
+      window.removeEventListener('online', flush);
       flush();
     };
   }, [locked, save]);
@@ -1885,6 +1896,11 @@ export default function SoapEncounterPage() {
         </div>
       </header>
 
+      {notSavedOffline && (
+        <div className="soap-error soap-error-banner" role="status" data-testid="soap-not-saved">
+          Not saved yet — your text is kept here and will save when the connection returns.
+        </div>
+      )}
       {error && <div className="soap-error soap-error-banner">{error}</div>}
 
       {petTabs.length > 1 && (

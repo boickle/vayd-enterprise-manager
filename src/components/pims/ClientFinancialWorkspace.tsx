@@ -230,7 +230,7 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
-import { apiErrorMessage } from '../../api/http';
+import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 // A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
@@ -4645,7 +4645,7 @@ export default function ClientFinancialWorkspace({
       await refreshList(next.id);
       setNote('Charged the card on file.');
     } catch (e: unknown) {
-      setError(apiErr(e));
+      setError(paymentErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -4674,7 +4674,7 @@ export default function ClientFinancialWorkspace({
         await refreshList(fresh.id);
         setNote('This invoice was already paid.');
       } else {
-        setError(apiErr(e));
+        setError(paymentErrorMessage(e));
       }
     } finally {
       setBusy(false);
