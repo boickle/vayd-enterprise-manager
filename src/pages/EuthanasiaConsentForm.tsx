@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useSearchParams } from 'react-router';
+import { consentNeedsCard } from '../utils/consentNeedsCard';
 import {
   getEuthanasiaConsentForm,
   memorialCartTotal,
@@ -533,10 +534,15 @@ export default function EuthanasiaConsentForm() {
     if (!aftercare || aftercareConfirmed !== 'yes') return;
     if (!pawPrintInk && !pawPrintClay && !pawPrintNone) return;
     const memorialTotal = memorialCartTotal(memorialItems);
-    const needsPay = Boolean(
-      memorialTotal > 0 ||
-        (pawPrintClay && form?.pawPrint.offering.clayCharge && form.pawPrint.clayChargePayment),
-    );
+    // The quoted estimate needs a card too, even with no clay or memorial picks: the
+    // server refuses the submit without one.
+    const needsPay = consentNeedsCard({
+      visitEstimateTotal,
+      memorialTotal,
+      clayChargedOnForm: Boolean(
+        pawPrintClay && form?.pawPrint.offering.clayCharge && form.pawPrint.clayChargePayment,
+      ),
+    });
     setSubmitting(true);
     setFieldError(null);
     setError(null);
