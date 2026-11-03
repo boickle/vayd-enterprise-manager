@@ -3535,7 +3535,9 @@ export default function VisitCheckoutPanel({
 
           {showPayment && !isPaid && !isVoid && (
             <EstimateSettlePanel
-              appointmentId={invoice?.appointmentId ?? null}
+              // Before any charge there is no invoice yet; the estimate still has to show,
+              // since on a euthanasia visit it is the bill.
+              appointmentId={invoice?.appointmentId ?? visitAppointmentId}
               disabled={disabled || busy != null}
               onSettled={(invoiceId) => {
                 void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
