@@ -5,6 +5,7 @@ import {
   emrApi,
   emrSql,
   emrWorld,
+  enterWeightLb,
   giveInvoiceItsShelf,
   itemName,
   openEncounter,
@@ -16,6 +17,7 @@ import {
   stubGmailCapture,
   stubRecapDraft,
   visitInvoice,
+  waitForRecapMailbox,
 } from '../support/emrCoreVisitWorld';
 
 /**
@@ -40,8 +42,7 @@ describe('EMR-11-1: wellness visit, card reader', () => {
       signInEmr('veterinarian', soapPath(dog, clientId));
 
       // Vitals: weight in pounds.
-      cy.get('input[placeholder="e.g. 12.4"]', { timeout: 40000 }).clear().type('52').blur();
-      cy.contains('label', 'Lb').find('input[type="radio"]').check({ force: true });
+      enterWeightLb('52');
 
       // The exam and the two vaccines go on the bill as orders.
       const box = 'Type here to add a charge, or a note…';
@@ -73,6 +74,7 @@ describe('EMR-11-1: wellness visit, card reader', () => {
       cy.contains('h1', 'Wrap up visit', { timeout: 30000 });
       cy.contains(dog.name);
       cy.contains('label', 'Subject').find('input', { timeout: 30000 }).should('not.have.value', '');
+      waitForRecapMailbox();
       cy.contains('button', 'Send to client').should('not.be.disabled').click();
       cy.wrap(null).should(() => expect(gmail.sent()).to.have.length(1));
       cy.contains('button', 'Sign & lock SOAP').should('not.be.disabled').click();
@@ -124,8 +126,7 @@ describe('EMR-11-2: sick visit, Rx and the saved card', () => {
 
     openEncounter(cat, clientId).then((enc) => {
       signInEmr('veterinarian', soapPath(cat, clientId));
-      cy.get('input[placeholder="e.g. 12.4"]', { timeout: 40000 }).clear().type('9').blur();
-      cy.contains('label', 'Lb').find('input[type="radio"]').check({ force: true });
+      enterWeightLb('9');
       addChargeVia('Type here to add a charge, or a note…', itemName('Wellness exam'));
       addChargeVia('Type here to add a charge, or a note…', itemName('Amoxicillin 50 mg tablet'));
 
