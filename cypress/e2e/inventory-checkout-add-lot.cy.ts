@@ -24,6 +24,8 @@ describe("INV-07-2: add the vial's lot at checkout on an uncounted shelf", () =>
       catalogItemId: w.items.vaccineId,
       description: 'Rabies vaccine',
       qty: 1,
+      // The vet of record on a rabies dose is a licensed veterinarian with a license number (EMR-07).
+      providerEmployeeId: w.vetOfRecordId,
     }).then((invoiceId) => {
       signInAs('technician', financialTab(invoiceId));
       openCharge('Rabies vaccine');

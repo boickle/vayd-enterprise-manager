@@ -129,6 +129,8 @@ import {
   removeTreatmentPlanMedicationBullet,
 } from '../utils/planNotesSections';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
+import { usePermissions } from '../permissions/PermissionContext';
+import { SignOffNotice } from '../components/soap/SignOffGate';
 
 
 function patientField(patient: Record<string, unknown> | null, ...keys: string[]): string | null {
@@ -525,6 +527,9 @@ export default function SoapEncounterPage() {
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
+  const permissions = usePermissions();
+  // record.addendum needs a licence (EMR-07); before permissions load, leave it to the server.
+  const canWriteAddendum = !permissions.effective || permissions.can('record.addendum');
   const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
   const rolesLower = (Array.isArray(role) ? role : []).map((r) => String(r).toLowerCase());
   const isAdmin = rolesLower.some((r) => r === 'admin' || r === 'superadmin');
@@ -1853,24 +1858,29 @@ export default function SoapEncounterPage() {
               <span className="soap-locked-badge" title="Signed and locked — no further edits">
                 <Lock size={14} /> SOAP signed
               </span>
-              <button
-                type="button"
-                className="soap-btn"
-                title="Append a dated note without unlocking the signed SOAP"
-                onClick={() => setWritingAddendum(true)}
-              >
-                <FilePlus2 size={15} /> Write addendum
-              </button>
+              {canWriteAddendum && (
+                <button
+                  type="button"
+                  className="soap-btn"
+                  title="Append a dated note without unlocking the signed SOAP"
+                  onClick={() => setWritingAddendum(true)}
+                >
+                  <FilePlus2 size={15} /> Write addendum
+                </button>
+              )}
             </>
           ) : (
-            <button
-              type="button"
-              className="soap-btn primary"
-              title="Review the charts and send the client recap"
-              onClick={() => void goToWrapUp()}
-            >
-              <ArrowRight size={15} /> Wrap up visit
-            </button>
+            <>
+              <SignOffNotice mode={mode} />
+              <button
+                type="button"
+                className="soap-btn primary"
+                title="Review the charts and send the client recap"
+                onClick={() => void goToWrapUp()}
+              >
+                <ArrowRight size={15} /> Wrap up visit
+              </button>
+            </>
           )}
         </div>
       </header>

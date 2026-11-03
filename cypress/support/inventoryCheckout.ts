@@ -35,6 +35,8 @@ export function counterInvoiceWith(
     description: string;
     qty: number;
     inventoryLotBalanceId?: number | null;
+    /** Who the charge is for; defaults to the technician. A rabies dose needs a licensed vet (EMR-07). */
+    providerEmployeeId?: number;
   }
 ) {
   const w = inventoryWorld();

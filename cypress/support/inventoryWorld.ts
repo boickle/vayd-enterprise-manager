@@ -13,6 +13,8 @@ export type InventoryWorld = {
   patientId: number;
   /** A paid store order for one 180-count bottle, waiting to be filled. */
   mailOrderId: number;
+  /** A licensed veterinarian with a license number, no login: the vet of record on rabies doses (EMR-07). */
+  vetOfRecordId: number;
   supplierId: number;
   counted: { branchId: number; mainLocationId: number; carLocationId: number };
   uncounted: { branchId: number; mainLocationId: number; carLocationId: number };

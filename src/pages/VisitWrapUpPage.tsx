@@ -71,6 +71,7 @@ import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChron
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 import { useAuth } from '../auth/useAuth';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
+import SignAndLockButton from '../components/soap/SignOffGate';
 import { formatDeclinedDate } from '../api/declinedTreatments';
 
 function startOfLocalDay(iso: string | null | undefined): number | null {
@@ -676,23 +677,21 @@ export default function VisitWrapUpPage() {
               <Lock size={14} /> SOAP signed &amp; locked
             </span>
           ) : (
-            <button
-              type="button"
-              className="soap-btn primary"
-              disabled={!canComplete || completing}
-              title={
-                !weightComplete
-                  ? `Record weight (or No weight taken) first: ${missingWeightPets.join(', ')}`
-                  : !clinicalComplete
-                    ? `Record prescription/dose details first: ${outstandingClinicalLabels.join(', ')}`
-                    : !emailDecided
-                        ? 'Send the client recap, or choose not to email'
-                        : 'Sign and lock the medical record for every pet on this visit'
+            <SignAndLockButton
+              modes={pets.filter((p) => p.status !== 'completed').map((p) => p.mode)}
+              notReadyReason={
+                canComplete
+                  ? null
+                  : !weightComplete
+                    ? `Record weight (or No weight taken) first: ${missingWeightPets.join(', ')}`
+                    : !clinicalComplete
+                      ? `Record prescription/dose details first: ${outstandingClinicalLabels.join(', ')}`
+                      : 'Send the client recap, or choose not to email'
               }
-              onClick={onSignAndLock}
-            >
-              <CheckCircle2 size={15} /> {completing ? 'Signing…' : 'Sign & lock SOAP'}
-            </button>
+              readyTitle="Sign and lock the medical record for every pet on this visit"
+              completing={completing}
+              onClick={() => void onSignAndLock()}
+            />
           )}
         </div>
       </header>

@@ -12,7 +12,8 @@
  * Money safety: the card reader and the saved card are stubbed in the browser (see
  * stubCardPayments); nothing here reaches Stripe, and the recap goes to a captured Gmail stub.
  */
-export type EmrCoreRole = 'veterinarian' | 'practice_manager';
+/** `technician` is a licensed technician (EMR-07); the vet is licensed with a license number. */
+export type EmrCoreRole = 'veterinarian' | 'practice_manager' | 'technician';
 
 export type EmrPet = { patientId: number; name: string; species: string; appointmentId: number };
 export type EmrHousehold = { clientId: number; email: string; pets: EmrPet[] };
@@ -34,7 +35,7 @@ export type EmrCoreWorld = {
   lots: Record<'rabies' | 'da2pp', { lotNumber: string; lotBalanceId: number }>;
   employees: Record<EmrCoreRole, number>;
   auth: Record<EmrCoreRole, { Authorization: string; token: string }>;
-  households: Record<'well' | 'sick' | 'cash' | 'multi', EmrHousehold>;
+  households: Record<'well' | 'sick' | 'cash' | 'multi' | 'signoff', EmrHousehold>;
 };
 
 export function emrWorld(): EmrCoreWorld {
@@ -66,6 +67,23 @@ export function emrApi<T = any>(
       failOnStatusCode: true,
     })
     .its('body') as Cypress.Chainable<T>;
+}
+
+/** Like emrApi but yields the whole response and never fails on the status (for refusals). */
+export function emrRequest(
+  role: EmrCoreRole,
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Cypress.Chainable<Cypress.Response<any>> {
+  const w = emrWorld();
+  return cy.request({
+    method,
+    url: `${apiBase()}${path}`,
+    headers: { Authorization: w.auth[role].Authorization },
+    body: body as Cypress.RequestBody,
+    failOnStatusCode: false,
+  });
 }
 
 /** Signs in as a seeded staff member (no password) and opens `path`. */

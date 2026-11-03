@@ -484,7 +484,7 @@ function performerFromRabiesLog(
     return {
       id: empId,
       label: name || pickStr(log.veterinarianName) || `Provider #${empId}`,
-      license: pickStr(emp?.licenseNumber) ?? pickStr(log.veterinarianLicense) ?? '',
+      license: pickStr(log.veterinarianLicense) ?? pickStr(emp?.licenseNumber) ?? '',
       active: emp?.isActive !== false && emp?.isDeleted !== true,
     };
   }
@@ -503,6 +503,10 @@ export function applyRabiesSource(
   const performer = performerFromRabiesLog(log, source.providers);
   if (performer?.active) {
     next = applyProvider(next, source.providers, String(performer.id), source.signatures);
+    // The license saved on the dose is the one in force when it was given, so a reprint of an
+    // old certificate keeps it even after the vet's license number changes (EMR-07-2b).
+    const licenseAtDose = log ? pickStr(log.veterinarianLicense) : null;
+    if (licenseAtDose) next = { ...next, veterinarianLicense: licenseAtDose };
   } else {
     next = applyProvider(next, source.providers, '', source.signatures);
   }
