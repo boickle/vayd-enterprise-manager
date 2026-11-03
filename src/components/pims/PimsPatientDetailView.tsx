@@ -3359,7 +3359,7 @@ export default function PimsPatientDetailView({
                   </tr>
                 </thead>
                 <tbody>
-                  {mrNotFound ? (
+                  {mrNotFound && chartRows.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="pims-patient-detail__empty-cell">
                         This pet has no medical record yet.
@@ -3563,7 +3563,7 @@ export default function PimsPatientDetailView({
                   </tr>
                 </thead>
                 <tbody>
-                  {mrNotFound ? (
+                  {mrNotFound && chartRows.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="pims-patient-detail__empty-cell">
                         This pet has no medical record yet.
