@@ -502,7 +502,18 @@ export function applyRabiesSource(
   let next = applyRabiesLog(draft, log);
   const performer = performerFromRabiesLog(log, source.providers);
   if (performer?.active) {
-    next = applyProvider(next, source.providers, String(performer.id), source.signatures);
+    // An eVet-imported dose names its vet only through the linked employee, who may not be in the
+    // provider list (no license on file, or not marked as a provider). Print them anyway (EMR-A12).
+    const listed = source.providers.some((p) => p.id === performer.id);
+    next = listed
+      ? applyProvider(next, source.providers, String(performer.id), source.signatures)
+      : {
+          ...next,
+          veterinarianName: performer.label,
+          veterinarianLicense: performer.license,
+          veterinarianEmployeeId: performer.id,
+          veterinarianSignaturePng: signatureFor(source.signatures, performer.id),
+        };
     // The license saved on the dose is the one in force when it was given, so a reprint of an
     // old certificate keeps it even after the vet's license number changes (EMR-07-2b).
     const licenseAtDose = log ? pickStr(log.veterinarianLicense) : null;
