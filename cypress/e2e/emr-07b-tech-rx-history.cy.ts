@@ -20,15 +20,15 @@ import {
  * - Every step is logged: "Directions entered by … (tech) for Dr. …", "Approved for dispensing by …",
  *   "Label printed by …, Rx #…".
  *
- * Seed: vayd-api test/scripts/emr-core-visit-seed.ts (household "signoff", whose visit's provider is
- * the seeded licensed vet). See emrCoreVisitWorld.ts for how to run. A DYMO printer can't run here,
+ * Seed: vayd-api test/scripts/emr-core-visit-seed.ts (household "rxtech", pet Hazel, its own visit whose provider is
+ * the seeded licensed vet; the "signoff" visit is locked by EMR-07-9). See emrCoreVisitWorld.ts for how to run. A DYMO printer can't run here,
  * so the print is the call the label screens make right after the label prints
  * (POST /record-history/rx-label-printed). Nothing reaches Stripe or email.
  */
 describe('EMR-07b: tech enters Rx directions for the vet; History shows every step', () => {
   it('tech saves the sig on the SOAP, approves it, prints the label, and opens History', () => {
     const w = emrWorld();
-    const { clientId, pets } = w.households.signoff;
+    const { clientId, pets } = w.households.rxtech;
     const [dog] = pets;
     const sig = '1 tab PO q12h with food';
 
@@ -54,23 +54,32 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
           confirmDuplicate: true,
         }
       ).then((order) => {
+        // The Rx form is not a row with a name header: it sits in the drawer under the checkout line for this
+        // order (VisitCheckoutPanel -> VisitDoseAndRxSection embedded). Find the line by order id and expand it.
+        const openRxDrawer = () => {
+          visitInvoice(dog).then((inv) => {
+            const line = (inv.lines as Array<{ id: string; orderId?: string | null; isDeleted?: boolean }>).find(
+              (l) => l.orderId === order.id && !l.isDeleted,
+            );
+            expect(line, 'checkout line for the Carprofen order').to.exist;
+            cy.get(`#checkout-line-${line!.id} .soap-invoice-line-expand`, { timeout: 40000 }).then(($btn) => {
+              if ($btn.attr('aria-expanded') !== 'true') cy.wrap($btn).click({ scrollBehavior: 'center' });
+            });
+          });
+          cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row', { timeout: 20000 }).should('exist');
+        };
         // 1. The technician writes the directions on the SOAP.
         signInEmr('technician', soapPath(dog, clientId));
         cy.contains(dog.name, { timeout: 40000 });
-        cy.contains('.soap-dose-row-head', itemName('Carprofen 75mg'), { timeout: 30000 })
-          .scrollIntoView()
-          .click();
-        cy.contains('.soap-dose-row-head', itemName('Carprofen 75mg'))
-          .closest('.soap-dose-row')
-          .within(() => {
-            cy.get('select[aria-label="Acute or chronic prescription"]').select('acute');
-            cy.contains('label', 'Refills').find('input[type="number"]').clear().type('2');
-            cy.get('textarea').first().clear().type(sig);
-            cy.contains('button', /Save Rx|Update Rx/).click();
-          });
-        cy.contains('.soap-dose-row-head', itemName('Carprofen 75mg'))
-          .closest('.soap-dose-row')
-          .should('contain.text', '2 refills');
+        openRxDrawer();
+        cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row').within(() => {
+          cy.get('select[aria-label="Acute or chronic prescription"]').select('acute');
+          cy.contains('label', 'Refills').find('input[type="number"]').clear().type('2');
+          cy.get('textarea').first().clear().type(sig);
+          cy.contains('button', /Save Rx|Update Rx/).click();
+          cy.contains('button', 'Update Rx', { timeout: 20000 }).should('exist');
+          cy.contains('label', 'Refills').find('input[type="number"]').should('have.value', '2');
+        });
 
         // The prescriber is the visit's vet, not the technician.
         emrSql(
@@ -106,12 +115,8 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
           // 4. History on the prescription's row lists each step.
           signInEmr('technician', soapPath(dog, clientId));
           cy.contains(dog.name, { timeout: 40000 });
-          cy.contains('.soap-dose-row-head', itemName('Carprofen 75mg'), { timeout: 30000 })
-            .scrollIntoView()
-            .click();
-          cy.contains('.soap-dose-row-head', itemName('Carprofen 75mg'))
-            .closest('.soap-dose-row')
-            .within(() => {
+          openRxDrawer();
+          cy.get('.soap-invoice-line-drawer.is-open .soap-dose-row').within(() => {
               cy.contains('button', 'History').click();
               cy.get('[aria-label="Record history"] li', { timeout: 20000 }).should(
                 'have.length',
