@@ -148,16 +148,9 @@ describe('EMR-11-4 to EMR-11-6: three-pet household', () => {
     emrSql(`SELECT status FROM soap_encounters WHERE id = '${encounterIds.Clover}'`).should('eq', 'draft');
   });
 
-  it.skip('EMR-11-5 warning: FINDING, no unsigned-chart warning exists yet; waiting on owner', () => {
-    const { clientId } = household();
-    // Ending the visit with Clover unsigned should say so. NOTE: as of this writing neither the
-    // wrap-up screen nor Start / End Visit on the schedule mentions an unsigned chart (no such text
-    // in the source), so this is expected to FAIL until that warning exists. It is the plan's expected result.
-    cy.visit(soapPath(pet('Clover'), clientId, '/wrap-up'));
-    cy.contains('h1', 'Wrap up visit', { timeout: 30000 });
-    cy.contains(/Clover.{0,80}(not signed|unsigned|still a draft|not yet signed)|(not signed|unsigned|still a draft).{0,80}Clover/i);
-
-  });
+  // EMR-11-5 warning: owner decision (Nov 3, 2026): no warning at End Visit or wrap-up. End Visit only
+  // logs the visit time. An unsigned chart (any number of household pets) is covered by the
+  // "Unfinished chart" task automation, which gives the visit's provider a task per unsigned SOAP.
 
   it('EMR-11-6: one recap covers all three pets and is sent once', () => {
     const { clientId } = household();
