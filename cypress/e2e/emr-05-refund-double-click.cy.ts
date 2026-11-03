@@ -90,10 +90,8 @@ describe('EMR-05-6: a double-clicked refund is applied once', () => {
 
     // On screen: one refund, of 100.
     cy.contains(/Refunded \$100\.00/, { timeout: 20000 }).should('exist');
-    cy.get('body').then(($b) => {
-      const hits = ($b.text().match(/Refunded \$100\.00/g) ?? []).filter(Boolean);
-      expect(hits.length, 'refund lines').to.be.lessThan(3); // the line and, at most, the status note
-    });
+    // One payment row on the receipt carries the refund (the ledger and status areas repeat the amount).
+    cy.get('.client-fin__paid-line').filter(':contains("Refunded $100.00")').should('have.length', 1);
     cy.contains(/Refunded \$200\.00/).should('not.exist');
 
     // Recorded: the card payment has 100 refunded once, and the bill owes 100.
