@@ -69,7 +69,9 @@ import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClie
 import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
 import { AppointmentRequestAlternateAddressCallout } from '../components/AppointmentRequestAlternateAddressCallout';
+import { AppointmentRequestHandlingNeedsCallout } from '../components/AppointmentRequestHandlingNeedsCallout';
 import { EvetNameLink } from '../components/EvetNameLink';
+import { requestDataHasNewPatientSpecialHandlingNeeds } from '../utils/appointmentRequestHandlingNeeds';
 import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
@@ -2321,6 +2323,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Confirm from submission fields immediately — do not wait for bookedApptMeta.
             // Gating on hasLinkedAppointment flashed Book / Link appointment while meta loaded.
             const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const showHandlingNeedsPendingConfirmation =
+              needsStaffConfirmation &&
+              requestDataHasNewPatientSpecialHandlingNeeds(rd);
             const needsManualBook = appointmentRequestNeedsManualBookActions({
               item,
               isDismissed,
@@ -2423,6 +2428,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                 ) : null}
                 <div className="appt-request-row-main">
                   <div className="appt-request-row-body">
+                    {showHandlingNeedsPendingConfirmation ? (
+                      <AppointmentRequestHandlingNeedsCallout compact />
+                    ) : null}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                       {isSearchActive ? (
                         <div
@@ -2929,6 +2937,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       clientPimsId={clientPimsId}
                       linkedAppointment={linkedAppointment}
                       submissionId={item.kind === 'abandoned' ? null : item.id}
+                      showHandlingNeedsPendingConfirmation={
+                        showHandlingNeedsPendingConfirmation
+                      }
                     />
                   </div>
                 ) : null}

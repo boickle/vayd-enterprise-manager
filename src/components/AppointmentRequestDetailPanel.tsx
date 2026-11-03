@@ -14,6 +14,7 @@ import {
   type LinkedAppointmentEvetIds,
 } from '../utils/appointmentRequestLinkedEvet';
 import { AppointmentRequestAlternateAddressCallout } from './AppointmentRequestAlternateAddressCallout';
+import { AppointmentRequestHandlingNeedsCallout } from './AppointmentRequestHandlingNeedsCallout';
 import { ClientUploadedRecordsList } from './ClientUploadedRecordsList';
 import { EvetNameLink } from './EvetNameLink';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
@@ -149,6 +150,7 @@ export function AppointmentRequestDetailPanel({
   clientPimsId = null,
   linkedAppointment = null,
   submissionId = null,
+  showHandlingNeedsPendingConfirmation = false,
 }: {
   requestData: Record<string, unknown>;
   practiceId: number;
@@ -156,6 +158,8 @@ export function AppointmentRequestDetailPanel({
   clientPimsId?: string | null;
   linkedAppointment?: LinkedAppointmentEvetIds | null;
   submissionId?: number | null;
+  /** Auto-booked new patient with handling needs awaiting CL confirmation. */
+  showHandlingNeedsPendingConfirmation?: boolean;
 }) {
   const sections = buildAppointmentRequestDetailSections(requestData, practiceTz);
   const pets = enrichPetDetailsFromLinkedAppointment(sections.pets, linkedAppointment);
@@ -169,7 +173,8 @@ export function AppointmentRequestDetailPanel({
     sections.pets.length > 0 ||
     sections.veterinaryHistory.length > 0 ||
     sections.scheduling.length > 0 ||
-    sections.other.length > 0;
+    sections.other.length > 0 ||
+    showHandlingNeedsPendingConfirmation;
 
   if (!hasContent && submissionId == null) {
     return (
@@ -191,6 +196,12 @@ export function AppointmentRequestDetailPanel({
           Everything the client submitted on the appointment form
         </span>
       </div>
+
+      {showHandlingNeedsPendingConfirmation ? (
+        <section className="appt-request-detail-card appt-request-detail-card--handling-needs">
+          <AppointmentRequestHandlingNeedsCallout />
+        </section>
+      ) : null}
 
       <div className="appt-request-detail-top-grid">
         {sections.client.length > 0 ? (

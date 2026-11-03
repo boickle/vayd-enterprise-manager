@@ -2120,6 +2120,64 @@
   margin-top: 0;
 }
 
+.appt-request-handling-needs-callout {
+  margin: 0 0 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 3px solid #b45309;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 55%, #fde68a 100%);
+  color: #78350f;
+  box-shadow:
+    0 0 0 1px rgba(180, 83, 9, 0.2),
+    0 4px 14px rgba(180, 83, 9, 0.16);
+}
+
+.appt-request-handling-needs-callout--compact {
+  margin-top: 8px;
+  padding: 12px 14px;
+}
+
+.appt-request-handling-needs-callout-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.appt-request-handling-needs-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: #b45309;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.35);
+}
+
+.appt-request-handling-needs-callout-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #92400e;
+}
+
+.appt-request-handling-needs-callout-lead {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #92400e;
+}
+
+.appt-request-detail-card--handling-needs .appt-request-handling-needs-callout {
+  margin-top: 0;
+}
+
 .appt-request-meta-list {
   margin: 12px 0 0;
   padding: 0;

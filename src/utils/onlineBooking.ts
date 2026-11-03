@@ -209,13 +209,19 @@ export function isSlotNoLongerAvailableError(
   return m.includes('no longer available') || m.includes('selected time');
 }
 
-export type AppointmentFormSubmitSuccessKind = 'online_confirmed' | 'request_received';
+export type AppointmentFormSubmitSuccessKind =
+  | 'online_confirmed'
+  | 'online_held_pending_handling'
+  | 'request_received';
 
 /** Classify public form POST success message from the API. */
 export function appointmentFormSubmitSuccessKindFromMessage(
   message: string | undefined,
 ): AppointmentFormSubmitSuccessKind {
   const m = (message ?? '').toLowerCase();
+  if (m.includes('held your appointment') || m.includes('review your pet')) {
+    return 'online_held_pending_handling';
+  }
   if (m.includes('booked successfully') || m.includes('appointment is confirmed')) {
     return 'online_confirmed';
   }
