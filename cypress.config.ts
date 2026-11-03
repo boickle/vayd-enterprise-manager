@@ -100,6 +100,36 @@ export default defineConfig({
         },
       });
 
+      // ── H-EMR: euthanasia / visit-payment world ────────────────────────────
+      // Runs vayd-api's test/scripts/emr-e2e-seed.ts. The database is REQUIRED (EMR_DB or CYPRESS_EMR_DB), its name
+      // must contain "test" and not be vayd_api_local (the script refuses otherwise), and the API the dev server
+      // talks to must use the same one. EMR_API_DIR overrides the API checkout (default ../vayd-api).
+      const emrApiDir = path.resolve(process.env.EMR_API_DIR || '../vayd-api');
+      const emrDb = process.env.EMR_DB || process.env.CYPRESS_EMR_DB || '';
+      const emrWorldFile = path.join(os.tmpdir(), 'emr-world-current.json');
+      const runEmrSeed = (command: 'seed' | 'clean') => {
+        if (!emrDb) throw new Error('Set EMR_DB to a test database (e.g. vayd_api_test) before using the EMR seed.');
+        execFileSync('npx', ['ts-node', '-T', 'test/scripts/emr-e2e-seed.ts', command, emrDb, emrWorldFile], {
+          cwd: emrApiDir,
+          env: { ...process.env, DB_DATABASE: emrDb, NODE_ENV: 'test', NODE_OPTIONS: '--no-experimental-strip-types' },
+          stdio: ['ignore', 'inherit', 'inherit'],
+        });
+      };
+      on('task', {
+        /** Seeds the EMR world (see cypress/support/emrWorld.ts for its shape) and returns it. */
+        seedEmrWorld() {
+          runEmrSeed('seed');
+          return JSON.parse(fs.readFileSync(emrWorldFile, 'utf8'));
+        },
+        cleanEmrWorld() {
+          if (fs.existsSync(emrWorldFile)) {
+            runEmrSeed('clean');
+            fs.unlinkSync(emrWorldFile);
+          }
+          return null;
+        },
+      });
+
       return config;
     },
     viewportWidth: 1280,
