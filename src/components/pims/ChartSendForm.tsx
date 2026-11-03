@@ -108,6 +108,14 @@ export default function ChartSendForm({
         fieldsSnapshot: needsEdit && editFields ? editFields : null,
       });
       setInvites((prev) => [inv, ...prev]);
+      if (inv.emailSent === false) {
+        // The invite exists but the client has not been emailed: say so, do not show "Sent".
+        setError(
+          inv.emailError ||
+            'The form was created but the email was not sent. Check the address and send it again.'
+        );
+        return;
+      }
       setSent(true);
       setSelectedTemplateId('');
       setStaffNote('');
