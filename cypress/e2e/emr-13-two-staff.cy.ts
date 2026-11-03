@@ -30,7 +30,7 @@ describe('EMR-13-5: tech saves second on a dose the vet changed', () => {
     const next = new Date(Date.now() + 365 * 864e5).toISOString().slice(0, 10);
 
     openEncounter(dog, clientId).then((enc) => {
-      addOrder(enc.id, w.items.rabiesId, 'Rabies vaccine', 28).then((order) => {
+      addOrder(enc.id, w.items.rabiesId, 'Rabies vaccine', 28, { confirmDuplicate: true }).then((order) => {
         const dose = (tag: string, expectedUpdatedAt?: string) =>
           emrApi('veterinarian', 'PUT', `/soap-encounters/${enc.id}/orders/${order.id}/vaccination`, {
             practiceId: w.practiceId,

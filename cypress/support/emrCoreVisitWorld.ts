@@ -317,8 +317,9 @@ export function stubCardPayments(pet: EmrPet) {
  * priced the seeded items at $0 in the first runs (so no bill was opened), so the specs place orders through the
  * API, the same call the box makes, and use the screens to check what they produced.
  */
-export function addOrder(encounterId: string, itemId: number, name: string, unitPrice: number, opts: { qty?: number; kind?: 'treatment' | 'med' } = {}) {
+export function addOrder(encounterId: string, itemId: number, name: string, unitPrice: number, opts: { qty?: number; kind?: 'treatment' | 'med'; confirmDuplicate?: boolean } = {}) {
   return emrApi<{ id: string; name: string }>('veterinarian', 'POST', `/soap-encounters/${encounterId}/orders`, {
+    ...(opts.confirmDuplicate ? { confirmDuplicate: true } : {}),
     practiceId: emrWorld().practiceId,
     name: itemName(name),
     kind: opts.kind ?? 'treatment',

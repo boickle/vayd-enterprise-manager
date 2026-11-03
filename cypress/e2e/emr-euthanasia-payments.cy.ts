@@ -186,7 +186,12 @@ describe('EMR-02-6: phone path for families who cannot use the online form', () 
     // The liaison opens the estimate from the scheduler's Euthanasia consent and sees "Take card".
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
-    cy.contains('button', 'Take card').should('be.visible');
+    // The checkout panel scrolls inside the fixed page shell and Wave 4's estimate list pushes this button below the
+    // fold; bring it into view in that scroll area first (centred, clear of the fixed header).
+    cy.contains('button', 'Take card', { timeout: 20000 })
+      .should('exist')
+      .scrollIntoView({ offset: { top: -250, left: 0 } })
+      .should('be.visible');
     noPrepayButtons();
 
     // "Take card" saves the card on the estimate (EstimateCardModal confirms it in Stripe, then saves it).
