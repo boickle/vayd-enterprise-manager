@@ -6,17 +6,20 @@ import {
   getOrderClinicalDetails,
   getVaccineDefaults,
   removeInvoiceLineVaccination,
+  recordConflictFrom,
   removeOrderVaccination,
   saveInvoiceLineVaccination,
   saveOrderVaccination,
   VISIT_WORKFLOW_PRACTICE_ID,
   type OrderPrescription,
   type OrderVaccination,
+  type RecordConflict,
   type StockDraw,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
 import type { InventoryLotBalance } from '../../api/branchInventory';
 import VaccineLotPicker from '../soap/VaccineLotPicker';
+import RecordConflictBanner from '../soap/RecordConflictBanner';
 import { askRemoveVaccineDose } from '../RemoveVaccineDoseDialog';
 import { apiErrorMessage } from '../../api/http';
 import './InvoiceVaccineDoseEditor.css';
@@ -97,6 +100,7 @@ export default function InvoiceVaccineDoseEditor({
   const [vaccineType, setVaccineType] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<RecordConflict | null>(null);
   const [prefilled, setPrefilled] = useState(false);
 
   useEffect(() => {
@@ -206,7 +210,7 @@ export default function InvoiceVaccineDoseEditor({
     </p>
   ) : null;
 
-  const save = async () => {
+  const save = async (versionOverride?: string | null) => {
     if (!canSaveDose) {
       setError('Save the invoice before recording the dose.');
       return;
@@ -231,8 +235,11 @@ export default function InvoiceVaccineDoseEditor({
     }
     setSaving(true);
     setError(null);
+    setConflict(null);
     try {
+      const expectedUpdatedAt = versionOverride ?? recorded?.updated ?? undefined;
       const body = {
+        ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         vaccineName: line.description,
         dateVaccinated,
         nextVaccinationDate: nextDue,
@@ -253,9 +260,30 @@ export default function InvoiceVaccineDoseEditor({
           : await saveInvoiceLineVaccination(line.invoiceId, line.id, body);
       onSaved(saved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save this dose.');
+      // EMR-13: keep what was typed; offer to reload their version or save over it.
+      const clash = recordConflictFrom(e);
+      if (clash) setConflict(clash);
+      else setError(e instanceof Error ? e.message : 'Could not save this dose.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Re-read this dose from the server; the form refills from it and the typed entries are dropped. */
+  const reloadDose = async () => {
+    setConflict(null);
+    try {
+      const fresh =
+        encounterId && orderId
+          ? (await getOrderClinicalDetails(encounterId)).vaccinations.find(
+              (v) => v.encounterOrderId === orderId
+            )
+          : (await getInvoiceVaccinations(line.invoiceId)).find(
+              (v) => v.visitInvoiceLineId === line.id
+            );
+      if (fresh) onSaved(fresh);
+    } catch (e) {
+      setError(apiErrorMessage(e));
     }
   };
 
@@ -354,6 +382,14 @@ export default function InvoiceVaccineDoseEditor({
           <span>{vaccineType || '—'}</span>
         </div>
       </div>
+      {conflict ? (
+        <RecordConflictBanner
+          conflict={conflict}
+          busy={saving}
+          onReload={() => void reloadDose()}
+          onSaveMine={() => void save(conflict.updated)}
+        />
+      ) : null}
       {error ? <p className="client-fin__vax-error">{error}</p> : null}
       <div className="client-fin__vax-actions">
         <button

@@ -510,6 +510,30 @@ export function soapFieldConflictFrom(e: unknown): SoapFieldConflict | null {
   };
 }
 
+/** 409 from a dose or prescription save when someone else saved the record after it was loaded (EMR-13). */
+export type RecordConflict = {
+  /** "Changed by Odile Brackenridge: they saved this vaccine dose after you opened it. Reload to see their changes." */
+  message: string;
+  changedByName: string;
+  /** The record's version now; sending it as `expectedUpdatedAt` saves over their change on purpose. */
+  updated: string | null;
+};
+
+export function recordConflictFrom(e: unknown): RecordConflict | null {
+  const res = (e as { response?: { status?: number; data?: unknown } })?.response;
+  if (res?.status !== 409) return null;
+  const data = res.data as
+    | { code?: string; message?: unknown; changedBy?: { name?: unknown }; updated?: unknown }
+    | undefined;
+  if (data?.code !== 'RECORD_CONFLICT') return null;
+  const name = typeof data.changedBy?.name === 'string' ? data.changedBy.name : 'Another staff member';
+  return {
+    message: typeof data.message === 'string' ? data.message : `Changed by ${name}. Reload to see their changes.`,
+    changedByName: name,
+    updated: typeof data.updated === 'string' ? data.updated : null,
+  };
+}
+
 export async function completeEncounter(id: string): Promise<SoapEncounter> {
   const { data } = await http.post<SoapEncounter>(
     `/soap-encounters/${encodeURIComponent(id)}/complete`,
@@ -747,6 +771,8 @@ export type OrderVaccination = {
   veterinarianLicense: string | null;
   /** Chosen lot balance — checkout decrements this specific lot. */
   inventoryLotBalanceId: number | null;
+  /** Version of this dose; send it back as `expectedUpdatedAt` so a stale save is refused. */
+  updated?: string | null;
 };
 
 /** A prescription written against an order. A real `prescriptions` row. */
@@ -762,6 +788,8 @@ export type OrderPrescription = {
   rxNumber: number | null;
   acuity: PrescriptionAcuity | null;
   discontinuedAt: string | null;
+  /** Version of this Rx; send it back as `expectedUpdatedAt` so a stale save is refused. */
+  updated?: string | null;
 };
 
 /** A patient-scoped chronic (or any) prescription for the EMR / SOAP pin. */
@@ -885,6 +913,8 @@ export type SaveVaccinationBody = {
   employeeId?: number;
   inventoryLotBalanceId?: number | null;
   lotZeroOverrideReason?: string;
+  /** `updated` of the dose as loaded (EMR-13); the server refuses the save if someone else changed it since. */
+  expectedUpdatedAt?: string;
 };
 
 export async function saveOrderVaccination(
@@ -951,6 +981,8 @@ export async function saveOrderPrescription(
     startDate?: string;
     acuity?: PrescriptionAcuity;
     employeeId?: number;
+    /** `updated` of the Rx as loaded (EMR-13). */
+    expectedUpdatedAt?: string;
   }
 ): Promise<OrderPrescription> {
   const { data } = await http.put<OrderPrescription>(

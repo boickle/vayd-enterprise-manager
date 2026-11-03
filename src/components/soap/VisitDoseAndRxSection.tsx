@@ -16,14 +16,17 @@ import {
   saveOrderPrescription,
   saveOrderVaccination,
   removeOrderVaccination,
+  recordConflictFrom,
   updateOrder,
   type EncounterOrder,
   type OrderPrescription,
   type OrderVaccination,
   type PrescriptionAcuity,
   type PrescriptionDefaults,
+  type RecordConflict,
   type StockDraw,
 } from '../../api/visitWorkflow';
+import RecordConflictBanner from './RecordConflictBanner';
 import {
   fetchCatalogPricingForOrder,
   getCatalogLinePrice,
@@ -306,6 +309,7 @@ export default function VisitDoseAndRxSection({
               : setExpanded(expanded === order.id ? null : order.id)
           }
           onQtyChange={repriceQty}
+          onReload={() => refresh()}
           onSaved={(saved) => {
             setVaccinations((prev) => ({ ...prev, [order.id]: saved }));
             if (forceOpenOrderId == null) setExpanded(null);
@@ -346,6 +350,7 @@ export default function VisitDoseAndRxSection({
               : setExpanded(expanded === order.id ? null : order.id)
           }
           onQtyChange={repriceQty}
+          onReload={() => refresh()}
           onSaved={(saved) => {
             setPrescriptions((prev) => ({ ...prev, [order.id]: saved }));
             if (forceOpenOrderId == null) setExpanded(null);
@@ -504,6 +509,7 @@ function VaccineRow({
   onQtyChange,
   onSaved,
   onRemoved,
+  onReload,
 }: {
   encounterId: string;
   order: EncounterOrder;
@@ -521,6 +527,8 @@ function VaccineRow({
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
   onSaved: (saved: OrderVaccination) => void;
   onRemoved: () => void;
+  /** Re-read the chart's doses and prescriptions (after a save conflict). */
+  onReload: () => Promise<void>;
 }) {
   const [lotNumber, setLotNumber] = useState('');
   const [lotBalanceId, setLotBalanceId] = useState<number | null>(null);
@@ -535,6 +543,7 @@ function VaccineRow({
   const [vaccineType, setVaccineType] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<RecordConflict | null>(null);
   const [prefilled, setPrefilled] = useState(false);
 
   const isRabies = /rabies/i.test(order.name);
@@ -605,7 +614,7 @@ function VaccineRow({
     if (Number(lot.quantityOnHand) > 0) setZeroOverrideReason('');
   }
 
-  const save = async () => {
+  const save = async (versionOverride?: string | null) => {
     if (!nextDue) {
       setError('Next due date is required so the patient gets a reminder.');
       return;
@@ -626,8 +635,11 @@ function VaccineRow({
     }
     setSaving(true);
     setError(null);
+    setConflict(null);
     try {
+      const expectedUpdatedAt = versionOverride ?? recorded?.updated ?? undefined;
       const saved = await saveOrderVaccination(encounterId, order.id, {
+        ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         vaccineName: order.name,
         dateVaccinated,
         nextVaccinationDate: nextDue,
@@ -647,7 +659,10 @@ function VaccineRow({
       });
       onSaved(saved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save this dose.');
+      // EMR-13: keep what was typed; offer to reload their version or save over it.
+      const clash = recordConflictFrom(e);
+      if (clash) setConflict(clash);
+      else setError(e instanceof Error ? e.message : 'Could not save this dose.');
     } finally {
       setSaving(false);
     }
@@ -781,6 +796,17 @@ function VaccineRow({
             </div>
           </div>
 
+          {conflict && (
+            <RecordConflictBanner
+              conflict={conflict}
+              busy={saving}
+              onReload={() => {
+                setConflict(null);
+                void onReload();
+              }}
+              onSaveMine={() => void save(conflict.updated)}
+            />
+          )}
           {error && <p className="soap-dose-error">{error}</p>}
 
           <div className="soap-dose-actions">
@@ -829,6 +855,7 @@ function PrescriptionRow({
   onToggle,
   onQtyChange,
   onSaved,
+  onReload,
 }: {
   encounterId: string;
   order: EncounterOrder;
@@ -848,6 +875,8 @@ function PrescriptionRow({
   onToggle: () => void;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
   onSaved: (saved: OrderPrescription) => void;
+  /** Re-read the chart's doses and prescriptions (after a save conflict). */
+  onReload: () => Promise<void>;
 }) {
   const [name, setName] = useState(order.name);
   const [refill, setRefill] = useState('0');
@@ -859,6 +888,7 @@ function PrescriptionRow({
   const [sigSource, setSigSource] = useState<PrescriptionDefaults['source']>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<RecordConflict | null>(null);
   const [prefilled, setPrefilled] = useState(false);
   const [showLabel, setShowLabel] = useState(false);
 
@@ -906,7 +936,8 @@ function PrescriptionRow({
   }, [open, prefilled, recorded, encounterId, order.id, order.catalogItemId]);
 
   const save = async (
-    labelValues?: RxLabelPrescriptionInput
+    labelValues?: RxLabelPrescriptionInput,
+    versionOverride?: string | null
   ): Promise<OrderPrescription | null> => {
     if (!acuity) {
       setError('Choose acute or chronic for this prescription.');
@@ -914,8 +945,11 @@ function PrescriptionRow({
     }
     setSaving(true);
     setError(null);
+    setConflict(null);
     try {
+      const expectedUpdatedAt = versionOverride ?? recorded?.updated ?? undefined;
       const saved = await saveOrderPrescription(encounterId, order.id, {
+        ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         name: labelValues?.name.trim() || name.trim() || order.name,
         // Not collected on the form any more — it comes off the catalog drug record, and the
         // label needs it stored on the prescription.
@@ -940,7 +974,9 @@ function PrescriptionRow({
       onSaved(saved);
       return saved;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save this prescription.');
+      const clash = recordConflictFrom(e);
+      if (clash) setConflict(clash);
+      else setError(e instanceof Error ? e.message : 'Could not save this prescription.');
       return null;
     } finally {
       setSaving(false);
@@ -1110,6 +1146,17 @@ function PrescriptionRow({
             />
           </label>
 
+          {conflict && (
+            <RecordConflictBanner
+              conflict={conflict}
+              busy={saving}
+              onReload={() => {
+                setConflict(null);
+                void onReload();
+              }}
+              onSaveMine={() => void save(undefined, conflict.updated)}
+            />
+          )}
           {error && <p className="soap-dose-error">{error}</p>}
 
           <div className="soap-dose-actions">
