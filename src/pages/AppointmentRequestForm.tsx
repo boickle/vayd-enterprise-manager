@@ -23,6 +23,11 @@ import {
 import { NewClientHowSoonPicker, type HowSoonChoiceValue } from '../components/NewClientHowSoonPicker';
 import { NewClientSpeciesPicker, type NewClientSpeciesChoice } from '../components/NewClientSpeciesPicker';
 import { PetVisitQuestionsBlock } from '../components/PetVisitQuestionsBlock';
+import { VisitCostEstimatePanel } from '../components/VisitCostEstimatePanel';
+import {
+  isAppointmentWithinCostEstimateWindow,
+  type VisitCostEstimatePet,
+} from '../api/visitCostEstimate';
 import { PetSexSelect, spayedNeuteredFromPetSex, type PetSexOption } from '../components/PetSexSelect';
 import {
   ClientRecordUploadFields,
@@ -847,6 +852,7 @@ export default function AppointmentRequestForm() {
   const lastFetchedVetsAddressRef = useRef<string>(''); // Vet lookup is separate from the zone gate
   const lastRecordedOosaAddressRef = useRef<string>(''); // Dedupe out-of-area interest POSTs
   const [zoneCheckStatus, setZoneCheckStatus] = useState<ZoneCheckStatus>('idle');
+  const [visitZoneName, setVisitZoneName] = useState<string | null>(null);
   const zoneCheckStatusRef = useRef<ZoneCheckStatus>('idle');
   zoneCheckStatusRef.current = zoneCheckStatus;
   const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
@@ -1167,20 +1173,29 @@ export default function AppointmentRequestForm() {
   }, [isLoggedIn]);
 
   const confirmVisitZone = useCallback(
-    async (address: string): Promise<Exclude<ZoneCheckStatus, 'idle' | 'pending'>> => {
+    async (
+      address: string,
+    ): Promise<{
+      status: Exclude<ZoneCheckStatus, 'idle' | 'pending'>;
+      zoneName: string | null;
+    }> => {
       try {
-        await http.get('/public/appointments/find-zone-by-address', {
-          params: {
-            address,
-            buffer: zoneSearchBufferMiles,
+        const { data } = await http.get<{ name?: string }>(
+          '/public/appointments/find-zone-by-address',
+          {
+            params: {
+              address,
+              buffer: zoneSearchBufferMiles,
+            },
           },
-        });
-        return 'in_service';
+        );
+        const zoneName = typeof data?.name === 'string' ? data.name.trim() : '';
+        return { status: 'in_service', zoneName: zoneName || null };
       } catch (zoneError: unknown) {
         const status = (zoneError as { response?: { status?: number } })?.response?.status;
-        if (status === 404) return 'out_of_service';
+        if (status === 404) return { status: 'out_of_service', zoneName: null };
         console.warn('[AppointmentForm] Zone check failed:', zoneError);
-        return 'failed';
+        return { status: 'failed', zoneName: null };
       }
     },
     [zoneSearchBufferMiles],
@@ -1236,10 +1251,12 @@ export default function AppointmentRequestForm() {
     }
 
     setZoneCheckStatus('pending');
-    const status = await confirmVisitZone(address);
-    applyZoneCheckResult(address, status);
-    if (status === 'in_service') return true;
-    if (status === 'out_of_service') {
+    setVisitZoneName(null);
+    const zoneResult = await confirmVisitZone(address);
+    setVisitZoneName(zoneResult.zoneName);
+    applyZoneCheckResult(address, zoneResult.status);
+    if (zoneResult.status === 'in_service') return true;
+    if (zoneResult.status === 'out_of_service') {
       const fd = formDataRef.current;
       return allowAppointmentRequestWhenOutOfArea({
         isExistingClient: isLoggedIn || fd.haveUsedServicesBefore === 'Yes',
@@ -1254,6 +1271,7 @@ export default function AppointmentRequestForm() {
   useEffect(() => {
     if (!visitAddressForZoneCheck) {
       setZoneCheckStatus('idle');
+      setVisitZoneName(null);
       lastCheckedAddressRef.current = '';
       setErrors((prev) => {
         if (!prev.zoneNotServiced) return prev;
@@ -1270,13 +1288,15 @@ export default function AppointmentRequestForm() {
     }
 
     setZoneCheckStatus('pending');
+    setVisitZoneName(null);
     let alive = true;
     const timeoutId = setTimeout(() => {
       void (async () => {
-        const status = await confirmVisitZone(visitAddressForZoneCheck);
+        const zoneResult = await confirmVisitZone(visitAddressForZoneCheck);
         if (!alive) return;
         if (lastCheckedAddressRef.current === visitAddressForZoneCheck) return;
-        applyZoneCheckResult(visitAddressForZoneCheck, status);
+        setVisitZoneName(zoneResult.zoneName);
+        applyZoneCheckResult(visitAddressForZoneCheck, zoneResult.status);
       })();
     }, 500);
 
@@ -1800,8 +1820,8 @@ export default function AppointmentRequestForm() {
     };
   }, [calmingPremedAppointmentType]);
 
-  // Availability uses the visit reason the client picked. Calming meds no longer
-  // swap the search onto the Pre-Meds type; those visits use the new-patient lead time.
+  // Availability uses the visit reason the client picked. Calming meds and muzzle
+  // visits use the practice pre-med lead time instead of swapping onto the Pre-Meds type.
   const primaryAppointmentTypeId = useMemo(
     () => resolvePrimaryAppointmentTypeId(formData),
     [
@@ -2781,6 +2801,64 @@ export default function AppointmentRequestForm() {
     currentPage === 'request-visit-continued' || currentPage === 'euthanasia-continued' ||
     (currentPage === 'new-client-pet-info' && !isLoggedIn) ||
     (currentPage === 'existing-client' && isLoggedIn);
+
+  const visitCostPets = useMemo((): VisitCostEstimatePet[] => {
+    const typeNameFor = (petId: string): string => {
+      const petData = formData.petSpecificData?.[petId];
+      const stored = petData?.appointmentTypeName?.trim();
+      if (stored) return stored;
+      const pretty = petData?.needsToday?.trim();
+      if (!pretty) return '';
+      return (
+        appointmentTypes.find((type) => type.prettyName === pretty || type.name === pretty)?.name ||
+        pretty
+      );
+    };
+    const rows: VisitCostEstimatePet[] = [];
+    const push = (
+      id: string,
+      name: string | undefined,
+      species?: string,
+      weight?: string,
+    ) => {
+      const appointmentTypeName = typeNameFor(id);
+      if (!appointmentTypeName) return;
+      rows.push({
+        name: name?.trim() || undefined,
+        appointmentTypeName,
+        species: species?.trim() || undefined,
+        weight: weight?.trim() || undefined,
+      });
+    };
+    if (!isLoggedIn) {
+      for (const pet of formData.newClientPets || []) {
+        push(pet.id, pet.name, pet.speciesChoice || pet.species, pet.weight);
+      }
+    } else {
+      for (const id of formData.selectedPetIds || []) {
+        const pet = pets.find((candidate) => candidate.id === id);
+        if (!pet) continue;
+        push(id, pet.name, pet.species);
+      }
+      for (const pet of formData.existingClientNewPets || []) {
+        push(pet.id, pet.name, pet.speciesChoice || pet.species, pet.weight);
+      }
+    }
+    return rows;
+  }, [
+    isLoggedIn,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+    formData.selectedPetIds,
+    formData.petSpecificData,
+    pets,
+    appointmentTypes,
+  ]);
+
+  const showVisitCostEstimate =
+    isOnSubmitStep &&
+    visitCostPets.length > 0 &&
+    isAppointmentWithinCostEstimateWindow(formData.selfScheduledSlot);
   // Show "Sign up for membership now" only when there is at least one pet eligible for membership.
   // For logged-in users, wait until we've loaded both transactions and wellness plans so we don't show the button for pets that already have membership.
   const membershipDataLoaded =
@@ -9559,13 +9637,17 @@ export default function AppointmentRequestForm() {
             Thank You!
           </h1>
           <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '16px' }}>
-            {submitSuccessKind === 'online_confirmed'
+            {submitSuccessKind === 'online_held_pending_handling'
+              ? "We've held your appointment. Please check your email for details — we'll confirm once we review your pet's records to make sure we're the right fit."
+              : submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : (submitSuccessKind === 'slot_taken' || submitSuccessKind === 'online_partial') &&
                   submitResultMessage
                 ? submitResultMessage
                 : 'We are working on booking your appointment and will be in touch shortly.'}
-            {submitSuccessKind === 'online_confirmed' && formData.joinWaitlistIfSooner
+            {(submitSuccessKind === 'online_confirmed' ||
+              submitSuccessKind === 'online_held_pending_handling') &&
+            formData.joinWaitlistIfSooner
               ? ' We’ll also reach out if an earlier time opens up.'
               : ''}
           </p>
@@ -10019,6 +10101,15 @@ export default function AppointmentRequestForm() {
           }}>
             {errors.submit}
           </div>
+        )}
+
+        {showVisitCostEstimate && (
+          <VisitCostEstimatePanel
+            practiceId={practiceId}
+            zoneName={visitZoneName}
+            pets={visitCostPets}
+            visible
+          />
         )}
 
         {!(isLoggedInIntroLoading) && (

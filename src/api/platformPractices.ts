@@ -1,7 +1,7 @@
 // src/api/platformPractices.ts
 import { http } from './http';
 
-export type PracticeFeature = 'messaging' | 'payments' | 'evetSync';
+export type PracticeFeature = 'messaging' | 'payments' | 'evetSync' | 'idexx';
 
 export type PlatformPracticeSummary = {
   key: string;

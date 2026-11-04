@@ -20,6 +20,7 @@ const FEATURE_LABELS: Record<PracticeFeature, string> = {
   messaging: 'Messaging (OpenPhone, email)',
   payments: 'Payments (Stripe)',
   evetSync: 'eVet sync',
+  idexx: 'IDEXX (VetConnect PLUS)',
 };
 
 const SETTING_NAME = /^[A-Z][A-Z0-9_]*$/;

@@ -69,7 +69,9 @@ import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClie
 import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
 import { AppointmentRequestAlternateAddressCallout } from '../components/AppointmentRequestAlternateAddressCallout';
+import { AppointmentRequestHandlingNeedsCallout } from '../components/AppointmentRequestHandlingNeedsCallout';
 import { EvetNameLink } from '../components/EvetNameLink';
+import { requestDataHasNewPatientSpecialHandlingNeeds } from '../utils/appointmentRequestHandlingNeeds';
 import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
@@ -733,7 +735,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
       const applySubmissionRows = (
         items: AppointmentRequestSubmissionItem[],
-        conversions: { converted: number; totalRequests: number } | null,
+        conversions: {
+          converted: number;
+          totalRequests: number;
+          convertedToHold?: number;
+        } | null,
         opts: { isPartialBackfill?: boolean },
       ) => {
         const previousRows = rowsRef.current;
@@ -763,8 +769,13 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
         if (conversions && conversions.totalRequests > 0) {
           const rate = ((conversions.converted / conversions.totalRequests) * 100).toFixed(1);
+          const holds = conversions.convertedToHold ?? 0;
+          const holdNote =
+            holds > 0
+              ? ` ${holds} ${holds === 1 ? 'is still a hold' : 'are still holds'}.`
+              : '';
           setConversionsBanner(
-            `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).`,
+            `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).${holdNote}`,
           );
         } else if (!silent && !opts.isPartialBackfill) {
           setConversionsBanner(null);
@@ -2313,6 +2324,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Confirm from submission fields immediately — do not wait for bookedApptMeta.
             // Gating on hasLinkedAppointment flashed Book / Link appointment while meta loaded.
             const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const showHandlingNeedsPendingConfirmation =
+              needsStaffConfirmation &&
+              requestDataHasNewPatientSpecialHandlingNeeds(rd);
             const needsManualBook = appointmentRequestNeedsManualBookActions({
               item,
               isDismissed,
@@ -2415,6 +2429,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                 ) : null}
                 <div className="appt-request-row-main">
                   <div className="appt-request-row-body">
+                    {showHandlingNeedsPendingConfirmation ? (
+                      <AppointmentRequestHandlingNeedsCallout compact />
+                    ) : null}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                       {isSearchActive ? (
                         <div
@@ -2921,6 +2938,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       clientPimsId={clientPimsId}
                       linkedAppointment={linkedAppointment}
                       submissionId={item.kind === 'abandoned' ? null : item.id}
+                      showHandlingNeedsPendingConfirmation={
+                        showHandlingNeedsPendingConfirmation
+                      }
                     />
                   </div>
                 ) : null}

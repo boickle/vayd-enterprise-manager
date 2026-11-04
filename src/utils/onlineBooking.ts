@@ -211,6 +211,8 @@ export function isSlotNoLongerAvailableError(
 
 export type AppointmentFormSubmitSuccessKind =
   | 'online_confirmed'
+  /** Booked for a new pet with handling needs; held until the team reviews records. */
+  | 'online_held_pending_handling'
   | 'request_received'
   /** D2: the picked time was taken at submit; nothing was booked and the team will call. */
   | 'slot_taken'
@@ -222,6 +224,9 @@ export function appointmentFormSubmitSuccessKindFromMessage(
   message: string | undefined,
 ): AppointmentFormSubmitSuccessKind {
   const m = (message ?? '').toLowerCase();
+  if (m.includes('held your appointment') || m.includes('review your pet')) {
+    return 'online_held_pending_handling';
+  }
   if (m.includes('booked successfully') || m.includes('appointment is confirmed')) {
     return 'online_confirmed';
   }
@@ -235,6 +240,14 @@ export function appointmentFormSubmitSuccessKindFromMessage(
 export function appointmentFormSubmitSuccessKindFromResponse(
   response: { message?: string | string[]; bookingOutcome?: string } | null | undefined
 ): AppointmentFormSubmitSuccessKind {
+  // A visit held for handling review is booked, but the client sees the "held" screen.
+  if (
+    response?.bookingOutcome !== 'slot_taken' &&
+    appointmentFormSubmitSuccessKindFromMessage(extractApiResponseMessage(response?.message)) ===
+      'online_held_pending_handling'
+  ) {
+    return 'online_held_pending_handling';
+  }
   switch (response?.bookingOutcome) {
     case 'slot_taken':
       return 'slot_taken';

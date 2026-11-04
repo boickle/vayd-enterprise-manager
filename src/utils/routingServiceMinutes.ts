@@ -130,9 +130,9 @@ export function routingVisitPetCount(input: {
 export type RoutingVisitPetInput = {
   appointmentTypeId: number;
   isNewPatient?: boolean;
-  /** When true, availability uses the new-patient lead time instead of the pre-meds window. */
+  /** When true, availability uses the pre-med lead time. */
   needsCalmingMedications?: boolean;
-  /** Muzzle or extra handling — same lead time as a new client. */
+  /** Muzzle or extra handling — same lead time as calming medication. */
   needsSpecialHandling?: boolean;
 };
 

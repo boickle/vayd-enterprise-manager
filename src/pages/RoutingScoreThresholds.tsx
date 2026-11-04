@@ -811,6 +811,27 @@ export default function RoutingScoreThresholdsPage() {
                 }}
               />
 
+              <label className="settings-label" htmlFor="ob-premed-lead">
+                Pre-med lead time (hours)
+              </label>
+              <input
+                id="ob-premed-lead"
+                className="settings-input"
+                type="number"
+                min={0}
+                step={1}
+                value={autoBookSettings.calmingPremedLeadTimeHours}
+                onChange={(e) => {
+                  const n = parseOptionalScore(e.target.value);
+                  if (n != null) {
+                    setAutoBookSettings((prev) => ({
+                      ...prev,
+                      calmingPremedLeadTimeHours: n,
+                    }));
+                  }
+                }}
+              />
+
               <label className="settings-label" htmlFor="ob-existing-lead">
                 Existing client lead time (hours)
               </label>
@@ -836,7 +857,9 @@ export default function RoutingScoreThresholdsPage() {
             <p className="settings-section-description" style={{ maxWidth: 760, marginTop: 12 }}>
               Defaults when a type is left blank: 45 min single, 30 min per pet for multi-pet,{' '}
               {autoBookSettings.newClientLeadTimeHours} hours for new clients/patients,{' '}
-              {autoBookSettings.existingClientLeadTimeHours} hours for existing clients.
+              {autoBookSettings.existingClientLeadTimeHours} hours for existing clients,{' '}
+              {autoBookSettings.calmingPremedLeadTimeHours} hours when a pet needs calming
+              medication or a muzzle.
             </p>
 
             <h4 style={{ marginTop: 20, marginBottom: 8 }}>Lead time by appointment type</h4>
@@ -845,8 +868,7 @@ export default function RoutingScoreThresholdsPage() {
               the default above ({autoBookSettings.existingClientLeadTimeHours} hours for existing
               clients, {autoBookSettings.newClientLeadTimeHours} hours for new clients). For
               example, an existing-client wellness can be 4 hours while a new-client wellness is
-              12. Visits that need calming medication or extra handling use the new-client hours
-              for that type.
+              12. A pet that needs calming medication or a muzzle uses the pre-med lead time ({autoBookSettings.calmingPremedLeadTimeHours} hours), including when they upload records. If that visit&apos;s other lead time is longer, the longer time is used.
             </p>
 
             <div style={{ overflowX: 'auto', maxWidth: 720 }}>
