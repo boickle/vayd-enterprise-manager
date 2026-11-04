@@ -238,11 +238,12 @@ describe('addToVisitClNote', () => {
     lateStops: [{ client: 'Smith', minutesPastWindow: 15 }],
   };
 
-  it('says where to add the pet, what it needs, and who may run late', () => {
-    expect(addToVisitClNote(base)).toBe(
-      'Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM arrival, Dr. Dana Demo ' +
-        '(appt #2010445). Needs: Annual Wellness Visit. Adds about 30 min. ' +
-        'Heads-up: Smith may arrive 15 min past their window.'
+  it('says who suggested it, which visit, why it was not added, and asks the CL to look into it', () => {
+    expect(addToVisitClNote({ ...base, suggestedBy: 'Dr. Dana Demo', visitPetNames: ['Juno'] })).toBe(
+      "Dr. Dana Demo suggested adding Maple to Juno's visit (Rivera) on Wed Nov 25, 9:00–11:00 AM " +
+        "arrival, with Dr. Dana Demo (appt #2010445), but didn't add Maple because a later stop " +
+        'could run late: Smith may arrive 15 min past their window. Can you look into this and ' +
+        'add Maple if it can work? Maple needs: Annual Wellness Visit. Adds about 30 min.'
     );
   });
 
@@ -260,11 +261,12 @@ describe('addToVisitClNote', () => {
         ],
       })
     ).toBe(
-      'Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM arrival, Dr. Dana Demo ' +
-        '(appt #2010445), together with Pepper. Needs: Annual Wellness Visit (needs pre-meds). ' +
-        'Note: Bring muzzle. Adds about 30 min for all the added pets. ' +
-        'Arrival window narrows to 9:00–10:00 AM for every pet (pre-meds). ' +
-        'Heads-up: Smith may arrive 15 min past their window; Lee may arrive at the edge of their window.'
+      'A staff member suggested adding Maple and Pepper to the Rivera visit on Wed Nov 25, ' +
+        "9:00–11:00 AM arrival, with Dr. Dana Demo (appt #2010445), but didn't add them because " +
+        'a later stop could run late: Smith may arrive 15 min past their window; Lee may arrive ' +
+        'at the edge of their window. Can you look into this and add them if it can work? ' +
+        'Maple needs: Annual Wellness Visit (needs pre-meds). Note: Bring muzzle. ' +
+        'Adds about 30 min for both pets. Arrival window narrows to 9:00–10:00 AM for every pet (pre-meds).'
     );
   });
 });

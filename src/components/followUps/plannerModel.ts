@@ -359,47 +359,67 @@ export type AddToVisitClNoteArgs = {
   premedsWindow?: { start: DateTime; end: DateTime } | null;
   /** Later stops that day that would arrive past (or at the edge of) their window. */
   lateStops: { client: string; minutesPastWindow: number }[];
+  /** Who sent it to the CLs, e.g. "Dr. Dana Demo" or "Casey Demo". */
+  suggestedBy?: string | null;
+  /** Pets already on that visit, e.g. ["Juno"]. */
+  visitPetNames?: string[];
 };
 
 /**
- * The forward-booking row's note when the doctor sends "add this pet to that visit" to
- * the CLs instead of adding it (the visit would make later stops late): where to add it
- * and what it needs, e.g. "Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM
- * arrival, Dr. Dana Demo (appt #2010445). Needs: Annual Wellness Visit. Adds about 30
- * min. Heads-up: Smith may arrive 15 min past their window."
+ * The forward-booking row's note when staff send "add this pet to that visit" to the CLs
+ * instead of adding it (the visit would make later stops late). Says who suggested it,
+ * which visit, why it wasn't added, and asks the CL to look into it, e.g.
+ * "Dr. Dana Demo suggested adding Maple and Pepper to Juno's visit (Rivera) on Wed Nov 25,
+ * 9:00–11:00 AM arrival, with Dr. Dana Demo (appt #2010445), but didn't add them because
+ * a later stop could run late: Smith may arrive 15 min past their window. Can you look into
+ * this and add them if it can work? Maple needs: Annual Wellness Visit. Adds about 30 min
+ * for both pets."
  */
 export function addToVisitClNote(a: AddToVisitClNoteArgs): string {
-  const visit = a.householdName ? `the ${a.householdName} visit` : "the household's visit";
+  const pets = [a.petName, ...a.otherPetNames];
+  const andNames = (xs: string[]) =>
+    xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+  const them = pets.length > 1 ? 'them' : a.petName;
+  const who = a.suggestedBy?.trim() || 'A staff member';
+  const onVisit = a.visitPetNames?.length ?? 0;
+  const visit = onVisit
+    ? `${andNames(a.visitPetNames!)}'s visit${a.householdName ? ` (${a.householdName})` : ''}`
+    : a.householdName
+      ? `the ${a.householdName} visit`
+      : "the household's visit";
   const appt = a.appointmentId != null ? ` (appt #${a.appointmentId})` : '';
-  const others = a.otherPetNames.length ? `, together with ${joinNames(a.otherPetNames)}` : '';
+  const late = a.lateStops
+    .map((s) =>
+      s.minutesPastWindow > 0
+        ? `${s.client} may arrive ${s.minutesPastWindow} min past their window`
+        : `${s.client} may arrive at the edge of their window`
+    )
+    .join('; ');
   const parts = [
-    `Add ${a.petName} to ${visit} ${a.visitStart.toFormat('ccc LLL d')}, ${timeRangeLabel(
-      a.windowStart,
-      a.windowEnd
-    )} arrival, ${providerFullLabel(a.provider)}${appt}${others}.`,
-    `Needs: ${a.needs.trim() || 'visit type not set'}${a.needsPremeds ? ' (needs pre-meds)' : ''}.`,
+    `${who} suggested adding ${andNames(pets)} to ${visit} on ${a.visitStart.toFormat(
+      'ccc LLL d'
+    )}, ${timeRangeLabel(a.windowStart, a.windowEnd)} arrival, with ${providerFullLabel(
+      a.provider
+    )}${appt}, but didn't add ${them}${
+      late ? ` because a later stop could run late: ${late}` : ''
+    }.`,
+    `Can you look into this and add ${them} if it can work?`,
+    `${a.petName} needs: ${a.needs.trim() || 'visit type not set'}${
+      a.needsPremeds ? ' (needs pre-meds)' : ''
+    }.`,
   ];
   const note = a.petNote?.trim();
   if (note) parts.push(`Note: ${note.replace(/[.\s]+$/, '')}.`);
   if (a.addedMinutes != null) {
     parts.push(
-      `Adds about ${a.addedMinutes} min${a.otherPetNames.length ? ' for all the added pets' : ''}.`
+      `Adds about ${a.addedMinutes} min${
+        pets.length === 2 ? ' for both pets' : pets.length > 2 ? ' for all the added pets' : ''
+      }.`
     );
   }
   if (a.premedsWindow) {
     parts.push(
       `Arrival window narrows to ${timeRangeLabel(a.premedsWindow.start, a.premedsWindow.end)} for every pet (pre-meds).`
-    );
-  }
-  if (a.lateStops.length) {
-    parts.push(
-      `Heads-up: ${a.lateStops
-        .map((s) =>
-          s.minutesPastWindow > 0
-            ? `${s.client} may arrive ${s.minutesPastWindow} min past their window`
-            : `${s.client} may arrive at the edge of their window`
-        )
-        .join('; ')}.`
     );
   }
   return parts.join(' ');

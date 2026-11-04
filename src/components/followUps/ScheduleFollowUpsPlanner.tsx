@@ -3,7 +3,7 @@ import { useSubmitOnce } from '../../hooks/useSubmitOnce';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { CalendarPlus, X } from 'lucide-react';
-import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
+import { fetchAllEmployees, fetchEmployee, type Employee } from '../../api/appointmentSettings';
 import { getEmployeeBranches, listPracticeBranches } from '../../api/branchInventory';
 import { getToken } from '../../api/http';
 import { resolveEmployeeIdFromToken } from '../../utils/practiceIdFromToken';
@@ -1121,7 +1121,20 @@ export default function ScheduleFollowUpsPlanner({
   }
 
   /** The forward-booking note: which visit to add the pet to, what it needs, the impact. */
-  function clNoteForAdd(v: UpcomingVisit, pet: PlannerPet): string {
+  /** The signed-in staff member's name for the CL note ("Dr. Dana Demo", "Casey Demo"), or null. */
+  async function myStaffName(): Promise<string | null> {
+    const me = resolveEmployeeIdFromToken(getToken());
+    if (me == null) return null;
+    try {
+      const e = await fetchEmployee(Number(me));
+      const name = [e?.firstName, e?.lastName].filter(Boolean).join(' ').trim();
+      if (!name) return null;
+      return /\b(dr|dvm|vmd)\b/i.test(e?.title ?? '') ? `Dr. ${name}` : name;
+    } catch {
+      return null;
+    }
+  }
+  function clNoteForAdd(v: UpcomingVisit, pet: PlannerPet, suggestedBy: string | null = null): string {
     const st = upcoming[v.key];
     const added = addedTo(v);
     const nameParts = (data?.clientName ?? '').trim().split(/\s+/).filter(Boolean);
@@ -1129,6 +1142,10 @@ export default function ScheduleFollowUpsPlanner({
     const note = addToVisitClNote({
       petName: pet.name,
       otherPetNames: added.filter((p) => p.patientId !== pet.patientId).map((p) => p.name),
+      suggestedBy,
+      visitPetNames: v.petIds
+        .map((id) => data?.pets.find((p) => p.patientId === id)?.name)
+        .filter((n): n is string => Boolean(n)),
       householdName: nameParts.length ? nameParts[nameParts.length - 1]! : null,
       visitStart: v.start,
       windowStart: v.windowStart,
@@ -1353,6 +1370,7 @@ export default function ScheduleFollowUpsPlanner({
       // "Send to CLs" on a housemate visit: one row per added pet, aimed at that visit's
       // day and provider, its note saying where to add the pet and what it needs.
       const clNoteByPet = new Map<number, { interval: PlannerInterval; note: string }>();
+      const suggestedBy = clVisits.length ? await myStaffName() : null;
       for (const v of clVisits) {
         const added = addedTo(v);
         const { entries } = await createPlannerForwardBookings({
@@ -1365,7 +1383,7 @@ export default function ScheduleFollowUpsPlanner({
           typeIdFor: (p) => addedTypeFor(v, p)!,
           premedsFor: (p) => premedsFor(p, upKey(v.key)),
           serviceMinutes: upcoming[v.key]?.added?.minutes ?? 20,
-          notesFor: (p) => clNoteForAdd(v, p),
+          notesFor: (p) => clNoteForAdd(v, p, suggestedBy),
           links: links.current,
         });
         entries.forEach(
@@ -1375,7 +1393,7 @@ export default function ScheduleFollowUpsPlanner({
         );
         for (const p of added) {
           if (!clNoteByPet.has(p.patientId))
-            clNoteByPet.set(p.patientId, { interval: visitInterval(v), note: clNoteForAdd(v, p) });
+            clNoteByPet.set(p.patientId, { interval: visitInterval(v), note: clNoteForAdd(v, p, suggestedBy) });
         }
       }
       // 2. Labs tasks, one per pet.

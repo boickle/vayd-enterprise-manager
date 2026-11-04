@@ -209,6 +209,8 @@ vi.mock('../../api/appointmentSettings', async (orig) => ({
   fetchAllEmployees: vi.fn(async () => [
     { id: 7, firstName: 'Priya', lastName: 'Patel', email: 'p@x.com' },
   ]),
+  // The signed-in staff member (employee 42 in the token below).
+  fetchEmployee: vi.fn(async () => ({ id: 42, firstName: 'Casey', lastName: 'Demo', title: 'CSR' })),
 }));
 vi.mock('../../api/branchInventory', async (orig) => ({
   ...(await orig<typeof import('../../api/branchInventory')>()),
@@ -968,9 +970,10 @@ function handoffFor(url: string) {
 
 describe('Adding a pet to a visit that would run late: Send to CLs', () => {
   const PEPPER_NOTE =
-    'Add Pepper to the Okafor visit Wed Dec 2, 10:00 AM–12:00 PM arrival, Dr. Priya Patel ' +
-    '(appt #900). Needs: Ear Recheck. Adds about 14 min. ' +
-    'Heads-up: Ruiz household may arrive 5 min past their window.';
+    "Casey Demo suggested adding Pepper to Greta's visit (Okafor) on Wed Dec 2, 10:00 AM–12:00 PM " +
+    'arrival, with Dr. Priya Patel (appt #900), but didn\'t add Pepper because a later stop could ' +
+    'run late: Ruiz household may arrive 5 min past their window. Can you look into this and add ' +
+    'Pepper if it can work? Pepper needs: Ear Recheck. Adds about 14 min.';
 
   /** Today's four pets get "No follow-up needed" so Done only waits on the visit. */
   function planTodaysPets() {
@@ -1062,7 +1065,7 @@ describe('Adding a pet to a visit that would run late: Send to CLs', () => {
       intervalAmount: 29,
       intervalUnit: 'days',
     });
-    expect(fluffy.disposition.bookingNotes).toMatch(/^Add Fluffy to the Okafor visit Wed Dec 2/);
+    expect(fluffy.disposition.bookingNotes).toMatch(/^Casey Demo suggested adding Fluffy to Greta's visit \(Okafor\) on Wed Dec 2/);
   });
 
   it('a pet the planner was opened for: Done says it went to the CLs for that visit', async () => {
