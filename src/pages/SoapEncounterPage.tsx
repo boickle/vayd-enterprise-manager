@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { isNetworkError } from '../api/http';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowRight,
   ClipboardList,
@@ -13,7 +13,6 @@ import {
   Receipt,
   SlidersHorizontal,
   Mic,
-  User,
   Users,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
@@ -77,6 +76,7 @@ import ConsentWeightAlert from '../components/consent/ConsentWeightAlert';
 import { type ConsentWeightChange } from '../utils/consentWeightAlert';
 import ScribePanel from '../components/soap/ScribePanel';
 import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSummary';
+import SoapHeaderRecords from '../components/soap/SoapHeaderRecords';
 import ScribeDocumentView, { type DocTabId } from '../components/soap/ScribeDocumentView';
 import SoapVitalsFields from '../components/soap/SoapVitalsFields';
 import {
@@ -1661,6 +1661,16 @@ export default function SoapEncounterPage() {
       .catch(() => undefined);
   }, [patientId]);
 
+  /** Pet/client record pop-up closed: reload the chronic box, since it may have changed there. */
+  const [recordModalRevision, setRecordModalRevision] = useState(0);
+  const refreshAfterRecordModal = useCallback(() => {
+    setRecordModalRevision((n) => n + 1);
+    refreshChronicMedications();
+    void listProblems(patientId)
+      .then(setProblems)
+      .catch(() => undefined);
+  }, [patientId, refreshChronicMedications]);
+
   const onScribeOrderCreated = (order: EncounterOrder) => {
     setOrders((prev) => [...prev, order]);
   };
@@ -1734,44 +1744,24 @@ export default function SoapEncounterPage() {
           <Stethoscope size={20} />
           <div className="soap-header-patient">
             <h1>
-              <Link
-                className="soap-header-patient-link"
-                to={`/schedule/patients?patientId=${encodeURIComponent(String(patientId))}`}
-                title="Open patient medical record"
-              >
-                {patientName || `Patient #${patientId}`}
-              </Link>
-              {currentMembership.isMember ? (
-                <span
-                  className="soap-header-member"
-                  title={currentMembership.membershipName?.trim() || 'On a membership'}
-                >
-                  <span aria-hidden>❤️</span>
-                  {currentMembership.membershipName?.trim() || 'Member'}
-                </span>
-              ) : null}
-              {clientName.trim() ? (
-                <>
-                  <span className="soap-header-client-sep" aria-hidden>
-                    ·
-                  </span>
-                  {headerClientId != null ? (
-                    <Link
-                      className="soap-header-client"
-                      to={`/schedule/clients?clientId=${encodeURIComponent(String(headerClientId))}`}
-                      title="Open client record"
+              <SoapHeaderRecords
+                patientId={patientId}
+                patientName={patientName}
+                clientId={headerClientId}
+                clientName={clientName}
+                onRecordClosed={refreshAfterRecordModal}
+                between={
+                  currentMembership.isMember ? (
+                    <span
+                      className="soap-header-member"
+                      title={currentMembership.membershipName?.trim() || 'On a membership'}
                     >
-                      <User size={14} aria-hidden />
-                      {clientName.trim()}
-                    </Link>
-                  ) : (
-                    <span className="soap-header-client">
-                      <User size={14} aria-hidden />
-                      {clientName.trim()}
+                      <span aria-hidden>❤️</span>
+                      {currentMembership.membershipName?.trim() || 'Member'}
                     </span>
-                  )}
-                </>
-              ) : null}
+                  ) : null
+                }
+              />
             </h1>
             {signalment.length > 0 && (
               <span
@@ -1972,6 +1962,7 @@ export default function SoapEncounterPage() {
             }
             suggestionsSlot={
               <EvetProblemSuggestions
+                key={`evet-${recordModalRevision}`}
                 patientId={patientId}
                 problems={problems}
                 encounterId={encounter?.id}

@@ -1,0 +1,119 @@
+/* SOAP header: pet / client records in a pop-up (owner request Nov 4, 2026). */
+.soap-header-view-details {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.soap-header-view-details:hover,
+.soap-header-view-details:focus-visible {
+  color: #1d4ed8;
+}
+
+/* Above the app navbar (z 100-320) so nothing outside the pop-up can be clicked by mistake. */
+.soap-record-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 12px 12px;
+}
+.soap-record-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+}
+.soap-record-modal__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, 96vw);
+  height: 94vh;
+  height: 94dvh;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+.soap-record-modal__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.soap-record-modal__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.soap-record-modal__hint {
+  flex: 1 1 220px;
+  font-size: 12px;
+  color: #64748b;
+}
+.soap-record-modal__full {
+  font-size: 13px;
+  color: #2563eb;
+  white-space: nowrap;
+}
+.soap-record-modal__back,
+.soap-record-modal__close {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-record-modal__close:hover,
+.soap-record-modal__back:hover {
+  background: #f1f5f9;
+}
+.soap-record-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.soap-record-modal__loading {
+  padding: 16px;
+}
+@media (max-width: 900px) {
+  .soap-record-modal {
+    padding: 6px;
+  }
+  .soap-record-modal__card {
+    width: 100%;
+    height: 98vh;
+    height: 98dvh;
+    border-radius: 10px;
+  }
+}
+
+/* The charts' own pop-ups sit below z 400; lift them while a record is open in the SOAP. */
+body.soap-record-modal-open .task-remove-modal__backdrop,
+body.soap-record-modal-open .shared-task-prompt__backdrop,
+body.soap-record-modal-open .ppg-backdrop,
+body.soap-record-modal-open .pmp-confirm-backdrop,
+body.soap-record-modal-open .mcp-backdrop,
+body.soap-record-modal-open .rpm-backdrop,
+body.soap-record-modal-open .stock-lot-add-modal {
+  z-index: 420;
+}
