@@ -467,55 +467,88 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
   it('SCH-13-4: labs pending for one pet and send to CLs for the other creates a labs task and a CL card', () => {
     const w = schedulingWorld();
     const [idA, idB] = w.households.A.activePetIds;
-    const labsTasks = () =>
+    // SCH-E: the labs task goes to doctor A (the visit's doctor) and to the technician who works
+    // with them (the seed links them, Settings → Staff "Works with"), as linked copies.
+    const labsTasksFor = (role: 'doctorA' | 'technician') =>
       schedulingApi(
-        'manager',
+        role,
         'GET',
         `/tasks?patientId=${idA}&includeDone=true&involvement=assigned`
       ).then((res): any => asList(res.body)) as Cypress.Chainable<any[]>;
+    const fresh = (after: any[], before: any[]) =>
+      after.filter((t) => !before.some((b) => b.id === t.id));
+    const reviewers = () => cy.contains('.fup-card--labs .scheduler-forward-booking-staff-pick', 'Who reviews');
     setUpTodaysVisit(13).then(() => {
-      labsTasks().then((before) => {
-        openPlanner(todayVisitIds[0], idA);
-        // Pet A: labs pending.
-        cy.contains('button.fup-pet', petA()).click();
-        cy.contains('[role="menuitem"]', 'Labs pending').click();
-        cy.contains('.fup-card--labs', petA());
-        cy.contains('.fup-card--labs label', 'Who reviews')
-          .find('select')
-          .find('option')
-          .should('have.length.greaterThan', 1);
-        cy.contains('.fup-card--labs label', 'Who reviews')
-          .find('select')
-          .select(String(w.employees.manager));
-        // Pet B: send to the CLs on the default card (with its own type).
-        putOnDefaultCard(petB());
-        cy.contains('button', 'Send to CLs to book').click();
-        cy.get('[role="alert"]').should('contain.text', petB());
-        pickType(petB(), w.types.recheck);
-        cy.contains('button', 'Send to CLs to book').click();
-        cy.contains('.fup-status--cl', 'Goes to the CLs when you press Done').should('be.visible');
-        cy.contains('button', /^Done/).click();
-        // Nothing was booked, so Done saves and closes.
-        cy.get('[role="dialog"][aria-labelledby="fup-title"]').should('not.exist');
+      labsTasksFor('doctorA').then((beforeDoctor) =>
+        labsTasksFor('technician').then((beforeTech) => {
+          openPlanner(todayVisitIds[0], idA);
+          // Pet A: labs pending.
+          cy.contains('button.fup-pet', petA()).click();
+          cy.contains('[role="menuitem"]', 'Labs pending').click();
+          cy.contains('.fup-card--labs', petA());
+          // "Who reviews" opens with the visit's doctor and their linked tech, editable.
+          reviewers()
+            .find('.scheduler-forward-booking-staff-chips li', { timeout: 30000 })
+            .should('have.length', 2);
+          reviewers().should('contain.text', 'Sched doctorA').and('contain.text', 'Sched technician');
+          // Pet B: send to the CLs on the default card (with its own type).
+          putOnDefaultCard(petB());
+          cy.contains('button', 'Send to CLs to book').click();
+          cy.get('[role="alert"]').should('contain.text', petB());
+          pickType(petB(), w.types.recheck);
+          cy.contains('button', 'Send to CLs to book').click();
+          cy.contains('.fup-status--cl', 'Goes to the CLs when you press Done').should('be.visible');
+          cy.contains('button', /^Done/).click();
+          // Nothing was booked, so Done saves and closes.
+          cy.get('[role="dialog"][aria-labelledby="fup-title"]').should('not.exist');
 
-        labsTasks().then((after) => {
-          const fresh = after.filter((t) => !before.some((b) => b.id === t.id));
-          expect(fresh, 'new labs task for the labs pet').to.have.length(1);
-          expect(String(fresh[0].title)).to.match(/once labs are back/i);
-          expect(String(fresh[0].title)).to.contain(petA());
-        });
-        forwardBookings('pending', idB).then((rows) => {
-          const cl = rows.filter((r) => !leftoverEntryIds.has(Number(r.id)));
-          expect(cl, 'CL card (pending forward-booking row) for the other pet').to.have.length(1);
-          expect(Number(cl[0].appointmentTypeId)).to.equal(w.types.recheck);
-        });
-        forwardBookings('pending', idA).then((rows) => {
-          expect(
-            rows.filter((r) => !leftoverEntryIds.has(Number(r.id))),
-            'the labs pet gets a task, not a CL row'
-          ).to.have.length(0);
-        });
-      });
+          labsTasksFor('doctorA').then((afterDoctor) =>
+            labsTasksFor('technician').then((afterTech) => {
+              const doctorCopy = fresh(afterDoctor, beforeDoctor);
+              const techCopy = fresh(afterTech, beforeTech);
+              expect(doctorCopy, "doctor A's labs task").to.have.length(1);
+              expect(techCopy, "the linked tech's labs task").to.have.length(1);
+              for (const t of [doctorCopy[0], techCopy[0]]) {
+                expect(String(t.title)).to.match(/once labs are back/i);
+                expect(String(t.title)).to.contain(petA());
+              }
+              expect(doctorCopy[0].shareGroupId, 'linked copies of one task').to.be.a('string');
+              expect(techCopy[0].shareGroupId).to.equal(doctorCopy[0].shareGroupId);
+
+              // The tech closes theirs "for everyone": both copies close.
+              signInAsScheduling('technician', `/schedule/tasks?taskId=${techCopy[0].id}`);
+              cy.contains('.pims-task-detail__shared', 'Shared', { timeout: 30000 }).should(
+                'contain.text',
+                'Sched doctorA'
+              );
+              cy.contains('button', 'Mark complete').click();
+              cy.get('[role="alertdialog"]')
+                .should('contain.text', 'Also close it for Sched doctorA?')
+                .contains('button', 'Close for everyone')
+                .click();
+              cy.get('[role="alertdialog"]').should('not.exist');
+              schedulingApi('doctorA', 'GET', `/tasks/${doctorCopy[0].id}`).then((res) => {
+                expect(res.body.status).to.equal('done');
+                expect(String(res.body.resolutionNote)).to.contain('closed their copy');
+              });
+              schedulingApi('technician', 'GET', `/tasks/${techCopy[0].id}`).then((res) => {
+                expect(res.body.status).to.equal('done');
+              });
+            })
+          );
+          forwardBookings('pending', idB).then((rows) => {
+            const cl = rows.filter((r) => !leftoverEntryIds.has(Number(r.id)));
+            expect(cl, 'CL card (pending forward-booking row) for the other pet').to.have.length(1);
+            expect(Number(cl[0].appointmentTypeId)).to.equal(w.types.recheck);
+          });
+          forwardBookings('pending', idA).then((rows) => {
+            expect(
+              rows.filter((r) => !leftoverEntryIds.has(Number(r.id))),
+              'the labs pet gets a task, not a CL row'
+            ).to.have.length(0);
+          });
+        })
+      );
     });
   });
 

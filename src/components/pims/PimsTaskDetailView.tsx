@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Loader2,
   Pencil,
+  RotateCcw,
   UserPlus,
   X,
 } from 'lucide-react';
@@ -54,6 +55,9 @@ import VisitRefundTaskPanel from './VisitRefundTaskPanel';
 import { taskPanelKind } from '../../utils/taskPanelKind';
 import TaskReassignModal from './TaskReassignModal';
 import TaskRemoveModal from './TaskRemoveModal';
+import TaskReopenModal from './TaskReopenModal';
+import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
+import { isSharedTask, sharedWithLabel } from '../../utils/sharedTask';
 import {
   mailOrderTaskStatusClass,
   mailOrderTaskStatusLabel,
@@ -77,6 +81,7 @@ function formatEventType(eventType: string): string {
     link_removed: 'Link removed',
     completed: 'Completed',
     removed: 'Removed',
+    reopened: 'Reopened',
     escalation_sent: 'Escalation reminder',
     body_changed: 'Description changed',
     due_changed: 'Due date changed',
@@ -186,6 +191,8 @@ export default function PimsTaskDetailView({
   const [editing, setEditing] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
 
   const employeeMap = useMemo(() => {
     const m = new Map<number, string>();
@@ -366,10 +373,13 @@ export default function PimsTaskDetailView({
 
   const handleComplete = async () => {
     if (!task || !canMutate) return;
+    // Shared task: "Also close it for …?" when other people's copies are still open.
+    const choice = await askAlsoClose(task);
+    if (!choice) return;
     setBusy(true);
     setActionError(null);
     try {
-      const d = await completeTask(task.id);
+      const d = await completeTask(task.id, choice);
       setTask(d);
       onUpdated();
     } catch (e: unknown) {
@@ -493,6 +503,21 @@ export default function PimsTaskDetailView({
                   Move
                 </button>
               )}
+              {canMutate && task.status === 'done' && (
+                <button
+                  type="button"
+                  className="pims-task-detail__btn pims-task-detail__btn--secondary"
+                  title="Put this task back on the board"
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setReopenOpen(true);
+                  }}
+                >
+                  <RotateCcw size={18} />
+                  Reopen
+                </button>
+              )}
             </>
           )}
         </div>
@@ -609,6 +634,18 @@ export default function PimsTaskDetailView({
             </span>
           )}
         </div>
+        {isSharedTask(task) ? (
+          <p className="pims-task-detail__shared">
+            <span className="pims-task-detail__shared-badge">Shared</span>
+            <span>{sharedWithLabel(task)}</span>
+          </p>
+        ) : null}
+        {task.watchers?.length ? (
+          <p className="pims-task-detail__watching">
+            <strong>Watching:</strong>{' '}
+            {task.watchers.map((w) => employeeLabel(employeeMap, w.employeeId)).join(', ')}
+          </p>
+        ) : null}
         <p className="pims-task-detail__schedule">
           {panelKind === 'visit_refund' ? (
             <span>No deadline — this refund has to happen.</span>
@@ -980,6 +1017,21 @@ export default function PimsTaskDetailView({
           }}
         />
       )}
+
+      {reopenOpen && (
+        <TaskReopenModal
+          task={task}
+          employees={employees}
+          onClose={() => setReopenOpen(false)}
+          onReopened={(updated) => {
+            setTask(updated);
+            setReopenOpen(false);
+            onUpdated();
+          }}
+        />
+      )}
+
+      {closePrompt}
 
       {removeOpen && (
         <TaskRemoveModal

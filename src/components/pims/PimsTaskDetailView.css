@@ -1180,3 +1180,32 @@
 .pims-callback-jot__return .soap-input {
   max-width: 22rem;
 }
+
+/* SCH-E: shared task heading line and watchers. */
+.pims-task-detail__shared {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #334155;
+}
+
+.pims-task-detail__shared-badge {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0f766e;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.pims-task-detail__watching {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: #475569;
+}

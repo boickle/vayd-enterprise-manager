@@ -13,6 +13,12 @@ import { LABS_PENDING_FORWARD_BOOKING_TASK_BODY } from '../../utils/forwardBooki
 import { validateTaskScheduleOrder } from '../../utils/taskDateTime';
 import { notifyTasksChanged } from '../../utils/taskOwnership';
 
+/**
+ * The labs-pending task, for one or more people. Two or more make one shared task: a
+ * linked copy per person (same shareGroupId), created by the API in one request, so
+ * closing or reopening one copy can offer to do the same for the others. Returns the
+ * first copy's id.
+ */
 export async function createLabsPendingForwardBookingTasks(opts: {
   title: string;
   branchIds: number[];
@@ -29,31 +35,19 @@ export async function createLabsPendingForwardBookingTasks(opts: {
   const watchers = uniqueEmployeeIds(opts.watcherEmployeeIds).filter(
     (id) => !assignees.includes(id)
   );
-  const [primary, ...rest] = assignees;
-  const first = await createTask({
+  const task = await createTask({
     title: opts.title,
     body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
     kind: 'forward_booking',
     branchIds: opts.branchIds,
-    assignedToEmployeeId: primary,
+    assignedToEmployeeId: assignees[0],
+    ...(assignees.length > 1 ? { assignedToEmployeeIds: assignees } : {}),
     watcherEmployeeIds: watchers,
     startAt: opts.startAt,
     dueAt: opts.dueAt,
     links: opts.links,
   });
-  for (const extra of rest) {
-    await createTask({
-      title: opts.title,
-      body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
-      kind: 'forward_booking',
-      branchIds: opts.branchIds,
-      assignedToEmployeeId: extra,
-      startAt: opts.startAt,
-      dueAt: opts.dueAt,
-      links: opts.links,
-    });
-  }
-  return Number(first.id);
+  return Number(task.id);
 }
 
 export type ForwardBookingDecisionTarget = {
