@@ -383,7 +383,10 @@ export default function EmailCampaignReportPage() {
                   {conversions.rows.map((c) => (
                     <TableRow key={`${c.clientId}-${c.convertedAt}`}>
                       <TableCell>
-                        <Typography variant="body2">{c.name || `Client #${c.clientId}`}</Typography>
+                        <Typography variant="body2">
+                          {c.name ||
+                            (c.clientId ? `Client #${c.clientId}` : c.email || 'External contact')}
+                        </Typography>
                         <Typography variant="caption" color="text.secondary">
                           {c.email}
                         </Typography>
@@ -441,7 +444,10 @@ export default function EmailCampaignReportPage() {
                   {(recipients?.rows ?? []).map((r) => (
                     <TableRow key={r.id}>
                       <TableCell>
-                        <Typography variant="body2">{r.name || `Client #${r.clientId}`}</Typography>
+                        <Typography variant="body2">
+                          {r.name ||
+                            (r.clientId ? `Client #${r.clientId}` : r.email || 'External contact')}
+                        </Typography>
                         <Typography variant="caption" color="text.secondary">
                           {r.email}
                         </Typography>
