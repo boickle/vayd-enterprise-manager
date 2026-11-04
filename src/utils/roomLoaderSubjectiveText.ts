@@ -573,20 +573,72 @@ function tagPreExam(bullet: string): string {
   return `${trimPeriod(bullet)} ${PRE_EXAM_CHECKIN_TAG}`;
 }
 
+/** "Weight is still an issue", "worried about her teeth": a concern, not a new fact. */
+const CONCERN_WORDS = /\b(?:still|an?|issue|issues|concern|concerns|concerned|problem|problems|worried|worry|worries|about)\b/gi;
+
+/**
+ * A check-in concern is covered when the visit history already talks about its subject
+ * ("weight is still an issue" next to "tends to be slightly overweight").
+ */
+function concernCoveredBy(visitBlob: string, checkin: string): boolean {
+  if (!/\b(?:issue|concern|concerned|problem|worried|worry)\b/i.test(checkin)) return false;
+  const subject = stripOwnerReports(checkin).replace(CONCERN_WORDS, ' ');
+  const names = properNounTokens(checkin);
+  const h = stemPhrase(normPhrase(visitBlob));
+  const tokens = stemPhrase(normPhrase(subject))
+    .split(' ')
+    .filter((t) => t.length > 2 && !COVER_STOP.has(t) && !names.has(t.replace(/s$/, '')));
+  return tokens.length > 0 && tokens.every((t) => h.includes(t));
+}
+
+const ABNORMAL_INTAKE =
+  /\b(?:not|no longer|less|more|decreas|increas|reduced|poor|picky|vomit|diarrh|constipat|strain|blood|accident|off (?:her|his|its) food|stopped|change)/i;
+
+/** "Eating, drinking, urinating and defecating normally" with nothing abnormal in it. */
+function isAllNormalIntake(s: string): boolean {
+  return historyTopic(s) === 'intake' && /\bnormal/i.test(s) && !ABNORMAL_INTAKE.test(s);
+}
+
+/** "Owner declines X" lines from the check-in, folded into one bullet. */
+function combineDeclines(lines: string[]): string[] {
+  const declined: string[] = [];
+  const rest: string[] = [];
+  for (const line of lines) {
+    const m = stripOwnerReports(line).match(/^(?:(?:the\s+)?(?:owner|client)\s+)?declin(?:es|ed)\s+(.+)$/i);
+    if (m?.[1]) declined.push(trimPeriod(m[1]));
+    else rest.push(line);
+  }
+  if (declined.length < 2) return lines;
+  const list =
+    declined.length === 2
+      ? `${declined[0]} and ${declined[1]}`
+      : `${declined.slice(0, -1).join(', ')}, and ${declined[declined.length - 1]}`;
+  return [...rest, `Declined ${list}`];
+}
+
 function mergeHistoryBullets(
   visitHistory: string[],
-  checkinHistory: string[]
+  checkinHistory: string[],
+  visitPresentingComplaint = ''
 ): { history: string[]; leftover: string[] } {
   const history = [...visitHistory];
   const leftover: string[] = [];
   const visitBlob = history.join('\n');
+  // Services requested on the form ("Lyme and Lepto vaccines and a heartworm test") are usually
+  // the reason for the visit, which the room note names in the Presenting Complaint.
+  const coveredBlob = visitPresentingComplaint ? `${visitPresentingComplaint}\n${visitBlob}` : visitBlob;
 
   for (const raw of checkinHistory) {
     const checkin = raw.replace(/\s*\(\s*pre-exam check-in\s*\)\.?/gi, '').trim();
     if (!checkin) continue;
-    if (phraseCoveredBy(visitBlob, checkin) || history.some((v) => phraseCoveredBy(v, checkin))) {
+    if (
+      phraseCoveredBy(coveredBlob, checkin) ||
+      history.some((v) => phraseCoveredBy(v, checkin)) ||
+      concernCoveredBy(visitBlob, checkin)
+    ) {
       continue;
     }
+    if (isAllNormalIntake(checkin) && history.some(isAllNormalIntake)) continue;
     if (isIndoorOnlyLine(checkin)) {
       const idx = history.findIndex(isOutdoorLifestyleLine);
       if (idx >= 0) {
@@ -620,7 +672,7 @@ function mergeHistoryBullets(
     }
     leftover.push(checkin);
   }
-  return { history, leftover };
+  return { history, leftover: combineDeclines(leftover) };
 }
 
 const HISTORY_TOPICS: Array<[string, RegExp]> = [
@@ -698,7 +750,11 @@ export function foldCheckinIntoVisit(checkin: string, visitDiscussion: string): 
     return extras.length > 0 ? `${visitRaw}\n\n${extras.map((b) => `- ${b}`).join('\n')}` : visitRaw;
   }
 
-  const { history, leftover } = mergeHistoryBullets(visitParts.history, checkinParts.history);
+  const { history, leftover } = mergeHistoryBullets(
+    visitParts.history,
+    checkinParts.history,
+    visitParts.presentingComplaint
+  );
   return formatSoapSectionSpacing(
     renderSoapHistory({
       presentingComplaint: combinePresentingComplaints(

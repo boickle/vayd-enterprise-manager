@@ -813,7 +813,8 @@ export default function ScribePanel({
       },
       onTranscript: (evt) => {
         if (evt.isFinal) {
-          setFinalTranscript((prev) => `${prev} ${evt.text}`.trim());
+          // One final utterance per line, matching what the API saves.
+          setFinalTranscript((prev) => `${prev}\n${evt.text}`.trim());
           setInterimText('');
         } else {
           setInterimText(evt.text);
