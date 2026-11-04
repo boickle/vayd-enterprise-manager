@@ -5,12 +5,14 @@ import { apiBaseUrl } from '../api/http';
 import {
   fetchPublicVeterinarians,
   fetchPublicMonthAvailability,
+  RoutingUnavailableError,
   fetchRoutingServiceMinutes,
   type PublicProvider,
   type MonthAvailabilityCandidate,
   type SelfScheduledSlot,
   type RoutingVisitPetInput,
 } from '../api/publicAppointments';
+import { ROUTING_UNAVAILABLE_ONLINE_MESSAGE } from './RoutingUnavailableNotice';
 import { fetchVeterinarians } from '../api/employee';
 import {
   findVeterinarianById,
@@ -1266,7 +1268,9 @@ export function SelfScheduleCalendarModal({
           return;
         }
         setMonthCandidates([]);
-        if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
+        if (err instanceof RoutingUnavailableError) {
+          setAvailabilityError(ROUTING_UNAVAILABLE_ONLINE_MESSAGE);
+        } else if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
           setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
         } else {
           setAvailabilityError(

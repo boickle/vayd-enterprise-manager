@@ -30,6 +30,7 @@ import {
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
+import { ROUTING_UNAVAILABLE_STAFF_MESSAGE } from '../components/RoutingUnavailableNotice';
 import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ForwardBookingWorkspaceContextPanel } from '../components/ForwardBookingWorkspaceContextPanel';
 import { AppointmentRequestRoutingSummary } from '../components/AppointmentRequestRoutingSummary';
@@ -5336,6 +5337,11 @@ export default function Routing({
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
+      if ((data as { routingUnavailable?: boolean } | null)?.routingUnavailable === true) {
+        // SCH-A3: OSRM is down; say so instead of showing an empty result.
+        setError(ROUTING_UNAVAILABLE_STAFF_MESSAGE);
+        return;
+      }
       let normalized = normalizeRoutingV2SlotSearchResponse(
         data as RoutingV2SlotSearchResult
       ) as Result;

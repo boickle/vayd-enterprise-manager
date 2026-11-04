@@ -9,6 +9,7 @@ import { validateAddress } from '../api/geo';
 import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ManualAddressFields } from '../components/ManualAddressFields';
 import { BreedCombobox } from '../components/BreedCombobox';
+import RoutingUnavailableNotice from '../components/RoutingUnavailableNotice';
 import OutsideHospitalPicker, {
   pickedHospitalKey,
   pickedHospitalsToText,
@@ -827,6 +828,8 @@ export default function AppointmentRequestForm() {
   const [isMobile, setIsMobile] = useState(false);
   const [recommendedSlots, setRecommendedSlots] = useState<Array<{ date: string; time: string; display: string; iso: string }>>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  /** SCH-A3: the API reported routing (OSRM) is down; show "call or text", not "no times". */
+  const [routingUnavailable, setRoutingUnavailable] = useState(false);
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
   const [scheduleModalRefreshKey, setScheduleModalRefreshKey] = useState(0);
   const [selfScheduleSlotError, setSelfScheduleSlotError] = useState<string | null>(null);
@@ -2261,6 +2264,7 @@ export default function AppointmentRequestForm() {
     }
 
     setLoadingSlots(true);
+    setRoutingUnavailable(false);
     try {
       // Get address from form data
       const address = formData.physicalAddress?.line1 || formData.newPhysicalAddress?.line1;
@@ -2458,6 +2462,11 @@ export default function AppointmentRequestForm() {
         console.log('[AppointmentForm] Calling /routing/v2 with payload:', payload);
         const response = await http.post('/routing/v2', payload);
         data = normalizeRoutingV2SlotSearchResponse(response.data as RoutingV2SlotSearchResult);
+        if ((response.data as { routingUnavailable?: boolean })?.routingUnavailable === true) {
+          setRoutingUnavailable(true);
+          setRecommendedSlots([]);
+          return;
+        }
         console.log('[AppointmentForm] Routing v2 response:', data);
       } else {
         // Use public availability API for new clients
@@ -2489,6 +2498,11 @@ export default function AppointmentRequestForm() {
         console.log('[AppointmentForm] Calling /public/appointments/availability with payload:', availabilityRequest);
         const availabilityResponse = await fetchAvailability(availabilityRequest);
         console.log('[AppointmentForm] Availability response:', availabilityResponse);
+        if (availabilityResponse.routingUnavailable) {
+          setRoutingUnavailable(true);
+          setRecommendedSlots([]);
+          return;
+        }
         
         // Convert availability response to routing-like format
         data = {
@@ -9165,8 +9179,11 @@ export default function AppointmentRequestForm() {
                 </>
               )}
 
+              {!loadingSlots && routingUnavailable && <RoutingUnavailableNotice />}
+
               {!isExistingClientFlow &&
                 !loadingSlots &&
+                !routingUnavailable &&
                 recommendedSlots.length === 0 &&
                 (formData.preferredDoctorExisting || formData.preferredDoctor) && (
                 renderManualSchedulingLiaisonBanner()
