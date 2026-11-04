@@ -87,6 +87,7 @@ Goal: record weight, TPR and the exam so the chart is ready to sign. **Everyone.
 | 5 | Type in the notes box ("Additional objective observations…") | Text appears in the notes | "Anything else you noticed goes here. Bold anything abnormal so it stands out." |
 | 6 | Click **Subjective**, type the history | "Presenting history, owner concerns…" | "History goes on Subjective. If the family filled in the check-in form, those answers are already here." |
 | 7 | Repeat on **Maple** and **Pepper** | Each pet has its own vitals | "Do this for every pet. The wrap-up won't let anyone sign until each pet has a weight." |
+| 8 | Point at the page (no button to press) | No Save button for the SOAP text | "You don't need to save the SOAP. It saves by itself every few seconds, and when you switch to another pet or leave the page. If the signal drops, your text stays on this device and saves when you're back online. Vaccines and prescriptions are different: those have their own Save button. You'll see that next." |
 
 **Techs:** "This is usually your part of the visit. Weigh, take TPR, and get it in before the doctor comes in."
 
@@ -147,6 +148,7 @@ Goal: record every dose so it reaches the chart, the certificate and the reminde
 **Doctors:** "Make sure your license number is in Settings → Staff before your first rabies dose."
 
 **Common mistakes**
+- **Typing the lot and tag but not pressing Save.** Doses don't save by themselves the way SOAP text does. Press the dose's Save button before you move on.
 - **Leaving a vaccine charged but not recorded.** The wrap-up shows **Dose needed: …** and blocks signing.
 - **Picking the wrong lot.** Match the bottle in your hand.
 - **A lot showing zero on hand.** Scout asks for a reason. Usually the right bottle just isn't counted yet. See the inventory videos.
@@ -265,6 +267,7 @@ Goal: get Rocket's ear medication written, approved and labelled. **Everyone exc
 **Liaisons:** "You can't write directions. You can fill a refill of a script that's already on file (see V11). Anything new waits for a doctor or tech, or goes to the mail queue: 'A doctor or technician must approve — or switch to Mail order'."
 
 **Common mistakes**
+- **Typing directions and walking away.** Prescriptions don't save by themselves. Press **Save sig** / **Save Rx** before you leave the line.
 - **Saving without Acute or chronic.** "Choose acute or chronic for this prescription."
 - **Refills past a year.** "Refill expiration cannot be more than 1 year from today."
 - **Clicking Save mine anyway without reading theirs.** You'll overwrite the doctor's change.
