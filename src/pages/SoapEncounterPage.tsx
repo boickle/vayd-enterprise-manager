@@ -1893,8 +1893,6 @@ export default function SoapEncounterPage() {
         </div>
       </header>
 
-      <SoapPatientAlerts profile={patientProfile} patientName={patientName} />
-
       {notSavedOffline && (
         <div className="soap-error soap-error-banner" role="status" data-testid="soap-not-saved">
           Not saved yet — your text is kept here and will save when the connection returns.
@@ -1927,6 +1925,9 @@ export default function SoapEncounterPage() {
           ))}
         </div>
       )}
+
+      {/* Below the pet tabs: the tabs are the visit's navigation, the alert is this pet's. */}
+      <SoapPatientAlerts profile={patientProfile} patientName={patientName} />
 
       {showPromptOverrides && primaryProviderId != null && (
         <ScribePromptOverridesModal
