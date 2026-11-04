@@ -8,10 +8,10 @@
  * stash would resurrect rows they already resolved.
  */
 
+/** A suggested problem is a name only; the doctor picks Acute or Chronic when accepting it. */
 export type DeferredScribeProblem = {
   key: string;
   label: string;
-  kind: 'presenting_complaint' | 'rule_out' | 'diagnosis';
 };
 
 const STORAGE_PREFIX = 'vayd.scribe.deferredProblems.';
@@ -45,8 +45,7 @@ export function takeDeferredProblems(encounterId: string): DeferredScribeProblem
         typeof item === 'object' &&
         item !== null &&
         typeof (item as DeferredScribeProblem).key === 'string' &&
-        typeof (item as DeferredScribeProblem).label === 'string' &&
-        typeof (item as DeferredScribeProblem).kind === 'string'
+        typeof (item as DeferredScribeProblem).label === 'string'
     );
   } catch {
     return [];

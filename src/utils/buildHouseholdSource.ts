@@ -320,7 +320,7 @@ export function buildHouseholdSourceText(opts: {
     if (openProblems.length) {
       lines.push('Active problems:');
       for (const p of openProblems) {
-        lines.push(`- ${p.label}${p.kind ? ` (${p.kind})` : ''}${p.note ? ` — ${p.note}` : ''}`);
+        lines.push(`- ${p.label}${p.acuity ? ` (${p.acuity})` : ''}${p.note ? ` — ${p.note}` : ''}`);
       }
     } else {
       lines.push('Active problems: none listed');

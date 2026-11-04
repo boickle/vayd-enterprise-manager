@@ -44,7 +44,6 @@ import {
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import type { CoverageChoicePrompt } from '../../utils/membershipCoverageChoice';
-import { isSharpsOrderName, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 import { useCan } from '../../permissions/PermissionContext';
 
 /**
@@ -123,10 +122,6 @@ type Props = {
   onInvoiceShouldRefresh: () => void;
   /** Room Loader–originated ids: Accept/Decline stay on the right; don't list them here. */
   excludeOrderIds?: ReadonlySet<string>;
-  /** Inventory catalog picks also go under Treatment Plan/Medications in the Plan narrative. */
-  onInventoryItemAdded?: (item: { name: string; isVaccine?: boolean }) => void;
-  /** When an inventory order is removed from Plan/checkout, drop its Plan narrative bullet. */
-  onInventoryItemRemoved?: (itemName: string) => void;
   /**
    * Catalog search lives on Checkout (same green add-bar as the ledger). Left Plan only
    * lists leftover notes / uncharged rows.
@@ -164,8 +159,6 @@ export default function PlanOrdersSection({
   practiceId,
   onChange,
   onInvoiceShouldRefresh,
-  onInventoryItemAdded,
-  onInventoryItemRemoved,
   showSearch = true,
   showList = true,
   className,
@@ -348,12 +341,8 @@ export default function PlanOrdersSection({
       storePricing(order.id, pricingItem);
       await reloadOrders([...orders, order]);
       onInvoiceShouldRefresh();
-      if (item.itemType === 'inventory' && !isSharpsOrderName(item.name)) {
-        onInventoryItemAdded?.({
-          name: item.name,
-          isVaccine: isVaccineSearchItem(item),
-        });
-      }
+      // Charges never write into the Plan narrative (owner decision Nov 4, 2026): the plan is
+      // written by the doctor or AI Scribe only.
       setQuery('');
       setResults([]);
       setBundleHits([]);
@@ -564,9 +553,6 @@ export default function PlanOrdersSection({
     dropPricing(order.id);
     await reloadOrders(orders.filter((o) => o.id !== order.id));
     onInvoiceShouldRefresh();
-    if (order.catalogItemType === 'inventory') {
-      onInventoryItemRemoved?.(order.name);
-    }
   };
 
   // Charging items live in Checkout only. Plan keeps notes (and anything not yet

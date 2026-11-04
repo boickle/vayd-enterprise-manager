@@ -12,12 +12,14 @@ const KIND_LABEL: Record<string, string> = {
   vaccination: 'Vaccine dose',
   lab_result: 'Lab result',
   encounter: 'Visit record',
+  problem: 'Problem list',
 };
 
 /**
  * Staff-only History for one pet (owner decision Nov 3, 2026): every logged step on the pet's
  * prescriptions, vaccine doses edited after sign-off and in-house lab results, and visits switched
- * between a medical note and a SOAP (Nov 4, 2026), newest first.
+ * between a medical note and a SOAP, and problems added, resolved or removed and eVet problem
+ * suggestions accepted or dismissed (Nov 4, 2026), newest first.
  *
  * Renders nothing for anyone who is not signed in as staff. Never placed on the medical-record
  * print, records sent out, certificates, labels or the client portal, and hidden when printed.

@@ -105,7 +105,6 @@ export async function commitSoapChronicDraft(
     const created = await createProblem({
       patientId,
       label: row.label,
-      kind: 'presenting_complaint',
       acuity: row.acuity,
       createdInEncounterId: encounterId,
     });

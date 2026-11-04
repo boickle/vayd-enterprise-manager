@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import {
   createProblem,
   deleteProblem,
   updateProblem,
   type PatientProblem,
   type PatientProblemAcuity,
-  type PatientProblemKind,
   type PatientProblemStatus,
 } from '../../api/visitWorkflow';
+import ProblemAddControl from './ProblemAddControl';
 
 type Props = {
   patientId: number;
@@ -20,23 +20,21 @@ type Props = {
   onToggleLink: (problemId: string, linked: boolean) => void;
 };
 
-const KIND_LABEL: Record<PatientProblemKind, string> = {
-  presenting_complaint: 'Complaint',
-  rule_out: 'Rule-out',
-  diagnosis: 'Diagnosis',
-};
+const STATUS_OPTIONS: { value: PatientProblemStatus; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'resolved', label: 'Resolved' },
+];
 
-const STATUS_OPTIONS: PatientProblemStatus[] = ['open', 'active', 'resolved'];
-
-const ACUITY_OPTIONS: { value: '' | PatientProblemAcuity; label: string }[] = [
-  { value: '', label: 'Unclassified' },
+const ACUITY_OPTIONS: { value: PatientProblemAcuity; label: string }[] = [
   { value: 'acute', label: 'Acute' },
   { value: 'chronic', label: 'Chronic' },
 ];
 
 /**
- * Master Problem List (spec §5.3). A presenting complaint or rule-out is a valid
- * entry on its own — no final diagnosis required. Active problems carry forward.
+ * The pet's one problem list (spec §5.3; owner decisions Nov 4, 2026), the same in Manual SOAP and
+ * AI Scribe. A problem is a name, Acute or Chronic (picked when adding), and Active or Resolved.
+ * The presenting complaint lives in Subjective; rule-outs go in the clinical reasoning text.
+ * Active problems carry forward.
  */
 export default function MasterProblemListSection({
   patientId,
@@ -47,31 +45,20 @@ export default function MasterProblemListSection({
   onChange,
   onToggleLink,
 }: Props) {
-  const [label, setLabel] = useState('');
-  const [kind, setKind] = useState<PatientProblemKind>('presenting_complaint');
-  const [busy, setBusy] = useState(false);
   /** In-flight wording edits, keyed by problem id. These labels print on the medical record,
    * so they stay editable after the problem is on the list. */
   const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
 
-  const add = async () => {
-    const trimmed = label.trim();
-    if (!trimmed || busy) return;
-    setBusy(true);
-    try {
-      const created = await createProblem({
-        patientId,
-        label: trimmed,
-        kind,
-        status: 'active',
-        createdInEncounterId: encounterId,
-      });
-      onChange([created, ...problems]);
-      onToggleLink(created.id, true);
-      setLabel('');
-    } finally {
-      setBusy(false);
-    }
+  const add = async (label: string, acuity: PatientProblemAcuity) => {
+    const created = await createProblem({
+      patientId,
+      label,
+      acuity,
+      status: 'active',
+      createdInEncounterId: encounterId,
+    });
+    onChange([created, ...problems]);
+    onToggleLink(created.id, true);
   };
 
   const replace = (updated: PatientProblem) =>
@@ -81,7 +68,7 @@ export default function MasterProblemListSection({
     replace(await updateProblem(p.id, { status }));
   };
 
-  const changeAcuity = async (p: PatientProblem, acuity: PatientProblemAcuity | null) => {
+  const changeAcuity = async (p: PatientProblem, acuity: PatientProblemAcuity) => {
     replace(await updateProblem(p.id, { acuity }));
   };
 
@@ -109,32 +96,8 @@ export default function MasterProblemListSection({
   };
 
   return (
-    <div className="soap-mpl">
-      {!disabled && (
-        <div className="soap-mpl-add">
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as PatientProblemKind)}
-            className="soap-input soap-select"
-          >
-            <option value="presenting_complaint">Complaint</option>
-            <option value="rule_out">Rule-out</option>
-            <option value="diagnosis">Diagnosis</option>
-          </select>
-          <input
-            className="soap-input"
-            placeholder="Add a problem (no diagnosis required)…"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') add();
-            }}
-          />
-          <button type="button" className="soap-btn" onClick={add} disabled={busy}>
-            <Plus size={14} /> Add
-          </button>
-        </div>
-      )}
+    <div className="soap-mpl" data-testid="soap-problem-list">
+      {!disabled && <ProblemAddControl onAdd={add} placeholder="Add a problem…" />}
 
       {problems.length === 0 ? (
         <div className="soap-empty">No problems on the list yet.</div>
@@ -153,7 +116,6 @@ export default function MasterProblemListSection({
                 >
                   {linked ? <Check size={14} /> : null}
                 </button>
-                <span className={`soap-tag kind-${p.kind}`}>{KIND_LABEL[p.kind]}</span>
                 {disabled ? (
                   <span className="soap-mpl-label">{p.label}</span>
                 ) : (
@@ -177,10 +139,15 @@ export default function MasterProblemListSection({
                   className="soap-input soap-select soap-mpl-acuity"
                   aria-label="Acute or chronic"
                   title="Chronic problems pin to the top of the patient record"
-                  onChange={(e) =>
-                    void changeAcuity(p, (e.target.value || null) as PatientProblemAcuity | null)
-                  }
+                  onChange={(e) => {
+                    if (e.target.value) void changeAcuity(p, e.target.value as PatientProblemAcuity);
+                  }}
                 >
+                  {p.acuity == null ? (
+                    <option value="" disabled>
+                      Pick…
+                    </option>
+                  ) : null}
                   {ACUITY_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
@@ -188,14 +155,15 @@ export default function MasterProblemListSection({
                   ))}
                 </select>
                 <select
-                  value={p.status}
+                  value={p.status === 'resolved' ? 'resolved' : 'active'}
                   disabled={disabled}
                   className="soap-input soap-select soap-mpl-status"
+                  aria-label="Active or resolved"
                   onChange={(e) => changeStatus(p, e.target.value as PatientProblemStatus)}
                 >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
+                  {STATUS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
                     </option>
                   ))}
                 </select>

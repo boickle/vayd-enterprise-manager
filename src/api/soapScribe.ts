@@ -10,7 +10,7 @@ import { io, type Socket } from 'socket.io-client';
 import { http } from './http';
 import { apiBaseUrl, getToken } from './http';
 import { VISIT_WORKFLOW_PRACTICE_ID } from './visitWorkflow';
-import type { EncounterOrderKind, PatientProblemKind } from './visitWorkflow';
+import type { EncounterOrderKind } from './visitWorkflow';
 
 export type ScribeSessionStatus = 'active' | 'stopped' | 'error';
 
@@ -33,7 +33,8 @@ export type ScribeSuggestion = {
   };
   exam: Record<string, ScribeExamFinding>;
   assessmentReasoning: string | null;
-  problems: { label: string; kind: PatientProblemKind }[];
+  /** Suggested problems, name only (older sessions may still carry a `kind`; ignored). */
+  problems: { label: string; kind?: string }[];
   planItems: { name: string; kind: EncounterOrderKind; note: string | null }[];
   /** Freeform Objective/Plan for the Document view — only populated on a final pass (paste, or
    * recording stop). Subjective/Assessment don't need an equivalent since they auto-apply into

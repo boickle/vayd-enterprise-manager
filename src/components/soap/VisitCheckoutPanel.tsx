@@ -224,9 +224,6 @@ type Props = {
   onOrdersChange?: (orders: EncounterOrder[]) => void;
   /** Refresh invoice after a catalog add (works even before the first line exists). */
   onInvoiceShouldRefresh?: () => void;
-  /** Inventory catalog picks also go under Treatment Plan/Medications in the Plan narrative. */
-  onInventoryItemAdded?: (item: { name: string; isVaccine?: boolean }) => void;
-  onInventoryItemRemoved?: (itemName: string) => void;
   /** Marks Room Loader–originated order ids so Accept does not resurface them on the left Plan list. */
   onRoomLoaderOrderIds?: (ids: string[]) => void;
   /** Expand / scroll to the invoice line for this encounter order (wrap-up Rx chip). */
@@ -1122,8 +1119,6 @@ export default function VisitCheckoutPanel({
   onOrderRemoved,
   onOrdersChange,
   onInvoiceShouldRefresh,
-  onInventoryItemAdded,
-  onInventoryItemRemoved,
   onRoomLoaderOrderIds,
   focusOrderId = null,
 }: Props) {
@@ -1980,8 +1975,6 @@ export default function VisitCheckoutPanel({
             .then(onInvoiceChange)
             .catch(() => undefined);
         }}
-        onInventoryItemAdded={isCurrent ? onInventoryItemAdded : undefined}
-        onInventoryItemRemoved={isCurrent ? onInventoryItemRemoved : undefined}
       />
     );
   };
