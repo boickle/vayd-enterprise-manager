@@ -346,12 +346,15 @@ export function isPracticeCalendarBlockAppointment(a: Appointment): boolean {
   return false;
 }
 
-/** Scheduler Remove: personal/flex blocks and no-location rows use confirm-only (no reason). */
+/** Scheduler Remove: personal/flex blocks, rows with no client and HOLD types use confirm-only (no reason). */
 export function appointmentRemoveRequiresCancellationReason(
   a: Appointment & Record<string, unknown>
 ): boolean {
   if (isPracticeCalendarBlockAppointment(a)) return false;
-  if (isAppointmentNoLocation(a)) return false;
+  // D1: a visit with a client always needs a reason, even without a location; only rows with no client don't.
+  if (!a.client) return false;
+  // D1: HOLD-type visits are cancelled without asking for a reason.
+  if (a.appointmentType?.isHold === true) return false;
   return true;
 }
 
@@ -433,11 +436,15 @@ export async function cancelAppointment(
   const appt = opts?.appt ?? null;
   const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
 
-  // Scout-created visits (manual book / add-pet): soft-delete on Remove so they leave the range
-  // query entirely. Cancel-only left hidden rows that piled up during testing.
-  if (isScoutCreatedAppointment(appt)) {
+  // SCH-03 / D1: a visit with a client is always cancelled (kept, with the reason). Only blocks and
+  // rows with no client may be deleted outright.
+  if (
+    isScoutCreatedAppointment(appt) &&
+    appt != null &&
+    (isPracticeCalendarBlockAppointment(appt) || !appt.client)
+  ) {
     await deleteAppointment(id);
-    return appointmentWithCancelledFields(appt ?? ({ id } as Appointment), trimmedReason ?? null);
+    return appointmentWithCancelledFields(appt, trimmedReason ?? null);
   }
 
   const basePayload: Record<string, unknown> = {

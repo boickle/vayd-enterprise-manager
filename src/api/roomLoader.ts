@@ -244,6 +244,8 @@ export type AppointmentType = {
   defaultDuration?: number;
   isBoardingType?: boolean;
   hasExtraInstructions?: boolean;
+  /** HOLD type: cancelled without a reason (SCH-03 / D1). */
+  isHold?: boolean;
   showInApptRequestForm?: boolean;
   newPatientAllowed?: boolean;
   calendarColor?: string | null;
