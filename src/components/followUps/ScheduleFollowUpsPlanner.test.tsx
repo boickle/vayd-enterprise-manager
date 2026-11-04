@@ -375,6 +375,40 @@ describe('Schedule follow-ups planner', () => {
     expect(actions.sendPlannerConfirmationText.mock.calls[0][0].sendProvider).toBeNull();
   });
 
+  it('sends the confirmation text once when Send text & finish is double clicked', async () => {
+    let release!: () => void;
+    actions.sendPlannerConfirmationText.mockImplementation(
+      () => new Promise<void>((resolve) => (release = resolve))
+    );
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    for (const name of ['Fluffy', 'Angel', 'Marvin']) pick(trayPet(name), /"In 1 year" card/);
+    pick(trayPet('Biscuit'), /^Labs pending$/);
+    pick(trayPet('Pepper'), /visit · Wed, Dec 2/);
+    await screen.findByText(/5 min past their window/);
+    fireEvent.click(screen.getByRole('button', { name: 'Add anyway' }));
+    await screen.findByText(/Pepper added\./);
+    for (const name of ['Fluffy', 'Angel', 'Marvin']) setType(cardTitled('In 1 year'), name, 1);
+    fireEvent.click(
+      within(cardTitled('In 1 year')).getByRole('button', { name: 'Send to CLs to book' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    await screen.findByText('Confirmation text');
+    const box = screen.getByLabelText('Text message to the owner') as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).not.toBe(''));
+
+    const send = screen.getByRole('button', { name: 'Send text & finish' });
+    // Two clicks in the same tick, before React re-renders the button as disabled.
+    act(() => {
+      send.click();
+      send.click();
+    });
+    await act(async () => {
+      release();
+    });
+    expect(actions.sendPlannerConfirmationText).toHaveBeenCalledTimes(1);
+  });
+
   it('warns before closing with unsaved work', async () => {
     const { onClose } = renderPlanner();
     await screen.findByText(/Today.s visit · needs a plan/);
