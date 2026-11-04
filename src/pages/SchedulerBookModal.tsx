@@ -29,6 +29,7 @@ import {
   completeForwardBookingFromBook,
 } from '../utils/forwardBookingBookComplete';
 import { completeAppointmentRequestFromBook } from '../utils/appointmentRequestBookComplete';
+import { createRoutingBookVisits } from '../utils/routingBookVisits';
 import type { AppointmentRequestBookVisitPatch } from '../utils/routingAppointmentRequestVisitPets';
 import type { ForwardBookingCreatedVia } from '../api/forwardBooking';
 import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
@@ -2664,39 +2665,34 @@ export function SchedulerBookModal({
         }
       } else if (perVisitRoutingBook) {
         const selected = routingBookVisitEdits.filter((v) => v.selected);
-        const createdByPatientId = new Map<string, number>();
-        for (const visit of selected) {
-          const created = await createAppointment({
+        // Same bodies Schedule follow-ups' Find a time now sends (utils/routingBookVisits).
+        const routingBook = await createRoutingBookVisits(
+          {
             practiceId,
             primaryProviderId: Number(providerId),
-            ...(showAdditionalEmployeesField ? { additionalEmployeeIds } : {}),
-            ...(selectedClientId ? { clientId: Number(selectedClientId) } : {}),
-            ...(!visit.isNoPatient && visit.patientId?.trim()
-              ? { patientId: Number(visit.patientId) }
-              : {}),
-            ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
-            appointmentTypeId: Number(visit.appointmentTypeId),
+            additionalEmployeeIds: showAdditionalEmployeesField ? additionalEmployeeIds : undefined,
+            clientId: selectedClientId ? Number(selectedClientId) : null,
+            alternateAddressText: trimmedAlt,
             appointmentStart: startIso,
             appointmentEnd: endIso,
-            ...(bookAllDay ? { allDay: true } : {}),
-            description: descriptionForNewBook(visit.description) || undefined,
-            instructions: staffNotesForNewBook(visit.instructions) || undefined,
+            allDay: bookAllDay,
+            bookedViaRouting: skipManualBookingPermissionGate,
+            extras: { ...forwardBookingCreateExtras, ...joinWaitlistCreateExtras },
+          },
+          selected.map((visit) => ({
+            patientId: !visit.isNoPatient && visit.patientId?.trim() ? visit.patientId : null,
+            appointmentTypeId: visit.appointmentTypeId,
+            description: descriptionForNewBook(visit.description),
+            instructions: staffNotesForNewBook(visit.instructions),
             needsPremeds: visit.needsPremeds,
-            ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
-            ...forwardBookingCreateExtras,
-            ...joinWaitlistCreateExtras,
-          });
-          const idRaw = created?.id;
-          if (idRaw != null && Number.isFinite(Number(idRaw))) {
-            const apptId = Number(idRaw);
-            if (savedAppointmentId == null) savedAppointmentId = apptId;
-            if (!visit.isNoPatient && visit.patientId?.trim()) {
-              createdByPatientId.set(visit.patientId.trim(), apptId);
-            }
+          })),
+          async (apptId, visit) => {
             await saveAlternateForAppointment(apptId);
             await claimIfHoldAppointment(apptId, visit.appointmentTypeId);
           }
-        }
+        );
+        const createdByPatientId = routingBook.createdByPatientId;
+        if (savedAppointmentId == null) savedAppointmentId = routingBook.firstAppointmentId;
         if (
           savedAppointmentId != null &&
           prefill?.forwardBookingVisitCompletes?.length

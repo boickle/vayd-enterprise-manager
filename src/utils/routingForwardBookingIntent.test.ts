@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
 import {
   buildRoutingForwardBookingIntentFromEntries,
+  claimRoutingForwardBookingIntentHandoff,
+  clearRoutingForwardBookingIntent,
   readRoutingForwardBookingIntent,
+  stashRoutingForwardBookingIntentForNewTab,
   writeRoutingForwardBookingIntent,
 } from './routingForwardBookingIntent';
 
@@ -48,5 +51,33 @@ describe('routing forward-booking intent: household entries', () => {
       [undefined, false],
       [undefined, true],
     ]);
+  });
+});
+
+describe('forward booking handoff to a new tab', () => {
+  it('the new tab takes over the intent once', () => {
+    writeRoutingForwardBookingIntent({
+      forwardBookingId: 500,
+      trackingToken: 't500',
+      clientId: '50',
+      patientId: '3',
+      origin: 'follow_up_planner',
+      workspaceActive: true,
+    });
+    const key = stashRoutingForwardBookingIntentForNewTab();
+    expect(key).toBeTruthy();
+    // The new tab starts with its own empty session.
+    clearRoutingForwardBookingIntent();
+    expect(readRoutingForwardBookingIntent()).toBeNull();
+    expect(claimRoutingForwardBookingIntentHandoff(`?fbHandoff=${key}`)).toBe(true);
+    expect(readRoutingForwardBookingIntent()).toMatchObject({
+      forwardBookingId: 500,
+      origin: 'follow_up_planner',
+      workspaceActive: true,
+    });
+    // Used up: a reload of that tab does not claim it again.
+    clearRoutingForwardBookingIntent();
+    expect(claimRoutingForwardBookingIntentHandoff(`?fbHandoff=${key}`)).toBe(false);
+    expect(claimRoutingForwardBookingIntentHandoff('')).toBe(false);
   });
 });

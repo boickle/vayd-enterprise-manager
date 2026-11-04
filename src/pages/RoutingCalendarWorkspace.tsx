@@ -9,7 +9,11 @@ import {
   appointmentRequestWorkspaceIsActive,
   ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
 } from '../utils/routingAppointmentRequestIntent';
-import { ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT } from '../utils/routingForwardBookingIntent';
+import {
+  claimRoutingForwardBookingIntentHandoff,
+  ROUTING_FORWARD_BOOKING_HANDOFF_PARAM,
+  ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+} from '../utils/routingForwardBookingIntent';
 import {
   rescheduleIntentIsActive,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
@@ -58,6 +62,18 @@ export default function RoutingCalendarWorkspace({
   /** Open with Get Best Route minimized (calendar-only view, e.g. Schedule follow-ups). */
   startRoutingCollapsed?: boolean;
 } = {}) {
+  // Opened in a new tab from Schedule follow-ups: take over its forward booking first, so
+  // Routing and the calendar below read it as if it had been started here.
+  useState(() => {
+    if (typeof window === 'undefined') return false;
+    const claimed = claimRoutingForwardBookingIntentHandoff(window.location.search);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM)) {
+      url.searchParams.delete(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM);
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+    return claimed;
+  });
   const workspaceRef = useRef<HTMLDivElement>(null);
   const calendarPaneRef = useRef<HTMLDivElement>(null);
   const [routingPct, setRoutingPct] = useState(readStoredSplitPct);

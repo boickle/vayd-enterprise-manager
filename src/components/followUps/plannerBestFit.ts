@@ -6,9 +6,9 @@
  * the same ASAP "all doctors in zone" doctor list), so the list matches what the full
  * form would show for the same client, doctor, type, minutes and dates.
  *
- * Booking still goes through the calendar: picking a slot writes the same calendar
- * preview Routing's "View placement" writes, and the embedded calendar's Book button
- * books it (and reports back to the planner) exactly as the full flow does.
+ * Book books the slot right here, with the same appointment bodies, routing feedback,
+ * pre-first neighbor move and forward-booking links the calendar's Book modal sends for
+ * a forward booking (utils/routingBookVisits).
  */
 import { DateTime } from 'luxon';
 import { http } from '../../api/http';
@@ -28,10 +28,20 @@ import {
   resolveRoutingCandidateIndex,
   routingTopCandidatesFromResult,
 } from '../../utils/routingCandidates';
+import type { RoutingCalendarPreviewPayloadV1 } from '../../utils/routingCalendarPreviewStorage';
+import { fetchAppointmentsRangeForLocalDay, patchAppointment } from '../../api/appointments';
 import {
-  writeRoutingCalendarPreview,
-  type RoutingCalendarPreviewPayloadV1,
-} from '../../utils/routingCalendarPreviewStorage';
+  completeAllForwardBookingVisitsFromBook,
+  completeForwardBookingFromBook,
+} from '../../utils/forwardBookingBookComplete';
+import { resolvePreFirstNeighborBumpTarget } from '../../utils/preFirstNeighborBump';
+import { submitRoutingAcceptedFeedbackFromPreview } from '../../utils/routingBookFeedback';
+import {
+  createRoutingBookVisits,
+  forwardBookingBookPrefillFromIntent,
+} from '../../utils/routingBookVisits';
+import type { RoutingForwardBookingIntentV1 } from '../../utils/routingForwardBookingIntent';
+import { forwardBookingEntriesForChipSelection } from '../../utils/routingPatientSelection';
 import { adjustRoutingSlotSearchDates } from '../../utils/routingSlotSearchDates';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import {
@@ -44,6 +54,19 @@ const MAX_ADDED_DRIVE_MINUTES = 20;
 
 export type BestFitWindow = { startDate: string; endDate: string };
 
+/**
+ * "What works for the owner?": Get Best Route's schedule preferences. Days are ISO
+ * weekdays (1 = Monday); time of day is Routing's Early ('first') / End of day ('end').
+ */
+export type BestFitPrefs = {
+  weekdays: number[];
+  timeOfDay: 'first' | 'end' | null;
+  /** Routing's "Force earliest available". */
+  earliest: boolean;
+};
+
+export const NO_BEST_FIT_PREFS: BestFitPrefs = { weekdays: [], timeOfDay: null, earliest: false };
+
 /** What the card asks for; the panel shows it and searches with it. */
 export type BestFitRequest = {
   clientId: number;
@@ -52,6 +75,8 @@ export type BestFitRequest = {
   providerId: number | null;
   doctorPimsId: string | null;
   providerName: string;
+  /** Short doctor label for the panel, e.g. "Dr. Patel". */
+  providerLabel?: string;
   appointmentTypeId: number;
   /** Appointment type `name` (Routing's Calculate Time key). */
   statsTypeKey: string;
@@ -75,6 +100,10 @@ export type BestFitSlot = {
   projectedDriveSeconds: number | null;
   emptyDay: boolean;
   isFallbackDoctor: boolean;
+  /** Household visits the doctor already has that day, when routing says. */
+  dayVisitCount: number | null;
+  /** Routing zone the visit falls in, when routing says. */
+  zoneName: string | null;
   /** The routing candidate as Routing's results list holds it (for the calendar preview). */
   option: Record<string, unknown>;
 };
@@ -179,8 +208,11 @@ export function buildBestFitRoutingBody(args: {
   doctorPimsId: string | null;
   asapDoctorIds?: string[];
   practiceId?: number;
+  prefs?: BestFitPrefs;
 }): Record<string, unknown> {
   const { req, place, tz, asap } = args;
+  const prefs = args.prefs ?? NO_BEST_FIT_PREFS;
+  const days = [...new Set(prefs.weekdays)].sort((a, b) => a - b);
   const dates = adjustRoutingSlotSearchDates(req.window.startDate, req.window.endDate, tz);
   const newAppt: Record<string, unknown> = {
     serviceMinutes: req.serviceMinutes,
@@ -201,9 +233,11 @@ export function buildBestFitRoutingBody(args: {
     useTraffic: false,
     // ASAP turns on "use reserve" in Routing.
     ignoreEmergencyBlocks: asap,
-    preferredWeekday: null,
-    preferredTimeOfDay: null,
+    // Routing sends one day as a number (older servers), several as a list.
+    preferredWeekday: days.length === 0 ? null : days.length === 1 ? days[0] : days,
+    preferredTimeOfDay: prefs.timeOfDay,
     preferEdge: null,
+    ...(prefs.earliest ? { preferEarliestFeasibleStart: true } : {}),
   };
   return asap
     ? {
@@ -285,6 +319,7 @@ export function bestFitSlotsFromResult(
         doctorName: name,
         routingRequestId: c.routingRequestId ?? r.routingRequestId,
       };
+      const zone = (c.effectiveZone ?? c.clientZone) as { name?: unknown } | undefined;
       return {
         key: `${pid}-${c.date}-${c.insertionIndex ?? ''}-${c.candidateIndex ?? ''}`,
         date: String(c.date).slice(0, 10),
@@ -298,6 +333,8 @@ export function bestFitSlotsFromResult(
         projectedDriveSeconds: num(c.projectedDriveSeconds),
         emptyDay,
         isFallbackDoctor: fallback,
+        dayVisitCount: num(c.dayHouseholdCount ?? c.dayClientVisitCount),
+        zoneName: str(zone?.name) || null,
         option,
       };
     });
@@ -315,8 +352,9 @@ export async function searchPlannerBestFit(args: {
   req: BestFitRequest;
   tz: string;
   asap: boolean;
+  prefs?: BestFitPrefs;
 }): Promise<BestFitSearchResult> {
-  const { req, tz, asap } = args;
+  const { req, tz, asap, prefs } = args;
   let place: BestFitPlace = { address: '', lat: NaN, lon: NaN };
   let doctorPimsId: string | null = null;
   try {
@@ -327,14 +365,22 @@ export async function searchPlannerBestFit(args: {
         slots: [],
         place,
         doctorPimsId,
-        error: 'Pick a doctor on the card, or turn on ASAP all doctors in zone.',
+        error: 'Pick a doctor on the card, or choose Any doctor in zone.',
       };
     }
     const asapDoctorIds = asap ? await asapDoctorPimsIds(req, place) : undefined;
     if (asap && !asapDoctorIds?.length) {
       return { slots: [], place, doctorPimsId, error: 'No doctors see clients in this zone.' };
     }
-    const body = buildBestFitRoutingBody({ req, place, tz, asap, doctorPimsId, asapDoctorIds });
+    const body = buildBestFitRoutingBody({
+      req,
+      place,
+      tz,
+      asap,
+      doctorPimsId,
+      asapDoctorIds,
+      prefs,
+    });
     const { data } = await http.post<RoutingV2SlotSearchResult>('/routing/v2', body);
     if ((data as { routingUnavailable?: boolean } | null)?.routingUnavailable === true) {
       return { slots: [], place, doctorPimsId, error: ROUTING_UNAVAILABLE_STAFF_MESSAGE };
@@ -374,24 +420,24 @@ export async function searchPlannerBestFit(args: {
 }
 
 /**
- * Put the picked slot on the calendar preview, the same payload Routing's "View
- * placement" writes, so the calendar's Book books it the normal way.
+ * The slot as Routing's "View placement" calendar preview holds it. Booking passes it to
+ * the routing feedback call, as the calendar's Book does with its preview.
  */
-export async function writeBestFitCalendarPreview(args: {
+export function bestFitPreviewPayload(args: {
   slot: BestFitSlot;
   req: BestFitRequest;
   place: BestFitPlace;
-}): Promise<boolean> {
+  /** Internal employee id of the slot's doctor. */
+  internalDoctorId: string;
+}): RoutingCalendarPreviewPayloadV1 {
   const { slot, req, place } = args;
-  const internalId = await internalDoctorIdForPims(slot.doctorPimsId);
-  if (!internalId) return false;
   const opt = slot.option as Candidate;
-  const payload: RoutingCalendarPreviewPayloadV1 = {
+  return {
     version: 1,
     listOptionKey: slot.key,
     option: {
       ...opt,
-      doctorPimsId: internalId,
+      doctorPimsId: args.internalDoctorId,
       doctorName: slot.doctorName,
       date: slot.date,
       suggestedStartIso: slot.suggestedStartIso,
@@ -414,6 +460,217 @@ export async function writeBestFitCalendarPreview(args: {
     candidateIndex: typeof opt.candidateIndex === 'number' ? opt.candidateIndex : undefined,
     candidateId: str(opt.candidateId) || undefined,
   };
-  writeRoutingCalendarPreview(payload);
-  return true;
+}
+
+// ---------------------------------------------------------------------------
+// How the panel shows a slot
+// ---------------------------------------------------------------------------
+
+export type BestFitQuality = 'Best fit' | 'Great' | 'Good';
+
+/**
+ * A tag per slot from the routing score (lower is better): the best score is "Best fit",
+ * scores within a quarter of it "Great", the rest "Good". Without scores, by rank.
+ */
+export function bestFitQualities(slots: readonly BestFitSlot[]): Map<string, BestFitQuality> {
+  const out = new Map<string, BestFitQuality>();
+  const scores = slots.map((s) => s.score).filter((v): v is number => v != null);
+  const best = scores.length ? Math.min(...scores) : null;
+  slots.forEach((s, i) => {
+    if (best == null || s.score == null) {
+      out.set(s.key, i === 0 ? 'Best fit' : i <= 2 ? 'Great' : 'Good');
+      return;
+    }
+    if (s.score === best) out.set(s.key, 'Best fit');
+    else if (s.score <= best + Math.max(Math.abs(best) * 0.25, 1)) out.set(s.key, 'Great');
+    else out.set(s.key, 'Good');
+  });
+  // Only one slot is the best fit (ties go to the first listed).
+  let seen = false;
+  for (const s of slots) {
+    if (out.get(s.key) !== 'Best fit') continue;
+    if (seen) out.set(s.key, 'Great');
+    seen = true;
+  }
+  return out;
+}
+
+/** "Dr. Patel" from "Priya Patel" (titles and single names kept as they are). */
+export function doctorShortName(name: string): string {
+  const n = name.trim();
+  if (!n || /^dr\.?\s/i.test(n)) return n;
+  const parts = n.split(/\s+/);
+  return parts.length > 1 ? `Dr. ${parts[parts.length - 1]}` : n;
+}
+
+/** A short plain reason, e.g. "Dr. Patel already has 4 visits that day · 6 min extra drive". */
+export function bestFitReason(slot: BestFitSlot): string {
+  const dr = doctorShortName(slot.doctorName);
+  const zone = slot.zoneName ? ` in ${slot.zoneName}` : '';
+  const n = slot.dayVisitCount;
+  const day = slot.emptyDay
+    ? `Open day for ${dr}${zone}`
+    : n != null && n >= 3
+      ? `${dr} already has ${n} visits${zone} that day`
+      : n != null && n > 0
+        ? `Light day for ${dr}${zone}`
+        : n === 0
+          ? `Open day for ${dr}${zone}`
+          : `On ${dr}'s route${zone} that day`;
+  const drive =
+    slot.addedDriveSeconds != null
+      ? `${Math.max(0, Math.round(slot.addedDriveSeconds / 60))} min extra drive`
+      : null;
+  return [day, drive, slot.isFallbackDoctor ? 'not the requested doctor' : null]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+// ---------------------------------------------------------------------------
+// Book
+// ---------------------------------------------------------------------------
+
+/** One pet's visit at the slot. */
+export type BestFitBookVisit = {
+  patientId: number;
+  appointmentTypeId: number;
+  /** "What does <pet> need?" (the appointment's Description). */
+  description: string;
+  needsPremeds: boolean;
+};
+
+export type BestFitBookResult = {
+  appointmentIds: number[];
+  startIso: string;
+  endIso: string;
+  providerId: number;
+  /** Booked, but something after the create did not save (shown to staff). */
+  warnings: string[];
+};
+
+/**
+ * Book the slot with no calendar: what the calendar's Book modal does for a forward
+ * booking from this slot's preview. One appointment per pet at the slot's start for the
+ * card's minutes, booked via routing; then the routing feedback link, the pre-first
+ * neighbor move, and each pet's forward-booking row marked booked with its appointment.
+ */
+export async function bookBestFitSlot(args: {
+  practiceId: number;
+  slot: BestFitSlot;
+  req: BestFitRequest;
+  place: BestFitPlace;
+  tz: string;
+  visits: BestFitBookVisit[];
+  /** The card's forward-booking intent (startPlannerSlotSearch wrote it). */
+  intent: RoutingForwardBookingIntentV1 | null;
+}): Promise<BestFitBookResult> {
+  const { slot, req, tz } = args;
+  if (!args.visits.length) throw new Error('No pets to book.');
+  const internalId = await internalDoctorIdForPims(slot.doctorPimsId);
+  const providerId = Number(internalId);
+  if (!internalId || !Number.isFinite(providerId)) {
+    throw new Error(`Could not find ${slot.doctorName} in the provider list.`);
+  }
+  // Same times the calendar gives a routing slot: suggested start + the card's minutes.
+  const start = DateTime.fromISO(slot.suggestedStartIso, { zone: 'utc' });
+  if (!start.isValid) throw new Error('This time is not valid any more. Search again.');
+  const minutes = Math.max(1, Math.floor(req.serviceMinutes) || 30);
+  const startIso = start.toUTC().toISO()!;
+  const endIso = start.plus({ minutes }).toUTC().toISO()!;
+  const preview = bestFitPreviewPayload({ ...args, internalDoctorId: internalId });
+
+  // Booking before the doctor's first visit moves that visit to follow this one.
+  const insertionIndex = Number((slot.option as Candidate).insertionIndex);
+  let bump: ReturnType<typeof resolvePreFirstNeighborBumpTarget> = null;
+  if (insertionIndex === 0) {
+    try {
+      const day = await fetchAppointmentsRangeForLocalDay({
+        dateIso: start.setZone(tz).toISODate()!,
+        practiceTimeZone: tz,
+        primaryProviderId: providerId,
+        practiceId: args.practiceId,
+      });
+      bump = resolvePreFirstNeighborBumpTarget({
+        insertionIndex: 0,
+        suggestedStartIso: startIso,
+        suggestedEndIso: endIso,
+        practiceTz: tz,
+        providerId: String(providerId),
+        appointments: day,
+      });
+    } catch {
+      bump = null;
+    }
+  }
+
+  const created = await createRoutingBookVisits(
+    {
+      practiceId: args.practiceId,
+      primaryProviderId: providerId,
+      clientId: req.clientId,
+      appointmentStart: startIso,
+      appointmentEnd: endIso,
+      bookedViaRouting: true,
+    },
+    args.visits.map((v) => ({
+      patientId: String(v.patientId),
+      appointmentTypeId: v.appointmentTypeId,
+      description: v.description,
+      instructions: '',
+      needsPremeds: v.needsPremeds,
+    }))
+  );
+  const firstId = created.firstAppointmentId;
+  if (firstId == null) throw new Error('The appointment was not created. Try again.');
+  const warnings: string[] = [];
+
+  const fb = await submitRoutingAcceptedFeedbackFromPreview(firstId, preview);
+  if (!fb.submitted && fb.error) {
+    warnings.push('Routing could not be linked to this suggestion. ' + fb.error);
+  }
+
+  if (bump) {
+    try {
+      await patchAppointment(
+        bump.appointmentId,
+        {
+          appointmentStart: bump.appointmentStart,
+          appointmentEnd: bump.appointmentEnd,
+          bookedViaRouting: true,
+        },
+        { practiceId: args.practiceId }
+      );
+    } catch (e) {
+      warnings.push(
+        e instanceof Error && e.message.trim()
+          ? e.message
+          : 'Could not update the next visit time to match the route.'
+      );
+    }
+  }
+
+  if (args.intent) {
+    const link = forwardBookingBookPrefillFromIntent(
+      args.intent,
+      forwardBookingEntriesForChipSelection(
+        args.intent,
+        args.visits.map((v) => String(v.patientId))
+      )
+    );
+    if (link.forwardBookingVisitCompletes?.length) {
+      const multi = await completeAllForwardBookingVisitsFromBook(created.createdByPatientId, link);
+      if (multi.warnings.length) {
+        warnings.push(
+          'Some forward bookings could not be marked complete. ' + multi.warnings.join(' ')
+        );
+      }
+    } else {
+      const one = await completeForwardBookingFromBook(firstId, link);
+      if (!one.completed && one.error) {
+        warnings.push('The forward booking could not be linked. ' + one.error);
+      }
+    }
+  }
+
+  return { appointmentIds: created.appointmentIds, startIso, endIso, providerId, warnings };
 }

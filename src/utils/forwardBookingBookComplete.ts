@@ -8,6 +8,12 @@ export type ForwardBookingBookCompleteResult = {
   error?: string;
 };
 
+/** The forward-booking fields of a Book prefill (all these helpers read). */
+export type ForwardBookingBookLink = Pick<
+  SchedulerBookPrefill,
+  'forwardBookingEntryId' | 'forwardBookingTrackingToken' | 'forwardBookingVisitCompletes'
+>;
+
 export type ForwardBookingVisitComplete = {
   forwardBookingEntryId: number;
   forwardBookingTrackingToken: string;
@@ -17,7 +23,7 @@ export type ForwardBookingVisitComplete = {
 /** After a successful routing book, link the new appointment to the forward booking entry. */
 export async function completeForwardBookingFromBook(
   appointmentId: number,
-  prefill: SchedulerBookPrefill | null | undefined,
+  prefill: ForwardBookingBookLink | null | undefined,
   opts?: { patientId?: string }
 ): Promise<ForwardBookingBookCompleteResult> {
   const completes = prefill?.forwardBookingVisitCompletes;
@@ -47,7 +53,7 @@ export async function completeForwardBookingFromBook(
 
 export async function completeAllForwardBookingVisitsFromBook(
   createdByPatientId: Map<string, number>,
-  prefill: SchedulerBookPrefill | null | undefined
+  prefill: ForwardBookingBookLink | null | undefined
 ): Promise<{ warnings: string[] }> {
   const warnings: string[] = [];
   const rows = prefill?.forwardBookingVisitCompletes;

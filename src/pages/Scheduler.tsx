@@ -448,6 +448,7 @@ import {
   forwardBookingWorkspaceContextBarLine,
 } from '../utils/forwardBookingRoutingContext';
 import { resolveForwardBookingBookDefaultDescription } from '../utils/forwardBookingBookPrefillDescription';
+import { forwardBookingBookPrefillFromIntent } from '../utils/routingBookVisits';
 import { returnToAppointmentRequestsList } from '../utils/appointmentRequestListReturnTab';
 import {
   writeAppointmentRequestReturnSession,
@@ -8191,28 +8192,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ? rescheduleSourceAppt?.instructions?.trim()
         : undefined,
       ...(preFirstNeighborBump ? { preFirstNeighborBump } : {}),
-      ...(fbi && !isReschedule
-        ? {
-            forwardBookingTrackingToken: fbi.trackingToken,
-            forwardBookingEntryId: fbi.forwardBookingId,
-            ...(fbiTargets && fbiTargets.entries.length > 1
-              ? {
-                  forwardBookingVisitCompletes: fbiTargets.entries.map((row) => ({
-                    forwardBookingEntryId: row.forwardBookingId,
-                    forwardBookingTrackingToken: row.trackingToken,
-                    patientId: row.patientId,
-                    patientName: row.patientName,
-                    description: resolveForwardBookingBookDefaultDescription(row),
-                    // Each pet's own type and pre-meds (Schedule follow-ups sets them per pet).
-                    ...(row.appointmentTypeId != null
-                      ? { appointmentTypeId: row.appointmentTypeId }
-                      : {}),
-                    needsPremeds: row.needsPremeds === true,
-                  })),
-                }
-              : {}),
-          }
-        : {}),
+      ...(fbi && !isReschedule ? forwardBookingBookPrefillFromIntent(fbi, fbiTargets) : {}),
       ...(ari && !isReschedule && !fbi
         ? {
             appointmentRequestSubmissionId: ari.appointmentRequestSubmissionId,

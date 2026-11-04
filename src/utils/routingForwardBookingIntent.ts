@@ -197,6 +197,57 @@ export function writeRoutingForwardBookingIntent(
   }
 }
 
+/** `/schedule/routing?fbHandoff=<key>`: a new tab picks up this tab's forward booking. */
+export const ROUTING_FORWARD_BOOKING_HANDOFF_PARAM = 'fbHandoff';
+const HANDOFF_PREFIX = 'vayd:routing-forward-booking-handoff:';
+const HANDOFF_MAX_AGE_MS = 10 * 60_000;
+
+/**
+ * Copy the current intent where a new tab can read it once (sessionStorage is per tab).
+ * Returns the key for the new tab's URL, or null when there is no intent.
+ */
+export function stashRoutingForwardBookingIntentForNewTab(): string | null {
+  if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY);
+    if (!raw) return null;
+    const now = Date.now();
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(HANDOFF_PREFIX)) continue;
+      const at = Number((JSON.parse(localStorage.getItem(k) ?? '{}') as { at?: number }).at);
+      if (!Number.isFinite(at) || now - at > HANDOFF_MAX_AGE_MS) localStorage.removeItem(k);
+    }
+    const key = `${now.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem(HANDOFF_PREFIX + key, JSON.stringify({ at: now, raw }));
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+/** In the new tab: move a stashed intent into this tab's session (once). */
+export function claimRoutingForwardBookingIntentHandoff(search: string): boolean {
+  if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return false;
+  try {
+    const key = new URLSearchParams(search).get(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM)?.trim();
+    if (!key) return false;
+    const stored = localStorage.getItem(HANDOFF_PREFIX + key);
+    localStorage.removeItem(HANDOFF_PREFIX + key);
+    if (!stored) return false;
+    const { at, raw } = JSON.parse(stored) as { at?: number; raw?: string };
+    if (!raw || !Number.isFinite(Number(at)) || Date.now() - Number(at) > HANDOFF_MAX_AGE_MS)
+      return false;
+    sessionStorage.setItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY, raw);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function markForwardBookingIntentAppliedToRoutingForm(): void {
   const cur = readRoutingForwardBookingIntent();
   if (!cur) return;
