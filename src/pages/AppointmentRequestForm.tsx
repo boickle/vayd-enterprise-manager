@@ -82,7 +82,7 @@ import {
   ONLINE_BOOKING_OTHER_SPECIES_MESSAGE,
   petsSpeciesAllowOnlineScheduling,
   SLOT_NO_LONGER_AVAILABLE_MESSAGE,
-  appointmentFormSubmitSuccessKindFromMessage,
+  appointmentFormSubmitSuccessKindFromResponse,
   extractApiResponseMessage,
   isSlotNoLongerAvailableError,
   type AppointmentFormSubmitSuccessKind,
@@ -835,6 +835,8 @@ export default function AppointmentRequestForm() {
   const highlightTimerRef = useRef<number | null>(null);
   const pendingValidationScrollRef = useRef<Record<string, string> | null>(null);
   const [submitSuccessKind, setSubmitSuccessKind] = useState<AppointmentFormSubmitSuccessKind>('request_received');
+  /** The API's message, shown as-is when the slot was taken or only some pets were booked. */
+  const [submitResultMessage, setSubmitResultMessage] = useState('');
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
@@ -5379,7 +5381,8 @@ export default function AppointmentRequestForm() {
         : (formData.newClientPets?.length || 0);
       
       markFormCompleted();
-      setSubmitSuccessKind(appointmentFormSubmitSuccessKindFromMessage(responseMessage));
+      setSubmitSuccessKind(appointmentFormSubmitSuccessKindFromResponse(submitResponse));
+      setSubmitResultMessage(responseMessage);
       const submittedEventParams = {
         appointment_type: appointmentType,
         pet_count: petCount,
@@ -5442,9 +5445,6 @@ export default function AppointmentRequestForm() {
     }
   };
 
-  const baskervilleFont = "'Libre Baskerville', 'Times New Roman', serif";
-  const isNewClientIntroStep = !isLoggedIn && currentPage === 'intro';
-  const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
   // SCH-06: one submit at a time. The guard is set before the zone check's await, and the
   // button shows "submitting" right away, so a double click sends one request.
   const handleSubmit = useSubmitOnce(async () => {
@@ -5456,6 +5456,9 @@ export default function AppointmentRequestForm() {
     }
   });
 
+  const baskervilleFont = "'Libre Baskerville', 'Times New Roman', serif";
+  const isNewClientIntroStep = !isLoggedIn && currentPage === 'intro';
+  const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
   const isNewClientPetStep = !isLoggedIn && currentPage === 'new-client-pet-info';
   const newClientCompactForm = isNewClientIntroStep || isNewClientPetStep;
   const newClientSectionGap = newClientCompactForm ? 16 : 20;
@@ -9541,7 +9544,10 @@ export default function AppointmentRequestForm() {
           <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '16px' }}>
             {submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
-              : 'We are working on booking your appointment and will be in touch shortly.'}
+              : (submitSuccessKind === 'slot_taken' || submitSuccessKind === 'online_partial') &&
+                  submitResultMessage
+                ? submitResultMessage
+                : 'We are working on booking your appointment and will be in touch shortly.'}
             {submitSuccessKind === 'online_confirmed' && formData.joinWaitlistIfSooner
               ? ' We’ll also reach out if an earlier time opens up.'
               : ''}

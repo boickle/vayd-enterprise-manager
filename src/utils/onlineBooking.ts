@@ -209,7 +209,13 @@ export function isSlotNoLongerAvailableError(
   return m.includes('no longer available') || m.includes('selected time');
 }
 
-export type AppointmentFormSubmitSuccessKind = 'online_confirmed' | 'request_received';
+export type AppointmentFormSubmitSuccessKind =
+  | 'online_confirmed'
+  | 'request_received'
+  /** D2: the picked time was taken at submit; nothing was booked and the team will call. */
+  | 'slot_taken'
+  /** Some pets were booked; the team will call about the rest. */
+  | 'online_partial';
 
 /** Classify public form POST success message from the API. */
 export function appointmentFormSubmitSuccessKindFromMessage(
@@ -220,4 +226,28 @@ export function appointmentFormSubmitSuccessKindFromMessage(
     return 'online_confirmed';
   }
   return 'request_received';
+}
+
+/**
+ * Classify the public form POST response. Prefers the API's `bookingOutcome`; older APIs only
+ * send a message.
+ */
+export function appointmentFormSubmitSuccessKindFromResponse(
+  response: { message?: string | string[]; bookingOutcome?: string } | null | undefined
+): AppointmentFormSubmitSuccessKind {
+  switch (response?.bookingOutcome) {
+    case 'slot_taken':
+      return 'slot_taken';
+    case 'partial':
+      return 'online_partial';
+    case 'booked':
+      return 'online_confirmed';
+    case 'not_booked':
+    case 'request':
+      return 'request_received';
+    default:
+      return appointmentFormSubmitSuccessKindFromMessage(
+        extractApiResponseMessage(response?.message)
+      );
+  }
 }
