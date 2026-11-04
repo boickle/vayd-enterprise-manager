@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
+import { useSubmitOnce } from '../hooks/useSubmitOnce';
 import { PremedsCheckbox } from '../components/PremedsCheckbox';
 import {
   PREMEDS_FORWARD_BOOKING_REASON,
@@ -724,6 +725,8 @@ export function SchedulerBookModal({
 
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  // SCH-A12: the in-flight flag is set before the first await and cleared on every exit path.
+  const submitBookOnce = useSubmitOnce(submitBook);
   const [checkingHouseholdVisits, setCheckingHouseholdVisits] = useState(false);
   const [householdVisitConflicts, setHouseholdVisitConflicts] = useState<
     HouseholdScheduledVisitConflict[] | null
@@ -2197,6 +2200,10 @@ export function SchedulerBookModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    await submitBookOnce();
+  }
+
+  async function submitBook() {
     // Ref guard — double-click Book before `submitting` state flushes can create two pets.
     if (submittingRef.current) return;
     const coVisitPreviewAvailable = Boolean(
