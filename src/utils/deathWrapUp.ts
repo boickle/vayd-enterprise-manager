@@ -20,6 +20,12 @@ import {
   type StoreStaffSubscription,
 } from '../api/onlineStore';
 import { recordPatientInactivation, type InactivationItem } from '../api/patientInactivation';
+import {
+  fetchPatientOpenSchedulingItems,
+  type PatientOpenFollowUp,
+  type PatientOpenTextOffer,
+  type PatientOpenWaitlistRow,
+} from '../api/patients';
 import { getEstimateForAppointment, listClientEstimates } from '../api/visitEstimates';
 import {
   VISIT_WORKFLOW_PRACTICE_ID,
@@ -74,6 +80,14 @@ export type DeathWrapUpPreview = {
   prescriptions: PatientPrescription[];
   /** Pharmacy and mail orders not yet shipped or picked up; Accept asks the mail team to cancel. */
   mailOrders: MailOrder[];
+  /**
+   * SCH-08 (D5): pending follow-ups (forward bookings), open text offers (slot offers) and
+   * waitlist rows. The server closes these when the pet is inactivated (deactivate, or the
+   * death invoice), so Accept has nothing extra to call for them.
+   */
+  followUps: PatientOpenFollowUp[];
+  textOffers: PatientOpenTextOffer[];
+  waitlist: PatientOpenWaitlistRow[];
   /**
    * Memberships whose cancel charge or credit is already a line on this visit's estimate or
    * invoice, or (from the chart, with no visit) on one of the owner's open estimates or bills.
@@ -137,7 +151,10 @@ export function deathWrapUpHasWork(preview: DeathWrapUpPreview | null | undefine
     preview.reminders.length > 0 ||
     preview.futureAppointments.length > 0 ||
     preview.prescriptions.length > 0 ||
-    preview.mailOrders.length > 0
+    preview.mailOrders.length > 0 ||
+    (preview.followUps?.length ?? 0) > 0 ||
+    (preview.textOffers?.length ?? 0) > 0 ||
+    (preview.waitlist?.length ?? 0) > 0
   );
 }
 
@@ -209,7 +226,7 @@ async function previewOnePatient(
       ? [args.appointmentId]
       : [];
 
-  const [memberships, reminders, futureAppointments, prescriptions, mailOrders] =
+  const [memberships, reminders, futureAppointments, prescriptions, mailOrders, scheduling] =
     await Promise.all([
       listPatientMemberships({ patientId }).catch(() => []),
       listPatientOpenReminders(patientId).catch(() => [] as UnscheduledReminder[]),
@@ -223,6 +240,11 @@ async function previewOnePatient(
         () => [] as PatientPrescription[]
       ),
       listMailOrders(args.practiceId, undefined, patientId).catch(() => [] as MailOrder[]),
+      fetchPatientOpenSchedulingItems(patientId).catch(() => ({
+        forwardBookings: [] as PatientOpenFollowUp[],
+        slotOffers: [] as PatientOpenTextOffer[],
+        waitlist: [] as PatientOpenWaitlistRow[],
+      })),
     ]);
 
   const membershipPreviews: MembershipCancelPreview[] = [];
@@ -265,6 +287,9 @@ async function previewOnePatient(
         !MAIL_ORDER_DONE_STATUSES.has(row.status) &&
         !mailCancelPending(row)
     ),
+    followUps: scheduling.forwardBookings,
+    textOffers: scheduling.slotOffers,
+    waitlist: scheduling.waitlist,
     moneyOnVisitMembershipIds: membershipPreviews
       .filter((row) => visitMoney.descriptions.has(membershipCancelLineDescription(row.planName)))
       .map((row) => row.membershipId),

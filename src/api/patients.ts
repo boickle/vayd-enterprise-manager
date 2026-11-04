@@ -646,6 +646,50 @@ export async function deactivatePatient(
   return data;
 }
 
+/** SCH-08 (D5): a pet's open scheduling items that inactivating it also closes. */
+export type PatientOpenFollowUp = {
+  id: number;
+  appointmentTypeName: string | null;
+  targetDueDate: string | null;
+};
+export type PatientOpenTextOffer = {
+  id: string;
+  offeredSlotDatetime: string;
+  appointmentTypeName: string | null;
+  /** Other active pets still on the offer. */
+  otherPetNames: string[];
+  /** expire: nobody else is on it. remove_pet: it stays open for the other pets. */
+  action: 'expire' | 'remove_pet';
+};
+export type PatientOpenWaitlistRow = {
+  id: number;
+  appointmentTypeName: string | null;
+  otherPetNames: string[];
+  action: 'remove' | 'remove_pet';
+};
+export type PatientOpenSchedulingItems = {
+  forwardBookings: PatientOpenFollowUp[];
+  slotOffers: PatientOpenTextOffer[];
+  waitlist: PatientOpenWaitlistRow[];
+};
+
+/**
+ * GET /patients/:id/open-scheduling-items — pending follow-ups, open text offers and
+ * waitlist rows. The server closes them when the pet is inactivated.
+ */
+export async function fetchPatientOpenSchedulingItems(
+  id: number | string,
+): Promise<PatientOpenSchedulingItems> {
+  const { data } = await http.get<PatientOpenSchedulingItems>(
+    `/patients/${encodeURIComponent(String(id))}/open-scheduling-items`,
+  );
+  return {
+    forwardBookings: data?.forwardBookings ?? [],
+    slotOffers: data?.slotOffers ?? [],
+    waitlist: data?.waitlist ?? [],
+  };
+}
+
 /** POST /patients/:id/reactivate — undo a deactivation. */
 export async function reactivatePatient(id: number | string): Promise<unknown> {
   const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/reactivate`);
