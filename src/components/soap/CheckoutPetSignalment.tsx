@@ -4,7 +4,27 @@ import { http } from '../../api/http';
 import { patientAgeYearsMonthsDisplay, patientSexNaturalLabelFromRecord } from '../../utils/schedulerVisitDisplay';
 import { practiceTimeZoneOrDefault } from '../../utils/practiceTimezone';
 
-export type PetWeight = { value: string; unit: string; at: string | null };
+export type PetWeight = {
+  value: string;
+  unit: string;
+  at: string | null;
+  /** Shown in brackets when the weight was recorded in kg, e.g. "9.9 lb (4.5 kg)". */
+  alt?: string | null;
+};
+
+const LB_PER_KG = 2.2046226218;
+
+/**
+ * Unit of a weight-history point. `weightUnitValue` is the eVet unit code (nothing in this repo or the API
+ * documents it; 1 = pounds, 2 = kilograms is the working assumption), or a text unit when one is sent.
+ */
+export function weightPointIsKg(p: { weightUnitValue?: unknown; weightUnit?: unknown }): boolean {
+  const text = typeof p.weightUnit === 'string' ? p.weightUnit : null;
+  if (text) return /kg|kilo/i.test(text);
+  const v = p.weightUnitValue;
+  if (typeof v === 'string' && /kg|kilo/i.test(v)) return true;
+  return Number(v) === 2;
+}
 export type PetSignalmentData = {
   profile: Record<string, unknown> | null;
   weight: PetWeight | null;
@@ -49,7 +69,7 @@ export function formatPetSignalment(data: PetSignalmentData): string {
   const w = data.weight;
   if (w) {
     const date = formatWeightDate(w.at);
-    parts.push(`${w.value} ${w.unit}${date ? ` (${date})` : ''}`);
+    parts.push(`${w.value} ${w.unit}${w.alt ? ` (${w.alt})` : ''}${date ? ` (${date})` : ''}`);
   } else {
     parts.push('No weight on file');
   }
@@ -69,7 +89,12 @@ async function loadPetSignalment(patientId: number): Promise<PetSignalmentData> 
     fetchPatientByIdStaff(patientId),
     http.get<{
       currentWeight?: number | null;
-      points?: { serviceDate?: string; weight?: number | string }[];
+      points?: {
+        serviceDate?: string;
+        weight?: number | string;
+        weightUnitValue?: number | string | null;
+        weightUnit?: string | null;
+      }[];
     }>(`/patients/${encodeURIComponent(String(patientId))}/weights`),
   ]);
   const raw = profileRes.status === 'fulfilled' ? profileRes.value : null;
@@ -77,11 +102,20 @@ async function loadPetSignalment(patientId: number): Promise<PetSignalmentData> 
   let weight: PetWeight | null = null;
   if (weightsRes.status === 'fulfilled') {
     const pts = (weightsRes.value.data?.points ?? [])
-      .map((p) => ({ at: str(p.serviceDate), w: Number(p.weight) }))
+      .map((p) => ({ at: str(p.serviceDate), w: Number(p.weight), kg: weightPointIsKg(p) }))
       .filter((p) => p.at && Number.isFinite(p.w) && p.w > 0)
       .sort((a, b) => Date.parse(a.at!) - Date.parse(b.at!));
     const last = pts[pts.length - 1];
-    if (last) weight = { value: formatWeightNumber(last.w), unit: 'lb', at: last.at };
+    if (last) {
+      weight = last.kg
+        ? {
+            value: formatWeightNumber(last.w * LB_PER_KG),
+            unit: 'lb',
+            at: last.at,
+            alt: `${formatWeightNumber(last.w)} kg`,
+          }
+        : { value: formatWeightNumber(last.w), unit: 'lb', at: last.at };
+    }
   }
   return { profile, weight };
 }

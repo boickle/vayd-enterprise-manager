@@ -145,6 +145,17 @@ function nestedRecord(v: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** True when the sex text already carries the neuter status ("MaleNeutered", "MN", "Female Spayed"). */
+function sexAlreadyStatesStatus(sexPart: string, alteredPart: string): boolean {
+  const sex = sexPart.toLowerCase().replace(/[\s._/-]+/g, '');
+  if (['mn', 'mi', 'fs', 'fi', 'sf', 'cm'].includes(sex)) return true;
+  const hasStatus = /spay|neuter|castrat|intact|altered|fixed/.test(sex);
+  if (!hasStatus) return false;
+  const status = alteredPart.toLowerCase();
+  const words = status.match(/spay|neuter|castrat|intact|altered|fixed/g) ?? [];
+  return words.length === 0 || words.every((w) => sex.includes(w));
+}
+
 /** Collect sex / altered strings from a raw patient API object (nested entities included). */
 export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -186,7 +197,9 @@ export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[]
     .filter(Boolean)
     .join(' ')
     .trim();
-  if (sexPart && alteredPart) out.push(`${sexPart} ${alteredPart}`);
+  if (sexPart && alteredPart && !sexAlreadyStatesStatus(sexPart, alteredPart)) {
+    out.push(`${sexPart} ${alteredPart}`);
+  } else if (sexPart && alteredPart) out.push(sexPart);
   else if (alteredPart) out.push(alteredPart);
 
   const nestedPatient = nestedRecord(o.patient);

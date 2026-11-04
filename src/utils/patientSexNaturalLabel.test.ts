@@ -27,3 +27,20 @@ describe('patientSexNaturalLabelFromRecord', () => {
     expect(f({ name: 'Rex' })).toBeNull();
   });
 });
+
+import { patientSexDisplayFromRecord, patientSexListDisplayFromRecord } from './schedulerVisitDisplay';
+
+describe('patientSexDisplayFromRecord never repeats the neuter status', () => {
+  it.each([
+    [{ sex: 'MaleNeutered', neuterStatus: 'Neutered' }, 'MaleNeutered'],
+    [{ sex: 'Female Spayed', neuterStatus: 'Spayed' }, 'Female Spayed'],
+    [{ sex: 'MN', neuterStatus: 'Neutered' }, 'MN'],
+    [{ sex: 'FemaleIntact', altered: 'Intact' }, 'FemaleIntact'],
+    [{ sex: 'Male', neuterStatus: 'Neutered' }, 'Male Neutered'],
+    [{ sex: 'Female', neuterStatus: 'Spayed' }, 'Female Spayed'],
+    [{ sex: 'Male' }, 'Male'],
+  ])('%j -> %s', (rec, expected) => {
+    expect(patientSexDisplayFromRecord(rec as Record<string, unknown>)).toBe(expected);
+    expect(patientSexListDisplayFromRecord(rec as Record<string, unknown>)).toBe(expected);
+  });
+});

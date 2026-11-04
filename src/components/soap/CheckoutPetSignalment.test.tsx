@@ -94,4 +94,24 @@ describe('checkout pet signalment line', () => {
     expect(fetchPatient).toHaveBeenCalledTimes(2);
     expect(httpGet).toHaveBeenCalledTimes(2);
   });
+
+  it('converts a point recorded in kg to lb and shows the kg too', async () => {
+    fetchPatient.mockResolvedValue(cat);
+    httpGet.mockResolvedValue({
+      data: { points: [{ serviceDate: '2026-11-04T15:00:00.000Z', weight: 4.5, weightUnitValue: 2 }] },
+    });
+    render(<CheckoutPetSignalment patientId={6} />);
+    const el = await screen.findByTestId('checkout-pet-signalment-6');
+    expect(el.textContent).toContain('9.92 lb (4.5 kg) (Nov 4, 2026)');
+  });
+
+  it('treats unit code 1 as pounds', async () => {
+    fetchPatient.mockResolvedValue(cat);
+    httpGet.mockResolvedValue({
+      data: { points: [{ serviceDate: '2026-11-04T15:00:00.000Z', weight: 9.8, weightUnitValue: 1 }] },
+    });
+    render(<CheckoutPetSignalment patientId={7} />);
+    const el = await screen.findByTestId('checkout-pet-signalment-7');
+    expect(el.textContent).toContain('9.8 lb (Nov 4, 2026)');
+  });
 });
