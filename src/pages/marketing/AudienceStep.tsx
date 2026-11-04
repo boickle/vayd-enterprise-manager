@@ -31,6 +31,7 @@ import {
   searchEmailCampaignClients,
   SKIP_REASON_LABELS,
 } from '../../api/emailCampaigns';
+import ExternalContactsField from './ExternalContactsField';
 
 type Props = {
   audience: EmailCampaignAudience;
@@ -228,7 +229,12 @@ export default function AudienceStep({
   readOnly,
   preview,
 }: Props) {
-  const set = (patch: Partial<EmailCampaignAudience>) => onChange({ ...audience, ...patch });
+  const set = (patch: Partial<EmailCampaignAudience>) =>
+    onChange({
+      ...audience,
+      externalContacts: audience.externalContacts ?? [],
+      ...patch,
+    });
 
   const providerOptions = (options?.providers ?? []).map((p) => ({ id: p.id, label: p.name }));
   const zoneOptions = (options?.zones ?? []).map((z) => ({ id: z.id, label: z.name }));
@@ -244,7 +250,6 @@ export default function AudienceStep({
               Who should get this email?
             </Typography>
             <RadioGroup
-              row
               value={audience.mode}
               onChange={(e) => set({ mode: e.target.value as EmailCampaignAudience['mode'] })}
             >
@@ -260,9 +265,20 @@ export default function AudienceStep({
                 label="Specific clients"
                 disabled={readOnly}
               />
+              <FormControlLabel
+                value="list"
+                control={<Radio />}
+                label="Only the pasted list"
+                disabled={readOnly}
+              />
             </RadioGroup>
 
-            {audience.mode === 'specific' ? (
+            {audience.mode === 'list' ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                No clients are selected from the practice. Only the people you add below are
+                emailed.
+              </Typography>
+            ) : audience.mode === 'specific' ? (
               <Box sx={{ mt: 1 }}>
                 <ClientPicker
                   label="Clients"
@@ -405,6 +421,13 @@ export default function AudienceStep({
             )}
           </Paper>
 
+          <ExternalContactsField
+            contacts={audience.externalContacts ?? []}
+            onChange={(externalContacts) => set({ externalContacts })}
+            disabled={readOnly}
+            listOnly={audience.mode === 'list'}
+          />
+
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle1" fontWeight={700} gutterBottom>
               Leave out
@@ -497,7 +520,7 @@ export function AudienceSummaryPanel({
       </Typography>
       <Typography color="text.secondary">
         will receive the email
-        {summary ? ` (of ${summary.total.toLocaleString()} matching clients)` : ''}
+        {summary ? ` (of ${summary.total.toLocaleString()} in this audience)` : ''}
       </Typography>
 
       <Alert severity="info" icon={<ShieldCheck size={20} />} sx={{ mt: 2 }}>
@@ -507,7 +530,9 @@ export function AudienceSummaryPanel({
         <Typography variant="body2">
           Households with no living pets, a pet that died or was made inactive in the last{' '}
           {protections.petLossWindowDays} days, or a euthanasia or other end-of-life visit in that
-          time are left out. This is checked again right before each email is sent.
+          time are left out. People added by name and email are included too. If that address
+          belongs to a client, the same protections apply. This is checked again right before each
+          email is sent.
         </Typography>
       </Alert>
 
@@ -541,9 +566,15 @@ export function AudienceSummaryPanel({
           <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
             A few recipients
           </Typography>
-          {summary.sample.slice(0, 8).map((s) => (
-            <Typography key={s.clientId} variant="body2" color="text.secondary" noWrap>
-              {[s.firstName, s.lastName].filter(Boolean).join(' ') || `Client #${s.clientId}`}
+          {summary.sample.slice(0, 8).map((s, index) => (
+            <Typography
+              key={`${s.email ?? 'row'}-${s.clientId ?? 'ext'}-${index}`}
+              variant="body2"
+              color="text.secondary"
+              noWrap
+            >
+              {[s.firstName, s.lastName].filter(Boolean).join(' ') ||
+                (s.clientId ? `Client #${s.clientId}` : s.email || 'External contact')}
               {s.petNames.length ? ` · ${s.petNames.join(', ')}` : ''}
             </Typography>
           ))}
