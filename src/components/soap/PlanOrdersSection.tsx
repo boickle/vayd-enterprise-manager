@@ -63,7 +63,10 @@ function PlanSearchResults({
   children: ReactNode;
 }) {
   const [box, setBox] = useState<{
-    top: number;
+    /** Set when the list opens below the box. */
+    top?: number;
+    /** Set when it opens above: pins the list's bottom edge just over the box, whatever its height. */
+    bottom?: number;
     left: number;
     width: number;
     maxHeight: number;
@@ -82,7 +85,9 @@ function PlanSearchResults({
       const openUp = below < 220 && above > below;
       const maxHeight = Math.min(320, openUp ? above : below);
       setBox({
-        top: openUp ? r.top - gap - maxHeight : r.bottom + gap,
+        ...(openUp
+          ? { bottom: window.innerHeight - r.top + gap }
+          : { top: r.bottom + gap }),
         left: r.left,
         width: Math.max(r.width, 240),
         maxHeight: Math.max(48, maxHeight),
@@ -103,7 +108,16 @@ function PlanSearchResults({
       ref={menuRef}
       className="soap-plan-results soap-plan-results--float"
       role="listbox"
-      style={{ top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight }}
+      style={{
+        // Inline so the base .soap-plan-results rule (position: absolute; top: 100%) can't
+        // override it: the coordinates come from getBoundingClientRect, i.e. the viewport.
+        position: 'fixed',
+        top: box.top ?? 'auto',
+        bottom: box.bottom ?? 'auto',
+        left: box.left,
+        width: box.width,
+        maxHeight: box.maxHeight,
+      }}
     >
       {children}
     </div>,
