@@ -1,5 +1,6 @@
 import { fetchPracticeInfo, fetchPracticeInfoById } from '../api/clientPortal';
 import { getPracticeSettings, updatePracticeSettings } from '../api/practiceSettings';
+import { clearEmployeeSignature, setEmployeeSignature } from '../api/employeesMutations';
 import { currentPracticeId } from './practiceIdFromToken';
 
 export type PracticeLetterhead = {
@@ -118,25 +119,16 @@ export async function loadProviderSignature(
   }
 }
 
+/**
+ * Set or clear one provider's signature. Goes through the signature endpoint (practice managers
+ * only, logged); the general settings save refuses this key. Stored where loadProviderSignature
+ * and the printed documents read it, so nothing that prints a signature changes.
+ */
 export async function saveProviderSignature(
   employeeId: number,
   dataUrl: string | null,
   practiceId: number = PRACTICE_ID
 ): Promise<void> {
-  const settings = await getPracticeSettings(practiceId).catch(() => ({}));
-  let map: Record<string, string> = {};
-  try {
-    const raw = (settings as Record<string, unknown> | undefined)?.[
-      'labels.providerSignatures'
-    ];
-    const parsed = JSON.parse(typeof raw === 'string' ? raw : '{}');
-    if (parsed && typeof parsed === 'object') map = parsed as Record<string, string>;
-  } catch {
-    map = {};
-  }
-  if (dataUrl) map[String(employeeId)] = dataUrl;
-  else delete map[String(employeeId)];
-  await updatePracticeSettings(practiceId, {
-    'labels.providerSignatures': JSON.stringify(map),
-  });
+  if (dataUrl) await setEmployeeSignature(employeeId, practiceId, dataUrl);
+  else await clearEmployeeSignature(employeeId, practiceId);
 }

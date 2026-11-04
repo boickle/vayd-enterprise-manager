@@ -143,7 +143,7 @@ Goal: record every dose so it reaches the chart, the certificate and the reminde
 | 4 | On a rabies line, type the **Rabies tag \*** number | The tag box | "Rabies needs a tag number. If there's no physical tag, type 0." |
 | 5 | Click **Record dose** | The line gets a check. Summary "Lot … · next due …" | "Record dose, and you'll see the lot and the next due date on the line." |
 | 6 | Show a rabies dose on a visit whose provider isn't a licensed vet | "The vet of record must be a licensed veterinarian for a rabies dose. Choose the veterinarian who gave or supervised it." | "The rabies certificate prints the vet of record, so it has to be a licensed veterinarian. Scout uses the visit's vet. Anyone on the visit can type the dose in." |
-| 7 | Show a vet with no license number on file | "Dr. … has no license number on file. Add the license number in Settings → Staff (edit → License number) before recording a rabies dose." | "And that vet needs a license number in Scout. If you see this, ask a manager to add it. Don't move the dose to someone else." |
+| 7 | Show a vet with no license number on file | "Dr. … has no license number on file. Ask a practice manager to add it in Settings → Staff before recording a rabies dose." | "And that vet needs a license number in Scout. If you see this, ask a manager to add it. Don't move the dose to someone else." |
 | 8 | Point at **Dose history** | The staff-only history of this dose | "Dose history shows who recorded or changed it, and when. It's for staff only and never prints." |
 
 **Techs:** "You can record every dose, rabies included. The doctor on the visit is the vet of record, not you."
