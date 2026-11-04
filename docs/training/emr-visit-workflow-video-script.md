@@ -33,7 +33,7 @@ Fifteen short videos, 2 to 4 minutes each, one task per video. One series that e
 | Client liaison | V9, V15 | V5, V11 (refills), V14 |
 
 **How to get to every screen**
-- **The visit:** **Schedule**, then the practice calendar (**Scheduler**). Right-click the appointment (long-press on a tablet) **[check on screen]**. Under **On Visit Day** there is **Start Encounter** (it says **Edit Encounter** once one exists) and **Start / End Visit**. **Start Encounter** asks **SOAP** ("Doctor exam — history, exam, assessment, and plan.") or **Medical note** ("Tech visit write-up — history, plan, and invoice. Not a SOAP.").
+- **The visit:** **Home** is the calendar. Pick the doctor in the list at the top right (**Dana Demo** in the demo) and click **Today**. Right-click the appointment (long-press on a tablet) **[check on screen]**. Under **On Visit Day** there is **Start Encounter** (it says **Edit Encounter** once one exists) and **Start / End Visit**. **Start Encounter** asks **SOAP** ("Doctor exam — history, exam, assessment, and plan.") or **Medical note** ("Tech visit write-up — history, plan, and invoice. Not a SOAP.").
 - **From the pet's chart:** **Patients**, open the pet, then use the chart toolbar (**Medical note**, **Send form**, **Print document**, **Communicate**, **Invoice**). The chart also offers to continue an open SOAP or start one on a booked visit.
 - **The SOAP page** has the tabs **Subjective**, **Objective**, **Assessment**, **Plan** and **Checkout prep**. The **Checkout** panel is on the right. **Wrap up visit** is top right.
 - **Checkout** (the whole household pays once): the **Checkout** button at the bottom of the SOAP's Checkout panel.
@@ -55,7 +55,7 @@ Goal: open the right chart for each pet on a household visit. **Everyone.**
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | **Schedule**, **Scheduler**. Right-click the Rivera visit, **On Visit Day**, **Start Encounter** | A small window titled with the first pet's name: **SOAP** and **Medical note** | "Every visit starts on the calendar. Right-click the visit, go to On Visit Day, and choose Start Encounter." |
+| 1 | **Home** (the calendar). In the doctor list at the top right pick **Dana Demo**, then click **Today**. Right-click the Rivera visit, **On Visit Day**, **Start Encounter** | A small window titled with the first pet's name: **SOAP** and **Medical note** | "Every visit starts on the calendar. Right-click the visit, go to On Visit Day, and choose Start Encounter." |
 | 2 | Click **SOAP** | The SOAP page. Header: **Biscuit · Rivera**, the signalment, and "Exam: … · Visit #… · Comprehensive SOAP" | "For a doctor exam, pick SOAP. Up top you'll see the pet, the family, and the visit number. Click the pet's name any time to open the full medical record." |
 | 3 | Point at the pet tabs: **Biscuit**, **Maple**, **Pepper** | One tab per pet. A heart shows on any pet with a membership | "The Riveras have three pets on this visit, so there's a tab for each one. Each pet gets its own chart. Click a tab to switch." |
 | 4 | Click **Maple** | Maple's SOAP opens. Same visit number | "Switching pets keeps you on the same visit. Anything you typed for Biscuit is already saved." |
