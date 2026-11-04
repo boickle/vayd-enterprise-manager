@@ -865,7 +865,7 @@ export default function SettingsEmployeeDirectory({
           {sigEditing ? 'Draw below or upload a PNG / JPEG.' : 'No signature on file yet.'}
         </p>
       )}
-      {sigEditing ? (
+      {sigEditing && canManageStaff ? (
         <>
           <SignaturePad onChange={(dataUrl) => setSigDraft(dataUrl || null)} />
           <input
@@ -906,6 +906,10 @@ export default function SettingsEmployeeDirectory({
             </button>
           </div>
         </>
+      ) : !canManageStaff ? (
+        <p className="settings-muted" style={{ margin: 0 }}>
+          A practice manager adds or changes signatures.
+        </p>
       ) : (
         <div className="settings-staff-signature__actions">
           <button
