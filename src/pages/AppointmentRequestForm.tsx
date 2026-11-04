@@ -88,6 +88,7 @@ import {
   type AppointmentFormSubmitSuccessKind,
 } from '../utils/onlineBooking';
 import { scrollToFirstAppointmentFormError } from '../utils/appointmentFormScrollToError';
+import { useSubmitOnce } from '../hooks/useSubmitOnce';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
 import {
@@ -4754,7 +4755,7 @@ export default function AppointmentRequestForm() {
     );
   };
 
-  const handleSubmit = async () => {
+  const submitAppointmentRequest = async () => {
     pruneAbandonedExistingClientNewPetStubs();
     if (!(await ensureVisitZoneInService())) {
       setErrors((prev) => ({
@@ -5444,6 +5445,17 @@ export default function AppointmentRequestForm() {
   const baskervilleFont = "'Libre Baskerville', 'Times New Roman', serif";
   const isNewClientIntroStep = !isLoggedIn && currentPage === 'intro';
   const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
+  // SCH-06: one submit at a time. The guard is set before the zone check's await, and the
+  // button shows "submitting" right away, so a double click sends one request.
+  const handleSubmit = useSubmitOnce(async () => {
+    setSubmitting(true);
+    try {
+      await submitAppointmentRequest();
+    } finally {
+      setSubmitting(false);
+    }
+  });
+
   const isNewClientPetStep = !isLoggedIn && currentPage === 'new-client-pet-info';
   const newClientCompactForm = isNewClientIntroStep || isNewClientPetStep;
   const newClientSectionGap = newClientCompactForm ? 16 : 20;
