@@ -35,8 +35,8 @@ describe('SCH-08 / SCH-09: an inactive pet leaves no open scheduling items', () 
     cy.contains('button', 'Deactivate', { timeout: 40000 }).click();
 
     cy.get('[role="dialog"]').within(() => {
-      cy.contains('h4', 'Removing 1 follow-up').should('be.visible');
-      cy.contains('h4', 'Expiring 1 text offer').should('be.visible');
+      cy.contains('h4', 'Removing 1 follow-up').scrollIntoView().should('be.visible');
+      cy.contains('h4', 'Expiring 1 text offer').scrollIntoView().should('be.visible');
       cy.get('select[aria-label="Reason for inactivating"]').select('moved_or_changed_vets');
       cy.contains('button', 'Accept and inactivate').click();
     });
@@ -54,7 +54,8 @@ describe('SCH-08 / SCH-09: an inactive pet leaves no open scheduling items', () 
     });
     cy.visit('/schedule/scheduling-tools/forward-booking');
     cy.contains('Forward booking', { timeout: 40000 });
-    cy.contains(sch08.petName).should('not.exist');
+    // The header's "Recent" patient picker still lists the pet; the queue itself must not.
+    cy.contains('Scheduling Tools').parent().should('not.contain.text', sch08.petName);
 
     // The text offer is closed.
     schedulingApi('cl', 'GET', `/patients/${sch08.petId}/open-scheduling-items`).then((res) => {
