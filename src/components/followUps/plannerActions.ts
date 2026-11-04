@@ -369,6 +369,8 @@ export async function createLabsTask(args: {
   /** Active branches of the practice. */
   practiceBranchIds: number[];
   assigneeIds: number[];
+  /** Notified, not doing the work (e.g. every doctor, for a relief doctor's visit). */
+  watcherIds?: number[];
   startAt: string;
   note: string;
 }): Promise<number> {
@@ -386,6 +388,7 @@ export async function createLabsTask(args: {
     title: `Forward book ${args.pet.name} once labs are back${args.note ? ` (${args.note})` : ''}`,
     branchIds,
     assigneeEmployeeIds: args.assigneeIds,
+    watcherEmployeeIds: args.watcherIds ?? [],
     startAt: args.startAt,
     dueAt: null,
     links: [

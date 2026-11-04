@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { removeTask, type TaskDetail } from '../../api/tasks';
+import { getTask, removeTask, type TaskDetail } from '../../api/tasks';
+import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
 import './TaskRemoveModal.css';
 
 function errMsg(e: unknown): string {
@@ -21,7 +22,7 @@ const QUICK_REASONS = [
 ];
 
 type Props = {
-  task: { id: number; title: string };
+  task: { id: number; title: string } & Partial<Pick<TaskDetail, 'shareGroup' | 'shareGroupId'>>;
   onClose: () => void;
   onRemoved: (updated: TaskDetail) => void;
 };
@@ -35,6 +36,7 @@ export default function TaskRemoveModal({ task, onClose, onRemoved }: Props) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
 
   const submit = async () => {
     const text = reason.trim();
@@ -42,10 +44,18 @@ export default function TaskRemoveModal({ task, onClose, onRemoved }: Props) {
       setErr('Say why this is being removed.');
       return;
     }
+    // Shared task: "Also remove it for …?" when other people's copies are still open.
+    // List rows only carry the group id; the people come with the task itself.
+    const withPeople =
+      task.shareGroup === undefined && task.shareGroupId
+        ? await getTask(task.id).catch(() => task)
+        : task;
+    const choice = await askAlsoClose(withPeople, 'remove');
+    if (!choice) return;
     setBusy(true);
     setErr(null);
     try {
-      onRemoved(await removeTask(task.id, text));
+      onRemoved(await removeTask(task.id, text, choice));
     } catch (e: unknown) {
       setErr(errMsg(e));
     } finally {
@@ -126,6 +136,7 @@ export default function TaskRemoveModal({ task, onClose, onRemoved }: Props) {
           </button>
         </div>
       </div>
+      {closePrompt}
     </div>
   );
 }

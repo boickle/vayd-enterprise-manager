@@ -393,7 +393,7 @@ function staffOptions(employees: Employee[]): StaffOption[] {
 
 /** Type a name, pick from the matches, and they land as a chip. Used for both
  * the people doing the labs task and the people only watching it. */
-function StaffMultiPick({
+export function StaffMultiPick({
   label,
   hint,
   employees,

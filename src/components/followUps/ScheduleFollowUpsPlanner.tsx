@@ -9,12 +9,15 @@ import { getToken } from '../../api/http';
 import { resolveEmployeeIdFromToken } from '../../utils/practiceIdFromToken';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { dispatchRoutingFocusHouseholdVisit } from '../../utils/bookingHouseholdVisitWarning';
-import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { dismissRoutingForwardBookingWorkspace } from '../../utils/routingForwardBookingIntent';
 import { ClientContactComposeModal } from '../ClientContactComposeModal';
 import { applySystemTemplateIfCustom } from '../../utils/messageTemplateCache';
 import { withClinicDefaults } from '../../utils/messageTemplateFields';
-import { forwardBookingModeOption } from '../forwardBooking/ForwardBookingDecisionFields';
+import {
+  forwardBookingModeOption,
+  StaffMultiPick,
+} from '../forwardBooking/ForwardBookingDecisionFields';
+import { suggestLabsTaskPeople } from '../forwardBooking/labsTaskPeople';
 import {
   addPetsToUpcomingVisit,
   bookingFromAppointments,
@@ -187,7 +190,11 @@ export default function ScheduleFollowUpsPlanner({
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [cards, setCards] = useState<NewCard[]>([]);
   const [upcoming, setUpcoming] = useState<Record<string, UpcomingState>>({});
-  const [labsAssignee, setLabsAssignee] = useState<number | null>(null);
+  /** Who does the labs task: the visit doctor and their techs by default (SCH-E); editable. */
+  const [labsAssignees, setLabsAssignees] = useState<number[]>([]);
+  const [labsWatchers, setLabsWatchers] = useState<number[]>([]);
+  /** Staff changed the people; a late suggestion must not overwrite them. */
+  const labsPeopleEdited = useRef(false);
   const [labsRemind, setLabsRemind] = useState('3');
   const [noneReason, setNoneReason] = useState('');
   const [clNote, setClNote] = useState('');
@@ -268,7 +275,14 @@ export default function ScheduleFollowUpsPlanner({
         setUpcoming(ups);
         setCards([blankCard(1, { kind: 'preset', key: '1y' }, d)]);
         seq.current = 2;
-        setLabsAssignee(d.todayProviderId);
+        labsPeopleEdited.current = false;
+        setLabsAssignees(d.todayProviderId ? [d.todayProviderId] : []);
+        setLabsWatchers([]);
+        void suggestLabsTaskPeople(d.todayProviderId).then((people) => {
+          if (!on || labsPeopleEdited.current || people.assignees.length === 0) return;
+          setLabsAssignees(people.assignees);
+          setLabsWatchers(people.watchers);
+        });
       })
       .catch(
         (e) => on && setLoadError(e instanceof Error ? e.message : 'Could not load follow-ups.')
@@ -1000,7 +1014,7 @@ export default function ScheduleFollowUpsPlanner({
       if (missing.length) return `Pick a visit type for ${joinNames(missing.map((p) => p.name))}`;
     }
     if (petsIn(NONE).length && !noneReason.trim()) return 'Pick a reason for "No follow-up needed"';
-    if (labsPets.length && !labsAssignee) return 'Pick who reviews the labs';
+    if (labsPets.length && labsAssignees.length === 0) return 'Pick who reviews the labs';
     return null;
   }
 
@@ -1080,7 +1094,8 @@ export default function ScheduleFollowUpsPlanner({
             practiceId,
             staffBranchIds,
             practiceBranchIds,
-            assigneeIds: labsAssignee ? [labsAssignee] : [],
+            assigneeIds: labsAssignees,
+            watcherIds: labsWatchers,
             startAt: data.today
               .plus({ days: remindDays })
               .set({ hour: 9, minute: 0 })
@@ -1105,9 +1120,9 @@ export default function ScheduleFollowUpsPlanner({
         if (mode === 'not_appropriate') disposition.bookingNotes = noneReason.trim();
         if (mode === 'labs_pending') {
           disposition.labsPendingTask = {
-            assignedToEmployeeId: labsAssignee,
-            assignedToEmployeeIds: labsAssignee ? [labsAssignee] : [],
-            watcherEmployeeIds: [],
+            assignedToEmployeeId: labsAssignees[0] ?? null,
+            assignedToEmployeeIds: labsAssignees,
+            watcherEmployeeIds: labsWatchers.filter((id) => !labsAssignees.includes(id)),
             title: `Forward book ${pet.name} once labs are back`,
             startAt: data.today
               .plus({ days: remindDays })
@@ -2286,20 +2301,36 @@ export default function ScheduleFollowUpsPlanner({
                   )}
                   {labsPets.length ? (
                     <div className="fup-opts">
-                      <label>
-                        Who reviews{' '}
-                        <select
-                          value={labsAssignee ?? ''}
-                          onChange={(e) => setLabsAssignee(Number(e.target.value) || null)}
-                        >
-                          <option value="">Choose…</option>
-                          {employees.map((em) => (
-                            <option key={em.id} value={em.id}>
-                              {formatEmployeeDisplayName(em) || em.email}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <div className="fup-labs-people">
+                        <StaffMultiPick
+                          label="Who reviews"
+                          hint="Starts with the visit's doctor and the techs who work with them. Each person gets their own linked copy."
+                          employees={employees}
+                          selectedIds={labsAssignees}
+                          ariaLabel="Who reviews the labs"
+                          onToggle={(id, checked) => {
+                            labsPeopleEdited.current = true;
+                            setLabsAssignees((cur) =>
+                              checked ? [...cur.filter((n) => n !== id), id] : cur.filter((n) => n !== id)
+                            );
+                            if (checked) setLabsWatchers((cur) => cur.filter((n) => n !== id));
+                          }}
+                        />
+                        <StaffMultiPick
+                          label="Watching"
+                          hint="Optional. Notified, but not doing the work."
+                          employees={employees}
+                          selectedIds={labsWatchers}
+                          ariaLabel="Who watches the labs task"
+                          onToggle={(id, checked) => {
+                            labsPeopleEdited.current = true;
+                            setLabsWatchers((cur) =>
+                              checked ? [...cur.filter((n) => n !== id), id] : cur.filter((n) => n !== id)
+                            );
+                            if (checked) setLabsAssignees((cur) => cur.filter((n) => n !== id));
+                          }}
+                        />
+                      </div>
                       <label>
                         Remind{' '}
                         <select value={labsRemind} onChange={(e) => setLabsRemind(e.target.value)}>

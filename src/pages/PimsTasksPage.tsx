@@ -69,6 +69,7 @@ import { isSoapAutomationTask } from '../utils/soapTask';
 import { isOrderListAutomationTask, orderListPath } from '../utils/orderListTask';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
 import TaskRemoveModal from '../components/pims/TaskRemoveModal';
+import { useSharedTaskClosePrompt } from '../components/pims/SharedTaskClosePrompt';
 import './PimsTasksPage.css';
 
 const PAGE_SIZE = 50;
@@ -442,6 +443,7 @@ export default function PimsTasksPage() {
   }, [roles]);
 
   const [items, setItems] = useState<TaskListItem[]>([]);
+  const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -892,7 +894,11 @@ export default function PimsTasksPage() {
 
   const handleMarkDone = async (id: number) => {
     try {
-      await completeTask(id);
+      // Shared task: ask whether to close the other people's copies too.
+      const row = items.find((t) => t.id === id);
+      const choice = row?.shareGroupId ? await askAlsoClose(await getTask(id)) : {};
+      if (!choice) return;
+      await completeTask(id, choice);
       refreshList();
       notifyTasksChanged();
     } catch (e: unknown) {
@@ -1007,6 +1013,14 @@ export default function PimsTasksPage() {
                     : isLabResultAutomationTask(row)
                       ? taskKindLabel('lab_result')
                       : taskKindLabel(row.kind)}
+              </span>
+            ) : null}
+            {row.shareGroupId ? (
+              <span
+                className="pims-task-card__kind pims-task-card__kind--shared"
+                title="Shared: each person has their own linked copy"
+              >
+                Shared
               </span>
             ) : null}
             {row.status === 'done' ? (
@@ -1441,6 +1455,7 @@ export default function PimsTasksPage() {
       )}
 
       {forwardBookingCreateModal}
+      {closePrompt}
     </div>
   );
 }

@@ -41,6 +41,7 @@ import {
 } from '../utils/taskDateTime';
 import { notifyTasksChanged } from '../utils/taskOwnership';
 import { createLabsPendingForwardBookingTasks } from '../components/forwardBooking/saveForwardBookingDecision';
+import { suggestLabsTaskPeople } from '../components/forwardBooking/labsTaskPeople';
 import {
   followUpSideEffectsSessionKey,
   markFollowUpSideEffectsDone,
@@ -455,6 +456,8 @@ export function SchedulerActualVisitTimeModal({
   const forwardBookingUserEditedRef = useRef(false);
   const forwardBookingListEnsuredRef = useRef(false);
   const labsPendingTaskEnsuredRef = useRef(false);
+  /** Suggested labs-task people (SCH-E), kept so a later refresh of the visit does not drop them. */
+  const suggestedLabsPeopleRef = useRef<{ assignees: number[]; watchers: number[] } | null>(null);
   const forwardBookingFormRef = useRef<ForwardBookingDispositionFormState>({
     mode: initialForwardBookingForm.mode,
     forwardAmount: initialForwardBookingForm.forwardAmount,
@@ -722,6 +725,31 @@ export function SchedulerActualVisitTimeModal({
     []
   );
 
+  // SCH-E: with no people saved yet, the labs task starts with the visit doctor and the
+  // techs who work with them (a relief doctor alone, with the doctors watching).
+  useEffect(() => {
+    if (!requiresForwardBooking) return;
+    const saved = forwardBookingFormStateFromDisposition(
+      appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
+      { labsTaskTitle: '', labsTaskStartLocal: '' }
+    );
+    if (saved.labsAssigneeEmployeeIds.length > 0) return;
+    const doctorId = Number(defaultLabsAssigneeEmployeeId(appt));
+    if (!Number.isFinite(doctorId) || doctorId <= 0) return;
+    let on = true;
+    void suggestLabsTaskPeople(doctorId).then((people) => {
+      if (!on || forwardBookingUserEditedRef.current || people.assignees.length === 0) return;
+      suggestedLabsPeopleRef.current = people;
+      setLabsAssigneeEmployeeIds((cur) =>
+        cur.length === 0 || (cur.length === 1 && cur[0] === doctorId) ? people.assignees : cur
+      );
+      setLabsWatcherEmployeeIds((cur) => (cur.length === 0 ? people.watchers : cur));
+    });
+    return () => {
+      on = false;
+    };
+  }, [appt, requiresForwardBooking]);
+
   useEffect(() => {
     if (!requiresForwardBooking) return;
     let cancelled = false;
@@ -743,13 +771,19 @@ export function SchedulerActualVisitTimeModal({
     void (async () => {
       const fresh = await fetchAppointmentById(appt.id, { practiceId });
       if (!on || !fresh) return;
-      const form = applyDefaultLabsAssignee(
-        forwardBookingFormStateFromDisposition(
-          fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
-          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
-        ),
-        fresh
+      const savedForm = forwardBookingFormStateFromDisposition(
+        fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
+        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
       );
+      const suggested = suggestedLabsPeopleRef.current;
+      const form =
+        savedForm.labsAssigneeEmployeeIds.length === 0 && suggested
+          ? {
+              ...savedForm,
+              labsAssigneeEmployeeIds: suggested.assignees,
+              labsWatcherEmployeeIds: suggested.watchers,
+            }
+          : applyDefaultLabsAssignee(savedForm, fresh);
       if (!forwardBookingUserEditedRef.current) {
         applyForwardBookingForm(form);
       }

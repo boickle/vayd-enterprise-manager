@@ -888,3 +888,9 @@
   gap: 8px;
   font-size: 14px;
 }
+
+/* SCH-E: a linked copy of a shared task. */
+.pims-task-card__kind--shared {
+  background: #f0fdfa;
+  color: #0f766e;
+}

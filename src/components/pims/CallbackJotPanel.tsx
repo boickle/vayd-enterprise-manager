@@ -3,6 +3,7 @@ import { Check, FileText, Phone, Trash2, UserPlus, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
 import { createScoutChartNote, finalizeScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
 import { completeTask, patchTask, removeTask, type TaskDetail } from '../../api/tasks';
+import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { resolveCall } from '../../api/calls';
 import type { Employee } from '../../api/appointmentSettings';
@@ -114,6 +115,7 @@ export default function CallbackJotPanel({
   const [reassignTo, setReassignTo] = useState('');
   const [polishing, setPolishing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [doneLabel, setDoneLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -260,6 +262,8 @@ export default function CallbackJotPanel({
   };
 
   const chartAndComplete = async () => {
+    const choice = task.status !== 'done' ? await askAlsoClose(task) : {};
+    if (!choice) return;
     setBusy('complete');
     setError(null);
     try {
@@ -271,7 +275,7 @@ export default function CallbackJotPanel({
           body: appendTaskNote(task.body, `Staff note from ${actorName()} (not charted)`, extra),
         });
       }
-      if (task.status !== 'done') await completeTask(task.id);
+      if (task.status !== 'done') await completeTask(task.id, choice);
       setDoneLabel(
         isCallback
           ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
@@ -368,6 +372,11 @@ export default function CallbackJotPanel({
   };
 
   const removeCallback = async () => {
+    const choice = task.status !== 'done' ? await askAlsoClose(task, 'remove') : {};
+    if (!choice) {
+      setConfirmRemove(false);
+      return;
+    }
     setBusy('remove');
     setError(null);
     try {
@@ -382,7 +391,7 @@ export default function CallbackJotPanel({
       await patchTask(task.id, { body });
       // Removed is not completed: the call never happened. Record it as such so
       // the Completed list does not claim this work was done.
-      if (task.status !== 'done') await removeTask(task.id, reason);
+      if (task.status !== 'done') await removeTask(task.id, reason, choice);
       setDoneLabel(`${chartHeading} removed. Nothing was filed to the chart.`);
       await onDone();
     } catch (e) {
@@ -656,6 +665,7 @@ export default function CallbackJotPanel({
           </button>
         </div>
       )}
+      {closePrompt}
     </div>
   );
 }

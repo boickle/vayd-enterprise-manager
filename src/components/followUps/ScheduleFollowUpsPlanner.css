@@ -1017,3 +1017,11 @@
   font-size: 12px;
   font-weight: 600;
 }
+
+/* Labs pending: who reviews and who watches (SCH-E). */
+.fup-labs-people {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
