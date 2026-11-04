@@ -19,6 +19,7 @@ import { forwardBookingDispositionIsComplete } from '../../utils/forwardBookingD
 import { appointmentArrivalWindowIsosForSms } from '../../utils/forwardBookingSmsMessage';
 import { appointmentTypeDisplayName } from '../../utils/nextScheduledAppointmentForVisit';
 import { activeClientPetsFromPayload, patientsForAppointment } from '../../utils/schedulerAddPet';
+import { extractPatientsFromClientPayload } from '../../pages/SchedulerBookModal';
 import type { PlannerProvider } from './plannerModel';
 import { plannerBookableTypes } from './plannerTiming';
 
@@ -71,6 +72,11 @@ export type FollowUpPlannerData = {
   clientEmails: string[];
   doNotSms: boolean;
   pets: PlannerPet[];
+  /**
+   * The household's pet list could not be loaded, so pets not on today's visit may be
+   * missing (the planner says so instead of "everyone else is booked").
+   */
+  householdError?: string | null;
   remindersByPet: Record<number, PlannerReminder[]>;
   upcoming: UpcomingVisit[];
   providers: PlannerProvider[];
@@ -306,7 +312,10 @@ export async function loadFollowUpPlannerData(args: {
   const firstEncounter = visitPets.find((p) => p.soapEncounterId)?.soapEncounterId ?? null;
 
   const [clientPayload, appts, providers, visitReminders, appointmentTypes] = await Promise.all([
-    fetchClientByIdStaff(clientId).catch(() => null),
+    // The household's pets come from here: try twice before giving up on them.
+    fetchClientByIdStaff(clientId)
+      .catch(() => fetchClientByIdStaff(clientId))
+      .catch(() => null),
     fetchClientAppointmentsStaff(clientId, {
       practiceId: args.practiceId,
       start: now.toUTC().toISO()!,
@@ -331,8 +340,23 @@ export async function loadFollowUpPlannerData(args: {
       : null,
   }));
   const todaySet = new Set(todayPets.map((p) => p.patientId));
-  const householdPets: PlannerPet[] = activeClientPetsFromPayload(clientPayload)
-    .filter((p) => !todaySet.has(Number(p.id)))
+  const householdRows: { id: number; name: string }[] = activeClientPetsFromPayload(
+    clientPayload
+  ).map((p) => ({ id: Number(p.id), name: p.name }));
+  // A pet on one of the household's upcoming visits is in the household even when the
+  // pet list did not load (or left it out). Pets the list has as inactive stay out.
+  const listed = new Set(extractPatientsFromClientPayload(clientPayload).map((p) => Number(p.id)));
+  for (const a of appts) {
+    if (a.isDeleted || isAppointmentCancelledOnPracticeCalendar(a)) continue;
+    for (const pt of patientsForAppointment(a)) {
+      const id = Number(pt.id);
+      if (!Number.isFinite(id) || listed.has(id) || householdRows.some((r) => r.id === id))
+        continue;
+      householdRows.push({ id, name: str(pt.name) ?? `Patient ${id}` });
+    }
+  }
+  const householdPets: PlannerPet[] = householdRows
+    .filter((p) => Number.isFinite(p.id) && !todaySet.has(p.id))
     .map((p) => {
       const focus = visit.focus?.find((f) => f.patientId === Number(p.id));
       return {
@@ -423,6 +447,10 @@ export async function loadFollowUpPlannerData(args: {
           [str(client.email), str(client.secondEmail)].filter((e): e is string => !!e)),
     doNotSms: clientDoNotSmsFromRecord(clientPayload),
     pets,
+    householdError:
+      clientPayload == null
+        ? 'Could not load the rest of the household. Close and reopen to try again.'
+        : null,
     remindersByPet,
     upcoming: groupUpcomingVisits(appts, { tz, now, excludeAppointmentIds: todayIds }),
     providers: plannerProviders,

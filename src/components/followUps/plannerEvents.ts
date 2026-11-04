@@ -14,11 +14,64 @@ export type FollowUpPlannerBookedDetail = {
   primaryProviderId: number | null;
 };
 
+/**
+ * "Open the full calendar in a new tab" books in another tab: the booking reaches the
+ * planner (still open in the checkout tab) over this channel.
+ */
+const FOLLOW_UP_PLANNER_BOOKED_CHANNEL = 'vayd:follow-up-planner-booked';
+
+function bookedChannel(): BroadcastChannel | null {
+  try {
+    return typeof BroadcastChannel === 'undefined'
+      ? null
+      : new BroadcastChannel(FOLLOW_UP_PLANNER_BOOKED_CHANNEL);
+  } catch {
+    return null;
+  }
+}
+
 export function notifyFollowUpPlannerBooked(detail: FollowUpPlannerBookedDetail): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(
     new CustomEvent<FollowUpPlannerBookedDetail>(FOLLOW_UP_PLANNER_BOOKED_EVENT, { detail })
   );
+  const ch = bookedChannel();
+  if (ch) {
+    try {
+      ch.postMessage(detail);
+    } finally {
+      ch.close();
+    }
+  }
+}
+
+/**
+ * Bookings for the planner from this tab's calendar or another tab's. Each booking is
+ * reported once even when it arrives both ways.
+ */
+export function subscribeFollowUpPlannerBooked(
+  onBooked: (detail: FollowUpPlannerBookedDetail) => void
+): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  const seen = new Set<number>();
+  const deliver = (d: FollowUpPlannerBookedDetail | null) => {
+    if (!d) return;
+    const id = Number(d.appointmentId);
+    if (seen.has(id)) return;
+    seen.add(id);
+    onBooked(d);
+  };
+  const onEvent = (ev: Event) => deliver(parseFollowUpPlannerBookedEvent(ev));
+  window.addEventListener(FOLLOW_UP_PLANNER_BOOKED_EVENT, onEvent);
+  const ch = bookedChannel();
+  if (ch) {
+    ch.onmessage = (msg: MessageEvent<FollowUpPlannerBookedDetail>) =>
+      deliver(msg.data && Number.isFinite(Number(msg.data.appointmentId)) ? msg.data : null);
+  }
+  return () => {
+    window.removeEventListener(FOLLOW_UP_PLANNER_BOOKED_EVENT, onEvent);
+    ch?.close();
+  };
 }
 
 export function parseFollowUpPlannerBookedEvent(event: Event): FollowUpPlannerBookedDetail | null {

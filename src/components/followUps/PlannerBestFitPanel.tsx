@@ -1,69 +1,102 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DateTime } from 'luxon';
 import {
+  bestFitQualities,
+  bestFitReason,
+  NO_BEST_FIT_PREFS,
   searchPlannerBestFit,
   type BestFitPlace,
+  type BestFitPrefs,
   type BestFitRequest,
   type BestFitSlot,
-  type BestFitWindow,
 } from './plannerBestFit';
 
+export type BestFitBookOutcome = { ok: true; warnings: string[] } | { ok: false; error: string };
+
 type Props = {
-  /** Card title, e.g. "In 2 weeks". */
+  /** Card title, e.g. "In 1 year". */
   cardLabel: string;
+  /** The card's target date, e.g. "Nov 3, 2027". */
+  targetLabel: string;
   request: BestFitRequest;
   tz: string;
-  /** A slot was picked: book it through the calendar. */
-  onPick: (
+  /** "What does <pet> need?" per pet id (the visit's Description). */
+  needs: Record<number, string>;
+  onNeedChange: (petId: number, text: string) => void;
+  /** Book the slot (no calendar). */
+  onBook: (
     slot: BestFitSlot,
     ctx: { request: BestFitRequest; place: BestFitPlace }
-    /** False: the slot could not be put on the calendar (the panel says so). */
-  ) => Promise<boolean | void> | boolean | void;
-  /** The full Find a time view (Get Best Route + calendar) with this window. */
-  onOpenFull: (window: BestFitWindow) => void;
+  ) => Promise<BestFitBookOutcome>;
+  /** After the booked confirmation: back to the plan. */
+  onBooked: () => void;
+  /** The normal calendar page, in a new tab. */
+  onOpenFull: () => void;
   onClose: () => void;
+  /** How long the booked confirmation shows before the plan comes back. */
+  confirmMs?: number;
 };
 
-function secsToPretty(s: number | null): string {
-  if (s == null) return '-';
-  const m = Math.round(s / 60);
-  const h = Math.floor(m / 60);
-  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+const TIMES: { key: BestFitPrefs['timeOfDay']; label: string; title: string }[] = [
+  { key: null, label: 'Any time', title: 'Any time of day' },
+  { key: 'first', label: 'Mornings', title: 'Early in the day (Get Best Route: Early)' },
+  { key: 'end', label: 'Afternoons', title: 'Later in the day (Get Best Route: End of day)' },
+];
+// Get Best Route's day chips (ISO weekday numbers).
+const DAYS = [
+  { n: 1, label: 'M', title: 'Monday' },
+  { n: 2, label: 'T', title: 'Tuesday' },
+  { n: 3, label: 'W', title: 'Wednesday' },
+  { n: 4, label: 'Th', title: 'Thursday' },
+  { n: 5, label: 'F', title: 'Friday' },
+  { n: 6, label: 'Sa', title: 'Saturday' },
+  { n: 7, label: 'Su', title: 'Sunday' },
+];
+
+function slotDay(slot: BestFitSlot): string {
+  return DateTime.fromISO(slot.date).toFormat('ccc, LLL d, yyyy');
 }
 
+/** "9:00–11:00 AM arrival" (or the visit's own times when there is no window). */
 function slotTimes(slot: BestFitSlot, minutes: number, tz: string): string {
-  const at = (iso: string) => DateTime.fromISO(iso).setZone(tz).toFormat('h:mm a');
+  const fmt = (a: DateTime, b: DateTime) =>
+    a.toFormat('a') === b.toFormat('a')
+      ? `${a.toFormat('h:mm')}–${b.toFormat('h:mm a')}`
+      : `${a.toFormat('h:mm a')}–${b.toFormat('h:mm a')}`;
+  const at = (iso: string) => DateTime.fromISO(iso).setZone(tz);
   if (slot.windowStartIso && slot.windowEndIso && slot.windowStartIso !== slot.windowEndIso) {
-    return `${at(slot.windowStartIso)} – ${at(slot.windowEndIso)} arrival`;
+    return `${fmt(at(slot.windowStartIso), at(slot.windowEndIso))} arrival`;
   }
-  const start = DateTime.fromISO(slot.suggestedStartIso);
-  return `${at(slot.suggestedStartIso)} – ${at(start.plus({ minutes }).toISO()!)}`;
-}
-
-function scoreText(score: number | null): string | null {
-  if (score == null) return null;
-  return `Score ${Number.isInteger(score) ? score : score.toFixed(2)}`;
+  const start = at(slot.suggestedStartIso);
+  return fmt(start, start.plus({ minutes }));
 }
 
 /**
- * "Find a time now" on a Schedule follow-ups card: the card's best-fit slots in a
- * compact panel on the right. Picking one shows it on the calendar to book.
+ * "Find a time now" on a Schedule follow-ups card: best-route matches near the card's
+ * target date, with the owner's preferences, booked straight from the list.
  */
 export default function PlannerBestFitPanel({
   cardLabel,
+  targetLabel,
   request,
   tz,
-  onPick,
+  needs,
+  onNeedChange,
+  onBook,
+  onBooked,
   onOpenFull,
   onClose,
+  confirmMs = 1500,
 }: Props) {
-  const [win, setWin] = useState<BestFitWindow>(request.window);
+  const [prefs, setPrefs] = useState<BestFitPrefs>(NO_BEST_FIT_PREFS);
   const [asap, setAsap] = useState(false);
   const [loading, setLoading] = useState(true);
   const [slots, setSlots] = useState<BestFitSlot[]>([]);
   const [place, setPlace] = useState<BestFitPlace | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [picking, setPicking] = useState<string | null>(null);
+  const [booking, setBooking] = useState<string | null>(null);
+  const [booked, setBooked] = useState<{ text: string; warnings: string[] } | null>(null);
+  const [fullOpened, setFullOpened] = useState(false);
   const seq = useRef(0);
   const mounted = useRef(true);
   useEffect(() => {
@@ -74,16 +107,17 @@ export default function PlannerBestFitPanel({
   }, []);
 
   const run = useCallback(
-    async (window: BestFitWindow, asapAll: boolean) => {
+    async (nextPrefs: BestFitPrefs, nextAsap: boolean) => {
       const n = ++seq.current;
       setLoading(true);
       setError(null);
       const res = await searchPlannerBestFit({
-        req: { ...request, window },
+        req: request,
         tz,
-        asap: asapAll,
+        asap: nextAsap,
+        prefs: nextPrefs,
       });
-      if (n !== seq.current) return;
+      if (n !== seq.current || !mounted.current) return;
       setSlots(res.slots);
       setPlace(res.place);
       setError(res.error);
@@ -93,78 +127,186 @@ export default function PlannerBestFitPanel({
   );
 
   useEffect(() => {
-    void run(request.window, false);
-    // Search once on open; later searches come from the controls.
+    void run(NO_BEST_FIT_PREFS, false);
+    // Search once on open; later searches come from the preferences.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const windowValid = !!win.startDate && !!win.endDate && win.endDate >= win.startDate;
-  const pets = request.pets.map((p) => p.name).join(', ');
+  /** Any preference change searches again with the same routing call. */
+  const change = (next: Partial<BestFitPrefs>, nextAsap = asap) => {
+    const p = { ...prefs, ...next };
+    setPrefs(p);
+    setAsap(nextAsap);
+    void run(p, nextAsap);
+  };
+
+  // The planner re-renders every half second during Undo; keep the timer steady.
+  const onBookedRef = useRef(onBooked);
+  onBookedRef.current = onBooked;
+  useEffect(() => {
+    if (!booked) return;
+    const t = window.setTimeout(() => onBookedRef.current(), confirmMs);
+    return () => window.clearTimeout(t);
+  }, [booked, confirmMs]);
+
+  const qualities = useMemo(() => bestFitQualities(slots), [slots]);
+  const petNames = request.pets.map((p) => p.name);
+  const missingNeeds = request.pets.filter((p) => !(needs[p.id] ?? '').trim());
+  const canBook = !missingNeeds.length && !booking && !booked && !!place;
+  const doctor = asap ? 'Any doctor in zone' : (request.providerLabel ?? request.providerName);
+  const needWord = missingNeeds.length > 1 ? 'need' : 'needs';
+  const missingText = missingNeeds.map((p) => p.name).join(' and ');
+
+  async function book(slot: BestFitSlot) {
+    if (!place || !canBook) return;
+    setBooking(slot.key);
+    setError(null);
+    const res = await onBook(slot, { request, place });
+    if (!mounted.current) return;
+    setBooking(null);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setBooked({
+      text: `Booked ${petNames.join(' & ')} · ${slotDay(slot)} · ${slotTimes(
+        slot,
+        request.serviceMinutes,
+        tz
+      )}`,
+      warnings: res.warnings,
+    });
+  }
 
   return (
-    <aside className="fup-fit" role="dialog" aria-modal="true" aria-label="Best fit">
+    <aside className="fup-fit" role="dialog" aria-modal="true" aria-label="Find a time">
       <div className="fup-fit__head">
         <div>
-          <b>Best fit · {cardLabel}</b>
-          <div className="fup-muted">
+          <h2 className="fup-fit__title">Find a time · {petNames.join(', ')}</h2>
+          <div className="fup-muted fup-fit__sub">
             {[
-              request.clientLabel,
-              pets,
-              request.typeLabel,
-              `${request.serviceMinutes} min`,
-              asap ? 'All doctors in zone' : request.providerName,
-              request.needsPremeds ? 'Needs pre-meds' : null,
+              cardLabel,
+              `about ${request.serviceMinutes} min`,
+              `target ${targetLabel}`,
+              doctor,
+              request.needsPremeds ? 'needs pre-meds' : null,
             ]
               .filter(Boolean)
               .join(' · ')}
           </div>
         </div>
-        <button type="button" className="fup-btn" onClick={onClose}>
-          Back to follow-ups
+        <button type="button" className="fup-btn fup-fit__back" onClick={onClose}>
+          Back to plan
         </button>
       </div>
 
-      <form
-        className="fup-fit__controls"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (windowValid) void run(win, asap);
-        }}
-      >
-        <label>
-          From
-          <input
-            type="date"
-            value={win.startDate}
-            onChange={(e) => setWin((w) => ({ ...w, startDate: e.target.value }))}
-          />
-        </label>
-        <label>
-          To
-          <input
-            type="date"
-            value={win.endDate}
-            min={win.startDate}
-            onChange={(e) => setWin((w) => ({ ...w, endDate: e.target.value }))}
-          />
-        </label>
-        <button type="submit" className="fup-btn" disabled={!windowValid || loading}>
-          Search
-        </button>
-        <label className="fup-fit__asap">
-          <input
-            type="checkbox"
-            checked={asap}
-            onChange={(e) => {
-              setAsap(e.target.checked);
-              if (windowValid) void run(win, e.target.checked);
-            }}
-          />
-          ASAP all doctors in zone
-        </label>
-      </form>
+      <div className="fup-fit__body" aria-busy={loading}>
+        {booked ? (
+          <div className="fup-fit__booked" role="status">
+            <b>✓ {booked.text}</b>
+            {booked.warnings.map((w) => (
+              <div key={w} className="fup-muted">
+                {w}
+              </div>
+            ))}
+            <div className="fup-muted">Back to the plan…</div>
+          </div>
+        ) : null}
 
-      <div className="fup-fit__list" aria-busy={loading}>
+        <div className="fup-fit__needs">
+          {request.pets.map((p) => (
+            <label key={p.id} className="fup-fit__need">
+              <b>What does {p.name} need?</b>
+              <input
+                type="text"
+                value={needs[p.id] ?? ''}
+                placeholder="e.g. annual exam and vaccines"
+                onChange={(e) => onNeedChange(p.id, e.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+
+        <div className="fup-fit__prefs">
+          <b>What works for the owner?</b>
+          <div className="fup-chips" role="group" aria-label="Time of day">
+            {TIMES.map((t) => (
+              <button
+                key={t.label}
+                type="button"
+                title={t.title}
+                className={`fup-chip${prefs.timeOfDay === t.key ? ' is-on' : ''}`}
+                aria-pressed={prefs.timeOfDay === t.key}
+                onClick={() => prefs.timeOfDay !== t.key && change({ timeOfDay: t.key })}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="fup-chips" role="group" aria-label="Days">
+            <button
+              type="button"
+              className={`fup-chip${prefs.weekdays.length ? '' : ' is-on'}`}
+              aria-pressed={!prefs.weekdays.length}
+              onClick={() => prefs.weekdays.length && change({ weekdays: [] })}
+            >
+              Any day
+            </button>
+            {DAYS.map((d) => {
+              const on = prefs.weekdays.includes(d.n);
+              return (
+                <button
+                  key={d.n}
+                  type="button"
+                  title={d.title}
+                  aria-label={d.title}
+                  aria-pressed={on}
+                  className={`fup-chip fup-chip--day${on ? ' is-on' : ''}`}
+                  onClick={() =>
+                    change({
+                      weekdays: on
+                        ? prefs.weekdays.filter((x) => x !== d.n)
+                        : [...prefs.weekdays, d.n].sort((a, b) => a - b),
+                    })
+                  }
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="fup-chips" role="group" aria-label="More options">
+            <button
+              type="button"
+              className={`fup-chip${prefs.earliest ? ' is-on' : ''}`}
+              aria-pressed={prefs.earliest}
+              title="Get Best Route: Force earliest available (may reduce routing efficiency)"
+              onClick={() => change({ earliest: !prefs.earliest })}
+            >
+              Earliest available
+            </button>
+            <button
+              type="button"
+              className={`fup-chip${asap ? ' is-on' : ''}`}
+              aria-pressed={asap}
+              title="Get Best Route: ASAP, best fit across the doctors seeing this zone"
+              onClick={() => change({}, !asap)}
+            >
+              Any doctor in zone
+            </button>
+          </div>
+        </div>
+
+        <p className="fup-muted fup-fit__explain">
+          Best route matches near the target date, ranked by drive time and how full that day is.
+        </p>
+
+        {missingNeeds.length > 0 && slots.length > 0 && !loading ? (
+          <div className="fup-fit__hint">
+            Say what {missingText} {needWord} to book.
+          </div>
+        ) : null}
+
         {loading ? <div className="fup-muted">Finding the best times…</div> : null}
         {!loading && error ? (
           <div className="fup-error" role="alert">
@@ -173,65 +315,67 @@ export default function PlannerBestFitPanel({
         ) : null}
         {!loading && !error && !slots.length ? (
           <div className="fup-muted">
-            No openings in this window. Widen the dates, try ASAP all doctors in zone, or open the
-            full calendar.
+            No openings near the target date with these choices. Try other days or times, or open
+            the full calendar.
           </div>
         ) : null}
-        {!loading &&
-          slots.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              className="fup-fit__slot"
-              disabled={picking != null || !place}
-              aria-label={`Book ${DateTime.fromISO(s.date).toFormat('ccc, LLL d')} with ${s.doctorName}`}
-              onClick={() => {
-                if (!place) return;
-                setPicking(s.key);
-                void Promise.resolve(onPick(s, { request: { ...request, window: win }, place }))
-                  .then((ok) => {
-                    if (ok === false && mounted.current)
-                      setError(
-                        'Could not open that slot on the calendar. Try another, or open the full calendar.'
-                      );
-                  })
-                  .finally(() => {
-                    if (mounted.current) setPicking(null);
-                  });
-              }}
-            >
-              <span className="fup-fit__when">
-                <b>{DateTime.fromISO(s.date).toFormat('ccc, LLL d')}</b>{' '}
-                {slotTimes(s, request.serviceMinutes, tz)}
-              </span>
-              <span className="fup-fit__who">
-                {s.doctorName}
-                {s.isFallbackDoctor ? ' · not the requested doctor' : ''}
-                {s.emptyDay ? ' · empty day' : ''}
-              </span>
-              <span className="fup-fit__meta">
-                {[
-                  scoreText(s.score),
-                  `Added drive ${secsToPretty(s.addedDriveSeconds)}`,
-                  s.projectedDriveSeconds != null
-                    ? `Day drive ${secsToPretty(s.projectedDriveSeconds)}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-            </button>
-          ))}
-      </div>
 
-      <div className="fup-fit__foot">
-        <button
-          type="button"
-          className="fup-link"
-          onClick={() => onOpenFull(windowValid ? win : request.window)}
-        >
-          Open full calendar
-        </button>
+        {!loading && slots.length > 0 ? (
+          <ul className="fup-fit__list">
+            {slots.map((s) => {
+              const quality = qualities.get(s.key) ?? 'Good';
+              return (
+                <li key={s.key} className="fup-fit__slot">
+                  <div className="fup-fit__slot-txt">
+                    <b className="fup-fit__when">
+                      {slotDay(s)} · {slotTimes(s, request.serviceMinutes, tz)}
+                    </b>
+                    <div className="fup-fit__why">
+                      <span
+                        className={`fup-fit__tag fup-fit__tag--${quality
+                          .toLowerCase()
+                          .replace(/\s+/g, '-')}`}
+                      >
+                        {quality}
+                      </span>{' '}
+                      {bestFitReason(s)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="fup-btn fup-btn--primary fup-fit__book"
+                    disabled={!canBook}
+                    title={
+                      missingNeeds.length ? `Say what ${missingText} ${needWord} first` : undefined
+                    }
+                    aria-label={`Book ${slotDay(s)} with ${s.doctorName}`}
+                    onClick={() => void book(s)}
+                  >
+                    {booking === s.key ? 'Booking…' : 'Book'}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+
+        <div className="fup-fit__foot">
+          <button
+            type="button"
+            className="fup-btn fup-btn--sm"
+            onClick={() => {
+              setFullOpened(true);
+              onOpenFull();
+            }}
+          >
+            Open the full calendar in a new tab
+          </button>
+          {fullOpened ? (
+            <div className="fup-muted fup-fit__note">
+              The calendar is open in another tab. Book there and this card updates.
+            </div>
+          ) : null}
+        </div>
       </div>
     </aside>
   );
