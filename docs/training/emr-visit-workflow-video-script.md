@@ -56,11 +56,12 @@ Goal: open the right chart for each pet on a household visit. **Everyone.**
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
 | 1 | **Home** (the calendar). In the doctor list at the top right pick **Dana Demo**, then click **Today**. Right-click the Rivera visit, **On Visit Day**, **Start Encounter** | A small window titled with the first pet's name: **SOAP** and **Medical note** | "Every visit starts on the calendar. Right-click the visit, go to On Visit Day, and choose Start Encounter." |
-| 2 | Click **SOAP** | The SOAP page. Header: **Biscuit · Rivera**, the signalment, and "Exam: … · Visit #… · Comprehensive SOAP" | "For a doctor exam, pick SOAP. Up top you'll see the pet, the family, and the visit number. Click the pet's name any time to open the full medical record." |
-| 3 | Point at the pet tabs: **Biscuit**, **Maple**, **Pepper** | One tab per pet. A heart shows on any pet with a membership | "The Riveras have three pets on this visit, so there's a tab for each one. Each pet gets its own chart. Click a tab to switch." |
-| 4 | Click **Maple** | Maple's SOAP opens. Same visit number | "Switching pets keeps you on the same visit. Anything you typed for Biscuit is already saved." |
-| 5 | Point at the right side | The **Checkout** panel with the household's charges | "The bill builds on the right while you work. The whole household shares one invoice." |
-| 6 | Point at a presence chip, if a colleague is on the visit | A chip with their name, or that they're recording | "If someone else is in this visit, you'll see their name here, so you know you're working together." |
+| 2 | Click **SOAP** | The SOAP page. Header: **Biscuit · View details · Rivera**, the signalment, and "Exam: … · Visit #… · Comprehensive SOAP" | "For a doctor exam, pick SOAP. Up top you'll see the pet, the family, and the visit number." |
+| 3 | Click **Biscuit** in the header (or **View details** next to it), look, then click **Close**. Then click the client name, **Rivera** | A large pop-up over the SOAP with Biscuit's whole chart: reminders, declined items, tasks, past due, problems and eVet suggestions, prescriptions, vaccines, History. Then the client record in the same kind of pop-up | "Click the pet's name or View details to see the whole chart without leaving the SOAP; click the client's name for the client record. Esc or Close brings you right back, and your SOAP is just as you left it." |
+| 4 | Point at the pet tabs: **Biscuit**, **Maple**, **Pepper** | One tab per pet. A heart shows on any pet with a membership | "The Riveras have three pets on this visit, so there's a tab for each one. Each pet gets its own chart. Click a tab to switch." |
+| 5 | Click **Maple** | Maple's SOAP opens. Same visit number | "Switching pets keeps you on the same visit. Anything you typed for Biscuit is already saved." |
+| 6 | Point at the right side | The **Checkout** panel with the household's charges | "The bill builds on the right while you work. The whole household shares one invoice." |
+| 7 | Point at a presence chip, if a colleague is on the visit | A chip with their name, or that they're recording | "If someone else is in this visit, you'll see their name here, so you know you're working together." |
 
 **Techs:** "You can open the SOAP and chart vitals and notes. Signing a full SOAP is the doctor's job. You'll see a small lock note at the top that says 'Only a licensed veterinarian can sign and lock a SOAP.' That's normal."
 

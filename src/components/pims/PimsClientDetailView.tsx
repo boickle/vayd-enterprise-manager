@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AddressChangeVisitsWarning,
@@ -1305,11 +1305,49 @@ function ClientAddressEditor({
 type Props = {
   clientId: string;
   onBack: () => void;
+  /**
+   * Shown in a pop-up over another screen (SOAP header, Nov 4, 2026): never navigates away (page
+   * jumps open a new browser tab), keeps URL-style state locally instead of in the address bar.
+   */
+  embedded?: boolean;
+  /** Embedded only: a pet link opens that pet here instead of navigating. */
+  onOpenPatient?: (patientId: string, name: string | null) => void;
 };
 
-export default function PimsClientDetailView({ clientId, onBack }: Props) {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+export default function PimsClientDetailView({
+  clientId,
+  onBack,
+  embedded = false,
+  onOpenPatient,
+}: Props) {
+  const routerNavigate = useNavigate();
+  const [urlSearchParams, setUrlSearchParams] = useSearchParams();
+  const [localSearchParams, setLocalSearchParams] = useState(() => new URLSearchParams());
+  const searchParams = embedded ? localSearchParams : urlSearchParams;
+  const setSearchParams = useCallback(
+    (next: URLSearchParams, opts?: { replace?: boolean }) => {
+      if (embedded) setLocalSearchParams(new URLSearchParams(next));
+      else setUrlSearchParams(next, opts);
+    },
+    [embedded, setUrlSearchParams],
+  );
+  const navigate = (to: string) => {
+    if (embedded) window.open(to, '_blank', 'noopener');
+    else routerNavigate(to);
+  };
+  /** Pet links: in the pop-up they open the pet there (or a new tab), never leave the page. */
+  const petLinkProps = (pid: string, petName: string | null) =>
+    embedded
+      ? onOpenPatient
+        ? {
+            onClick: (e: ReactMouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onOpenPatient(pid, petName);
+            },
+          }
+        : { target: '_blank', rel: 'noopener noreferrer' }
+      : {};
   const { employeeId, userId, abilities } = useAuth() as {
     employeeId?: number | null;
     userId?: string | null;
@@ -1870,6 +1908,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                         <Link
                           className={`pims-emr-household__pet${sexClass}${petActive ? '' : ' is-inactive'}`}
                           to={href}
+                          {...petLinkProps(pid, pickStr(p.name) ?? null)}
                           title={petActive ? undefined : `${pickStr(p.name) ?? 'This pet'} is inactive`}
                         >
                           <PetThumb
@@ -2384,7 +2423,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     <div className="pims-client-detail__pet-main">
                       <div className="pims-client-detail__pet-name">
                         {pid ? (
-                          <Link to={href}>{pickStr(p.name) ?? `Pet #${pid}`}</Link>
+                          <Link to={href} {...petLinkProps(pid, pickStr(p.name) ?? null)}>{pickStr(p.name) ?? `Pet #${pid}`}</Link>
                         ) : (
                           <span>{pickStr(p.name) ?? 'Pet'}</span>
                         )}
