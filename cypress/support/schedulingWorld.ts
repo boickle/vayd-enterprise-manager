@@ -72,6 +72,9 @@ export function signInAsScheduling(role: SchRole, path: string) {
   cy.window().then((win) => {
     win.localStorage.clear();
     win.localStorage.setItem('accessToken', w.auth[role].token);
+    // A real login (AuthProvider.applySession) also stores the client id. Without it the booking form's
+    // first render has no userId and, with no past visits, skips the /clients/:id lookup that prefills the phone.
+    if (role === 'client') win.localStorage.setItem('vayd_clientId', String(w.households.A.clientId));
   });
   cy.visit(path);
 }
