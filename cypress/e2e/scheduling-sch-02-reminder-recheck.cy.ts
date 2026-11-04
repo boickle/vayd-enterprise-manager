@@ -75,6 +75,19 @@ describe('SCH-02-5: reminder not sent for a visit cancelled after the build', ()
       });
 
     cy.writeFile(capture(), '');
+    // Clean slate for household A: earlier runs (and the other specs) leave future visits and sent-reminder rows,
+    // and the sender will not text a household twice for the same day. Test database only.
+    const db = String(Cypress.env('SCH_DB'));
+    expect(db, 'SCH_DB must be a vayd_api_test* database').to.match(/^vayd_api_test[A-Za-z0-9_]*$/);
+    const clientId = w.households.A.clientId;
+    const sql = (statement: string) =>
+      cy.exec(`psql -d ${db} -c "${statement.replace(/"/g, '\\"')}"`);
+    sql(`delete from notification_outbox where "clientId"=${clientId}`);
+    sql(`update appointments set "isDeleted"=true where "clientId"=${clientId} and "appointmentStart">now()`);
+    // The seeded household cannot be texted; allow it for this test (texts are captured, never delivered).
+    sql(
+      `update clients set "doNotSendReminders"=false,"doNotSms"=false,"smsOptOut"=false where id=${clientId}`
+    );
     const [pet1, pet2] = w.households.A.activePetIds;
     book(pet1, w.doctors.A, 'SCH-02 e2e keep').then((keep) => {
       book(pet2, w.doctors.B, 'SCH-02 e2e cancel').then((gone) => {
@@ -85,6 +98,9 @@ describe('SCH-02-5: reminder not sent for a visit cancelled after the build', ()
           confirmStatusName: CANCELED,
           cancellationReason: 'SCH-02 e2e',
         });
+        // Only this household's reminders are under test: drop the rows the build queued for any other client in the
+        // copied data, so their texts do not land in the capture.
+        sql(`delete from notification_outbox where "clientId" is distinct from ${clientId}`);
         job('send');
         cy.readFile(capture()).then((raw: string) => {
           const texts = raw
@@ -95,6 +111,9 @@ describe('SCH-02-5: reminder not sent for a visit cancelled after the build', ()
           expect(texts, 'one text for the remaining visit').to.have.length(1);
           expect(keep.body.id).to.be.a('number');
         });
+        sql(
+          `update clients set "doNotSendReminders"=true,"doNotSms"=true,"smsOptOut"=true where id=${clientId}`
+        );
       });
     });
   });
