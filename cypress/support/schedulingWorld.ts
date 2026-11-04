@@ -130,3 +130,27 @@ export function clearSeededHouseholdVisits() {
     });
   }
 }
+
+/**
+ * Puts the seeded households back to a clean slate straight in the test database, for specs that need household A
+ * to have no upcoming visits and only its two seeded pets (the follow-up planner treats a pet that already has a
+ * future visit as "already booked"). Visits that have started cannot be removed through the API, and other specs
+ * add pets and visits, so this is done in SQL. Needs CYPRESS_SCH_DB, which must be a vayd_api_test* database.
+ */
+export function resetSeededHouseholdsInDb() {
+  const w = schedulingWorld();
+  const db = String(Cypress.env('SCH_DB'));
+  expect(db, 'CYPRESS_SCH_DB must be a vayd_api_test* database').to.match(/^vayd_api_test[A-Za-z0-9_]*$/);
+  const clients = `${w.households.A.clientId},${w.households.B.clientId}`;
+  const keepPets = [...w.households.A.activePetIds, w.households.A.inactivePetId, w.households.B.petId].join(',');
+  const sql = (statement: string) =>
+    cy.exec(`psql -d ${db} -c "${statement.replace(/"/g, '\\"')}"`);
+  sql(`update appointments set "isDeleted"=true where "clientId" in (${clients}) and "appointmentStart">now() - interval '2 days'`);
+  // A Room Loader keeps its links to removed visits and the planner's roster still reads them, so unlink those.
+  sql(
+    `delete from room_loader_appointments where "appointmentId" in (select id from appointments where "clientId" in (${clients}))`
+  );
+  sql(
+    `update patients set "isActive"=false where id in (select "patientsId" from clients_patients_patients where "clientsId" in (${clients})) and id not in (${keepPets})`
+  );
+}
