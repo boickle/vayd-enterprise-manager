@@ -309,6 +309,90 @@ export function vaccineDoseRecorded(
   return Boolean((l.orderId && byOrderId[l.orderId]) || byLineId[l.id]);
 }
 
+/**
+ * After Approve succeeds the drawer closes only when nothing else on the line is still needed.
+ * "Pick a provider" does not count when the approve flow is about to assign the visit's vet.
+ */
+export function closeDrawerAfterApprove(notReadyReason: string | null, vetWillBeAssigned: boolean): boolean {
+  return notReadyReason === null || (notReadyReason === 'Pick a provider' && vetWillBeAssigned);
+}
+
+/** Lot picker for a lot-tracked line that is not Rx, not a vaccine and not tied to a stock draw. */
+export function CheckoutPlainLotPicker({
+  line,
+  invoice,
+  disabled,
+  onSaved,
+  onError,
+}: {
+  line: VisitInvoiceLine;
+  invoice: VisitInvoice;
+  disabled: boolean;
+  onSaved: (invoice: VisitInvoice) => void;
+  onError: (message: string) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const shelf = lotShelf(line, invoice);
+  return (
+    <div className={`client-fin__rx-field client-fin__rx-lot${line.inventoryLotBalanceId == null ? ' is-missing' : ''}`}>
+      <MultiLotEditor
+        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+        inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
+        branchId={shelf.branchId}
+        locationId={shelf.locationId}
+        onShelfChange={(next) => void changeLineShelf(invoice, line, next).then(onSaved, (e: unknown) => onError(apiErrorMessage(e)))}
+        otherShelvesFrom={shelf.safeName}
+        itemName={line.description}
+        disabled={disabled || saving}
+        {...lotEditorProps(line)}
+        onSaveLots={async (lots) => {
+          setSaving(true);
+          try {
+            onSaved(await updateCounterInvoiceLine(invoice.id, line.id, { lots }));
+            return true;
+          } catch (e) {
+            onError(apiErrorMessage(e));
+            return false;
+          } finally {
+            setSaving(false);
+          }
+        }}
+        renderSingle={() => (
+          <StockLotPicker
+            forUse
+            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+            inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
+            branchId={shelf.branchId}
+            locationId={shelf.locationId}
+            otherShelvesFrom={shelf.safeName}
+            itemName={line.description}
+            disabled={disabled || saving}
+            selectedLotId={line.inventoryLotBalanceId ?? null}
+            lotNumber={line.lotNumber ?? ''}
+            onChange={(pick) => {
+              void (async () => {
+                setSaving(true);
+                try {
+                  onSaved(
+                    await updateCounterInvoiceLine(invoice.id, line.id, {
+                      inventoryLotBalanceId: pick.lotId,
+                      lotNumber: pick.lotNumber || null,
+                    }),
+                  );
+                } catch (e) {
+                  onError(apiErrorMessage(e));
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            }}
+          />
+        )}
+      />
+    </div>
+  );
+}
+
 export function CheckoutInvoiceRxFields({
   line,
   invoice,
@@ -333,7 +417,6 @@ export function CheckoutInvoiceRxFields({
   onError,
   onApproved,
   onMailOrderApproved,
-  onSavedAndCollapse,
   onApproveTried,
   children,
 }: {
@@ -370,7 +453,7 @@ export function CheckoutInvoiceRxFields({
   onApproved: () => void;
   /** The mail order's doctor approval was completed from this invoice. */
   onMailOrderApproved?: () => void;
-  /** After a successful Save Rx — collapse the line. */
+  /** Kept for callers; Save Rx no longer collapses the drawer. */
   onSavedAndCollapse?: () => void;
   onApproveTried?: () => void;
   /** Mail / dispense toggles sit above Approve in the foot row. */
@@ -809,9 +892,8 @@ export function CheckoutInvoiceRxFields({
               disabled={saving || Boolean(missingBeforeSave())}
               title={missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'}
               onClick={() => {
-                void persistRx().then((ok) => {
-                  if (ok) onSavedAndCollapse?.();
-                });
+                // Stay open after Save Rx so Approve is right there.
+                void persistRx();
               }}
             >
               {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
@@ -1163,6 +1245,7 @@ export default function VisitCheckoutPanel({
   const [rxApproveTried, setRxApproveTried] = useState<Record<string, true>>({});
   const [drawerLineId, setDrawerLineId] = useState<string | null>(null);
   const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
+  const [approvedCheckLineId, setApprovedCheckLineId] = useState<string | null>(null);
   useEffect(() => {
     if (expandedLineId) {
       setDrawerLineId(expandedLineId);
@@ -2088,6 +2171,7 @@ export default function VisitCheckoutPanel({
    * Note the Rx checks read `recorded` (the saved prescriptions row), never the form
    * inputs — the whole point is to say when what's on screen has not reached the server.
    */
+  const lineNotReadyReasonRef = useRef<((l: VisitInvoiceLine) => string | null) | null>(null);
   const lineNotReadyReason = (l: VisitInvoiceLine): string | null => {
     const order = l.orderId != null ? orders.find((o) => o.id === l.orderId) ?? null : null;
     const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
@@ -2139,6 +2223,18 @@ export default function VisitCheckoutPanel({
     // snap test is entered when it is read (the end-of-day task chases it).
     return null;
   };
+  lineNotReadyReasonRef.current = lineNotReadyReason;
+  // After Approve succeeds, close the drawer only when nothing else on the line is still needed.
+  useEffect(() => {
+    if (!approvedCheckLineId) return;
+    const line = (invoice?.lines ?? []).find((x) => x.id === approvedCheckLineId);
+    if (!line || !line.rxApprovedAt) return;
+    const reason = lineNotReadyReasonRef.current?.(line) ?? null;
+    if (closeDrawerAfterApprove(reason, rxLabel?.veterinarianEmployeeId != null)) {
+      setExpandedLineId((cur) => (cur === line.id ? null : cur));
+    }
+    setApprovedCheckLineId(null);
+  });
 
   const computeLineReady = (l: VisitInvoiceLine): boolean =>
     lineNotReadyReason(l) === null;
@@ -3129,8 +3225,8 @@ export default function VisitCheckoutPanel({
                               }));
                             }}
                             onError={setError}
-                            onSavedAndCollapse={() => setExpandedLineId(null)}
                             onApproved={() => {
+                              setApprovedCheckLineId(l.id);
                               if (
                                 l.providerEmployeeId != null ||
                                 rxLabel?.veterinarianEmployeeId == null
@@ -3292,6 +3388,17 @@ export default function VisitCheckoutPanel({
                                 }).then(onInvoiceChange);
                               }}
                               onSaveLots={async (lots) => { try { onInvoiceChange(await updateCounterInvoiceLine(invoice.id, l.id, { lots })); return true; } catch (e) { setError(apiErrorMessage(e)); return false; } }}
+                            />
+                          </div>
+                        ) : null}
+                        {l.trackLots && !mailed && !isVaccineLine && !showRxLabel && !stock.linked ? (
+                          <div className="soap-invoice-line-clinical">
+                            <CheckoutPlainLotPicker
+                              line={l}
+                              invoice={invoice}
+                              disabled={disabled || !canEditLines}
+                              onSaved={onInvoiceChange}
+                              onError={setError}
                             />
                           </div>
                         ) : null}

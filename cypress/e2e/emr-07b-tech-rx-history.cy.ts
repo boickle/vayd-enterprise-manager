@@ -90,7 +90,7 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
         ).should('eq', `${w.employees.veterinarian}|${sig}|2`);
 
         // 2. The technician approves the script for dispensing with the form's Approve button (rx.invoice.approve).
-        // Saving the Rx collapses the drawer, so open it again first.
+        // Saving the Rx keeps the drawer open; openRxDrawer only clicks the chevron when it is closed.
         openRxDrawer();
         cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match').within(() => {
           cy.get('.client-fin__btn-approve').click();
