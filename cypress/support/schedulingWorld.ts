@@ -75,3 +75,32 @@ export function signInAsScheduling(role: SchRole, path: string) {
   });
   cy.visit(path);
 }
+
+/**
+ * The API serves GET /employees/providers from a Redis cache (EMPLOYEES_PROVIDERS_CACHE_*) that a test API can
+ * share with another environment, so the seeded doctors may be missing from the Scheduler's provider list.
+ * This adds them to that one response (setup only; nothing under test reads it).
+ */
+export function includeSeededDoctorsInProviderList() {
+  const w = schedulingWorld();
+  cy.intercept('GET', '**/employees/providers*', (req) => {
+    req.continue((res) => {
+      const rows: any[] = Array.isArray(res.body) ? res.body : (res.body?.items ?? []);
+      const seeded = (['A', 'B'] as const)
+        .filter((k) => !rows.some((r) => Number(r.id) === w.doctors[k]))
+        .map((k) => ({
+          id: w.doctors[k],
+          firstName: 'Sched',
+          lastName: `doctor${k}`,
+          isProvider: true,
+          isActive: true,
+          isDeleted: false,
+        }));
+      const out = Array.isArray(res.body)
+        ? [...rows, ...seeded]
+        : { ...res.body, items: [...rows, ...seeded] };
+      res.setDelay(0);
+      res.send(200, out, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+    });
+  });
+}
