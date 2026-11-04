@@ -152,9 +152,14 @@ export function readRoutingForwardBookingIntent(): RoutingForwardBookingIntentV1
         : {}),
       ...(householdEntries?.length
         ? {
-            householdEntries: householdEntries.map(
-              ({ appointmentTypeId: _id, appointmentTypeName: _name, ...row }) => row
-            ),
+            // Schedule follow-ups picked each pet's type on purpose; other rows carry the
+            // source visit's type, which the type picker replaces.
+            householdEntries:
+              o.origin === 'follow_up_planner'
+                ? householdEntries
+                : householdEntries.map(
+                    ({ appointmentTypeId: _id, appointmentTypeName: _name, ...row }) => row
+                  ),
           }
         : {}),
     };
@@ -339,6 +344,12 @@ function householdEntryFromForwardBookingRow(entry: ForwardBookingEntry): Forwar
     patientId: String(entry.patientId),
     patientName: pickStr(entry.patient?.name) ?? undefined,
     targetDueDate: entry.targetDueDate ?? null,
+    ...(entry.appointmentTypeId != null && Number.isFinite(Number(entry.appointmentTypeId))
+      ? {
+          appointmentTypeId: Number(entry.appointmentTypeId),
+          ...(entry.appointmentTypeName ? { appointmentTypeName: entry.appointmentTypeName } : {}),
+        }
+      : {}),
     ...(entry.needsPremeds === true ? { needsPremeds: true } : {}),
     bookingNotes: entry.bookingNotes ?? null,
     description: entry.description ?? null,

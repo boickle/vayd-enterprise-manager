@@ -29,6 +29,7 @@ import {
   type PlannerBooking,
 } from './plannerActions';
 import {
+  householdArrivalWindow,
   loadFollowUpPlannerData,
   type FollowUpPlannerData,
   type PlannerVisitInput,
@@ -66,13 +67,15 @@ import {
 } from './plannerModel';
 import { loadAddPetImpact, type AddPetImpact } from './visitImpact';
 import {
-  appointmentTypeLabel,
+  appointmentTypeStaffName,
   createProviderStatsCache,
   estimateAddedMinutes,
   estimateVisitMinutes,
-  suggestTypeIdForInterval,
   type MinutesEstimate,
 } from './plannerTiming';
+import { premedsHistoryVisitReason, usePremedsHistory } from '../../utils/premedsHistory';
+import { premedsWindowSpanLabel, usePracticePremedsWindowMinutes } from '../../utils/premedsWindow';
+import { patientsForAppointment } from '../../utils/schedulerAddPet';
 import './ScheduleFollowUpsPlanner.css';
 
 const RoutingCalendarWorkspace = lazy(() => import('../../pages/RoutingCalendarWorkspace'));
@@ -100,11 +103,6 @@ type NewCard = {
   interval: PlannerInterval;
   keepToday: boolean;
   providerId: number | null;
-  premeds: boolean;
-  /** Required before booking or sending to the CLs. */
-  appointmentTypeId: number | null;
-  /** The tech picked the type; interval changes stop re-suggesting it. */
-  typeChosen: boolean;
   status: 'draft' | 'cl' | 'searching' | 'booked';
   /** Rows created for an in-progress slot search. */
   searchEntryIds: number[];
@@ -221,8 +219,19 @@ export default function ScheduleFollowUpsPlanner({
   const statsFor = useRef(createProviderStatsCache()).current;
   /** Visit length per new card, from the card's provider history. */
   const [cardMinutes, setCardMinutes] = useState<Record<string, MinutesEstimate>>({});
-  /** Visit type for each pet added to a housemate's visit (key: petId@card). */
-  const [addedTypes, setAddedTypes] = useState<Record<string, number>>({});
+  /** Visit type each pet was given on a card or housemate visit (key: petId@card). */
+  const [petTypes, setPetTypes] = useState<Record<string, number>>({});
+  /** "Needs pre-meds" each pet was given on a card or housemate visit (key: petId@card). */
+  const [petPremeds, setPetPremeds] = useState<Record<string, boolean>>({});
+  /** Cards where staff tried to book or send without picking every pet's type. */
+  const [typeErrorCards, setTypeErrorCards] = useState<Record<string, boolean>>({});
+  /** Pets whose last visit (or chart) needed pre-meds; their box starts checked. */
+  const premedsHistory = usePremedsHistory(
+    practiceId,
+    data?.pets.map((p) => p.patientId) ?? [],
+    open && data != null
+  );
+  const premedsSpan = premedsWindowSpanLabel(usePracticePremedsWindowMinutes());
   const dragRef = useRef<{ petId: number; from: string | null } | null>(null);
 
   // -------------------------------------------------------------------------
@@ -402,6 +411,30 @@ export default function ScheduleFollowUpsPlanner({
   const cardProvider = (c: NewCard): PlannerProvider | null =>
     (c.keepToday ? todayProvider : c.providerId != null ? providerById.get(c.providerId) : null) ??
     null;
+  /** A pet's visit type on a card: its own pick, else the card's (or housemate visit's) type. */
+  const typeFor = (pet: PlannerPet, card: string): number | null => {
+    const own = petTypes[noteKey(pet.patientId, card)];
+    if (own != null) return own;
+    if (card.startsWith('up:')) {
+      const id = Number(visitByKey.get(card.slice(3))?.appointments[0]?.appointmentType?.id);
+      return Number.isFinite(id) ? id : null;
+    }
+    // New follow-up cards start at "Choose…": staff must pick each pet's type.
+    return null;
+  };
+  /** A pet's "needs pre-meds" on a card: its own choice, else checked when history says so. */
+  const premedsFor = (pet: PlannerPet, card: string): boolean =>
+    petPremeds[noteKey(pet.patientId, card)] ?? premedsHistory.has(String(pet.patientId));
+  /** Pets on a card still missing a visit type. */
+  const untypedIn = (card: string) => petsIn(card).filter((p) => typeFor(p, card) == null);
+  /** False (and the pets' pickers flagged) when any pet on the card has no visit type yet. */
+  const requireTypes = (card: string): boolean => {
+    const missing = untypedIn(card);
+    if (!missing.length) return true;
+    setTypeErrorCards((m) => ({ ...m, [card]: true }));
+    setError(`Pick a visit type for ${joinNames(missing.map((p) => p.name))}`);
+    return false;
+  };
   const cardLabel = (card: string): string => {
     if (card === LABS) return 'Labs pending';
     if (card === NONE) return 'No follow-up';
@@ -428,9 +461,6 @@ export default function ScheduleFollowUpsPlanner({
       interval,
       keepToday: d?.todayProviderId != null,
       providerId: null,
-      premeds: false,
-      appointmentTypeId: d ? suggestTypeIdForInterval(interval, d.bookableTypes) : null,
-      typeChosen: false,
       status: 'draft',
       searchEntryIds: [],
       booking: null,
@@ -511,28 +541,29 @@ export default function ScheduleFollowUpsPlanner({
   };
 
   /** History-based length for a card's pets, loaded fresh at the moment of booking. */
-  async function minutesForCard(card: NewCard, petCount: number): Promise<number> {
-    if (!data || card.appointmentTypeId == null) return 45;
+  async function minutesForCard(card: NewCard): Promise<number> {
+    const typeIds = petsIn(card.key)
+      .map((p) => typeFor(p, card.key))
+      .filter((id): id is number => id != null);
+    if (!data || !typeIds.length) return 45;
     const rows = await statsFor(cardProvider(card)?.id);
-    return estimateVisitMinutes(
-      Array(Math.max(1, petCount)).fill(card.appointmentTypeId),
-      rows,
-      data.appointmentTypes
-    ).minutes;
+    return estimateVisitMinutes(typeIds, rows, data.appointmentTypes).minutes;
   }
   const typeName = (id: number | null) => {
     const t = data?.appointmentTypes.find((x) => Number(x.id) === Number(id));
-    return t ? appointmentTypeLabel(t) : '';
+    return t ? appointmentTypeStaffName(t) : '';
   };
 
   async function findTime(card: NewCard) {
     if (!data) return;
     const cardPets = petsIn(card.key);
-    if (!cardPets.length || card.appointmentTypeId == null) return;
+    if (!cardPets.length || untypedIn(card.key).length) return;
+    // Routing searches with the first pet's type; each pet's row keeps its own type.
+    const anchorTypeId = typeFor(cardPets[0]!, card.key)!;
     setBusy(card.key);
     setError(null);
     try {
-      const serviceMinutes = await minutesForCard(card, cardPets.length);
+      const serviceMinutes = await minutesForCard(card);
       const { entries } = await createPlannerForwardBookings({
         practiceId,
         clientId: data.clientId,
@@ -540,16 +571,16 @@ export default function ScheduleFollowUpsPlanner({
         interval: card.interval,
         today: data.today,
         providerId: cardProvider(card)?.id ?? null,
-        premeds: card.premeds,
-        appointmentTypeId: card.appointmentTypeId,
+        typeIdFor: (p) => typeFor(p, card.key)!,
+        premedsFor: (p) => premedsFor(p, card.key),
         serviceMinutes,
         notesFor: notesFor(card.key),
         links: links.current,
       });
       if (
         !startPlannerSlotSearch(entries, {
-          appointmentTypeId: card.appointmentTypeId,
-          appointmentTypeName: typeName(card.appointmentTypeId),
+          appointmentTypeId: anchorTypeId,
+          appointmentTypeName: typeName(anchorTypeId),
           serviceMinutes,
         })
       ) {
@@ -719,7 +750,12 @@ export default function ScheduleFollowUpsPlanner({
   // -------------------------------------------------------------------------
   // Each card's expected length, refreshed when its pets, type or provider change.
   const cardSig = cards
-    .map((c) => `${c.key}|${c.appointmentTypeId}|${cardProvider(c)?.id}|${petsIn(c.key).length}`)
+    .map(
+      (c) =>
+        `${c.key}|${cardProvider(c)?.id}|${petsIn(c.key)
+          .map((p) => typeFor(p, c.key))
+          .join(',')}`
+    )
     .join(';');
   useEffect(() => {
     if (!data) return;
@@ -727,14 +763,12 @@ export default function ScheduleFollowUpsPlanner({
     void (async () => {
       const next: Record<string, MinutesEstimate> = {};
       for (const c of cards) {
-        const n = petsIn(c.key).length;
-        if (!n || c.appointmentTypeId == null) continue;
+        const typeIds = petsIn(c.key)
+          .map((p) => typeFor(p, c.key))
+          .filter((id): id is number => id != null);
+        if (!typeIds.length) continue;
         const rows = await statsFor(cardProvider(c)?.id);
-        next[c.key] = estimateVisitMinutes(
-          Array(n).fill(c.appointmentTypeId),
-          rows,
-          data.appointmentTypes
-        );
+        next[c.key] = estimateVisitMinutes(typeIds, rows, data.appointmentTypes);
       }
       if (on) setCardMinutes(next);
     })();
@@ -746,12 +780,7 @@ export default function ScheduleFollowUpsPlanner({
 
   const addedTo = (v: UpcomingVisit) =>
     petsIn(upKey(v.key)).filter((p) => !v.petIds.includes(p.patientId));
-  const visitTypeId = (v: UpcomingVisit) => {
-    const id = Number(v.appointments[0]?.appointmentType?.id);
-    return Number.isFinite(id) ? id : null;
-  };
-  const addedTypeFor = (v: UpcomingVisit, pet: PlannerPet) =>
-    addedTypes[noteKey(pet.patientId, upKey(v.key))] ?? visitTypeId(v);
+  const addedTypeFor = (v: UpcomingVisit, pet: PlannerPet) => typeFor(pet, upKey(v.key));
   const addedSig = (data?.upcoming ?? [])
     .map(
       (v) =>
@@ -822,6 +851,7 @@ export default function ScheduleFollowUpsPlanner({
         pets,
         notesFor: (p) => notes[noteKey(p.patientId, upKey(v.key))]?.trim() ?? '',
         typeIdFor: (p) => addedTypeFor(v, p)!,
+        premedsFor: (p) => premedsFor(p, upKey(v.key)),
         addedMinutes: upcoming[v.key]?.added?.minutes ?? 20,
       });
       setUpcoming((u) => ({ ...u, [v.key]: { ...u[v.key], adding: false, booking } }));
@@ -950,6 +980,10 @@ export default function ScheduleFollowUpsPlanner({
       const missing = addedTo(v).filter((p) => addedTypeFor(v, p) == null);
       if (missing.length) return `Pick a visit type for ${joinNames(missing.map((p) => p.name))}`;
     }
+    for (const c of clCards) {
+      const missing = untypedIn(c.key);
+      if (missing.length) return `Pick a visit type for ${joinNames(missing.map((p) => p.name))}`;
+    }
     if (petsIn(NONE).length && !noneReason.trim()) return 'Pick a reason for "No follow-up needed"';
     if (labsPets.length && !labsAssignee) return 'Pick who reviews the labs';
     return null;
@@ -1005,9 +1039,9 @@ export default function ScheduleFollowUpsPlanner({
           interval: c.interval,
           today: data.today,
           providerId: cardProvider(c)?.id ?? null,
-          premeds: c.premeds,
-          appointmentTypeId: c.appointmentTypeId!,
-          serviceMinutes: await minutesForCard(c, petsIn(c.key).length),
+          typeIdFor: (p) => typeFor(p, c.key)!,
+          premedsFor: (p) => premedsFor(p, c.key),
+          serviceMinutes: await minutesForCard(c),
           notesFor: notesFor(c.key),
           links: links.current,
         });
@@ -1244,10 +1278,87 @@ export default function ScheduleFollowUpsPlanner({
     setMenu({ petId, from, x: Math.min(r.left, window.innerWidth - 300), y: r.bottom + 6 });
   };
 
+  /** Re-confirm a CL card whose pets' details changed. */
+  const markCardDraft = (card: string) =>
+    setCards((cs) =>
+      cs.map((c) => (c.key === card && c.status === 'cl' ? { ...c, status: 'draft' } : c))
+    );
+
+  /** Visit type (staff name) and "Needs pre-meds" for one pet on one card. */
+  const petVisitFields = (pet: PlannerPet, card: string) => {
+    const k = noteKey(pet.patientId, card);
+    const history = premedsHistory.get(String(pet.patientId));
+    const premeds = premedsFor(pet, card);
+    const missingType = typeErrorCards[card] === true && typeFor(pet, card) == null;
+    return (
+      <div className="fup-petfields">
+        <label className={`fup-typepick${missingType ? ' is-invalid' : ''}`}>
+          Visit type{' '}
+          <select
+            value={typeFor(pet, card) ?? ''}
+            aria-label={`Visit type for ${pet.name}`}
+            aria-invalid={missingType || undefined}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              setPetTypes((t) => {
+                const next = { ...t };
+                if (id) next[k] = id;
+                else delete next[k];
+                return next;
+              });
+              markCardDraft(card);
+              setDirty(true);
+            }}
+          >
+            <option value="">Choose…</option>
+            {(data?.bookableTypes ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {appointmentTypeStaffName(t)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {missingType ? (
+          <div className="fup-field-error">Pick a visit type for {pet.name}</div>
+        ) : null}
+        <label className="fup-premeds">
+          <input
+            type="checkbox"
+            checked={premeds}
+            aria-label={`${pet.name} needs pre-meds`}
+            onChange={(e) => {
+              setPetPremeds((m) => ({ ...m, [k]: e.target.checked }));
+              markCardDraft(card);
+              setDirty(true);
+            }}
+          />{' '}
+          Needs pre-meds
+        </label>
+        {history && premeds && petPremeds[k] === undefined ? (
+          <div className="fup-muted fup-petfields__why">
+            {premedsHistoryVisitReason(history, pet.name)}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  /** "Echo needs pre-meds, so every pet on this visit gets the 1-hour arrival window." */
+  const householdPremedsNote = (names: string[], total: number) => {
+    if (!names.length) return null;
+    return (
+      <div className="fup-premeds-note">
+        {joinNames(names)} {names.length > 1 ? 'need' : 'needs'} pre-meds, so{' '}
+        {total > 1 ? 'every pet on this visit gets' : 'this visit gets'} the {premedsSpan} arrival
+        window.
+      </div>
+    );
+  };
+
   const inPlan = (
     pet: PlannerPet,
     card: string,
-    opts?: { fixed?: boolean; noNotes?: boolean; readOnly?: boolean }
+    opts?: { fixed?: boolean; noNotes?: boolean; readOnly?: boolean; visitFields?: boolean }
   ) => {
     const k = noteKey(pet.patientId, card);
     const locked = opts?.fixed || lockedAt(pet.patientId, card);
@@ -1301,6 +1412,7 @@ export default function ScheduleFollowUpsPlanner({
             </button>
           ) : null}
         </div>
+        {opts?.visitFields && !locked && !opts.readOnly ? petVisitFields(pet, card) : null}
         {remList(pet, card, { withHead: true, canCopy: !locked && !opts?.noNotes })}
         {opts?.noNotes ? null : (
           <input
@@ -1697,31 +1809,30 @@ export default function ScheduleFollowUpsPlanner({
                       {fixed.map((p) => inPlan(p, upKey(v.key), { fixed: true, noNotes: true }))}
                       {added.map((p) => (
                         <div key={p.patientId} className="fup-added">
-                          {inPlan(p, upKey(v.key))}
-                          {!booking ? (
-                            <label className="fup-typepick">
-                              {p.name}&apos;s visit type{' '}
-                              <select
-                                value={addedTypeFor(v, p) ?? ''}
-                                aria-label={`Visit type for ${p.name}`}
-                                onChange={(e) =>
-                                  setAddedTypes((t) => ({
-                                    ...t,
-                                    [noteKey(p.patientId, upKey(v.key))]: Number(e.target.value),
-                                  }))
-                                }
-                              >
-                                <option value="">Choose…</option>
-                                {data.bookableTypes.map((t) => (
-                                  <option key={t.id} value={t.id}>
-                                    {appointmentTypeLabel(t)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : null}
+                          {inPlan(p, upKey(v.key), { visitFields: !booking })}
                         </div>
                       ))}
+                      {added.length && !booking
+                        ? householdPremedsNote(
+                            [
+                              ...fixed
+                                .filter((f) =>
+                                  v.appointments.some(
+                                    (a) =>
+                                      a.needsPremeds === true &&
+                                      patientsForAppointment(a).some(
+                                        (x) => Number(x.id) === f.patientId
+                                      )
+                                  )
+                                )
+                                .map((f) => f.name),
+                              ...added
+                                .filter((p) => premedsFor(p, upKey(v.key)))
+                                .map((p) => p.name),
+                            ],
+                            fixed.length + added.length
+                          )
+                        : null}
                       {!booking && !st?.adding ? (
                         <div className="fup-drop">Drop a pet here to add them to this visit</div>
                       ) : null}
@@ -1737,7 +1848,21 @@ export default function ScheduleFollowUpsPlanner({
                                   : ''}
                               .
                             </b>{' '}
-                            Arrival window stays {fmtWindow(v.windowStart, v.windowEnd)}.
+                            {(() => {
+                              const nowPremeds = added.some((p) => premedsFor(p, upKey(v.key)));
+                              const already = v.appointments.some((a) => a.needsPremeds === true);
+                              const first = v.appointments[0];
+                              const win =
+                                nowPremeds && !already && first
+                                  ? householdArrivalWindow(first, [{ needsPremeds: true }], tz)
+                                  : null;
+                              return win
+                                ? `Arrival window narrows to ${fmtWindow(
+                                    DateTime.fromISO(win.startIso, { zone: 'utc' }).setZone(tz),
+                                    DateTime.fromISO(win.endIso, { zone: 'utc' }).setZone(tz)
+                                  )} for every pet (pre-meds).`
+                                : `Arrival window stays ${fmtWindow(v.windowStart, v.windowEnd)}.`;
+                            })()}
                             {st?.impactLoading
                               ? ' Checking the rest of the day…'
                               : st?.impactError
@@ -1905,12 +2030,6 @@ export default function ScheduleFollowUpsPlanner({
                                         ...x,
                                         interval,
                                         status: 'draft',
-                                        appointmentTypeId: x.typeChosen
-                                          ? x.appointmentTypeId
-                                          : (suggestTypeIdForInterval(
-                                              interval,
-                                              data.bookableTypes
-                                            ) ?? x.appointmentTypeId),
                                       }
                                     : x
                                 )
@@ -1918,34 +2037,68 @@ export default function ScheduleFollowUpsPlanner({
                               setDirty(true);
                             }}
                           />
-                          <label className="fup-typepick">
-                            Visit type{' '}
-                            <select
-                              value={c.appointmentTypeId ?? ''}
-                              aria-label="Visit type"
-                              onChange={(e) =>
-                                setCards((cs) =>
-                                  cs.map((x) =>
-                                    x.key === c.key
-                                      ? {
-                                          ...x,
-                                          appointmentTypeId: Number(e.target.value) || null,
-                                          typeChosen: true,
-                                          status: 'draft',
-                                        }
-                                      : x
-                                  )
-                                )
-                              }
-                            >
-                              <option value="">Choose…</option>
-                              {data.bookableTypes.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {appointmentTypeLabel(t)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                          {/* Doctor is for the whole household, so it sits with the timing. */}
+                          <div className="fup-opts fup-opts--provider">
+                            {todayProvider ? (
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={c.keepToday}
+                                  onChange={(e) =>
+                                    setCards((cs) =>
+                                      cs.map((x) =>
+                                        x.key === c.key
+                                          ? {
+                                              ...x,
+                                              keepToday: e.target.checked,
+                                              status: 'draft',
+                                              providerId:
+                                                x.providerId ??
+                                                data.providers.find(
+                                                  (p) => p.id !== data.todayProviderId
+                                                )?.id ??
+                                                null,
+                                            }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                />{' '}
+                                Keep {providerTextLabel(todayProvider)}
+                              </label>
+                            ) : null}
+                            {!c.keepToday ? (
+                              <label>
+                                With{' '}
+                                <select
+                                  value={c.providerId ?? ''}
+                                  aria-label="Provider for this visit"
+                                  onChange={(e) =>
+                                    setCards((cs) =>
+                                      cs.map((x) =>
+                                        x.key === c.key
+                                          ? {
+                                              ...x,
+                                              providerId: Number(e.target.value) || null,
+                                              status: 'draft',
+                                            }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                >
+                                  <option value="">Choose…</option>
+                                  {data.providers
+                                    .filter((p) => p.id !== data.todayProviderId || !todayProvider)
+                                    .map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name}
+                                      </option>
+                                    ))}
+                                </select>
+                              </label>
+                            ) : null}
+                          </div>
                           {cardMinutes[c.key] ? (
                             <div className="fup-muted">
                               About {cardMinutes[c.key].minutes} min
@@ -1957,108 +2110,37 @@ export default function ScheduleFollowUpsPlanner({
                         </>
                       ) : null}
                       {ps.length ? (
-                        ps.map((p) => inPlan(p, c.key))
+                        ps.map((p) => inPlan(p, c.key, { visitFields: draft }))
                       ) : (
                         <div className="fup-drop">Drag pets here</div>
                       )}
-                      {draft ? (
-                        <div className="fup-opts">
-                          {todayProvider ? (
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={c.keepToday}
-                                onChange={(e) =>
-                                  setCards((cs) =>
-                                    cs.map((x) =>
-                                      x.key === c.key
-                                        ? {
-                                            ...x,
-                                            keepToday: e.target.checked,
-                                            providerId:
-                                              x.providerId ??
-                                              data.providers.find(
-                                                (p) => p.id !== data.todayProviderId
-                                              )?.id ??
-                                              null,
-                                          }
-                                        : x
-                                    )
-                                  )
-                                }
-                              />{' '}
-                              Keep {providerTextLabel(todayProvider)}
-                            </label>
-                          ) : null}
-                          {!c.keepToday ? (
-                            <label>
-                              With{' '}
-                              <select
-                                value={c.providerId ?? ''}
-                                aria-label="Provider for this visit"
-                                onChange={(e) =>
-                                  setCards((cs) =>
-                                    cs.map((x) =>
-                                      x.key === c.key
-                                        ? { ...x, providerId: Number(e.target.value) || null }
-                                        : x
-                                    )
-                                  )
-                                }
-                              >
-                                <option value="">Choose…</option>
-                                {data.providers
-                                  .filter((p) => p.id !== data.todayProviderId || !todayProvider)
-                                  .map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-                          ) : null}
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={c.premeds}
-                              onChange={(e) =>
-                                setCards((cs) =>
-                                  cs.map((x) =>
-                                    x.key === c.key ? { ...x, premeds: e.target.checked } : x
-                                  )
-                                )
-                              }
-                            />{' '}
-                            Needs premeds
-                          </label>
-                        </div>
-                      ) : null}
+                      {draft && ps.length
+                        ? householdPremedsNote(
+                            ps.filter((p) => premedsFor(p, c.key)).map((p) => p.name),
+                            ps.length
+                          )
+                        : null}
                       {c.status === 'draft' ? (
                         <div className="fup-actions">
                           <button
                             type="button"
                             className="fup-btn fup-btn--primary"
                             disabled={
-                              !ps.length ||
-                              busy === c.key ||
-                              (!c.keepToday && !c.providerId) ||
-                              c.appointmentTypeId == null
+                              !ps.length || busy === c.key || (!c.keepToday && !c.providerId)
                             }
-                            title={
-                              c.appointmentTypeId == null ? 'Pick a visit type first' : undefined
-                            }
-                            onClick={() => void findTime(c)}
+                            onClick={() => {
+                              if (!requireTypes(c.key)) return;
+                              void findTime(c);
+                            }}
                           >
                             {busy === c.key ? 'Starting…' : 'Find a time now'}
                           </button>
                           <button
                             type="button"
                             className="fup-btn"
-                            disabled={!ps.length || c.appointmentTypeId == null}
-                            title={
-                              c.appointmentTypeId == null ? 'Pick a visit type first' : undefined
-                            }
+                            disabled={!ps.length}
                             onClick={() => {
+                              if (!requireTypes(c.key)) return;
                               setCards((cs) =>
                                 cs.map((x) => (x.key === c.key ? { ...x, status: 'cl' } : x))
                               );

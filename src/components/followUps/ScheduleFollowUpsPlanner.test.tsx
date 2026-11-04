@@ -186,6 +186,10 @@ vi.mock('../../utils/routingServiceMinutes', async (orig) => ({
     },
   ]),
 }));
+vi.mock('../../api/appointments', async (orig) => ({
+  ...(await orig<typeof import('../../api/appointments')>()),
+  fetchPremedsHistory: vi.fn(async () => []),
+}));
 vi.mock('../../pages/RoutingCalendarWorkspace', () => ({
   default: () => <div>Embedded calendar</div>,
 }));
@@ -201,6 +205,8 @@ vi.mock('../../api/branchInventory', async (orig) => ({
 }));
 
 import ScheduleFollowUpsPlanner from './ScheduleFollowUpsPlanner';
+import { fetchPremedsHistory } from '../../api/appointments';
+import { loadFollowUpPlannerData as loadPlannerDataMock } from './plannerData';
 
 const visit = {
   clientId: 50,
@@ -231,6 +237,11 @@ function pick(petButton: HTMLElement, item: RegExp, which: 'first' | 'last' = 'f
 }
 const trayPet = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) });
 const cardTitled = (title: string) => screen.getByText(title).closest('article') as HTMLElement;
+/** Pick a pet's visit type on a card (cards start at "Choose…"). */
+const setType = (scope: HTMLElement, petName: string, typeId: number) =>
+  fireEvent.change(within(scope).getByLabelText(`Visit type for ${petName}`), {
+    target: { value: String(typeId) },
+  });
 
 beforeEach(() => {
   Object.values(actions).forEach((fn) => fn.mockClear());
@@ -297,6 +308,10 @@ describe('Schedule follow-ups planner', () => {
     await waitFor(() => expect(actions.addPetsToUpcomingVisit).toHaveBeenCalledTimes(1));
     expect(await screen.findByText(/Pepper added\./)).toBeTruthy();
 
+    // Each pet's visit type is picked by hand: annual for the 1-year card, recheck for Marvin.
+    for (const name of ['Fluffy', 'Angel', 'Marvin']) setType(cardTitled('In 1 year'), name, 1);
+    setType(cardTitled('In 2 weeks'), 'Marvin', 2);
+
     // 1-year card to the CLs with a household note.
     fireEvent.click(within(yearCard).getByRole('button', { name: 'Send to CLs to book' }));
     fireEvent.change(screen.getByLabelText(/Note for the CLs/), {
@@ -308,7 +323,7 @@ describe('Schedule follow-ups planner', () => {
       within(cardTitled('In 2 weeks')).getByRole('button', { name: 'Find a time now' })
     );
     await screen.findByText('Embedded calendar');
-    // Card defaulted to Recheck (short interval); history says 25 min for one pet.
+    // Marvin's Recheck; history says 25 min for one pet.
     expect(actions.startPlannerSlotSearch.mock.calls[0][1]).toEqual({
       appointmentTypeId: 2,
       appointmentTypeName: 'Recheck',
@@ -376,6 +391,7 @@ describe('Schedule follow-ups planner', () => {
     renderPlanner();
     await screen.findByText(/Today.s visit · needs a plan/);
     pick(trayPet('Fluffy'), /"In 1 year" card/);
+    setType(cardTitled('In 1 year'), 'Fluffy', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
     await screen.findByText('Embedded calendar');
     act(() =>
@@ -396,6 +412,7 @@ describe('Schedule follow-ups planner', () => {
     renderPlanner();
     await screen.findByText(/Today.s visit · needs a plan/);
     pick(trayPet('Angel'), /"In 1 year" card/);
+    setType(cardTitled('In 1 year'), 'Angel', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
     await screen.findByText('Embedded calendar');
     fireEvent.click(screen.getByRole('button', { name: 'Back to follow-ups' }));
@@ -418,6 +435,7 @@ describe('Schedule follow-ups planner', () => {
     );
     await screen.findByText(/Today.s visit · needs a plan/);
     pick(trayPet('Angel'), /"In 1 year" card/);
+    setType(cardTitled('In 1 year'), 'Angel', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
     await screen.findByText('Embedded calendar');
     window.dispatchEvent(new Event('pagehide'));
@@ -464,5 +482,102 @@ describe('Schedule follow-ups planner', () => {
     );
     // The earlier visit keeps its saved Labs pending choice.
     expect(actions.savePetDisposition).not.toHaveBeenCalled();
+  });
+
+  it('gives each pet its own visit type and pre-meds, and the household the pre-meds window', async () => {
+    // Staff see the type's own name, not the client-facing pretty name.
+    const types = [
+      apptType(1, 'Wellness'),
+      { ...(apptType(2, 'RCHK', 20) as object), prettyName: 'Recheck / follow-up' } as never,
+      apptType(3, 'Ear Recheck', 20),
+    ];
+    vi.mocked(loadPlannerDataMock).mockResolvedValueOnce({
+      ...fixture,
+      appointmentTypes: types,
+      bookableTypes: types,
+    });
+    // Angel's last visit had pre-meds; Fluffy's did not.
+    vi.mocked(fetchPremedsHistory).mockResolvedValueOnce([
+      {
+        patientId: 2,
+        source: 'visit',
+        premedsNote: null,
+        appointmentId: 77,
+        appointmentStart: '2026-09-01T14:00:00Z',
+        appointmentTypeName: 'Wellness',
+      },
+    ]);
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    for (const name of ['Fluffy', 'Angel']) pick(trayPet(name), /"In 1 year" card/);
+    const card = cardTitled('In 1 year');
+
+    // One picker per pet, listing staff names.
+    const fluffyType = within(card).getByLabelText('Visit type for Fluffy') as HTMLSelectElement;
+    const angelType = within(card).getByLabelText('Visit type for Angel') as HTMLSelectElement;
+    expect(within(fluffyType).getByRole('option', { name: 'RCHK' })).toBeTruthy();
+    expect(within(fluffyType).queryByRole('option', { name: 'Recheck / follow-up' })).toBeNull();
+    expect(within(card).queryByRole('combobox', { name: 'Visit type' })).toBeNull();
+    fireEvent.change(fluffyType, { target: { value: '1' } });
+    fireEvent.change(angelType, { target: { value: '3' } });
+
+    // Pre-meds per pet: Angel pre-checked from history, Fluffy not.
+    const angelPremeds = within(card).getByLabelText('Angel needs pre-meds') as HTMLInputElement;
+    await waitFor(() => expect(angelPremeds.checked).toBe(true));
+    expect((within(card).getByLabelText('Fluffy needs pre-meds') as HTMLInputElement).checked).toBe(
+      false
+    );
+    expect(
+      within(card).getByText(/last visit \(Sep 1, 2026 · Wellness\) had pre-meds/)
+    ).toBeTruthy();
+    // One pet on pre-meds narrows the window for the whole household.
+    expect(
+      within(card).getByText(
+        'Angel needs pre-meds, so every pet on this visit gets the 1-hour arrival window.'
+      )
+    ).toBeTruthy();
+
+    // The doctor is chosen once for the household, above the pets.
+    const keep = within(card).getByLabelText(/Keep Dr\. Patel/);
+    const firstPet = within(card).getByRole('button', { name: /^Fluffy: move/ });
+    expect(keep.compareDocumentPosition(firstPet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Find a time now' }));
+    await screen.findByText('Embedded calendar');
+    const call = actions.createPlannerForwardBookings.mock.calls.at(-1)![0];
+    const [fluffy, angel] = call.pets;
+    expect([call.typeIdFor(fluffy), call.typeIdFor(angel)]).toEqual([1, 3]);
+    expect([call.premedsFor(fluffy), call.premedsFor(angel)]).toEqual([false, true]);
+    // Routing searches with the first pet's type (staff name).
+    expect(actions.startPlannerSlotSearch.mock.calls.at(-1)![1]).toMatchObject({
+      appointmentTypeId: 1,
+      appointmentTypeName: 'Wellness',
+    });
+  });
+
+  it('starts every pet at "Choose…" and will not book or send until each has a type', async () => {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    for (const name of ['Fluffy', 'Angel']) pick(trayPet(name), /"In 1 year" card/);
+    const card = cardTitled('In 1 year');
+    expect((within(card).getByLabelText('Visit type for Fluffy') as HTMLSelectElement).value).toBe(
+      ''
+    );
+
+    setType(card, 'Fluffy', 1);
+    fireEvent.click(within(card).getByRole('button', { name: 'Find a time now' }));
+    expect(await screen.findAllByText('Pick a visit type for Angel')).toBeTruthy();
+    expect(within(card).getByLabelText('Visit type for Angel').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
+    fireEvent.click(within(card).getByRole('button', { name: 'Send to CLs to book' }));
+    expect(screen.queryByText(/Goes to the CLs when you press Done/)).toBeNull();
+    expect(actions.createPlannerForwardBookings).not.toHaveBeenCalled();
+    expect(actions.startPlannerSlotSearch).not.toHaveBeenCalled();
+
+    setType(card, 'Angel', 1);
+    expect(within(card).queryByText('Pick a visit type for Angel')).toBeNull();
+    fireEvent.click(within(card).getByRole('button', { name: 'Find a time now' }));
+    await screen.findByText('Embedded calendar');
   });
 });

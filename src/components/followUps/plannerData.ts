@@ -122,6 +122,25 @@ function dueDate(raw: string | null | undefined, tz: string): DateTime | null {
  * Household visits from now on, one entry per visit. Each pet has its own appointment
  * row, so rows with the same start and provider are the same house call.
  */
+/**
+ * Arrival window for a household visit: if any pet at the visit needs pre-meds, every pet
+ * gets the pre-meds window (the same rule the API applies to the calendar and reminders).
+ */
+export function householdArrivalWindow(
+  first: Appointment,
+  household: Array<Pick<Appointment, 'needsPremeds'>>,
+  tz: string
+) {
+  const anyPremeds = household.some((a) => a.needsPremeds === true);
+  if (!anyPremeds || first.needsPremeds === true)
+    return appointmentArrivalWindowIsosForSms(first, tz);
+  // The stored window was worked out without the sibling's pre-meds; recompute it.
+  return appointmentArrivalWindowIsosForSms(
+    { ...first, needsPremeds: true, effectiveWindow: undefined, arrivalWindow: undefined },
+    tz
+  );
+}
+
 export function groupUpcomingVisits(
   appointments: Appointment[],
   opts: { tz: string; now: DateTime; excludeAppointmentIds: Set<number> }
@@ -148,7 +167,7 @@ export function groupUpcomingVisits(
         .pop() ?? first.appointmentEnd,
       { zone: 'utc' }
     ).setZone(opts.tz);
-    const win = appointmentArrivalWindowIsosForSms(first, opts.tz);
+    const win = householdArrivalWindow(first, rows, opts.tz);
     const petIds = rows.flatMap((r) =>
       patientsForAppointment(r)
         .map((p) => Number(p.id))

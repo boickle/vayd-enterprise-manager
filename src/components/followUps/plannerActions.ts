@@ -14,7 +14,6 @@ import {
 import { fetchClientAppointmentsStaff } from '../../api/pimsAppointments';
 import type { Appointment } from '../../api/roomLoader';
 import { updateEncounter } from '../../api/visitWorkflow';
-import { appointmentArrivalWindowIsosForSms } from '../../utils/forwardBookingSmsMessage';
 import { alignSiblingVisitScheduledTimes } from '../../utils/householdVisitTimeAlign';
 import {
   buildRoutingForwardBookingIntentFromEntries,
@@ -24,7 +23,7 @@ import {
 import { patientsForAppointment } from '../../utils/schedulerAddPet';
 import { notifyTasksChanged } from '../../utils/taskOwnership';
 import { createLabsPendingForwardBookingTasks } from '../forwardBooking/saveForwardBookingDecision';
-import type { PlannerPet, UpcomingVisit } from './plannerData';
+import { householdArrivalWindow, type PlannerPet, type UpcomingVisit } from './plannerData';
 import { plannerIntervalForApi, type PlannerInterval, type PlannerProvider } from './plannerModel';
 
 export type PlannerBooking = {
@@ -65,8 +64,10 @@ export async function createPlannerForwardBookings(args: {
   interval: PlannerInterval;
   today: DateTime;
   providerId: number | null;
-  premeds: boolean;
-  appointmentTypeId: number;
+  /** Each pet's own visit type. */
+  typeIdFor: (pet: PlannerPet) => number;
+  /** Each pet's own "needs pre-meds" (the routing search narrows the household window if any). */
+  premedsFor: (pet: PlannerPet) => boolean;
   /** Visit length for the whole card, from the provider's history. */
   serviceMinutes: number;
   notesFor: (pet: PlannerPet) => string;
@@ -88,8 +89,8 @@ export async function createPlannerForwardBookings(args: {
         intervalUnit,
         primaryProviderId: args.providerId ?? undefined,
         bookingNotes: args.notesFor(pet),
-        needsPremeds: args.premeds,
-        appointmentTypeId: args.appointmentTypeId,
+        needsPremeds: args.premedsFor(pet),
+        appointmentTypeId: args.typeIdFor(pet),
         serviceMinutes: args.serviceMinutes,
         createdVia: sourceAppointmentId != null && pet.onTodaysVisit ? 'end_visit' : 'manual',
       })
@@ -194,7 +195,7 @@ export function bookingFromAppointments(
   const first = rows[0];
   const startIso = first?.appointmentStart ?? opts.fallbackStartIso;
   const start = DateTime.fromISO(startIso, { zone: 'utc' }).setZone(opts.tz);
-  const win = first ? appointmentArrivalWindowIsosForSms(first, opts.tz) : null;
+  const win = first ? householdArrivalWindow(first, rows, opts.tz) : null;
   return {
     appointmentIds: rows.map((r) => Number(r.id)),
     start,
@@ -219,6 +220,8 @@ export async function addPetsToUpcomingVisit(args: {
   notesFor: (pet: PlannerPet) => string;
   /** Visit type for each added pet. */
   typeIdFor: (pet: PlannerPet) => number;
+  /** "Needs pre-meds" for each added pet. */
+  premedsFor: (pet: PlannerPet) => boolean;
   /** History-based extra time for all added pets together. */
   addedMinutes: number;
 }): Promise<PlannerBooking> {
@@ -238,6 +241,7 @@ export async function addPetsToUpcomingVisit(args: {
         appointmentStart: startIso,
         appointmentEnd: endIso,
         description: args.notesFor(pet) || undefined,
+        ...(args.premedsFor(pet) ? { needsPremeds: true } : {}),
         bookedViaRouting: true,
       });
       created.push(Number(row.id));
@@ -253,11 +257,20 @@ export async function addPetsToUpcomingVisit(args: {
     for (const id of created) await deleteAppointment(id).catch(() => undefined);
     throw e;
   }
+  // A pre-meds pet narrows the whole household's arrival window.
+  const tz = visit.start.zoneName ?? 'utc';
+  const first = visit.appointments[0];
+  const win =
+    first && args.pets.some((p) => args.premedsFor(p))
+      ? householdArrivalWindow(first, [{ needsPremeds: true }], tz)
+      : null;
   return {
     appointmentIds: created,
     start: visit.start,
-    windowStart: visit.windowStart,
-    windowEnd: visit.windowEnd,
+    windowStart: win
+      ? DateTime.fromISO(win.startIso, { zone: 'utc' }).setZone(tz)
+      : visit.windowStart,
+    windowEnd: win ? DateTime.fromISO(win.endIso, { zone: 'utc' }).setZone(tz) : visit.windowEnd,
     provider: visit.provider,
     bookedAtMs: Date.now(),
     entryIds: [],

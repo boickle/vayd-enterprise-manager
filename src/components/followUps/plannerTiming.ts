@@ -22,6 +22,11 @@ export function appointmentTypeLabel(t: Pick<AppointmentType, 'name' | 'prettyNa
   return (t.prettyName || t.name || '').trim();
 }
 
+/** The type's own name (not the client-facing pretty name), for staff pickers. */
+export function appointmentTypeStaffName(t: Pick<AppointmentType, 'name' | 'prettyName'>): string {
+  return (t.name || t.prettyName || '').trim();
+}
+
 /** Types a follow-up can be booked as: active, routable, and not a hold or boarding. */
 export function plannerBookableTypes(all: readonly AppointmentType[]): AppointmentType[] {
   return sortAppointmentTypesForPicker(

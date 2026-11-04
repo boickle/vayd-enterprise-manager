@@ -985,3 +985,35 @@
   border-color: var(--fup-accent-strong);
   background: var(--fup-accent-soft);
 }
+
+/* Per-pet visit type and pre-meds (each pet in a household can differ). */
+.fup-petfields {
+  display: grid;
+  gap: 6px;
+}
+.fup-premeds {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.fup-petfields__why {
+  font-size: 12px;
+}
+/* Any pet on pre-meds narrows the whole household's arrival window. */
+.fup-premeds-note {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--fup-warn-soft);
+  border-left: 3px solid var(--fup-warn);
+}
+.fup-typepick.is-invalid select {
+  border-color: var(--fup-bad);
+  background: var(--fup-bad-soft);
+}
+.fup-field-error {
+  color: var(--fup-bad);
+  font-size: 12px;
+  font-weight: 600;
+}

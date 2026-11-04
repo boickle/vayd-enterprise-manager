@@ -340,6 +340,10 @@ export type SchedulerBookPrefill = {
     patientName?: string;
     /** Per-pet Description prefill (care outreach / schedule loader notes). */
     description?: string;
+    /** Per-pet visit type from the forward booking row (Schedule follow-ups). */
+    appointmentTypeId?: number;
+    /** This pet's own pre-meds flag; siblings are not assumed to match. */
+    needsPremeds?: boolean;
   }>;
   forwardBookingCreatedVia?: ForwardBookingCreatedVia;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
@@ -1603,13 +1607,30 @@ export function SchedulerBookModal({
       if (id && name) routingPreviewNameById.set(id, name);
     }
     const fbDescriptionByPatientId = new Map<string, string>();
+    const fbTypeByPatientId = new Map<string, string>();
+    const fbPremedsByPatientId = new Map<string, boolean>();
     for (const row of prefill?.forwardBookingVisitCompletes ?? []) {
       const id = String(row.patientId).trim();
       const name = row.patientName?.trim();
       if (id && name) routingPreviewNameById.set(id, name);
       const fbDesc = row.description?.trim();
       if (id && fbDesc) fbDescriptionByPatientId.set(id, fbDesc);
+      if (
+        id &&
+        row.appointmentTypeId != null &&
+        routingBookFullAppointmentTypes.some((t) => String(t.id) === String(row.appointmentTypeId))
+      ) {
+        fbTypeByPatientId.set(id, String(row.appointmentTypeId));
+      }
+      if (id && row.needsPremeds != null) fbPremedsByPatientId.set(id, row.needsPremeds === true);
     }
+    const typeForPatient = (patientId: string): string =>
+      fbTypeByPatientId.get(patientId) ?? defaultType;
+    /** A household forward booking carries each pet's own flag; otherwise use the defaults. */
+    const premedsForPatient = (patientId: string): boolean =>
+      fbPremedsByPatientId.has(patientId)
+        ? fbPremedsByPatientId.get(patientId) === true
+        : defaultPremedsFor(patientId);
     for (const p of clientPets) {
       if (p.isDeleted === true || p.isActive === false) continue;
       routingPreviewNameById.set(String(p.id), p.name);
@@ -1624,10 +1645,10 @@ export function SchedulerBookModal({
         patientId,
         patientName: p.name,
         selected: autoSelectPatient(patientId),
-        appointmentTypeId: defaultType,
+        appointmentTypeId: typeForPatient(patientId),
         description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
-        needsPremeds: defaultPremedsFor(patientId),
+        needsPremeds: premedsForPatient(patientId),
       };
     });
     for (const patientId of preferredPatientIdSet) {
@@ -1636,10 +1657,10 @@ export function SchedulerBookModal({
         patientId,
         patientName: routingPreviewNameById.get(patientId) ?? `Patient ${patientId}`,
         selected: true,
-        appointmentTypeId: defaultType,
+        appointmentTypeId: typeForPatient(patientId),
         description: descriptionForPatient(patientId),
         instructions: defaultStaffNotes,
-        needsPremeds: defaultPremedsFor(patientId),
+        needsPremeds: premedsForPatient(patientId),
       });
     }
 

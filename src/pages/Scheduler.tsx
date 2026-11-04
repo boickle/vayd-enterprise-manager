@@ -8203,6 +8203,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     patientId: row.patientId,
                     patientName: row.patientName,
                     description: resolveForwardBookingBookDefaultDescription(row),
+                    // Each pet's own type and pre-meds (Schedule follow-ups sets them per pet).
+                    ...(row.appointmentTypeId != null
+                      ? { appointmentTypeId: row.appointmentTypeId }
+                      : {}),
+                    needsPremeds: row.needsPremeds === true,
                   })),
                 }
               : {}),
