@@ -11,11 +11,13 @@ const KIND_LABEL: Record<string, string> = {
   prescription: 'Prescription',
   vaccination: 'Vaccine dose',
   lab_result: 'Lab result',
+  encounter: 'Visit record',
 };
 
 /**
  * Staff-only History for one pet (owner decision Nov 3, 2026): every logged step on the pet's
- * prescriptions, vaccine doses edited after sign-off and in-house lab results, newest first.
+ * prescriptions, vaccine doses edited after sign-off and in-house lab results, and visits switched
+ * between a medical note and a SOAP (Nov 4, 2026), newest first.
  *
  * Renders nothing for anyone who is not signed in as staff. Never placed on the medical-record
  * print, records sent out, certificates, labels or the client portal, and hidden when printed.
@@ -54,7 +56,8 @@ export default function PatientRecordHistoryPanel({
     <div className="record-history patient-record-history" role="region" aria-label="Pet record history">
       <p className="patient-record-history__note">
         Staff only. Who entered or changed prescriptions, vaccine doses after sign-off and lab
-        results. Not part of the medical record.
+        results, and who switched a visit between a medical note and a SOAP. Not part of the
+        medical record.
       </p>
       {error ? (
         <p className="record-history-error">{error}</p>

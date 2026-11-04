@@ -65,7 +65,7 @@ Goal: open the right chart for each pet on a household visit. **Everyone.**
 **Techs:** "You can open the SOAP and chart vitals and notes. Signing a full SOAP is the doctor's job. You'll see a small lock note at the top that says 'Only a licensed veterinarian can sign and lock a SOAP.' That's normal."
 
 **Common mistakes**
-- **Starting a Medical note when the doctor is doing an exam.** A full exam is a SOAP. A medical note is the tech visit write-up.
+- **Starting a Medical note when the doctor is doing an exam.** A full exam is a SOAP. A medical note is the tech visit write-up. To fix it, click **Switch to SOAP** at the top of the medical note and confirm. The note text moves into the SOAP and the SOAP opens (see V12). It works until the note is signed. The other way, a SOAP with nothing typed in it yet shows **Switch to medical note**.
 - **Charting on the wrong pet tab.** Check the pet's name in the header before you type.
 - **Opening a new encounter when one exists.** The menu says **Edit Encounter** once there is one, and that opens the existing chart.
 
@@ -367,8 +367,9 @@ Goal: write up a tech visit and sign it. **Licensed techs and doctors. Unlicense
 | 2 | Type in **History** and **Plan**, or use **Start AI scribe** and **Write up visit** | "Why they are here, how the pet is doing, owner observations…" | "History and plan, in plain words. Or record the room and let Write up visit draft it." |
 | 3 | **Checkout prep** and the **Checkout** panel | The bill on the right, with payment buttons | "Charges and payment are right here on the side." |
 | 4 | **Client email** tab | A subject and message | "Write a short email for Harold if he'd like one." |
-| 5 | Click **Wrap up** | The note is signed, and you're back on the schedule | "Wrap up signs and locks the note." |
-| 6 | Logged in as Tess Demo | **Wrap up** is greyed out: "Only a licensed veterinarian or licensed technician can sign this record." | "If you're not licensed, the button stays grey. Write it up and ask a licensed tech or the doctor to sign." |
+| 5 | Point at **Switch to SOAP** at the top, click it, then click **Cancel** | A box: "Switch this medical note to a SOAP? The note text moves into the SOAP." | "If you picked a medical note but the doctor ends up doing an exam, don't start over. Click Switch to SOAP. What you wrote moves into the SOAP and the SOAP opens. It works until the note is signed. We'll cancel here because Mittens really is a tech visit." |
+| 6 | Click **Wrap up** | The note is signed, and you're back on the schedule. **Switch to SOAP** is gone once the note is signed | "Wrap up signs and locks the note." |
+| 7 | Logged in as Tess Demo | **Wrap up** is greyed out: "Only a licensed veterinarian or licensed technician can sign this record." | "If you're not licensed, the button stays grey. Write it up and ask a licensed tech or the doctor to sign." |
 
 **Techs:** "Licensed techs: you can sign a quick visit or a medical note. Unlicensed techs: you can write it, not sign it."
 
@@ -377,7 +378,7 @@ Goal: write up a tech visit and sign it. **Licensed techs and doctors. Unlicense
 **Note for the narrator:** the code also has a "Quick SOAP" type that a licensed tech may sign. No screen I found starts one, so this video uses the medical note **[check on screen: whether a Quick SOAP can be started]**.
 
 **Common mistakes**
-- **Using a medical note for a doctor exam.**
+- **Using a medical note for a doctor exam.** Click **Switch to SOAP** before signing (step 5).
 - **Leaving it unsigned.** If you're not licensed, hand it off the same day.
 
 **Demo data needed**
