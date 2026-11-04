@@ -215,6 +215,8 @@ type Props = {
   followUpSlot?: ReactNode;
   /** Off when the page renders CheckoutReminders itself (under its Follow-up section). */
   remindersInPanel?: boolean;
+  /** Scroll the SOAP page's checkout column to the open chart's pet. Off on the standalone checkout page, where it would scroll the whole page. */
+  scrollToCurrentPet?: boolean;
   /**
    * Payment lives on the checkout screen, not in the SOAP sidebar. With this off the
    * panel is the working bill (add charges, record doses, approve scripts) and offers
@@ -1221,6 +1223,7 @@ export default function VisitCheckoutPanel({
   rxLabel,
   followUpSlot,
   remindersInPanel = true,
+  scrollToCurrentPet = true,
   showPayment = true,
   onCheckout,
   paymentBlockedReason = null,
@@ -1365,7 +1368,7 @@ export default function VisitCheckoutPanel({
   }, [siblingPendingOrders, currentPendingOrders]);
 
   useEffect(() => {
-    if (patientId == null || roster.length <= 1) return;
+    if (!scrollToCurrentPet || patientId == null || roster.length <= 1) return;
     if (holdInvoiceScrollRef.current) return;
     let cancelled = false;
     const timers: number[] = [];
@@ -1383,7 +1386,7 @@ export default function VisitCheckoutPanel({
       window.cancelAnimationFrame(frame);
       for (const id of timers) window.clearTimeout(id);
     };
-  }, [patientId, roster.length]);
+  }, [patientId, roster.length, scrollToCurrentPet]);
 
   const previsitIdsKey = previsitOrders.map((o) => o.id).join(',');
 

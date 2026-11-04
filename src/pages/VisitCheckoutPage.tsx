@@ -345,6 +345,7 @@ export default function VisitCheckoutPage() {
           <EmployerPromotionLine invoice={invoice} onInvoiceChange={setInvoice} />
           <VisitCheckoutPanel
             remindersInPanel={false}
+            scrollToCurrentPet={false}
             encounterId={encounterId ?? undefined}
             invoice={invoice}
             orders={orders}
