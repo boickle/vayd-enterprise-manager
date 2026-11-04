@@ -148,7 +148,7 @@ Goal: record every dose so it reaches the chart, the certificate and the reminde
 
 **Techs:** "You can record every dose, rabies included. The doctor on the visit is the vet of record, not you."
 
-**Doctors:** "Make sure your license number is in Settings → Staff before your first rabies dose."
+**Doctors:** "Your practice manager enters your license number and signature in Settings → Staff. Before your first rabies dose, check with them that both are there."
 
 **Common mistakes**
 - **Typing the lot and tag but not pressing Save.** Doses don't save by themselves the way SOAP text does. Press the dose's Save button before you move on.
