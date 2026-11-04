@@ -11,12 +11,9 @@
  * review/Send step. What the API decides is read back with schedulingApi.
  *
  * Intercepts and stand-ins (and why):
- *  - The embedded Routing calendar is NOT clicked through (slot search, arrival windows and the book modal are
- *    covered by the Scheduler specs). After "Find a time now" the planner has created the forward-booking rows
- *    and is waiting for the calendar to report a booking. The spec does what a calendar book does: it creates
- *    one appointment per pet at the same start through the API, completes each forward-booking row
- *    (POST /forward-bookings/:id/complete), then fires the same window event the Scheduler fires
- *    (vayd:follow-up-planner-booked). Everything after that (card turns "Booked", Undo, Done, review) is the
+ *  - "Find a time now" opens the "Find a time" panel (best-route slot cards). The spec books through its Book
+ *    button, as a user does (no calendar, no new tab). The slot is whatever routing offers, so the follow-up start
+ *    is read back from the booked appointments. Everything after (card turns "Booked", Undo, Done, review) is the
  *    planner's own code against the real API.
  *  - The API under test captures email to a file but has no way to observe sent texts from Cypress, and the
  *    seeded clients are do-not-text. SCH-13-5 turns text on for household A (restored afterwards), stubs
@@ -32,7 +29,6 @@ import {
 
 const TZ = 'America/New_York';
 /** The planner's own "Undo" window is 10 s; the test clicks Undo well inside it. */
-const BOOKED_EVENT = 'vayd:follow-up-planner-booked';
 
 /** UTC instant of a New York wall-clock time on the first weekday at least `daysAhead` days from now. */
 function weekdayAtNy(daysAhead: number, hour: number): Date {
@@ -205,10 +201,12 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
   }
 
   /**
-   * Plans a 2-week recheck for both pets, picks each pet's type, clicks Find a time now and then stands in for
-   * the calendar's book (see the header comment). Yields the follow-up start and the booked appointment ids.
+   * Plans a 2-week recheck for both pets, picks each pet's type, clicks Find a time now and books the first slot
+   * from the "Find a time" panel's Book button (no calendar). The slot is whatever the routing search offers, so
+   * the follow-up start is read back from the booked appointments. Yields that start, the booked appointment ids
+   * and the forward-booking rows the planner made.
    */
-  function planAndBookBoth(followUpStart: Date) {
+  function planAndBookBoth() {
     const w = schedulingWorld();
     putOnDefaultCard(petA());
     putOnDefaultCard(petB());
@@ -228,55 +226,37 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
       expect($s.val()).to.equal(String(w.types.recheck))
     );
     cy.contains('button', 'Find a time now').click();
-    cy.get('[role="dialog"][aria-label="Calendar"]', { timeout: 30000 }).should('be.visible');
 
-    // The planner has created one pending forward-booking row per pet.
+    // The "Find a time" panel (not the old in-planner calendar) lists slot cards with a Book button.
+    cy.get('[role="dialog"][aria-label="Find a time"]', { timeout: 30000 }).as('fit').should('be.visible');
+    cy.get('@fit').find('.fup-fit__book', { timeout: 60000 }).should('have.length.greaterThan', 0);
+    // "What does <pet> need?" is required (it becomes the visit Description); fill any that the card's note left empty.
+    cy.get('@fit')
+      .find('.fup-fit__need input')
+      .should('have.length', 2)
+      .each(($input) => {
+        if (!String($input.val() ?? '').trim()) {
+          cy.wrap($input).type('SCH-13 e2e follow-up recheck');
+        }
+      });
+    cy.get('@fit').find('.fup-fit__book').first().should('not.be.disabled').click();
+    cy.get('@fit').find('.fup-fit__booked').should('contain.text', `Booked ${petA()}`);
+    // The panel returns to the plan by itself; the card is booked, with Undo in the toast.
+    cy.get('[role="dialog"][aria-label="Find a time"]', { timeout: 15000 }).should('not.exist');
+    cy.contains('.fup-status--ok', 'Booked').should('be.visible');
+    cy.get('[role="status"]').should('contain.text', `Booked ${petA()}`);
+
     const pets = w.households.A.activePetIds;
-    return forwardBookings('pending').then((rows) => {
-      const mine = rows.filter((r) => pets.includes(Number(r.patientId)));
+    return forwardBookings('booked').then((rows) => {
+      const mine = rows.filter(
+        (r) => pets.includes(Number(r.patientId)) && !leftoverEntryIds.has(Number(r.id))
+      );
       expect(mine.map((r) => Number(r.patientId)).sort()).to.deep.equal([...pets].sort());
-      // Stand-in for the calendar's book: appointments, then complete each row.
-      const booked: number[] = [];
-      mine.forEach((row) => {
-        schedulingApi<{ id: number }>('cl', 'POST', '/appointments', {
-          practiceId: w.practiceId,
-          primaryProviderId: w.doctors.A,
-          clientId: w.households.A.clientId,
-          patientId: Number(row.patientId),
-          appointmentTypeId: Number(row.appointmentTypeId ?? w.types.recheck),
-          appointmentStart: followUpStart.toISOString(),
-          appointmentEnd: new Date(followUpStart.getTime() + 30 * 60_000).toISOString(),
-          description: 'SCH-13 e2e follow-up',
-          bookedViaRouting: true,
-        }).then((res) => {
-          booked.push(res.body.id);
-          schedulingApi('cl', 'POST', `/forward-bookings/${row.id}/complete`, {
-            trackingToken: row.trackingToken,
-            appointmentId: res.body.id,
-            completedVia: 'routing',
-          });
-        });
+      const booked = mine.map((r) => Number(r.bookedAppointmentId));
+      return schedulingApi('manager', 'GET', `/appointments/${booked[0]}`).then((res) => {
+        const start = new Date(res.body.appointmentStart);
+        return { start, booked, rows: mine } as { start: Date; booked: number[]; rows: any[] };
       });
-      cy.window().then((win) => {
-        win.dispatchEvent(
-          new win.CustomEvent(BOOKED_EVENT, {
-            detail: {
-              appointmentId: booked[0],
-              startIso: followUpStart.toISOString(),
-              endIso: new Date(followUpStart.getTime() + 30 * 60_000).toISOString(),
-              primaryProviderId: w.doctors.A,
-            },
-          })
-        );
-      });
-      cy.contains('.fup-status--ok', 'Booked').should('be.visible');
-      cy.get('[role="status"]').should('contain.text', `Booked ${petA()}`);
-      return cy
-        .wrap(null, { log: false })
-        .then((): any => ({ booked, rows: mine })) as Cypress.Chainable<{
-        booked: number[];
-        rows: any[];
-      }>;
     });
   }
 
@@ -312,11 +292,10 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
 
   it('SCH-13-1: books a 2-week recheck for both pets; visits exist and forward bookings are "booked"', () => {
     const w = schedulingWorld();
-    const followUp = weekdayAtNy(14, 9);
     setUpTodaysVisit().then(() => {
       openPlanner(todayVisitIds[0], w.households.A.activePetIds[0]);
       cy.get('.fup-tray').should('contain.text', petA()).and('contain.text', petB());
-      planAndBookBoth(followUp).then(({ booked, rows }) => {
+      planAndBookBoth().then(({ start: followUp, booked, rows }) => {
         expect(booked).to.have.length(2);
         expectVisitsAt(followUp, 2);
         forwardBookings('booked').then((now) => {
@@ -339,10 +318,9 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
 
   it('SCH-13-2: Undo within 10 s removes the visits and the forward bookings', () => {
     const w = schedulingWorld();
-    const followUp = weekdayAtNy(14, 11);
     setUpTodaysVisit(12).then(() => {
       openPlanner(todayVisitIds[0], w.households.A.activePetIds[0]);
-      planAndBookBoth(followUp).then(({ booked, rows }) => {
+      planAndBookBoth().then(({ start: followUp, booked, rows }) => {
         expectVisitsAt(followUp, 2);
         cy.get('[role="status"]').contains('button', 'Undo').click();
         cy.get('[role="status"]').should('contain.text', 'Booking undone');
@@ -521,11 +499,14 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
                 'contain.text',
                 'Sched doctorA'
               );
+              // The prompt closes before the request finishes: wait for the complete call itself.
+              cy.intercept('POST', '**/tasks/*/complete').as('completeTask');
               cy.contains('button', 'Mark complete').click();
               cy.get('[role="alertdialog"]')
                 .should('contain.text', 'Also close it for Sched doctorA?')
                 .contains('button', 'Close for everyone')
                 .click();
+              cy.wait('@completeTask').its('response.statusCode').should('be.within', 200, 299);
               cy.get('[role="alertdialog"]').should('not.exist');
               schedulingApi('doctorA', 'GET', `/tasks/${doctorCopy[0].id}`).then((res) => {
                 expect(res.body.status).to.equal('done');
@@ -582,12 +563,11 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
 
     it('Send & finish with a double click makes exactly one text request', () => {
       const w = schedulingWorld();
-      const followUp = weekdayAtNy(14, 14);
       // Stubbed: nothing can be sent, and the stub is how the single send is counted.
       cy.intercept('POST', '**/sms/client/*', { statusCode: 200, body: { ok: true } }).as('sms');
       setUpTodaysVisit(15).then(() => {
         openPlanner(todayVisitIds[0], w.households.A.activePetIds[0]);
-        planAndBookBoth(followUp).then(() => {
+        planAndBookBoth().then(() => {
           cy.contains('button', 'Done · next: text the owner').click();
           cy.get('#fup-title').should('contain.text', 'Text the owner');
           cy.get('textarea[aria-label="Text message to the owner"]')
