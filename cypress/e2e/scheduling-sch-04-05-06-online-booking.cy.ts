@@ -125,6 +125,8 @@ function staffBook(o: {
     appointmentStart: o.start.toISOString(),
     appointmentEnd: end.toISOString(),
     description: 'SCH e2e: booked by staff first',
+    // The Scheduler's Book screen always sends this (see plan SCH-A1).
+    bookedViaRouting: true,
   });
 }
 
