@@ -16,8 +16,8 @@ type Props = {
 };
 
 /**
- * Labs-pending / "add to the list" tasks. The work is putting them on the forward
- * booking list — not charting a call. Chart notes stay available under the fold.
+ * Labs-pending tasks. The work is scheduling the follow-up (Schedule follow-ups),
+ * not charting a call. Chart notes stay available under the fold.
  */
 export default function ForwardBookingTaskPanel({
   task,
@@ -36,15 +36,15 @@ export default function ForwardBookingTaskPanel({
   });
 
   return (
-    <section className="pims-fb-task" aria-label="Add forward booking">
+    <section className="pims-fb-task" aria-label="Schedule follow-ups">
       <p className="pims-fb-task__lead">
-        When you are ready, add {who} to the forward booking list. Lab results and
-        owner comms can live on another screen — this task is the booking.
+        When the labs are back, schedule {who}&apos;s follow-up: add {who} to a visit
+        already on the books, book a new one, or send it to the CLs. Done closes this task.
       </p>
       <div className="pims-fb-task__actions">
         <Link className="pims-task-detail__btn pims-task-detail__btn--primary" to={to}>
           <CalendarPlus size={16} />
-          Add to forward booking list
+          Schedule follow-ups
         </Link>
         {canComplete ? (
           <button

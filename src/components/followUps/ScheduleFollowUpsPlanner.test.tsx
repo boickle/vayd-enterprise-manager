@@ -425,4 +425,44 @@ describe('Schedule follow-ups planner', () => {
     unmount();
     expect(actions.removePlannerForwardBookings).toHaveBeenCalledWith([500], 1);
   });
+
+  it('labs are back: the pet needs a plan, and Done reports what was done for the task', async () => {
+    const { loadFollowUpPlannerData } = await import('./plannerData');
+    vi.mocked(loadFollowUpPlannerData).mockResolvedValueOnce({
+      ...fixture,
+      todayProviderId: null,
+      pets: fixture.pets.map((p) => ({
+        ...p,
+        onTodaysVisit: false,
+        appointmentId: null,
+        soapEncounterId: null,
+        ...(p.patientId === 4 ? { focusReason: 'Labs are back', sourceAppointmentId: 104 } : {}),
+      })),
+    });
+    const onSaved = vi.fn();
+    render(
+      <ScheduleFollowUpsPlanner
+        open
+        visit={visit}
+        practiceId={1}
+        tz={TZ}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />
+    );
+    await screen.findByText('Labs are back · needs a plan');
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    expect(await screen.findByText(/Still needs a follow-up: Biscuit/)).toBeTruthy();
+
+    pick(trayPet('Biscuit'), /No follow-up needed/);
+    fireEvent.click(screen.getByRole('button', { name: 'Client declined' }));
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    await waitFor(() =>
+      expect(onSaved).toHaveBeenCalledWith({
+        focusSummary: 'Biscuit: no follow-up needed (Client declined).',
+      })
+    );
+    // The earlier visit keeps its saved Labs pending choice.
+    expect(actions.savePetDisposition).not.toHaveBeenCalled();
+  });
 });

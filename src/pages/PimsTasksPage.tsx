@@ -51,8 +51,7 @@ import {
   type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
-import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
-import type { ForwardBookingEntry } from '../api/forwardBooking';
+import ScheduleFollowUpsForTask from '../components/followUps/ScheduleFollowUpsForTask';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
   FORWARD_BOOKING_CREATE_ON_TASKS_PARAM,
@@ -60,7 +59,6 @@ import {
   FORWARD_BOOKING_TASK_ADDED_PARAM,
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
-import { completeForwardBookingTask } from '../utils/forwardBookingTaskComplete';
 import {
   mailOrderTaskStatusClass,
   mailOrderTaskStatusLabel,
@@ -929,30 +927,22 @@ export default function PimsTasksPage() {
     setForwardBookingSourceTaskId(null);
   }, []);
 
-  const onForwardBookingCreated = useCallback(
-    (entry: ForwardBookingEntry) => {
-      const taskId = forwardBookingSourceTaskId;
-      closeForwardBookingCreate();
-      if (taskId != null) {
-        void completeForwardBookingTask(taskId, entry).then((closed) => {
-          if (closed) setForwardBookingAddedTaskId(taskId);
+  // "Forward book once labs are back": Schedule follow-ups for the household, with the
+  // pet needing a plan; Done closes the task.
+  const forwardBookingCreateModal =
+    forwardBookingCreateOpen && forwardBookingPrefill ? (
+      <ScheduleFollowUpsForTask
+        patientId={forwardBookingPrefill.patientId}
+        appointmentId={forwardBookingPrefill.appointmentId}
+        taskId={forwardBookingSourceTaskId}
+        onClose={closeForwardBookingCreate}
+        onDone={({ taskClosed }) => {
+          const taskId = forwardBookingSourceTaskId;
+          closeForwardBookingCreate();
+          if (taskClosed && taskId != null) setForwardBookingAddedTaskId(taskId);
           refreshList();
           notifyTasksChanged();
-        });
-        return;
-      }
-      refreshList();
-      notifyTasksChanged();
-    },
-    [closeForwardBookingCreate, forwardBookingSourceTaskId, refreshList],
-  );
-
-  const forwardBookingCreateModal =
-    forwardBookingCreateOpen ? (
-      <CreateForwardBookingModal
-        prefill={forwardBookingPrefill}
-        onClose={closeForwardBookingCreate}
-        onCreated={onForwardBookingCreated}
+        }}
       />
     ) : null;
 

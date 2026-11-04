@@ -147,6 +147,14 @@ function fmtWindow(a: DateTime, b: DateTime) {
   return `${a.toFormat('h:mm')}–${b.toFormat('h:mm a')}`;
 }
 
+export type PlannerSaveResult = {
+  /**
+   * One line per pet the planner was opened for (e.g. a labs-pending task), saying
+   * what was done: used as the task's resolution note. Null when there were none.
+   */
+  focusSummary: string | null;
+};
+
 type Props = {
   open: boolean;
   /** Build with plannerVisitFromWrapUp / plannerVisitFromAppointments / plannerVisitForClient. */
@@ -155,7 +163,7 @@ type Props = {
   tz: string;
   onClose: () => void;
   /** After Done saved the choices, so the checkout reloads the wrap-up. */
-  onSaved: () => void | Promise<void>;
+  onSaved: (result: PlannerSaveResult) => void | Promise<void>;
 };
 
 /**
@@ -378,7 +386,10 @@ export default function ScheduleFollowUpsPlanner({
       .map((c) => outcomeAt(pet, c))
       .filter((o): o is PlacementOutcome => o != null);
   const todayPets = pets.filter((p) => p.onTodaysVisit);
-  const openPets = todayPets.filter((p) => !p.savedMode && outcomesFor(p).length === 0);
+  /** Opened for these pets (e.g. labs are back): they need a plan too. */
+  const focusPets = pets.filter((p) => p.focusReason);
+  const mustPlan = [...todayPets, ...focusPets];
+  const openPets = mustPlan.filter((p) => !p.savedMode && outcomesFor(p).length === 0);
   const readOnly =
     todayPets.length > 0 && todayPets.every((p) => p.savedMode) && !savedOnce ? true : false;
 
@@ -944,6 +955,39 @@ export default function ScheduleFollowUpsPlanner({
     return null;
   }
 
+  /** What was done for each pet the planner was opened for, in plain words. */
+  function focusSummary(): string | null {
+    if (!focusPets.length || !data) return null;
+    return focusPets
+      .map((pet) => {
+        const parts = (placements[pet.patientId] ?? []).flatMap((card) => {
+          if (card === NONE) return [`no follow-up needed (${noneReason.trim()})`];
+          if (card.startsWith('up:')) {
+            const v = visitByKey.get(card.slice(3));
+            return upcoming[card.slice(3)]?.booking && v
+              ? [
+                  `added to the ${fmtDay(v.start)} visit${v.provider ? ` with ${providerTextLabel(v.provider)}` : ''}`,
+                ]
+              : [];
+          }
+          const c = cardByKey.get(card);
+          if (c?.status === 'booked' && c.booking) {
+            return [
+              `booked ${fmtDay(c.booking.start)}${c.booking.provider ? ` with ${providerTextLabel(c.booking.provider)}` : ''}`,
+            ];
+          }
+          if (c?.status === 'cl') {
+            return [
+              `sent to the CLs (around ${plannerTargetDate(c.interval, data.today).toFormat('LLL d, yyyy')})`,
+            ];
+          }
+          return [];
+        });
+        return `${pet.name}: ${parts.join('; ') || 'no change'}.`;
+      })
+      .join(' ');
+  }
+
   async function saveAll() {
     if (!data) return;
     const blocker = doneBlocker();
@@ -1032,7 +1076,7 @@ export default function ScheduleFollowUpsPlanner({
       }
       setDirty(false);
       setSavedOnce(true);
-      await onSaved();
+      await onSaved({ focusSummary: focusSummary() });
       if (bookings.length) {
         setTextEdited(false);
         setStep('review');
@@ -1295,7 +1339,10 @@ export default function ScheduleFollowUpsPlanner({
     (p) => !p.savedMode && !(placements[p.patientId] ?? []).length
   );
   const savedToday = todayPets.filter((p) => p.savedMode);
-  const trayOther = pets.filter((p) => !p.onTodaysVisit && !(placements[p.patientId] ?? []).length);
+  const trayOther = pets.filter(
+    (p) => !p.onTodaysVisit && !p.focusReason && !(placements[p.patientId] ?? []).length
+  );
+  const trayFocus = focusPets.filter((p) => !(placements[p.patientId] ?? []).length);
   const flagged = trayOther
     .map((p) => {
       const urgent = (data?.remindersByPet[p.patientId] ?? []).filter((r) => {
@@ -1532,8 +1579,45 @@ export default function ScheduleFollowUpsPlanner({
                   ))}
                 </div>
               ) : null}
+              {focusPets.length ? (
+                <div className="fup-tray__sec">
+                  <h3>{focusPets[0].focusReason} · needs a plan</h3>
+                  {trayFocus.length ? (
+                    trayFocus.map((p) => (
+                      <button
+                        key={p.patientId}
+                        type="button"
+                        className="fup-pet"
+                        draggable
+                        onDragStart={() => (dragRef.current = { petId: p.patientId, from: null })}
+                        onClick={(e) => openMenu(p.patientId, null, e.currentTarget)}
+                      >
+                        {avatar(p)}
+                        <span className="fup-pet__txt">
+                          <span className="fup-pet-name">{p.name}</span>
+                          <span className="fup-pet-meta">
+                            {p.inactive ? 'Marked inactive · check the chart' : 'Tap to choose'}
+                          </span>
+                        </span>
+                        <span className="fup-grip" aria-hidden="true">
+                          ⋮⋮
+                        </span>
+                        <span className="fup-pet__rems">{remList(p, null)}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="fup-ok">
+                      ✓ {joinNames(focusPets.map((p) => p.name))} has a card
+                    </div>
+                  )}
+                </div>
+              ) : null}
               <div className="fup-tray__sec">
-                <h3>{todayPets.length ? 'Rest of household · optional' : 'Household'}</h3>
+                <h3>
+                  {todayPets.length || focusPets.length
+                    ? 'Rest of household · optional'
+                    : 'Household'}
+                </h3>
                 {trayOther.length ? (
                   trayOther.map((p) => (
                     <button
@@ -2208,7 +2292,7 @@ export default function ScheduleFollowUpsPlanner({
             ) : (
               <>
                 <div className="fup-progress">
-                  {todayPets.map((p) => {
+                  {mustPlan.map((p) => {
                     const done = !!p.savedMode || outcomesFor(p).length > 0;
                     const labels = (placements[p.patientId] ?? [])
                       .filter((c) => outcomeAt(p, c))
@@ -2516,7 +2600,7 @@ function MoveMenu(props: {
               {o.label}
             </button>
           ))}
-          {props.pet.onTodaysVisit ? (
+          {props.pet.onTodaysVisit || props.pet.focusReason ? (
             <button type="button" role="menuitem" onClick={() => props.onPick(NONE, 'move')}>
               No follow-up needed
             </button>
@@ -2538,7 +2622,7 @@ function MoveMenu(props: {
               {o.label}
             </button>
           ))}
-          {props.pet.onTodaysVisit ? (
+          {props.pet.onTodaysVisit || props.pet.focusReason ? (
             <button type="button" role="menuitem" onClick={() => props.onPick(NONE, 'add')}>
               No follow-up needed
             </button>

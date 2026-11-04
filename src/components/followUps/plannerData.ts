@@ -5,6 +5,7 @@ import {
 } from '../../api/appointments';
 import { listPatientOpenReminders } from '../../api/careOutreach';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
+import { fetchPatientByIdStaff } from '../../api/patients';
 import { fetchAllAppointmentTypes, type AppointmentType } from '../../api/appointmentSettings';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 import type { ForwardBookingDispositionMode } from '../../api/forwardBookingDisposition';
@@ -31,6 +32,12 @@ export type PlannerPet = {
   soapEncounterId: string | null;
   /** Follow-up already settled for this visit before the planner opened (read-only). */
   savedMode: ForwardBookingDispositionMode | null;
+  /** Why the planner was opened for this pet (e.g. "Labs are back"); needs a plan. */
+  focusReason?: string | null;
+  /** Earlier visit that new forward-booking rows for this pet link back to. */
+  sourceAppointmentId?: number | null;
+  /** Patient record is inactive (e.g. deceased); shown so staff check before booking. */
+  inactive?: boolean;
 };
 
 export type PlannerReminder = {
@@ -182,6 +189,12 @@ export type PlannerVisitInput = {
   }[];
   clientEmails?: string[];
   clientDoNotEmail?: boolean;
+  /**
+   * Pets the planner was opened for without a visit being wrapped up, e.g. a
+   * labs-pending task: they need a plan, but their earlier visit's saved follow-up
+   * choice is left as it is.
+   */
+  focus?: { patientId: number; sourceAppointmentId: number | null; reason: string }[];
 };
 
 export function plannerVisitFromWrapUp(w: VisitWrapUp): PlannerVisitInput {
@@ -237,9 +250,10 @@ export function plannerVisitFromAppointments(
 /** Left-nav shortcut: a household with no visit being wrapped up. */
 export function plannerVisitForClient(
   clientId: number,
-  clientName: string | null
+  clientName: string | null,
+  focus?: PlannerVisitInput['focus']
 ): PlannerVisitInput {
-  return { clientId, clientName, provider: null, pets: [] };
+  return { clientId, clientName, provider: null, pets: [], focus };
 }
 
 /**
@@ -300,16 +314,47 @@ export async function loadFollowUpPlannerData(args: {
   const todaySet = new Set(todayPets.map((p) => p.patientId));
   const householdPets: PlannerPet[] = activeClientPetsFromPayload(clientPayload)
     .filter((p) => !todaySet.has(Number(p.id)))
-    .map((p) => ({
-      patientId: Number(p.id),
-      name: p.name,
-      species: null,
-      onTodaysVisit: false,
-      appointmentId: null,
-      soapEncounterId: null,
-      savedMode: null,
-    }));
-  const pets = [...todayPets, ...householdPets];
+    .map((p) => {
+      const focus = visit.focus?.find((f) => f.patientId === Number(p.id));
+      return {
+        patientId: Number(p.id),
+        name: p.name,
+        species: null,
+        onTodaysVisit: false,
+        appointmentId: null,
+        soapEncounterId: null,
+        savedMode: null,
+        focusReason: focus?.reason ?? null,
+        sourceAppointmentId: focus?.sourceAppointmentId ?? null,
+      };
+    })
+    // Pets the planner was opened for come first.
+    .sort((a, b) => Number(!!b.focusReason) - Number(!!a.focusReason));
+  // A pet the planner was opened for must never vanish because its record is inactive.
+  const missingFocus = (visit.focus ?? []).filter(
+    (f) => !todaySet.has(f.patientId) && !householdPets.some((p) => p.patientId === f.patientId)
+  );
+  const inactiveFocusPets: PlannerPet[] = await Promise.all(
+    missingFocus.map(async (f) => {
+      const raw = (await fetchPatientByIdStaff(f.patientId).catch(() => null)) as Record<
+        string,
+        unknown
+      > | null;
+      return {
+        patientId: f.patientId,
+        name: str(raw?.name) ?? `Patient ${f.patientId}`,
+        species: str(raw?.species) ?? null,
+        onTodaysVisit: false,
+        appointmentId: null,
+        soapEncounterId: null,
+        savedMode: null,
+        focusReason: f.reason,
+        sourceAppointmentId: f.sourceAppointmentId,
+        inactive: true,
+      };
+    })
+  );
+  const pets = [...todayPets, ...inactiveFocusPets, ...householdPets];
 
   const openReminders = await Promise.all(
     pets.map((p) => listPatientOpenReminders(p.patientId).catch(() => []))

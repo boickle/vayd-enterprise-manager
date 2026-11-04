@@ -83,7 +83,10 @@ export function buildCreateForwardBookingUrl(args: {
 }
 
 export const LABS_PENDING_FORWARD_BOOKING_TASK_BODY =
-  'When lab results are back, add to the forward booking list.';
+  'When lab results are back, schedule the follow-up (Schedule follow-ups).';
+
+/** Body of labs tasks created before Schedule follow-ups; still recognized. */
+const LEGACY_LABS_PENDING_TASK_BODY = 'When lab results are back, add to the forward booking list.';
 
 /**
  * Whether putting this on the forward booking list is the work. Patient +
@@ -97,7 +100,9 @@ export function isForwardBookingTask(task: {
   if (!getForwardBookingPrefillFromTaskLinks(task.links)) return false;
   const body = task.body?.trim();
   if (!body) return false;
-  if (body === LABS_PENDING_FORWARD_BOOKING_TASK_BODY) return true;
+  if (body === LABS_PENDING_FORWARD_BOOKING_TASK_BODY || body === LEGACY_LABS_PENDING_TASK_BODY) {
+    return true;
+  }
   // Older tasks carried the booking link in the notes instead of a marker body.
   return body
     .split('\n')

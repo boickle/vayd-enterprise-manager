@@ -48,10 +48,10 @@ export type PlannerBooking = {
 export class SourceVisitLinks {
   private used = new Set<number>();
   take(pet: PlannerPet): number | null {
-    if (!pet.onTodaysVisit || pet.appointmentId == null || this.used.has(pet.patientId))
-      return null;
+    const source = pet.onTodaysVisit ? pet.appointmentId : (pet.sourceAppointmentId ?? null);
+    if (source == null || this.used.has(pet.patientId)) return null;
     this.used.add(pet.patientId);
-    return pet.appointmentId;
+    return source;
   }
   release(petId: number) {
     this.used.delete(petId);
@@ -91,7 +91,7 @@ export async function createPlannerForwardBookings(args: {
         needsPremeds: args.premeds,
         appointmentTypeId: args.appointmentTypeId,
         serviceMinutes: args.serviceMinutes,
-        createdVia: sourceAppointmentId != null ? 'end_visit' : 'manual',
+        createdVia: sourceAppointmentId != null && pet.onTodaysVisit ? 'end_visit' : 'manual',
       })
     );
   }

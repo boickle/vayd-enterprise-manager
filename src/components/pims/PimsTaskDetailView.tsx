@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
+import { VAYD_TASKS_CHANGED } from '../../utils/taskOwnership';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -218,6 +219,13 @@ export default function PimsTaskDetailView({
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Closed elsewhere (e.g. Schedule follow-ups finished this labs task): show it.
+  useEffect(() => {
+    const onChanged = () => void load();
+    window.addEventListener(VAYD_TASKS_CHANGED, onChanged);
+    return () => window.removeEventListener(VAYD_TASKS_CHANGED, onChanged);
   }, [load]);
 
   useEffect(() => {
@@ -668,7 +676,7 @@ export default function PimsTaskDetailView({
           <p className="pims-fb-added__row pims-fb-added__row--1">
             <CheckCircle2 size={20} aria-hidden />
             <span>
-              <strong>Forward booking added</strong>
+              <strong>Follow-ups saved</strong>
               {patientName ? ` for ${patientName}` : ''}
             </span>
           </p>
