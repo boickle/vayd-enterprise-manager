@@ -244,8 +244,23 @@ export type VisitInvoiceTender = {
   voidReason?: string | null;
 };
 
+/** SCH-10: an employer promotion offered on the invoice, waiting for staff to confirm it. */
+export type PendingEmployerPromotion = {
+  usageId: number;
+  promotionId: number;
+  promotionName: string;
+  companyName: string;
+  /** "Employer promotion". */
+  label: string;
+  discountType: string;
+  /** Dollars off. */
+  amount: number;
+};
+
 export type VisitInvoice = {
   id: string;
+  /** Present on the client's first visit invoice until staff confirm the promotion (SCH-10). */
+  pendingEmployerPromotion?: PendingEmployerPromotion | null;
   /**
    * Only on the reply to a line edit: the new quantity no longer fit the line's lots, so the
    * server cleared them and staff must pick them again.
@@ -1589,6 +1604,15 @@ export async function getInvoice(id: string): Promise<VisitInvoice> {
   const { data } = await http.get<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}`, {
     params: { practiceId: pid() },
   });
+  return data;
+}
+
+/** SCH-10: staff confirm the employer promotion; adds the discount line. */
+export async function confirmEmployerPromotion(id: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(id)}/employer-promotion/confirm`,
+    { practiceId: pid() }
+  );
   return data;
 }
 

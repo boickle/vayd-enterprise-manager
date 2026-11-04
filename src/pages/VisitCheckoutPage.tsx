@@ -25,6 +25,7 @@ import {
   joinPetNames,
 } from '../utils/forwardBookingDisposition';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
+import EmployerPromotionLine from '../components/invoice/EmployerPromotionLine';
 import ScheduleFollowUpsButton from '../components/followUps/ScheduleFollowUpsButton';
 import ScheduleFollowUpsPlanner from '../components/followUps/ScheduleFollowUpsPlanner';
 import { plannerVisitFromWrapUp } from '../components/followUps/plannerData';
@@ -333,6 +334,7 @@ export default function VisitCheckoutPage() {
         </section>
 
         <section className="soap-checkout-page__pane">
+          <EmployerPromotionLine invoice={invoice} onInvoiceChange={setInvoice} />
           <VisitCheckoutPanel
             encounterId={encounterId ?? undefined}
             invoice={invoice}

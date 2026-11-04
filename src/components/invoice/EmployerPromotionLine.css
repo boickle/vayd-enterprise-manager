@@ -1,0 +1,23 @@
+.employer-promo-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed #2e7d32;
+  border-radius: 8px;
+  background: #f1f8f2;
+}
+.employer-promo-line__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+.employer-promo-line__error {
+  color: #b71c1c;
+}
+.employer-promo-line__confirm {
+  flex-shrink: 0;
+}
