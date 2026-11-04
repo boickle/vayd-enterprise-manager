@@ -23,6 +23,7 @@ import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
 import { ForwardBookingBookLaterModal } from '../components/ForwardBookingBookLaterModal';
 import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import ScheduleFollowUpsLauncher from '../components/followUps/ScheduleFollowUpsLauncher';
 import { EditForwardBookingModal } from '../components/EditForwardBookingModal';
 import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
@@ -2785,7 +2786,20 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         </div>
       ) : null}
 
-      {createOpen ? (
+      {createOpen && !createPrefill && !createReturnTo ? (
+        // Plain "new forward booking" (header + Forward Book): same Schedule follow-ups
+        // window as checkout, Start/End Visit and the left nav.
+        <ScheduleFollowUpsLauncher
+          onClose={() => finishCreateForwardBooking(null)}
+          onSaved={() => {
+            setStatusFilter('pending');
+            void load();
+          }}
+        />
+      ) : null}
+
+      {/* From a labs-pending task: prefilled form that also closes the task. */}
+      {createOpen && (createPrefill || createReturnTo) ? (
         <CreateForwardBookingModal
           practiceId={PRACTICE_ID}
           prefill={createPrefill}

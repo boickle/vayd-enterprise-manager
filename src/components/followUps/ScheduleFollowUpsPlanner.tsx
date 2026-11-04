@@ -1547,7 +1547,9 @@ export default function ScheduleFollowUpsPlanner({
                       {avatar(p)}
                       <span className="fup-pet__txt">
                         <span className="fup-pet-name">{p.name}</span>
-                        <span className="fup-pet-meta">Not on today&apos;s visit</span>
+                        <span className="fup-pet-meta">
+                          {todayPets.length ? "Not on today's visit" : 'Tap to choose'}
+                        </span>
                       </span>
                       <span className="fup-grip" aria-hidden="true">
                         ⋮⋮

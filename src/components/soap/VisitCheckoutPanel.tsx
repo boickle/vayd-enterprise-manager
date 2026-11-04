@@ -188,8 +188,7 @@ type Props = {
   orders?: EncounterOrder[];
   disabled?: boolean;
   rxLabel?: CheckoutRxLabelContext | null;
-  /** Rendered below the payment actions — the follow-up question, asked while
-   * the client is still here (see CheckoutFollowUpPrompt). */
+  /** Rendered below the payment actions (optional extra content). */
   followUpSlot?: ReactNode;
   /**
    * Payment lives on the checkout screen, not in the SOAP sidebar. With this off the
