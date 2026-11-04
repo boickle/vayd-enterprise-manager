@@ -338,7 +338,7 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
           expect(stillThere, 'forward-booking rows left after Undo').to.have.length(0);
         });
         // The card is back to a draft, so the pets can be booked again.
-        cy.contains('button', 'Find a time now').should('be.visible');
+        cy.contains('button', 'Find a time now').scrollIntoView().should('be.visible');
       });
     });
   });
