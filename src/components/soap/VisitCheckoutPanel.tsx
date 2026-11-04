@@ -182,6 +182,27 @@ function formatDeclineDay(iso: string): string {
   return ` (${day})`;
 }
 
+/** Pets the checkout Reminders box offers: the roster plus any pet on an invoice line. */
+export function buildReminderPets(
+  roster: { patientId: number; patientName: string }[],
+  invoice: VisitInvoice | null | undefined,
+  patientId?: number | null
+): { patientId: number; patientName: string }[] {
+  const out: { patientId: number; patientName: string }[] = roster.map((r) => ({
+    patientId: r.patientId,
+    patientName: r.patientName,
+  }));
+  const add = (id: number | null | undefined, name?: string | null) => {
+    if (id == null || out.some((p) => p.patientId === id)) return;
+    out.push({ patientId: id, patientName: name?.trim() || `Pet #${id}` });
+  };
+  for (const l of invoice?.lines ?? []) {
+    if (!l.isDeleted) add(l.patientId, l.patientName);
+  }
+  if (out.length === 0) add(patientId ?? invoice?.patientId ?? null);
+  return out;
+}
+
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
   encounterId?: string | null;
@@ -192,6 +213,8 @@ type Props = {
   rxLabel?: CheckoutRxLabelContext | null;
   /** Rendered below the payment actions (optional extra content). */
   followUpSlot?: ReactNode;
+  /** Off when the page renders CheckoutReminders itself (under its Follow-up section). */
+  remindersInPanel?: boolean;
   /**
    * Payment lives on the checkout screen, not in the SOAP sidebar. With this off the
    * panel is the working bill (add charges, record doses, approve scripts) and offers
@@ -1197,6 +1220,7 @@ export default function VisitCheckoutPanel({
   disabled,
   rxLabel,
   followUpSlot,
+  remindersInPanel = true,
   showPayment = true,
   onCheckout,
   paymentBlockedReason = null,
@@ -1319,21 +1343,10 @@ export default function VisitCheckoutPanel({
     [orders]
   );
 
-  const reminderPets = useMemo(() => {
-    const out: { patientId: number; patientName: string }[] = roster.map((r) => ({
-      patientId: r.patientId,
-      patientName: r.patientName,
-    }));
-    const add = (id: number | null | undefined, name?: string | null) => {
-      if (id == null || out.some((p) => p.patientId === id)) return;
-      out.push({ patientId: id, patientName: name?.trim() || `Pet #${id}` });
-    };
-    for (const l of invoice?.lines ?? []) {
-      if (!l.isDeleted) add(l.patientId, l.patientName);
-    }
-    if (out.length === 0) add(patientId ?? invoice?.patientId ?? null);
-    return out;
-  }, [roster, invoice?.lines, invoice?.patientId, patientId]);
+  const reminderPets = useMemo(
+    () => buildReminderPets(roster, invoice, patientId),
+    [roster, invoice, patientId]
+  );
 
   const previsitOrders = useMemo(() => {
     const byId = new Map<string, EncounterOrder>();
@@ -3965,11 +3978,11 @@ export default function VisitCheckoutPanel({
         />
       )}
 
-      {showPayment ? (
+      {followUpSlot}
+
+      {showPayment && remindersInPanel ? (
         <CheckoutReminders invoice={invoice} pets={reminderPets} disabled={disabled} />
       ) : null}
-
-      {followUpSlot}
 
       {showPayment ? (
         <div className="soap-visit-complete">
