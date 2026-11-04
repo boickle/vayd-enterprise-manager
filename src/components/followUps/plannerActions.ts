@@ -330,10 +330,34 @@ export function chooseLabsTaskBranchIds(args: {
   return visit != null ? [visit] : [];
 }
 
-function appointmentBranchId(a: Appointment | null): number | null {
+function appointmentBranchId(a: Appointment | null | undefined): number | null {
   const raw = (a as { branch?: { id?: unknown } | null; branchId?: unknown } | null) ?? null;
   const n = Number(raw?.branch?.id ?? raw?.branchId);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * Branches for one visit's labs task (see chooseLabsTaskBranchIds). Reads the visit's
+ * branch from the row when the caller has it, otherwise loads the visit.
+ */
+export async function resolveLabsTaskBranchIds(args: {
+  appointmentId: number;
+  appointment?: Appointment | null;
+  practiceId: number;
+  staffBranchIds: readonly number[];
+  practiceBranchIds: readonly number[];
+}): Promise<number[]> {
+  let visitBranchId = appointmentBranchId(args.appointment);
+  if (visitBranchId == null) {
+    visitBranchId = appointmentBranchId(
+      await fetchAppointmentById(args.appointmentId, { practiceId: args.practiceId })
+    );
+  }
+  return chooseLabsTaskBranchIds({
+    visitBranchId,
+    staffBranchIds: args.staffBranchIds,
+    practiceBranchIds: args.practiceBranchIds,
+  });
 }
 
 export async function createLabsTask(args: {
@@ -350,11 +374,9 @@ export async function createLabsTask(args: {
 }): Promise<number> {
   if (!args.pet.appointmentId)
     throw new Error(`${args.pet.name} has no visit to link the labs task to.`);
-  const visit = await fetchAppointmentById(args.pet.appointmentId, {
+  const branchIds = await resolveLabsTaskBranchIds({
+    appointmentId: args.pet.appointmentId,
     practiceId: args.practiceId,
-  });
-  const branchIds = chooseLabsTaskBranchIds({
-    visitBranchId: appointmentBranchId(visit),
     staffBranchIds: args.staffBranchIds,
     practiceBranchIds: args.practiceBranchIds,
   });

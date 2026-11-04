@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchAppointmentById } from '../../api/appointments';
 import { createLabsPendingForwardBookingTasks } from '../forwardBooking/saveForwardBookingDecision';
-import { chooseLabsTaskBranchIds, createLabsTask, SourceVisitLinks } from './plannerActions';
+import {
+  chooseLabsTaskBranchIds,
+  createLabsTask,
+  resolveLabsTaskBranchIds,
+  SourceVisitLinks,
+} from './plannerActions';
 import type { PlannerPet } from './plannerData';
 
 vi.mock('../../api/appointments', async (orig) => ({
@@ -141,5 +146,38 @@ describe('createLabsTask', () => {
     vi.mocked(fetchAppointmentById).mockResolvedValue(null);
     await createLabsTask({ ...base, staffBranchIds: [6] });
     expect(vi.mocked(createLabsPendingForwardBookingTasks).mock.calls[0][0].branchIds).toEqual([6]);
+  });
+});
+
+// SCH-13-4, End Visit modal (SchedulerActualVisitTimeModal): it has the visit rows in hand.
+describe('resolveLabsTaskBranchIds', () => {
+  const practiceBranchIds = Array.from({ length: 24 }, (_, i) => i + 1);
+  beforeEach(() => vi.mocked(fetchAppointmentById).mockReset());
+
+  it('reads the branch from the visit row it is given, without loading the visit', async () => {
+    await expect(
+      resolveLabsTaskBranchIds({
+        appointmentId: 700,
+        appointment: { id: 700, branch: { id: 8 } } as never,
+        practiceId: 1,
+        staffBranchIds: [8, 2],
+        practiceBranchIds,
+      })
+    ).resolves.toEqual([8]);
+    expect(fetchAppointmentById).not.toHaveBeenCalled();
+  });
+
+  it('loads the visit when the row has no branch, and never returns every practice branch', async () => {
+    vi.mocked(fetchAppointmentById).mockResolvedValue({ id: 700, branch: { id: 8 } } as never);
+    const ids = await resolveLabsTaskBranchIds({
+      appointmentId: 700,
+      appointment: { id: 700 } as never,
+      practiceId: 1,
+      staffBranchIds: [2],
+      practiceBranchIds,
+    });
+    expect(fetchAppointmentById).toHaveBeenCalledWith(700, { practiceId: 1 });
+    expect(ids).toEqual([2]);
+    expect(ids).not.toEqual(practiceBranchIds);
   });
 });
