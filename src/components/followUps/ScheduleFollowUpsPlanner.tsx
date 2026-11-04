@@ -292,11 +292,6 @@ export default function ScheduleFollowUpsPlanner({
         labsPeopleEdited.current = false;
         setLabsAssignees(d.todayProviderId ? [d.todayProviderId] : []);
         setLabsWatchers([]);
-        void suggestLabsTaskPeople(d.todayProviderId).then((people) => {
-          if (!on || labsPeopleEdited.current || people.assignees.length === 0) return;
-          setLabsAssignees(people.assignees);
-          setLabsWatchers(people.watchers);
-        });
       })
       .catch(
         (e) => on && setLoadError(e instanceof Error ? e.message : 'Could not load follow-ups.')
@@ -305,6 +300,22 @@ export default function ScheduleFollowUpsPlanner({
       on = false;
     };
   }, [open, data, practiceId, tz]);
+
+  // SCH-E: who the labs task starts with (the doctor and their techs). Its own effect: the load
+  // effect above re-runs (and cancels) as soon as it stores `data`, which used to drop this answer.
+  const todayProviderId = data?.todayProviderId ?? null;
+  useEffect(() => {
+    if (!open || todayProviderId == null) return;
+    let on = true;
+    void suggestLabsTaskPeople(todayProviderId).then((people) => {
+      if (!on || labsPeopleEdited.current || people.assignees.length === 0) return;
+      setLabsAssignees(people.assignees);
+      setLabsWatchers(people.watchers);
+    });
+    return () => {
+      on = false;
+    };
+  }, [open, todayProviderId]);
 
   // Staff and branches only when labs pending is used.
   const usesLabs = Object.values(placements).some((p) => p.includes(LABS));

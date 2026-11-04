@@ -166,6 +166,21 @@ describe('labs pending: who reviews starts with the right people', () => {
     expect(disposition.labsPendingTask.assignedToEmployeeIds).toEqual([7, ...techs]);
   });
 
+  it('keeps the suggestion when it arrives after the planner has loaded (a real network call)', async () => {
+    fetchLabsTaskPeople.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ relief: false, assigneeEmployeeIds: [7, 21], watcherEmployeeIds: [] }),
+            50
+          )
+        )
+    );
+    renderPlanner();
+    await biscuitToLabs();
+    await waitFor(() => expect(chips('Who reviews')).toEqual(['Lena Crispell', 'Jen Ortiz']));
+  });
+
   it('relief doctor: the relief doctor does it, the doctors watch', async () => {
     vi.mocked(loadFollowUpPlannerData).mockResolvedValueOnce({ ...fixture, todayProviderId: 30 });
     fetchLabsTaskPeople.mockResolvedValue({
