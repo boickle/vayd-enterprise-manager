@@ -9,7 +9,12 @@
  * then sent on to the real API. Needs CYPRESS_SCHEDULING_WORLD.
  */
 import '../support/e2e';
-import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  includeSeededDoctorsInProviderList,
+  schedulingApi,
+  schedulingWorld,
+  signInAsScheduling,
+} from '../support/schedulingWorld';
 import {
   fillExistingClientForm,
   freshVisitorIp,
@@ -92,6 +97,8 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
         clientId: String(w.households.A.clientId),
         pets: [{ ...newPet, new: true }],
         allPets: undefined,
+        // The form ticked Alder; this visit is for the new pet only, and the API reads selectedPetIds first.
+        selectedPetIds: [],
         existingClientNewPets: [newPet],
         petSpecificData: {
           [newPet.id]: {
@@ -127,13 +134,19 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
             const appointmentId = res.body.bookedAppointmentId as number;
             expect(appointmentId, 'booked visit').to.be.a('number');
             schedulingApi('cl', 'GET', `/appointments/${appointmentId}`).then((appt) => {
-              expect(appt.body.patientId, 'linked to a pet').to.be.a('number');
+              // GET /appointments/:id returns the pet as `patient`.
+              expect(appt.body.patient?.id, 'linked to a pet').to.be.a('number');
               expect(appt.body.appointmentType?.isHold ?? false).to.equal(false);
             });
             const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(
               start
             );
-            signInAsScheduling('cl', `/schedule/scheduler?fromMyDay=1&date=${ymd}`);
+            // Show doctor A's calendar (the seeded doctors may be missing from the cached provider list).
+            includeSeededDoctorsInProviderList();
+            signInAsScheduling(
+              'cl',
+              `/schedule/scheduler?fromMyDay=1&date=${ymd}&provider=${w.doctors.A}`
+            );
             cy.get(`[data-appt-id="${appointmentId}"]`, { timeout: 30000 })
               .first()
               .should('contain.text', 'Mochi')
