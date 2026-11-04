@@ -84,6 +84,8 @@ export function signInAsScheduling(role: SchRole, path: string) {
 export function includeSeededDoctorsInProviderList() {
   const w = schedulingWorld();
   cy.intercept('GET', '**/employees/providers*', (req) => {
+    delete req.headers['if-none-match']; // a 304 has no body to patch
+    delete req.headers['if-modified-since'];
     req.continue((res) => {
       const rows: any[] = Array.isArray(res.body) ? res.body : (res.body?.items ?? []);
       const seeded = (['A', 'B'] as const)
@@ -103,4 +105,27 @@ export function includeSeededDoctorsInProviderList() {
       res.send(200, out, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
     });
   });
+}
+
+/**
+ * Removes (soft delete, the Scheduler's own DELETE) the upcoming visits of both seeded households, so a spec
+ * that books fixed times starts from an empty calendar even after an earlier run left visits behind.
+ */
+export function clearSeededHouseholdVisits() {
+  const w = schedulingWorld();
+  const mine = new Set([w.households.A.clientId, w.households.B.clientId]);
+  const start = new Date().toISOString();
+  const end = new Date(Date.now() + 45 * 864e5).toISOString();
+  for (const doctorId of [w.doctors.A, w.doctors.B]) {
+    schedulingApi<any>(
+      'manager',
+      'GET',
+      `/appointments/range?practiceId=${w.practiceId}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&primaryProviderId=${doctorId}`
+    ).then((res) => {
+      const rows: any[] = Array.isArray(res.body) ? res.body : (res.body?.items ?? []);
+      rows
+        .filter((a) => mine.has(Number(a.client?.id ?? a.clientId)))
+        .forEach((a) => schedulingApi('manager', 'DELETE', `/appointments/${a.id}`));
+    });
+  }
 }

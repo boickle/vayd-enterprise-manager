@@ -12,7 +12,12 @@
  * APPOINTMENT_REQUEST_TEST_EMAIL set (lower environments only email that inbox).
  */
 import '../support/e2e';
-import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  clearSeededHouseholdVisits,
+  schedulingApi,
+  schedulingWorld,
+  signInAsScheduling,
+} from '../support/schedulingWorld';
 
 const D2_MESSAGE =
   'That time was just taken. Our team will call you within one business hour to find another.';
@@ -62,6 +67,9 @@ function routeFormToSeededSlot(start: Date, pets: PetRef[]) {
   cy.intercept('POST', '**/public/appointments/form', (req) => {
     const typeId = w.types.medical;
     const body = req.body as Record<string, unknown>;
+    // The form endpoint allows 3 submissions an hour per IP. The API trusts X-Forwarded-For from loopback, so each
+    // submission comes from its own made-up visitor address and reruns are not throttled.
+    req.headers['x-forwarded-for'] = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
     req.body = {
       ...body,
       clientType: 'existing',
@@ -132,23 +140,62 @@ function staffBook(o: {
 
 /** Household A's existing-client form, up to (not including) Submit, with the given pets checked. */
 function fillExistingClientForm(petIndexes: number[]) {
-  cy.get('input[type="tel"]', { timeout: 15000 }).should('not.have.value', '');
-  cy.contains('Is this the address where we will come to see you')
+  // The household's saved details prefill once the client record has loaded.
+  cy.get('input[type="tel"]', { timeout: 30000 }).should('not.have.value', '');
+  cy.contains('Is this the place we are doing the visit?')
     .parent()
     .find('input[value="Yes"]')
     .check();
+  cy.contains('Is your mailing address the same as this location?')
+    .parent()
+    .find('input[type="radio"]')
+    .first()
+    .check();
   cy.get('input[type="checkbox"]', { timeout: 10000 });
   for (const i of petIndexes) {
-    cy.get('input[type="checkbox"]').eq(i).check();
-    cy.get('[data-visit-reason="not-feeling-well"]').eq(i).click();
+    // The pet's own checkbox is the first one in its card (a calming-medication box appears after it).
+    cy.get('[data-pet-id]').eq(i).find('input[type="checkbox"]').first().check();
+    // Only a checked pet's card shows its reason buttons, so look inside that pet's card.
+    cy.get('[data-pet-id]').eq(i).find('[data-visit-reason="not-feeling-well"]').click();
   }
   cy.get('textarea').first().type('Limping since yesterday');
   cy.contains('How soon do you need to be seen?').scrollIntoView();
   cy.get('[data-how-soon="Flexible"]').click();
+  // Submit is not accepted while the form is still checking online scheduling options.
+  cy.contains('Checking online scheduling options', { timeout: 30000 }).should('not.exist');
+  // The slot picker is not driven here (the POST is rewritten to the seeded slot), so the form is in its
+  // manual-scheduling mode, which wants a note about timing before it will submit.
+  cy.get('textarea[placeholder^="For example: mornings"]').type('Any time works');
+}
+
+/**
+ * The portal form prefills an existing client's phone and address from the client's visit history
+ * (GET /appointments/client). The seeded household starts with none, and the test clears its upcoming visits,
+ * so give it one past visit (a returning client, as the form expects).
+ */
+function ensureHouseholdAHasVisitHistory() {
+  const w = schedulingWorld();
+  const past = new Date(Date.now() - 20 * 864e5);
+  past.setUTCMinutes(Math.floor(Math.random() * 50), 0, 0);
+  schedulingApi('manager', 'POST', '/appointments', {
+    practiceId: w.practiceId,
+    primaryProviderId: w.doctors.A,
+    clientId: w.households.A.clientId,
+    patientId: w.households.A.activePetIds[0],
+    appointmentTypeId: w.types.medical,
+    appointmentStart: past.toISOString(),
+    appointmentEnd: new Date(past.getTime() + 5 * 60_000).toISOString(),
+    description: 'SCH e2e: earlier visit (history for the portal form)',
+    bookedViaRouting: true,
+  }, false); // a refusal (e.g. one from an earlier run in that minute) still leaves history in place
 }
 
 describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06-4)', () => {
   beforeEach(() => {
+    // The portal header is sticky and would cover fields scrolled to the top.
+    Cypress.config('scrollBehavior', 'center');
+    clearSeededHouseholdVisits();
+    ensureHouseholdAHasVisitHistory();
     cy.clearAllSessionStorage();
     cy.clearAllCookies();
     // Reference data the form loads; the client's own pets and contact come from the real API.
@@ -158,12 +205,25 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
     cy.intercept('GET', '**/public/species-breeds?practiceId=1&speciesId=*', {
       fixture: 'breeds.json',
     }).as('getBreeds');
-    cy.intercept('GET', '**/public/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAppointmentTypes'
-    );
-    cy.intercept('GET', '**/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAuthAppointmentTypes'
-    );
+    // Appointment types come from the real API; the seeded Medical Visit is not flagged for the request form, so
+    // flag it in the response (display setup only) to make it a pickable reason card.
+    cy.intercept('GET', '**/appointment-types*', (req) => {
+      // No conditional GET: a 304 has no body to patch.
+      delete req.headers['if-none-match'];
+      delete req.headers['if-modified-since'];
+      req.continue((res) => {
+        const rows: any[] = Array.isArray(res.body) ? res.body : (res.body?.items ?? []);
+        const patched = rows.map((t) =>
+          Number(t.id) === schedulingWorld().types.medical
+            ? { ...t, showInApptRequestForm: true, newPatientAllowed: true }
+            : t
+        );
+        res.send(200, Array.isArray(res.body) ? patched : { ...res.body, items: patched }, {
+          'content-type': 'application/json',
+          'access-control-allow-origin': '*',
+        });
+      });
+    });
     cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 200 }).as(
       'checkZone'
     );
@@ -200,7 +260,7 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
         expect(body.bookingOutcome).to.equal('slot_taken');
         expect(body.message).to.equal(D2_MESSAGE);
       });
-    cy.contains(D2_MESSAGE).should('be.visible');
+    cy.contains(D2_MESSAGE).scrollIntoView({ offset: { top: -160, left: 0 } }).should('be.visible');
     cy.contains('booked successfully').should('not.exist');
   });
 
@@ -225,8 +285,8 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
     cy.contains('button', 'Submit').click();
 
     cy.wait('@submitForm').its('response.body.bookingOutcome').should('equal', 'partial');
-    cy.contains('booked for Birch').should('be.visible');
-    cy.contains('our team will call you about Alder').should('be.visible');
+    cy.contains('booked for Birch').scrollIntoView({ offset: { top: -160, left: 0 } }).should('be.visible');
+    cy.contains('our team will call you about Alder').scrollIntoView({ offset: { top: -160, left: 0 } }).should('be.visible');
     cy.contains('booked successfully').should('not.exist');
   });
 
@@ -245,7 +305,7 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
     });
 
     cy.wait('@submitForm');
-    cy.contains('Thank You!', { timeout: 20000 }).should('be.visible');
+    cy.contains('Thank You!', { timeout: 20000 }).scrollIntoView({ offset: { top: -160, left: 0 } }).should('be.visible');
     cy.get('@submitForm.all').should('have.length', 1);
     cy.capturedEmails().then((emails) => {
       const confirmations = (emails as Array<{ subject?: string }>).filter((e) =>
