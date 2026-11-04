@@ -763,6 +763,97 @@
   position: relative;
 }
 
+/* Find a time now: compact best-fit panel on the right */
+.fup-fit {
+  position: absolute;
+  top: 3vh;
+  bottom: 3vh;
+  right: 2vw;
+  width: min(440px, 94vw);
+  z-index: 2050;
+  background: var(--fup-card);
+  border-radius: 16px;
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fup-fit__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--fup-line);
+}
+.fup-fit__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: flex-end;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--fup-line);
+  font-size: 12px;
+}
+.fup-fit__controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fup-muted);
+}
+.fup-fit__controls input[type='date'] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--fup-line);
+  border-radius: 8px;
+}
+.fup-fit__controls .fup-fit__asap {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  color: var(--fup-ink);
+}
+.fup-fit__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fup-fit__slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--fup-line);
+  border-radius: 10px;
+  background: var(--fup-card);
+  color: var(--fup-ink);
+  cursor: pointer;
+  font: inherit;
+}
+.fup-fit__slot:hover:not(:disabled) {
+  border-color: var(--fup-accent);
+  background: var(--fup-accent-soft);
+}
+.fup-fit__slot:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.fup-fit__who,
+.fup-fit__meta {
+  font-size: 12px;
+  color: var(--fup-muted);
+}
+.fup-fit__foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--fup-line);
+}
+
 /* Leave warning */
 .fup-confirm {
   position: absolute;
@@ -815,6 +906,11 @@
 }
 
 @media (max-width: 900px) {
+  .fup-fit {
+    inset: 0;
+    width: auto;
+    border-radius: 0;
+  }
   .fup-planner,
   .fup-layer {
     inset: 0;
