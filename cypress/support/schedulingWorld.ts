@@ -123,9 +123,10 @@ export function clearSeededHouseholdVisits() {
       `/appointments/range?practiceId=${w.practiceId}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&primaryProviderId=${doctorId}`
     ).then((res) => {
       const rows: any[] = Array.isArray(res.body) ? res.body : (res.body?.items ?? []);
+      // A visit whose chart has started cannot be removed (SCH-15); those stay (failOnStatusCode false).
       rows
         .filter((a) => mine.has(Number(a.client?.id ?? a.clientId)))
-        .forEach((a) => schedulingApi('manager', 'DELETE', `/appointments/${a.id}`));
+        .forEach((a) => schedulingApi('manager', 'DELETE', `/appointments/${a.id}`, undefined, false));
     });
   }
 }

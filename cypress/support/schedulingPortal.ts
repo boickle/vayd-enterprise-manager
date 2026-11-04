@@ -34,28 +34,6 @@ export function fillExistingClientForm(petIndexes: number[]) {
   cy.get('textarea[placeholder^="For example: mornings"]').type('Any time works');
 }
 
-/**
- * The portal form prefills an existing client's phone and address from the client's visit history
- * (GET /appointments/client). The seeded household starts with none, and the test clears its upcoming visits,
- * so give it one past visit (a returning client, as the form expects).
- */
-export function ensureHouseholdAHasVisitHistory() {
-  const w = schedulingWorld();
-  const past = new Date(Date.now() - 20 * 864e5);
-  past.setUTCMinutes(Math.floor(Math.random() * 50), 0, 0);
-  schedulingApi('manager', 'POST', '/appointments', {
-    practiceId: w.practiceId,
-    primaryProviderId: w.doctors.A,
-    clientId: w.households.A.clientId,
-    patientId: w.households.A.activePetIds[0],
-    appointmentTypeId: w.types.medical,
-    appointmentStart: past.toISOString(),
-    appointmentEnd: new Date(past.getTime() + 5 * 60_000).toISOString(),
-    description: 'SCH e2e: earlier visit (history for the portal form)',
-    bookedViaRouting: true,
-  }, false); // a refusal (e.g. one from an earlier run in that minute) still leaves history in place
-}
-
 /** A made-up visitor address: the form endpoint allows 3 submissions an hour per IP, and the API trusts X-Forwarded-For from loopback. */
 export function freshVisitorIp(): string {
   return `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
@@ -71,7 +49,6 @@ export function setUpPortalForm() {
     // The portal header is sticky and would cover fields scrolled to the top.
     Cypress.config('scrollBehavior', 'center');
     clearSeededHouseholdVisits();
-    ensureHouseholdAHasVisitHistory();
     cy.clearAllSessionStorage();
     cy.clearAllCookies();
     // Reference data the form loads; the client's own pets and contact come from the real API.
@@ -112,4 +89,15 @@ export function setUpPortalForm() {
     cy.intercept('GET', '**/employees/veterinarians*', { fixture: 'veterinarians.json' }).as(
       'getVeterinarians'
     );
+}
+
+/**
+ * Waits for the form submit's response. The API takes a while to answer (it renders the request PDF), the form
+ * gives up on a slow first try and sends it again with the same session, and the API returns the saved submission
+ * for the repeat. The first try then has no response, so keep waiting until one does.
+ */
+export function waitForFormResponse(alias: string): Cypress.Chainable<any> {
+  return cy.wait(alias, { timeout: 90000 }).then((interception: any) =>
+    interception.response ? interception : waitForFormResponse(alias)
+  );
 }
