@@ -24,7 +24,8 @@ import {
   forwardBookingDispositionIsComplete,
   joinPetNames,
 } from '../utils/forwardBookingDisposition';
-import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
+import VisitCheckoutPanel, { buildReminderPets } from '../components/soap/VisitCheckoutPanel';
+import CheckoutReminders from '../components/soap/CheckoutReminders';
 import EmployerPromotionLine from '../components/invoice/EmployerPromotionLine';
 import ScheduleFollowUpsButton from '../components/followUps/ScheduleFollowUpsButton';
 import ScheduleFollowUpsPlanner from '../components/followUps/ScheduleFollowUpsPlanner';
@@ -331,11 +332,19 @@ export default function VisitCheckoutPage() {
           ) : (
             <p className="soap-hint">No charts on this visit yet.</p>
           )}
+          {invoice ? (
+            <CheckoutReminders
+              invoice={invoice}
+              pets={buildReminderPets(roster, invoice, patientId)}
+              disabled={false}
+            />
+          ) : null}
         </section>
 
         <section className="soap-checkout-page__pane">
           <EmployerPromotionLine invoice={invoice} onInvoiceChange={setInvoice} />
           <VisitCheckoutPanel
+            remindersInPanel={false}
             encounterId={encounterId ?? undefined}
             invoice={invoice}
             orders={orders}
