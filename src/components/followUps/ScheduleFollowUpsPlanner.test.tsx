@@ -191,7 +191,17 @@ vi.mock('../../api/appointments', async (orig) => ({
   fetchPremedsHistory: vi.fn(async () => []),
 }));
 vi.mock('../../pages/RoutingCalendarWorkspace', () => ({
-  default: () => <div>Embedded calendar</div>,
+  default: ({ startRoutingCollapsed }: { startRoutingCollapsed?: boolean }) => (
+    <div>{startRoutingCollapsed ? 'Embedded calendar only' : 'Embedded calendar'}</div>
+  ),
+}));
+const bestFit = vi.hoisted(() => ({
+  searchPlannerBestFit: vi.fn(),
+  writeBestFitCalendarPreview: vi.fn(async () => true),
+}));
+vi.mock('./plannerBestFit', async (orig) => ({
+  ...(await orig<typeof import('./plannerBestFit')>()),
+  ...bestFit,
 }));
 vi.mock('../../api/appointmentSettings', async (orig) => ({
   ...(await orig<typeof import('../../api/appointmentSettings')>()),
@@ -260,6 +270,14 @@ const staffToken = `x.${btoa(JSON.stringify({ sub: 5, employeeId: 42 }))}.y`;
 beforeEach(() => {
   localStorage.setItem('accessToken', staffToken);
   Object.values(actions).forEach((fn) => fn.mockClear());
+  Object.values(bestFit).forEach((fn) => fn.mockClear());
+  bestFit.searchPlannerBestFit.mockResolvedValue({
+    slots: [],
+    place: { address: '1 Elm St, Portland, ME 04101', lat: 43.66, lon: -70.25 },
+    doctorPimsId: 'P7',
+    error: null,
+  });
+  bestFit.writeBestFitCalendarPreview.mockResolvedValue(true);
   actions.createPlannerForwardBookings.mockImplementation(
     async ({ pets }: { pets: { patientId: number }[] }) => ({
       entries: pets.map((p, i) => ({ id: 500 + i, patientId: p.patientId })),
@@ -337,7 +355,7 @@ describe('Schedule follow-ups planner', () => {
     fireEvent.click(
       within(cardTitled('In 2 weeks')).getByRole('button', { name: 'Find a time now' })
     );
-    await screen.findByText('Embedded calendar');
+    await screen.findByRole('dialog', { name: 'Best fit' });
     // Marvin's Recheck; history says 25 min for one pet.
     expect(actions.startPlannerSlotSearch.mock.calls[0][1]).toEqual({
       appointmentTypeId: 2,
@@ -451,7 +469,7 @@ describe('Schedule follow-ups planner', () => {
     pick(trayPet('Fluffy'), /"In 1 year" card/);
     setType(cardTitled('In 1 year'), 'Fluffy', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
-    await screen.findByText('Embedded calendar');
+    await screen.findByRole('dialog', { name: 'Best fit' });
     act(() =>
       notifyFollowUpPlannerBooked({
         appointmentId: 555,
@@ -472,7 +490,7 @@ describe('Schedule follow-ups planner', () => {
     pick(trayPet('Angel'), /"In 1 year" card/);
     setType(cardTitled('In 1 year'), 'Angel', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
-    await screen.findByText('Embedded calendar');
+    await screen.findByRole('dialog', { name: 'Best fit' });
     fireEvent.click(screen.getByRole('button', { name: 'Back to follow-ups' }));
     await waitFor(() =>
       expect(actions.removePlannerForwardBookings).toHaveBeenCalledWith([500], 1)
@@ -495,7 +513,7 @@ describe('Schedule follow-ups planner', () => {
     pick(trayPet('Angel'), /"In 1 year" card/);
     setType(cardTitled('In 1 year'), 'Angel', 1);
     fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
-    await screen.findByText('Embedded calendar');
+    await screen.findByRole('dialog', { name: 'Best fit' });
     window.dispatchEvent(new Event('pagehide'));
     expect(actions.removePlannerForwardBookingsOnUnload).toHaveBeenCalledWith([500], 1);
     unmount();
@@ -601,7 +619,7 @@ describe('Schedule follow-ups planner', () => {
     expect(keep.compareDocumentPosition(firstPet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     fireEvent.click(within(card).getByRole('button', { name: 'Find a time now' }));
-    await screen.findByText('Embedded calendar');
+    await screen.findByRole('dialog', { name: 'Best fit' });
     const call = actions.createPlannerForwardBookings.mock.calls.at(-1)![0];
     const [fluffy, angel] = call.pets;
     expect([call.typeIdFor(fluffy), call.typeIdFor(angel)]).toEqual([1, 3]);
@@ -636,6 +654,164 @@ describe('Schedule follow-ups planner', () => {
     setType(card, 'Angel', 1);
     expect(within(card).queryByText('Pick a visit type for Angel')).toBeNull();
     fireEvent.click(within(card).getByRole('button', { name: 'Find a time now' }));
+    await screen.findByRole('dialog', { name: 'Best fit' });
+  });
+});
+
+describe('Find a time now: compact best-fit panel', () => {
+  const slot = {
+    key: 'P7-2027-11-02-0-0',
+    date: '2027-11-02',
+    suggestedStartIso: '2027-11-02T14:00:00Z',
+    windowStartIso: '2027-11-02T13:00:00Z',
+    windowEndIso: '2027-11-02T15:00:00Z',
+    doctorPimsId: 'P7',
+    doctorName: 'Priya Patel',
+    score: 12.5,
+    addedDriveSeconds: 840,
+    projectedDriveSeconds: 4800,
+    emptyDay: false,
+    isFallbackDoctor: false,
+    option: { date: '2027-11-02', suggestedStartIso: '2027-11-02T14:00:00Z', insertionIndex: 0 },
+  };
+
+  async function openPanelForFluffy() {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    pick(trayPet('Fluffy'), /"In 1 year" card/);
+    setType(cardTitled('In 1 year'), 'Fluffy', 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
+    return screen.findByRole('dialog', { name: 'Best fit' });
+  }
+
+  it('opens the compact panel (not the calendar) with the card prefilled', async () => {
+    bestFit.searchPlannerBestFit.mockResolvedValue({
+      slots: [slot],
+      place: { address: '1 Elm St', lat: 43.66, lon: -70.25 },
+      doctorPimsId: 'P7',
+      error: null,
+    });
+    const panel = await openPanelForFluffy();
+    expect(screen.queryByText(/Embedded calendar/)).toBeNull();
+    expect(within(panel).getByText('Best fit · In 1 year')).toBeTruthy();
+    expect(
+      within(panel).getByText(/Ada Okafor · Fluffy · Wellness · \d+ min · Priya Patel/)
+    ).toBeTruthy();
+
+    // Same request Routing would get: client, the card's pets, type, minutes, doctor,
+    // pre-meds and the card's target window (Nov 3, 2027 ±7 days).
+    await waitFor(() => expect(bestFit.searchPlannerBestFit).toHaveBeenCalledTimes(1));
+    const first = bestFit.searchPlannerBestFit.mock.calls[0][0];
+    const minutes = actions.startPlannerSlotSearch.mock.calls[0][1].serviceMinutes;
+    expect(first).toMatchObject({
+      tz: TZ,
+      asap: false,
+      req: {
+        clientId: 50,
+        clientLabel: 'Ada Okafor',
+        providerId: 7,
+        providerName: 'Priya Patel',
+        appointmentTypeId: 1,
+        statsTypeKey: 'Wellness',
+        serviceMinutes: minutes,
+        needsPremeds: false,
+        pets: [{ id: 1, name: 'Fluffy' }],
+        window: { startDate: '2027-10-27', endDate: '2027-11-10' },
+      },
+    });
+
+    // Each slot shows date, window, doctor, score and drive.
+    const row = await within(panel).findByRole('button', {
+      name: /Book Tue, Nov 2 with Priya Patel/,
+    });
+    expect(row.textContent).toContain('Tue, Nov 2');
+    expect(row.textContent).toContain('9:00 AM – 11:00 AM arrival');
+    expect(row.textContent).toContain('Score 12.50');
+    expect(row.textContent).toContain('Added drive 14m');
+    expect(row.textContent).toContain('Day drive 1h 20m');
+
+    // Controls: ASAP all doctors in zone and a new date window search again.
+    fireEvent.click(within(panel).getByLabelText('ASAP all doctors in zone'));
+    await waitFor(() => expect(bestFit.searchPlannerBestFit).toHaveBeenCalledTimes(2));
+    expect(bestFit.searchPlannerBestFit.mock.calls[1][0].asap).toBe(true);
+    fireEvent.change(within(panel).getByLabelText('To'), { target: { value: '2027-11-24' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(bestFit.searchPlannerBestFit).toHaveBeenCalledTimes(3));
+    expect(bestFit.searchPlannerBestFit.mock.calls[2][0]).toMatchObject({
+      asap: true,
+      req: { window: { startDate: '2027-10-27', endDate: '2027-11-24' } },
+    });
+  });
+
+  it('picking a slot books it through the calendar and comes back to the updated card', async () => {
+    bestFit.searchPlannerBestFit.mockResolvedValue({
+      slots: [slot],
+      place: { address: '1 Elm St', lat: 43.66, lon: -70.25 },
+      doctorPimsId: 'P7',
+      error: null,
+    });
+    const panel = await openPanelForFluffy();
+    fireEvent.click(await within(panel).findByRole('button', { name: /Book Tue, Nov 2/ }));
+
+    // The slot goes on the calendar preview Routing's View placement writes; the calendar
+    // opens on it alone (no Get Best Route form) for its usual Book.
+    await screen.findByText('Embedded calendar only');
+    expect(bestFit.writeBestFitCalendarPreview).toHaveBeenCalledTimes(1);
+    expect(bestFit.writeBestFitCalendarPreview.mock.calls[0][0]).toMatchObject({
+      slot,
+      place: { address: '1 Elm St', lat: 43.66, lon: -70.25 },
+      req: { clientId: 50, appointmentTypeId: 1, pets: [{ id: 1, name: 'Fluffy' }] },
+    });
+    expect(screen.queryByRole('dialog', { name: 'Best fit' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Back to best fit' })).toBeTruthy();
+
+    // The calendar's Book reports back exactly as today.
+    act(() =>
+      notifyFollowUpPlannerBooked({
+        appointmentId: 555,
+        startIso: '2026-11-16T14:00:00Z',
+        endIso: '2026-11-16T15:00:00Z',
+        primaryProviderId: 7,
+      })
+    );
+    await screen.findByText(/✓ Booked · Mon, Nov 16/);
+    expect(screen.queryByText(/Embedded calendar/)).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Best fit' })).toBeNull();
+    expect(actions.findBookedAppointments).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 50, petIds: [1] })
+    );
+    expect(actions.removePlannerForwardBookings).not.toHaveBeenCalled();
+  });
+
+  it('Back to best fit returns to the list and keeps the search rows', async () => {
+    bestFit.searchPlannerBestFit.mockResolvedValue({
+      slots: [slot],
+      place: { address: '1 Elm St', lat: 43.66, lon: -70.25 },
+      doctorPimsId: 'P7',
+      error: null,
+    });
+    const panel = await openPanelForFluffy();
+    fireEvent.click(await within(panel).findByRole('button', { name: /Book Tue, Nov 2/ }));
+    await screen.findByText('Embedded calendar only');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to best fit' }));
+    await screen.findByRole('dialog', { name: 'Best fit' });
+    expect(actions.removePlannerForwardBookings).not.toHaveBeenCalled();
+  });
+
+  it('Open full calendar opens the existing Find a time view', async () => {
+    const panel = await openPanelForFluffy();
+    await within(panel).findByText(/No openings in this window/);
+    fireEvent.click(within(panel).getByRole('button', { name: 'Open full calendar' }));
     await screen.findByText('Embedded calendar');
+    expect(screen.getByText('Find a time')).toBeTruthy();
+    expect(
+      screen.getByText('Pick a slot and book it. You will come straight back here.')
+    ).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Best fit' })).toBeNull();
+    // Still the same search: closing it without booking takes the rows back off the list.
+    fireEvent.click(screen.getByRole('button', { name: 'Back to follow-ups' }));
+    await waitFor(() =>
+      expect(actions.removePlannerForwardBookings).toHaveBeenCalledWith([500], 1)
+    );
   });
 });

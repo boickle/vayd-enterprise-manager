@@ -9,7 +9,13 @@ import { getToken } from '../../api/http';
 import { resolveEmployeeIdFromToken } from '../../utils/practiceIdFromToken';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { dispatchRoutingFocusHouseholdVisit } from '../../utils/bookingHouseholdVisitWarning';
-import { dismissRoutingForwardBookingWorkspace } from '../../utils/routingForwardBookingIntent';
+import {
+  dismissRoutingForwardBookingWorkspace,
+  readRoutingForwardBookingIntent,
+  writeRoutingForwardBookingIntent,
+} from '../../utils/routingForwardBookingIntent';
+import { clearRoutingCalendarPreview } from '../../utils/routingCalendarPreviewStorage';
+import { forwardBookingRoutingSearchDateRange } from '../../utils/forwardBookingFromAppointment';
 import { ClientContactComposeModal } from '../ClientContactComposeModal';
 import { applySystemTemplateIfCustom } from '../../utils/messageTemplateCache';
 import { withClinicDefaults } from '../../utils/messageTemplateFields';
@@ -72,6 +78,14 @@ import {
   type ReminderFit,
 } from './plannerModel';
 import { loadAddPetImpact, type AddPetImpact } from './visitImpact';
+import PlannerBestFitPanel from './PlannerBestFitPanel';
+import {
+  writeBestFitCalendarPreview,
+  type BestFitPlace,
+  type BestFitRequest,
+  type BestFitSlot,
+  type BestFitWindow,
+} from './plannerBestFit';
 import {
   appointmentTypeStaffName,
   createProviderStatsCache,
@@ -126,7 +140,13 @@ type UpcomingState = {
 };
 
 type Layer =
-  | { kind: 'find'; cardKey: string }
+  /** Find a time now: the card's best-fit slots in a compact panel. */
+  | { kind: 'fit'; cardKey: string; request: BestFitRequest }
+  /**
+   * Get Best Route + calendar. `collapsed` opens on the calendar only (a best-fit slot
+   * waiting for Book); `fit` is the panel to go back to.
+   */
+  | { kind: 'find'; cardKey: string; collapsed?: boolean; fit?: BestFitRequest }
   | {
       kind: 'view';
       appointmentId: number;
@@ -627,7 +647,11 @@ export default function ScheduleFollowUpsPlanner({
             : c
         )
       );
-      setLayer({ kind: 'find', cardKey: card.key });
+      setLayer({
+        kind: 'fit',
+        cardKey: card.key,
+        request: bestFitRequestFor(card, anchorTypeId, serviceMinutes),
+      });
       setDirty(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the slot search.');
@@ -636,11 +660,88 @@ export default function ScheduleFollowUpsPlanner({
     }
   }
 
+  /**
+   * What the best-fit panel searches with: the same client, doctor, type, minutes,
+   * pre-meds and date window Routing would get from this card's forward-booking intent.
+   */
+  function bestFitRequestFor(
+    card: NewCard,
+    anchorTypeId: number,
+    serviceMinutes: number
+  ): BestFitRequest {
+    const cardPets = petsIn(card.key);
+    const intent = readRoutingForwardBookingIntent();
+    // Routing's window for this intent (target due date ±7 days, never before today);
+    // without an intent, the same window around the card's own target date.
+    const target = plannerTargetDate(card.interval, data!.today);
+    const todayStart = data!.today.startOf('day');
+    const window = (intent
+      ? forwardBookingRoutingSearchDateRange({
+          intervalAmount: intent.intervalAmount,
+          intervalUnit: intent.intervalUnit,
+          targetDueDateIso: intent.targetDueDate ?? null,
+          practiceTz: tz,
+        })
+      : null) ?? {
+      startDate: DateTime.max(todayStart, target.minus({ days: 7 })).toISODate()!,
+      endDate: DateTime.max(todayStart, target.plus({ days: 7 })).toISODate()!,
+    };
+    const anchorType = data!.appointmentTypes.find((t) => Number(t.id) === anchorTypeId);
+    const typeLabels = [
+      ...new Set(cardPets.map((p) => typeName(typeFor(p, card.key))).filter(Boolean)),
+    ];
+    const provider = cardProvider(card);
+    return {
+      clientId: data!.clientId,
+      clientLabel: data!.clientName ?? null,
+      providerId: provider?.id ?? null,
+      doctorPimsId: intent?.primaryDoctorPimsId?.trim() || null,
+      providerName: provider?.name ?? 'Doctor',
+      appointmentTypeId: anchorTypeId,
+      statsTypeKey: String(anchorType?.name ?? '').trim() || typeName(anchorTypeId),
+      typeLabel: typeLabels.join(' + '),
+      serviceMinutes,
+      needsPremeds: cardPets.some((p) => premedsFor(p, card.key)),
+      pets: cardPets.map((p) => ({ id: p.patientId, name: p.name })),
+      window,
+    };
+  }
+
+  /** A best-fit slot was picked: show it on the calendar, where Book books it. */
+  async function pickBestFitSlot(
+    cardKey: string,
+    slot: BestFitSlot,
+    ctx: { request: BestFitRequest; place: BestFitPlace }
+  ): Promise<boolean> {
+    const ok = await writeBestFitCalendarPreview({ slot, req: ctx.request, place: ctx.place });
+    if (ok) setLayer({ kind: 'find', cardKey, collapsed: true, fit: ctx.request });
+    return ok;
+  }
+
+  /** "Open full calendar" from the panel: today's Find a time, with the panel's dates. */
+  function openFullFindTime(cardKey: string, request: BestFitRequest, window: BestFitWindow) {
+    const intent = readRoutingForwardBookingIntent();
+    if (intent) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { v: _v, appliedToRoutingForm: _applied, ...rest } = intent;
+      writeRoutingForwardBookingIntent({ ...rest, routingSearch: window });
+    }
+    clearRoutingCalendarPreview();
+    setLayer({ kind: 'find', cardKey, fit: { ...request, window } });
+  }
+
+  /** From the calendar back to the best-fit list; the search keeps going. */
+  function backToBestFit() {
+    if (layer?.kind !== 'find' || !layer.fit) return;
+    clearRoutingCalendarPreview();
+    setLayer({ kind: 'fit', cardKey: layer.cardKey, request: layer.fit });
+  }
+
   const closeLayer = useCallback(async () => {
     const current = layer;
     setLayer(null);
     clearFollowUpPlannerPreview();
-    if (current?.kind !== 'find') return;
+    if (current?.kind !== 'find' && current?.kind !== 'fit') return;
     dismissRoutingForwardBookingWorkspace();
     const card = cards.find((c) => c.key === current.cardKey);
     if (card?.status === 'searching') {
@@ -655,7 +756,7 @@ export default function ScheduleFollowUpsPlanner({
 
   // The embedded calendar reports a booking.
   useEffect(() => {
-    if (!open || layer?.kind !== 'find' || !data) return;
+    if (!open || (layer?.kind !== 'find' && layer?.kind !== 'fit') || !data) return;
     const cardKey = layer.cardKey;
     const onBooked = async (ev: Event) => {
       const d = parseFollowUpPlannerBookedEvent(ev);
@@ -2494,24 +2595,50 @@ export default function ScheduleFollowUpsPlanner({
         />
       ) : null}
 
-      {layer ? (
+      {layer?.kind === 'fit' ? (
+        <PlannerBestFitPanel
+          key={layer.cardKey}
+          cardLabel={(() => {
+            const c = cards.find((x) => x.key === layer.cardKey);
+            return c && data ? plannerIntervalLabel(c.interval, data.today) : 'Follow-up';
+          })()}
+          request={layer.request}
+          tz={tz}
+          onPick={(slot, ctx) => pickBestFitSlot(layer.cardKey, slot, ctx)}
+          onOpenFull={(w) => openFullFindTime(layer.cardKey, layer.request, w)}
+          onClose={() => void closeLayer()}
+        />
+      ) : layer ? (
         <aside className="fup-layer" role="dialog" aria-modal="true" aria-label="Calendar">
           <div className="fup-layer__head">
             <div>
               <b>{layer.kind === 'find' ? 'Find a time' : `Calendar · ${layer.label}`}</b>
               <div className="fup-muted">
                 {layer.kind === 'find'
-                  ? 'Pick a slot and book it. You will come straight back here.'
+                  ? layer.collapsed
+                    ? 'Check the slot and press Book. You will come straight back here.'
+                    : 'Pick a slot and book it. You will come straight back here.'
                   : 'The visit is highlighted. Reschedule or cancel it here if needed.'}
               </div>
             </div>
-            <button type="button" className="fup-btn" onClick={() => void closeLayer()}>
-              Back to follow-ups
-            </button>
+            <div className="fup-actions">
+              {layer.kind === 'find' && layer.fit ? (
+                <button type="button" className="fup-btn" onClick={backToBestFit}>
+                  Back to best fit
+                </button>
+              ) : null}
+              <button type="button" className="fup-btn" onClick={() => void closeLayer()}>
+                Back to follow-ups
+              </button>
+            </div>
           </div>
           <div className="fup-layer__body">
             <Suspense fallback={<div className="fup-body--center">Loading the calendar…</div>}>
-              <RoutingCalendarWorkspace startRoutingCollapsed={layer.kind === 'view'} />
+              <RoutingCalendarWorkspace
+                startRoutingCollapsed={
+                  layer.kind === 'view' || (layer.kind === 'find' && !!layer.collapsed)
+                }
+              />
             </Suspense>
           </div>
         </aside>
