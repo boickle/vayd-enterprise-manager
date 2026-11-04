@@ -55,9 +55,12 @@ export type AppointmentRequestSubmission = Omit<
 /** Conversion of public appointment requests into actual appointments. */
 export type AppointmentRequestSubmissionConversions = {
   totalRequests: number;
+  /** Linked to a real visit, or matched to one booked after the request. */
   converted: number;
+  /** Linked only to a HOLD. Not included in `converted` or the rate. */
+  convertedToHold?: number;
   notConverted: number;
-  /** Fraction in [0, 1]. */
+  /** Fraction in [0, 1]. Real appointments only. */
   conversionRate: number;
 };
 

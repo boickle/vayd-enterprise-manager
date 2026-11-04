@@ -2,6 +2,11 @@ import { http } from './http';
 
 /** Single booked visit row (nested under each day). One row = one booked visit; requires clientId + patientId on the server. */
 export type AppointmentBookingDetail = {
+  appointmentId?: number;
+  /** Client display name, usually `Last, First`. */
+  clientName?: string | null;
+  /** Pet name. */
+  patientName?: string | null;
   /** When the booking was created (PIMS externalCreated or row created). Used for CL lead-time scoring. */
   bookedAt?: string;
   appointmentStart?: string;

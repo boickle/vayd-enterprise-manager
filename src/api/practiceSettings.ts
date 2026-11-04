@@ -135,7 +135,7 @@ export type ReminderSettings = {
   'chat.hoursOfOperation'?: string;
   /**
    * Online auto-book duration and lead-time settings (JSON string).
-   * Shape: { singlePatientMinutes, multiPetPerPetMinutes, newClientLeadTimeHours, existingClientLeadTimeHours, leadTimeHoursByAppointmentTypeId, newClientLeadTimeHoursByAppointmentTypeId }.
+   * Shape: { singlePatientMinutes, multiPetPerPetMinutes, newClientLeadTimeHours, existingClientLeadTimeHours, calmingPremedLeadTimeHours, leadTimeHoursByAppointmentTypeId, newClientLeadTimeHoursByAppointmentTypeId }.
    */
   'onlineBooking.autoBookSettings'?: string;
   /**

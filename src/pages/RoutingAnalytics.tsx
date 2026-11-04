@@ -1,12 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link as RouterLink } from 'react-router';
 import {
   Box,
+  Button,
   Card,
   CardContent,
   CardHeader,
   Typography,
   Alert,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Link,
   Table,
   TableBody,
   TableCell,
@@ -56,6 +63,10 @@ import {
   fetchServiceAreaInterestAnalytics,
   type ServiceAreaInterestAnalyticsResponse,
 } from '../api/serviceAreaInterest';
+import {
+  buildSchedulerFocusAppointmentUrl,
+  writeSchedulerFocusSession,
+} from '../utils/schedulerFocusAppointment';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { useScheduleOptimizeSavings } from '../hooks/useScheduleOptimizeSavings';
 import {
@@ -409,6 +420,66 @@ function aggregateScheduleLoaderRequestsByDay(
   return dates.map((date) => ({ date, requestCount: byDate.get(date) ?? 0 }));
 }
 
+function formatVisitWhen(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const dt = DateTime.fromISO(iso, { setZone: true }).setZone(DEFAULT_PRACTICE_TIMEZONE);
+  return dt.isValid ? dt.toFormat('MMM d, yyyy h:mm a') : '—';
+}
+
+function bookingTypeLabel(b: AppointmentBookingDetail): string {
+  const pretty = (b.appointmentTypePrettyName ?? '').trim();
+  const raw = (b.appointmentTypeName ?? '').trim();
+  return pretty || raw || 'Unknown type';
+}
+
+function providerKeyOf(b: AppointmentBookingDetail): string {
+  const id = b.primaryProviderId;
+  if (id != null && !Number.isNaN(Number(id))) return `id:${Number(id)}`;
+  return `name:${(b.primaryProviderName ?? '').trim() || '_'}`;
+}
+
+function filterBookingsByKind(
+  bookings: AppointmentBookingDetail[],
+  kind: 'all' | 'new' | 'existing',
+): AppointmentBookingDetail[] {
+  if (kind === 'new') return bookings.filter((b) => b.newPatient === true);
+  if (kind === 'existing') return bookings.filter((b) => b.newPatient !== true);
+  return bookings;
+}
+
+function ApptCountButton({
+  count,
+  onOpen,
+  sx,
+}: {
+  count: number;
+  onOpen: () => void;
+  sx?: Record<string, unknown>;
+}) {
+  if (!count) return <>0</>;
+  return (
+    <Button
+      variant="text"
+      size="small"
+      onClick={onOpen}
+      sx={{
+        minWidth: 0,
+        px: 0.25,
+        py: 0,
+        fontWeight: 'inherit',
+        lineHeight: 'inherit',
+        textTransform: 'none',
+        textDecoration: 'underline',
+        textUnderlineOffset: '2px',
+        color: 'inherit',
+        ...sx,
+      }}
+    >
+      {count}
+    </Button>
+  );
+}
+
 /** Flatten booking rows for the selected employee(s) and dates (calendar days in range). */
 function collectBookingDetails(
   users: AppointmentBookingsAnalyticsUser[] | undefined,
@@ -457,6 +528,10 @@ export default function RoutingAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bookingsError, setBookingsError] = useState<string | null>(null);
+  const [bookingList, setBookingList] = useState<{
+    title: string;
+    bookings: AppointmentBookingDetail[];
+  } | null>(null);
   const [fillDayError, setFillDayError] = useState<string | null>(null);
   const [careOutreachUsageError, setCareOutreachUsageError] = useState<string | null>(null);
   const [requestSubmissions, setRequestSubmissions] = useState<AppointmentRequestSubmissionItem[] | null>(
@@ -746,6 +821,7 @@ export default function RoutingAnalyticsPage() {
       let totalPotentialRevenue = 0;
       let routingRequests = 0;
       let scheduleLoaderRequests = 0;
+      const bookings: AppointmentBookingDetail[] = [];
       for (const d of bu?.bookingsByDay ?? []) {
         const date = d?.date?.slice(0, 10);
         if (!date || !datesSet.has(date)) continue;
@@ -754,6 +830,7 @@ export default function RoutingAnalyticsPage() {
         newPatientBooked += d.newPatientBooked ?? 0;
         totalPoints += d.totalPoints ?? 0;
         totalPotentialRevenue += d.totalPotentialRevenue ?? 0;
+        for (const b of d.bookings ?? []) bookings.push(b);
       }
       for (const d of ru?.requestsByDay ?? []) {
         const date = d?.date?.slice(0, 10);
@@ -782,6 +859,7 @@ export default function RoutingAnalyticsPage() {
         totalPotentialRevenue,
         routingRequests,
         scheduleLoaderRequests,
+        bookings,
       };
     };
 
@@ -839,6 +917,18 @@ export default function RoutingAnalyticsPage() {
     [employeeBookingTableRows]
   );
 
+  const openBookingList = (title: string, bookings: AppointmentBookingDetail[]) => {
+    const sorted = [...bookings].sort((a, b) =>
+      (a.appointmentStart ?? '').localeCompare(b.appointmentStart ?? ''),
+    );
+    setBookingList({ title, bookings: sorted });
+  };
+
+  const visibleBookings = useMemo(
+    () => employeeBookingTableRows.flatMap((row) => row.bookings),
+    [employeeBookingTableRows],
+  );
+
   /** Goal vs booked (colored) is shown only for a single selected day; multi-day ranges show a plain total. */
   const practiceBookingGoalDisplay = useMemo(() => {
     if (!isSingleDay) return null;
@@ -863,11 +953,7 @@ export default function RoutingAnalyticsPage() {
   const providerBreakdownRows = useMemo(() => {
     const map = new Map<string, { label: string; count: number; providerKey: string }>();
     for (const b of overviewBookingDetails) {
-      const id = b.primaryProviderId;
-      const key =
-        id != null && id !== undefined && !Number.isNaN(Number(id))
-          ? `id:${Number(id)}`
-          : `name:${(b.primaryProviderName ?? '').trim() || '_'}`;
+      const key = providerKeyOf(b);
       const label = (b.primaryProviderName ?? '').trim() || 'Unknown provider';
       const prev = map.get(key);
       if (prev) prev.count += 1;
@@ -879,9 +965,7 @@ export default function RoutingAnalyticsPage() {
   const appointmentTypeBreakdownRows = useMemo(() => {
     const map = new Map<string, number>();
     for (const b of overviewBookingDetails) {
-      const pretty = (b.appointmentTypePrettyName ?? '').trim();
-      const raw = (b.appointmentTypeName ?? '').trim();
-      const label = pretty || raw || 'Unknown type';
+      const label = bookingTypeLabel(b);
       map.set(label, (map.get(label) ?? 0) + 1);
     }
     return [...map.entries()]
@@ -1181,8 +1265,8 @@ export default function RoutingAnalyticsPage() {
             title="Bookings & tool usage by employee"
             subheader={
               isSingleDay
-                ? 'Per employee: routing requests, schedule loader (fill-day) requests, and appointments booked (new patient, existing patient, total) for the selected day. Entire practice lists anyone with activity that day; one employee shows that row even if all counts are zero. Totals at the bottom sum the visible rows.'
-                : 'Per employee: totals over the selected date range (same columns as single-day). Entire practice lists anyone with activity in the range. The chart below shows daily trends for the employee filter; dashed blue line is a linear trend of total appointments. Click a legend label to show or hide a series. Totals at the bottom sum the visible rows.'
+                ? 'Per employee: routing requests, schedule loader (fill-day) requests, and appointments booked (new patient, existing patient, total) for the selected day. Entire practice lists anyone with activity that day; one employee shows that row even if all counts are zero. Totals at the bottom sum the visible rows. Click an appointment count to list those visits and open them on the calendar.'
+                : 'Per employee: totals over the selected date range (same columns as single-day). Entire practice lists anyone with activity in the range. The chart below shows daily trends for the employee filter; dashed blue line is a linear trend of total appointments. Click a legend label to show or hide a series. Totals at the bottom sum the visible rows. Click an appointment count to list those visits and open them on the calendar.'
             }
           />
           <CardContent>
@@ -1250,9 +1334,34 @@ export default function RoutingAnalyticsPage() {
                             <TableCell>{row.name}</TableCell>
                             <TableCell align="right">{row.routingRequests}</TableCell>
                             <TableCell align="right">{row.scheduleLoaderRequests}</TableCell>
-                            <TableCell align="right">{row.newPatientBooked}</TableCell>
-                            <TableCell align="right">{row.existingPatientBooked}</TableCell>
-                            <TableCell align="right">{row.totalBooked}</TableCell>
+                            <TableCell align="right">
+                              <ApptCountButton
+                                count={row.newPatientBooked}
+                                onOpen={() =>
+                                  openBookingList(
+                                    `${row.name} — new patient`,
+                                    filterBookingsByKind(row.bookings, 'new'),
+                                  )
+                                }
+                              />
+                            </TableCell>
+                            <TableCell align="right">
+                              <ApptCountButton
+                                count={row.existingPatientBooked}
+                                onOpen={() =>
+                                  openBookingList(
+                                    `${row.name} — existing patient`,
+                                    filterBookingsByKind(row.bookings, 'existing'),
+                                  )
+                                }
+                              />
+                            </TableCell>
+                            <TableCell align="right">
+                              <ApptCountButton
+                                count={row.totalBooked}
+                                onOpen={() => openBookingList(row.name, row.bookings)}
+                              />
+                            </TableCell>
                             <TableCell align="right">{row.totalPoints}</TableCell>
                             <TableCell align="right">
                               {formatUsd(row.totalPotentialRevenue)}
@@ -1272,10 +1381,26 @@ export default function RoutingAnalyticsPage() {
                             {employeeBookingTableColumnTotals.scheduleLoaderRequests}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
-                            {employeeBookingTableColumnTotals.newPatientBooked}
+                            <ApptCountButton
+                              count={employeeBookingTableColumnTotals.newPatientBooked}
+                              onOpen={() =>
+                                openBookingList(
+                                  'New patient',
+                                  filterBookingsByKind(visibleBookings, 'new'),
+                                )
+                              }
+                            />
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
-                            {employeeBookingTableColumnTotals.existingPatientBooked}
+                            <ApptCountButton
+                              count={employeeBookingTableColumnTotals.existingPatientBooked}
+                              onOpen={() =>
+                                openBookingList(
+                                  'Existing patient',
+                                  filterBookingsByKind(visibleBookings, 'existing'),
+                                )
+                              }
+                            />
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
                             {selectedOverviewUserEmail === ALL_USERS && practiceBookingGoalDisplay ? (
@@ -1292,10 +1417,17 @@ export default function RoutingAnalyticsPage() {
                                         : 'error.main',
                                 }}
                               >
-                                {practiceBookingGoalDisplay.booked}/{practiceBookingGoalDisplay.goal} booked
+                                <ApptCountButton
+                                  count={practiceBookingGoalDisplay.booked}
+                                  onOpen={() => openBookingList('All appointments', visibleBookings)}
+                                />
+                                /{practiceBookingGoalDisplay.goal} booked
                               </Typography>
                             ) : (
-                              employeeBookingTableColumnTotals.totalBooked
+                              <ApptCountButton
+                                count={employeeBookingTableColumnTotals.totalBooked}
+                                onOpen={() => openBookingList('All appointments', visibleBookings)}
+                              />
                             )}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
@@ -1635,12 +1767,22 @@ export default function RoutingAnalyticsPage() {
                         {providerBreakdownRows.map((row, idx) => (
                           <TableRow key={`provider-${idx}-${row.label}`}>
                             <TableCell>{row.label}</TableCell>
-                            <TableCell align="right">{row.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                          <TableCell align="right">
+                            <ApptCountButton
+                              count={row.count}
+                              onOpen={() =>
+                                openBookingList(
+                                  row.label,
+                                  overviewBookingDetails.filter((b) => providerKeyOf(b) === row.providerKey),
+                                )
+                              }
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
                 )}
               </CardContent>
             </Card>
@@ -1668,12 +1810,22 @@ export default function RoutingAnalyticsPage() {
                         {appointmentTypeBreakdownRows.map((row, idx) => (
                           <TableRow key={`type-${idx}-${row.label}`}>
                             <TableCell>{row.label}</TableCell>
-                            <TableCell align="right">{row.count}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                          <TableCell align="right">
+                            <ApptCountButton
+                              count={row.count}
+                              onOpen={() =>
+                                openBookingList(
+                                  row.label,
+                                  overviewBookingDetails.filter((b) => bookingTypeLabel(b) === row.label),
+                                )
+                              }
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
                 )}
               </CardContent>
             </Card>
@@ -2120,7 +2272,7 @@ export default function RoutingAnalyticsPage() {
               <Card sx={{ mb: 3 }}>
                 <CardHeader
                   title="Request → appointment conversions"
-                  subheader="Public appointment requests that were converted into actual appointments for the selected date range."
+                  subheader="Public appointment requests for the selected date range. A hold stays in its own row until that visit becomes a real appointment."
                 />
                 <CardContent>
                   <TableContainer component={Paper} variant="outlined">
@@ -2144,6 +2296,12 @@ export default function RoutingAnalyticsPage() {
                             <Typography variant="body2" component="span" color="success.main">
                               {requestSubmissionConversions.converted}
                             </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Converted to hold</TableCell>
+                          <TableCell align="right">
+                            {requestSubmissionConversions.convertedToHold ?? 0}
                           </TableCell>
                         </TableRow>
                         <TableRow>
@@ -2408,6 +2566,85 @@ export default function RoutingAnalyticsPage() {
             </Card>
           </>
         )}
+      <Dialog
+        open={bookingList != null}
+        onClose={() => setBookingList(null)}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>{bookingList?.title ?? 'Appointments'}</DialogTitle>
+        <DialogContent>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Client</TableCell>
+                  <TableCell>Pet</TableCell>
+                  <TableCell>Date</TableCell>
+                  <TableCell>Provider</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {(bookingList?.bookings ?? []).length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6}>
+                      <Typography variant="body2" color="text.secondary">
+                        No appointments in this count.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  bookingList?.bookings.map((b, idx) => {
+                    const appointmentId = Number(b.appointmentId);
+                    const href =
+                      Number.isFinite(appointmentId) && appointmentId > 0
+                        ? buildSchedulerFocusAppointmentUrl(appointmentId, {
+                            date: practiceLocalDayKey(b.appointmentStart) || undefined,
+                            providerId:
+                              b.primaryProviderId != null ? String(b.primaryProviderId) : undefined,
+                          })
+                        : null;
+                    return (
+                      <TableRow key={`${appointmentId || 'row'}-${idx}`}>
+                        <TableCell>{b.clientName?.trim() || '—'}</TableCell>
+                        <TableCell>{b.patientName?.trim() || '—'}</TableCell>
+                        <TableCell>{formatVisitWhen(b.appointmentStart)}</TableCell>
+                        <TableCell>{b.primaryProviderName?.trim() || '—'}</TableCell>
+                        <TableCell>{bookingTypeLabel(b)}</TableCell>
+                        <TableCell>
+                          {href ? (
+                            <Link
+                              component={RouterLink}
+                              to={href}
+                              onClick={() =>
+                                writeSchedulerFocusSession({
+                                  appointmentId,
+                                  dateHint: practiceLocalDayKey(b.appointmentStart) || null,
+                                  providerHint:
+                                    b.primaryProviderId != null ? String(b.primaryProviderId) : null,
+                                })
+                              }
+                            >
+                              Open on calendar
+                            </Link>
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBookingList(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

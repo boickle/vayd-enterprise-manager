@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon';
+import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import {
   appointmentMatchesPatientId,
@@ -18,6 +19,7 @@ function pickStr(v: unknown): string | null {
 function isFutureAppointment(a: Appointment, excludeId: number, asOfMs: number): boolean {
   if (a.id === excludeId) return false;
   if (a.isDeleted === true) return false;
+  if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   const startMs = Date.parse(a.appointmentStart);
   return Number.isFinite(startMs) && startMs > asOfMs;
 }
