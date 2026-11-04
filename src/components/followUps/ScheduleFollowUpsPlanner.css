@@ -733,36 +733,6 @@
   background: var(--fup-accent-soft);
 }
 
-/* Calendar side layer: covers most of the window, planner stays visible on the left. */
-.fup-layer {
-  position: absolute;
-  top: 3vh;
-  bottom: 3vh;
-  right: 3vw;
-  left: 18vw;
-  z-index: 2050;
-  background: var(--fup-card);
-  border-radius: 16px;
-  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.25);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.fup-layer__head {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--fup-line);
-}
-.fup-layer__body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  position: relative;
-}
-
 /* Find a time now: best-fit panel on the right, booked from the list */
 .fup-fit {
   position: absolute;
@@ -875,6 +845,7 @@
   display: grid;
   gap: 4px;
   min-width: 0;
+  flex: 1;
 }
 .fup-fit__when {
   font-size: 15px;
@@ -899,6 +870,10 @@
 .fup-fit__book {
   flex-shrink: 0;
   padding: 10px 16px;
+}
+.fup-fit__review {
+  flex-shrink: 0;
+  padding: 10px 14px;
 }
 .fup-fit__foot {
   display: grid;
@@ -966,8 +941,7 @@
     width: auto;
     border-radius: 0;
   }
-  .fup-planner,
-  .fup-layer {
+  .fup-planner {
     inset: 0;
     border-radius: 0;
   }

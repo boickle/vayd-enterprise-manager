@@ -30,6 +30,8 @@ type Props = {
   ) => Promise<BestFitBookOutcome>;
   /** After the booked confirmation: back to the plan. */
   onBooked: () => void;
+  /** The calendar in a new tab at this slot (day, doctor, the proposed visit in place). */
+  onReview: (slot: BestFitSlot, ctx: { request: BestFitRequest; place: BestFitPlace }) => void;
   /** The normal calendar page, in a new tab. */
   onOpenFull: () => void;
   onClose: () => void;
@@ -84,6 +86,7 @@ export default function PlannerBestFitPanel({
   onNeedChange,
   onBook,
   onBooked,
+  onReview,
   onOpenFull,
   onClose,
   confirmMs = 1500,
@@ -97,6 +100,7 @@ export default function PlannerBestFitPanel({
   const [booking, setBooking] = useState<string | null>(null);
   const [booked, setBooked] = useState<{ text: string; warnings: string[] } | null>(null);
   const [fullOpened, setFullOpened] = useState(false);
+  const [reviewed, setReviewed] = useState<string | null>(null);
   const seq = useRef(0);
   const mounted = useRef(true);
   useEffect(() => {
@@ -343,6 +347,21 @@ export default function PlannerBestFitPanel({
                   </div>
                   <button
                     type="button"
+                    className="fup-btn fup-fit__review"
+                    disabled={!place || !!booking || !!booked}
+                    title="Open the calendar in a new tab at this time"
+                    aria-label={`Review ${slotDay(s)} with ${s.doctorName} in the calendar`}
+                    onClick={() => {
+                      if (!place) return;
+                      setReviewed(s.key);
+                      setFullOpened(true);
+                      onReview(s, { request, place });
+                    }}
+                  >
+                    Review
+                  </button>
+                  <button
+                    type="button"
                     className="fup-btn fup-btn--primary fup-fit__book"
                     disabled={!canBook}
                     title={
@@ -364,6 +383,7 @@ export default function PlannerBestFitPanel({
             type="button"
             className="fup-btn fup-btn--sm"
             onClick={() => {
+              setReviewed(null);
               setFullOpened(true);
               onOpenFull();
             }}
@@ -372,7 +392,9 @@ export default function PlannerBestFitPanel({
           </button>
           {fullOpened ? (
             <div className="fup-muted fup-fit__note">
-              The calendar is open in another tab. Book there and this card updates.
+              {reviewed
+                ? 'That time is open in the calendar in another tab. Book there and this card updates.'
+                : 'The calendar is open in another tab. Book there and this card updates.'}
             </div>
           ) : null}
         </div>

@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  readRoutingCalendarPreview,
+  type RoutingCalendarPreviewPayloadV1,
+} from './routingCalendarPreviewStorage';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
 import {
   buildRoutingForwardBookingIntentFromEntries,
+  claimRoutingCalendarHandoff,
   claimRoutingForwardBookingIntentHandoff,
   clearRoutingForwardBookingIntent,
   readRoutingForwardBookingIntent,
+  stashRoutingCalendarHandoffForNewTab,
   stashRoutingForwardBookingIntentForNewTab,
   writeRoutingForwardBookingIntent,
 } from './routingForwardBookingIntent';
@@ -79,5 +85,65 @@ describe('forward booking handoff to a new tab', () => {
     clearRoutingForwardBookingIntent();
     expect(claimRoutingForwardBookingIntentHandoff(`?fbHandoff=${key}`)).toBe(false);
     expect(claimRoutingForwardBookingIntentHandoff('')).toBe(false);
+  });
+});
+
+describe('calendar handoff to a new tab: a slot or a visit to show', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  it('carries a slot preview into the new tab before its calendar mounts', () => {
+    const preview = {
+      version: 1,
+      option: {
+        date: '2027-11-02',
+        suggestedStartIso: '2027-11-02T14:00:00Z',
+        doctorPimsId: '7',
+        doctorName: 'Priya Patel',
+        insertionIndex: 1,
+      },
+      serviceMinutes: 30,
+      newApptMeta: { clientId: '50' },
+      appointmentTypeId: 1,
+    } as RoutingCalendarPreviewPayloadV1;
+    const key = stashRoutingCalendarHandoffForNewTab({ calendarPreview: preview });
+    expect(key).toBeTruthy();
+    expect(claimRoutingCalendarHandoff(`?fbHandoff=${key}`)).toEqual({
+      intent: false,
+      preview: true,
+      focusVisit: null,
+    });
+    expect(readRoutingCalendarPreview()).toMatchObject({ option: { date: '2027-11-02' } });
+  });
+
+  it('a visit to focus goes without this tab\'s forward booking', () => {
+    writeRoutingForwardBookingIntent({
+      forwardBookingId: 500,
+      trackingToken: 't500',
+      clientId: '50',
+      patientId: '3',
+      intervalAmount: 1,
+      intervalUnit: 'months',
+      serviceMinutes: 30,
+    });
+    const focusVisit = {
+      appointmentId: 900,
+      startIso: '2026-12-02T15:00:00.000Z',
+      practiceDateKey: '2026-12-02',
+      providerId: 7,
+      label: 'Wed, Dec 2',
+    };
+    const key = stashRoutingCalendarHandoffForNewTab({ intent: false, focusVisit });
+    clearRoutingForwardBookingIntent();
+    expect(claimRoutingCalendarHandoff(`?fbHandoff=${key}`)).toEqual({
+      intent: false,
+      preview: false,
+      focusVisit,
+    });
+    expect(readRoutingForwardBookingIntent()).toBeNull();
+    // Nothing to hand off: no key.
+    expect(stashRoutingCalendarHandoffForNewTab({ intent: false })).toBeNull();
   });
 });

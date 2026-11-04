@@ -2,6 +2,7 @@ import { DateTime } from 'luxon';
 import { applyMergeFields, withClinicDefaults } from '../../utils/messageTemplateFields';
 import { SYSTEM_TEMPLATE_SEEDS } from '../../utils/messageTemplateSeeds';
 import {
+  addToVisitClNote,
   bookingUndoOpen,
   confirmationTextParts,
   tidyMergedText,
@@ -218,5 +219,52 @@ describe('Settings template for the confirmation text', () => {
     expect(render(withMore)).toBe(buildFollowUpConfirmationText(withMore));
     const noName = { ...base, clientFirstName: null };
     expect(render(noName)).toBe(buildFollowUpConfirmationText(noName));
+  });
+});
+
+describe('addToVisitClNote', () => {
+  const at = (iso: string) => DateTime.fromISO(iso, { zone: 'America/New_York' });
+  const base = {
+    petName: 'Maple',
+    otherPetNames: [],
+    householdName: 'Rivera',
+    visitStart: at('2026-11-25T09:00'),
+    windowStart: at('2026-11-25T09:00'),
+    windowEnd: at('2026-11-25T11:00'),
+    provider: { id: 3, name: 'Dana Demo', firstName: 'Dana', lastName: 'Demo' },
+    appointmentId: 2010445,
+    needs: 'Annual Wellness Visit',
+    addedMinutes: 30,
+    lateStops: [{ client: 'Smith', minutesPastWindow: 15 }],
+  };
+
+  it('says where to add the pet, what it needs, and who may run late', () => {
+    expect(addToVisitClNote(base)).toBe(
+      'Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM arrival, Dr. Dana Demo ' +
+        '(appt #2010445). Needs: Annual Wellness Visit. Adds about 30 min. ' +
+        'Heads-up: Smith may arrive 15 min past their window.'
+    );
+  });
+
+  it('adds the other pets, the pre-meds window change and the doctor note', () => {
+    expect(
+      addToVisitClNote({
+        ...base,
+        otherPetNames: ['Pepper'],
+        needsPremeds: true,
+        petNote: 'Bring muzzle.',
+        premedsWindow: { start: at('2026-11-25T09:00'), end: at('2026-11-25T10:00') },
+        lateStops: [
+          { client: 'Smith', minutesPastWindow: 15 },
+          { client: 'Lee', minutesPastWindow: 0 },
+        ],
+      })
+    ).toBe(
+      'Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM arrival, Dr. Dana Demo ' +
+        '(appt #2010445), together with Pepper. Needs: Annual Wellness Visit (needs pre-meds). ' +
+        'Note: Bring muzzle. Adds about 30 min for all the added pets. ' +
+        'Arrival window narrows to 9:00–10:00 AM for every pet (pre-meds). ' +
+        'Heads-up: Smith may arrive 15 min past their window; Lee may arrive at the edge of their window.'
+    );
   });
 });

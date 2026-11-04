@@ -9,8 +9,10 @@ import {
   appointmentRequestWorkspaceIsActive,
   ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
 } from '../utils/routingAppointmentRequestIntent';
+import { dispatchRoutingFocusHouseholdVisit } from '../utils/bookingHouseholdVisitWarning';
+import { showFollowUpPlannerPreview } from '../components/followUps/plannerEvents';
 import {
-  claimRoutingForwardBookingIntentHandoff,
+  claimRoutingCalendarHandoff,
   ROUTING_FORWARD_BOOKING_HANDOFF_PARAM,
   ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
 } from '../utils/routingForwardBookingIntent';
@@ -56,17 +58,13 @@ function readStoredSplitPct(): number {
  * Routing + practice calendar side by side. Routing keeps its own React state; the calendar
  * is a separate Scheduler instance from `/schedule/scheduler`. Preview sync uses sessionStorage + a window event.
  */
-export default function RoutingCalendarWorkspace({
-  startRoutingCollapsed = false,
-}: {
-  /** Open with Get Best Route minimized (calendar-only view, e.g. Schedule follow-ups). */
-  startRoutingCollapsed?: boolean;
-} = {}) {
-  // Opened in a new tab from Schedule follow-ups: take over its forward booking first, so
-  // Routing and the calendar below read it as if it had been started here.
-  useState(() => {
-    if (typeof window === 'undefined') return false;
-    const claimed = claimRoutingForwardBookingIntentHandoff(window.location.search);
+export default function RoutingCalendarWorkspace() {
+  // Opened in a new tab from Schedule follow-ups: take over its forward booking (and the
+  // slot or visit to show) first, so Routing and the calendar below read it as if it had
+  // been started here.
+  const [handoff] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    const claimed = claimRoutingCalendarHandoff(window.location.search);
     const url = new URL(window.location.href);
     if (url.searchParams.has(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM)) {
       url.searchParams.delete(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM);
@@ -74,6 +72,40 @@ export default function RoutingCalendarWorkspace({
     }
     return claimed;
   });
+  const focusVisit = handoff?.focusVisit ?? null;
+  // "View in calendar" from the planner: open on that visit's day and doctor, highlighted,
+  // with the longer end time drawn as the dashed preview. Repeated while the calendar
+  // loads its doctors and day.
+  useEffect(() => {
+    if (!focusVisit) return;
+    const fire = () => {
+      dispatchRoutingFocusHouseholdVisit(
+        {
+          appointmentId: focusVisit.appointmentId,
+          patientNames: [],
+          scheduledLabel: focusVisit.label,
+          appointmentTypeLabel: '',
+          isHold: false,
+          notes: null,
+          appointmentStartIso: focusVisit.startIso,
+          practiceDateKey: focusVisit.practiceDateKey,
+          primaryProviderId: focusVisit.providerId != null ? String(focusVisit.providerId) : null,
+        },
+        { pinHighlight: true }
+      );
+      if (focusVisit.previewEndIso) {
+        showFollowUpPlannerPreview({
+          appointmentId: focusVisit.appointmentId,
+          startIso: focusVisit.startIso,
+          endIso: focusVisit.previewEndIso,
+          originalStartIso: focusVisit.startIso,
+          originalEndIso: focusVisit.originalEndIso ?? focusVisit.previewEndIso,
+        });
+      }
+    };
+    const timers = [400, 1200, 2500, 5000].map((ms) => window.setTimeout(fire, ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [focusVisit]);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const calendarPaneRef = useRef<HTMLDivElement>(null);
   const [routingPct, setRoutingPct] = useState(readStoredSplitPct);
@@ -83,7 +115,10 @@ export default function RoutingCalendarWorkspace({
   const [showEmbeddedCalendar, setShowEmbeddedCalendar] = useState(
     () => !isMobileRoutingViewport() || mobileRoutingNeedsEmbeddedCalendar()
   );
-  const [routingCollapsed, setRoutingCollapsed] = useState(startRoutingCollapsed);
+  const [routingCollapsed, setRoutingCollapsed] = useState(
+    // A visit opened from Schedule follow-ups: calendar only, Get Best Route minimized.
+    focusVisit != null
+  );
 
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_MQ);

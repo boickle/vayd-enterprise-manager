@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSubmitOnce } from '../../hooks/useSubmitOnce';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
@@ -8,13 +8,13 @@ import { getEmployeeBranches, listPracticeBranches } from '../../api/branchInven
 import { getToken } from '../../api/http';
 import { resolveEmployeeIdFromToken } from '../../utils/practiceIdFromToken';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
-import { dispatchRoutingFocusHouseholdVisit } from '../../utils/bookingHouseholdVisitWarning';
 import {
   dismissRoutingForwardBookingWorkspace,
   readRoutingForwardBookingIntent,
-  ROUTING_FORWARD_BOOKING_HANDOFF_PARAM,
-  stashRoutingForwardBookingIntentForNewTab,
+  routingCalendarHandoffUrl,
+  stashRoutingCalendarHandoffForNewTab,
   writeRoutingForwardBookingIntent,
+  type RoutingCalendarHandoff,
 } from '../../utils/routingForwardBookingIntent';
 import { FORWARD_BOOKING_ROUTE_PATH } from '../../utils/forwardBookingWorkspaceGuard';
 import { notifySchedulingToolsNavCountsRefresh } from '../../hooks/useSchedulingToolsNavCounts';
@@ -51,13 +51,9 @@ import {
   type PlannerPet,
   type UpcomingVisit,
 } from './plannerData';
+import { subscribeFollowUpPlannerBooked, type FollowUpPlannerBookedDetail } from './plannerEvents';
 import {
-  clearFollowUpPlannerPreview,
-  showFollowUpPlannerPreview,
-  subscribeFollowUpPlannerBooked,
-  type FollowUpPlannerBookedDetail,
-} from './plannerEvents';
-import {
+  addToVisitClNote,
   BOOKING_UNDO_MS,
   bookingUndoOpen,
   buildFollowUpConfirmationText,
@@ -83,8 +79,10 @@ import {
 import { loadAddPetImpact, type AddPetImpact } from './visitImpact';
 import PlannerBestFitPanel, { type BestFitBookOutcome } from './PlannerBestFitPanel';
 import {
+  bestFitPreviewPayload,
   bookBestFitSlot,
   doctorShortName,
+  internalDoctorIdForPims,
   type BestFitPlace,
   type BestFitRequest,
   type BestFitSlot,
@@ -100,8 +98,6 @@ import { premedsHistoryVisitReason, usePremedsHistory } from '../../utils/premed
 import { premedsWindowSpanLabel, usePracticePremedsWindowMinutes } from '../../utils/premedsWindow';
 import { patientsForAppointment } from '../../utils/schedulerAddPet';
 import './ScheduleFollowUpsPlanner.css';
-
-const RoutingCalendarWorkspace = lazy(() => import('../../pages/RoutingCalendarWorkspace'));
 
 const PRACTICE_NAME = 'Vet At Your Door';
 const AVATAR_COLORS = ['#c0562f', '#2f7fc0', '#3d9a5b', '#8a52c4', '#c08a1f', '#3a8f8f', '#b0476b'];
@@ -140,24 +136,18 @@ type UpcomingState = {
   impactError: string | null;
   /** History-based extra time for the pets being added. */
   added: MinutesEstimate | null;
+  /**
+   * "Send to CLs": the added pets are not put on the visit here; at Done each gets a
+   * forward-booking row telling the CLs to add them to this visit.
+   */
+  clSend: boolean;
 };
 
-type Layer =
-  /**
-   * Find a time now: the card's best-fit slots, booked from the panel. The full calendar
-   * opens in a new tab; this tab never leaves the planner.
-   */
-  | { kind: 'fit'; cardKey: string; request: BestFitRequest }
-  | {
-      kind: 'view';
-      appointmentId: number;
-      startIso: string;
-      providerId: number | null;
-      label: string;
-      /** Show the visit with this longer end time as the calendar's dashed preview. */
-      previewEndIso?: string;
-      originalEndIso?: string;
-    };
+/**
+ * Find a time now: the card's best-fit slots, booked from the panel. Any calendar opens in
+ * a new tab; this tab never leaves the planner.
+ */
+type Layer = { kind: 'fit'; cardKey: string; request: BestFitRequest };
 
 const LABS = 'labs';
 const NONE = 'none';
@@ -286,6 +276,7 @@ export default function ScheduleFollowUpsPlanner({
         for (const v of d.upcoming) {
           ups[v.key] = {
             added: null,
+            clSend: false,
             booking: null,
             adding: false,
             impact: null,
@@ -376,7 +367,6 @@ export default function ScheduleFollowUpsPlanner({
         void removePlannerForwardBookings(ids, practiceId);
         dismissRoutingForwardBookingWorkspace();
       }
-      clearFollowUpPlannerPreview();
     };
   }, [practiceId]);
 
@@ -433,7 +423,9 @@ export default function ScheduleFollowUpsPlanner({
       if (card.startsWith('up:')) {
         const v = visitByKey.get(card.slice(3));
         if (v?.petIds.includes(pet.patientId)) return 'already_booked';
-        return upcoming[card.slice(3)]?.booking ? 'booked' : null;
+        const st = upcoming[card.slice(3)];
+        if (st?.booking) return 'booked';
+        return st?.clSend ? 'send_to_cls' : null;
       }
       const c = cardByKey.get(card);
       if (c?.status === 'booked') return 'booked';
@@ -580,6 +572,17 @@ export default function ScheduleFollowUpsPlanner({
         c.status === 'cl' && (c.key === card || c.key === from) ? { ...c, status: 'draft' } : c
       )
     );
+    // Same for a visit marked "Send to CLs".
+    const touched = [card, from].filter(
+      (k): k is string => !!k && k.startsWith('up:') && !!upcoming[k.slice(3)]?.clSend
+    );
+    if (touched.length) {
+      setUpcoming((u) => {
+        const next = { ...u };
+        for (const k of touched) next[k.slice(3)] = { ...next[k.slice(3)], clSend: false };
+        return next;
+      });
+    }
     setDirty(true);
   }
 
@@ -777,31 +780,78 @@ export default function ScheduleFollowUpsPlanner({
   }
 
   /**
-   * "Open the full calendar in a new tab": the normal calendar page with this forward
-   * booking (the panel's dates), in another tab. The planner stays open here, and a
-   * booking made there comes back to this card.
+   * Every calendar the planner offers opens in another tab (the normal calendar page),
+   * through a one-time handoff the calendar page picks up. The planner stays open here,
+   * and a booking made there comes back to the open card.
    */
-  function openFullCalendarInNewTab(request: BestFitRequest) {
+  function openCalendarTab(handoff: RoutingCalendarHandoff, tab?: Window | null) {
+    const url = routingCalendarHandoffUrl(
+      FORWARD_BOOKING_ROUTE_PATH,
+      stashRoutingCalendarHandoffForNewTab(handoff)
+    );
+    if (tab) {
+      tab.location.href = url;
+      return;
+    }
+    // Never navigates this tab: a blocked pop-up just says so.
+    if (!window.open(url, '_blank')) setPopupBlocked();
+  }
+  const setPopupBlocked = () =>
+    setError('The browser blocked the new tab. Allow pop-ups for Scout and try again.');
+
+  /** The card's forward booking, searching the panel's dates. */
+  function writeSearchWindow(request: BestFitRequest) {
     const intent = readRoutingForwardBookingIntent();
     if (intent) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { v: _v, appliedToRoutingForm: _applied, ...rest } = intent;
       writeRoutingForwardBookingIntent({ ...rest, routingSearch: request.window });
     }
-    const key = stashRoutingForwardBookingIntentForNewTab();
-    const url = key
-      ? `${FORWARD_BOOKING_ROUTE_PATH}?${ROUTING_FORWARD_BOOKING_HANDOFF_PARAM}=${encodeURIComponent(key)}`
-      : FORWARD_BOOKING_ROUTE_PATH;
-    // Never navigates this tab: a blocked pop-up just says so.
-    const tab = window.open(url, '_blank');
-    if (!tab) setError('The browser blocked the new tab. Allow pop-ups for Scout and try again.');
+  }
+
+  /** "Open the full calendar in a new tab": the calendar page with this forward booking. */
+  function openFullCalendarInNewTab(request: BestFitRequest) {
+    writeSearchWindow(request);
+    openCalendarTab({});
+  }
+
+  /**
+   * Review on a best-fit slot: the calendar in a new tab, on that day and doctor, with the
+   * proposed visit drawn in place (Routing's "View placement" preview). Book there books
+   * it the normal way and this card updates.
+   */
+  async function reviewSlotInNewTab(
+    slot: BestFitSlot,
+    ctx: { request: BestFitRequest; place: BestFitPlace }
+  ): Promise<void> {
+    // Opened now, while the click still allows a pop-up; pointed at the slot once the
+    // doctor's calendar id is known.
+    const tab = window.open('', '_blank');
+    if (!tab) return setPopupBlocked();
+    const internalId = await internalDoctorIdForPims(slot.doctorPimsId);
+    if (!internalId) {
+      tab.close();
+      setError(`Could not find ${slot.doctorName} in the provider list.`);
+      return;
+    }
+    writeSearchWindow(ctx.request);
+    openCalendarTab(
+      {
+        calendarPreview: bestFitPreviewPayload({
+          slot,
+          req: ctx.request,
+          place: ctx.place,
+          internalDoctorId: internalId,
+        }),
+      },
+      tab
+    );
   }
 
   const closeLayer = useCallback(async () => {
     const current = layer;
     setLayer(null);
-    clearFollowUpPlannerPreview();
-    if (current?.kind !== 'fit') return;
+    if (!current) return;
     dismissRoutingForwardBookingWorkspace();
     const card = cards.find((c) => c.key === current.cardKey);
     if (card?.status === 'searching') {
@@ -893,6 +943,10 @@ export default function ScheduleFollowUpsPlanner({
     }
   }
 
+  /**
+   * View in calendar / View appointment: the calendar in a new tab on the visit's day and
+   * doctor, the visit highlighted; with `preview`, its longer end time drawn dashed.
+   */
   function viewOnCalendar(
     appointmentId: number,
     start: DateTime,
@@ -900,51 +954,20 @@ export default function ScheduleFollowUpsPlanner({
     label: string,
     preview?: { endIso: string; originalEndIso: string }
   ) {
-    setLayer({
-      kind: 'view',
-      appointmentId,
-      startIso: start.toUTC().toISO()!,
-      providerId,
-      label,
-      ...(preview ? { previewEndIso: preview.endIso, originalEndIso: preview.originalEndIso } : {}),
+    openCalendarTab({
+      intent: false,
+      focusVisit: {
+        appointmentId,
+        startIso: start.toUTC().toISO()!,
+        practiceDateKey: start.setZone(tz).toISODate()!,
+        providerId,
+        label,
+        ...(preview
+          ? { previewEndIso: preview.endIso, originalEndIso: preview.originalEndIso }
+          : {}),
+      },
     });
   }
-  // Highlight the visit once the embedded calendar has mounted and subscribed.
-  useEffect(() => {
-    if (layer?.kind !== 'view') return;
-    const start = DateTime.fromISO(layer.startIso, { zone: 'utc' }).setZone(tz);
-    const fire = () =>
-      dispatchRoutingFocusHouseholdVisit(
-        {
-          appointmentId: layer.appointmentId,
-          patientNames: [],
-          scheduledLabel: layer.label,
-          appointmentTypeLabel: '',
-          isHold: false,
-          notes: null,
-          appointmentStartIso: layer.startIso,
-          practiceDateKey: start.toISODate()!,
-          primaryProviderId: layer.providerId != null ? String(layer.providerId) : null,
-        },
-        { pinHighlight: true }
-      );
-    const firePreview = () =>
-      layer.previewEndIso &&
-      showFollowUpPlannerPreview({
-        appointmentId: layer.appointmentId,
-        startIso: layer.startIso,
-        endIso: layer.previewEndIso,
-        originalStartIso: layer.startIso,
-        originalEndIso: layer.originalEndIso ?? layer.previewEndIso,
-      });
-    const timers = [400, 1200, 2500].map((ms) =>
-      window.setTimeout(() => {
-        fire();
-        firePreview();
-      }, ms)
-    );
-    return () => timers.forEach((t) => window.clearTimeout(t));
-  }, [layer, tz]);
 
   // -------------------------------------------------------------------------
   // Add to a housemate's upcoming visit
@@ -1067,6 +1090,68 @@ export default function ScheduleFollowUpsPlanner({
       setError(e instanceof Error ? e.message : 'Could not add to that visit.');
     }
   }
+  /** The household's arrival window when an added pet brings pre-meds to the visit. */
+  function premedsWindowFor(v: UpcomingVisit): { start: DateTime; end: DateTime } | null {
+    const nowPremeds = addedTo(v).some((p) => premedsFor(p, upKey(v.key)));
+    const already = v.appointments.some((a) => a.needsPremeds === true);
+    const first = v.appointments[0];
+    if (!nowPremeds || already || !first) return null;
+    const win = householdArrivalWindow(first, [{ needsPremeds: true }], tz);
+    return win
+      ? {
+          start: DateTime.fromISO(win.startIso, { zone: 'utc' }).setZone(tz),
+          end: DateTime.fromISO(win.endIso, { zone: 'utc' }).setZone(tz),
+        }
+      : null;
+  }
+
+  /** "Send to CLs": nothing changes on the visit; the rows are made at Done. */
+  function markAddForCls(v: UpcomingVisit) {
+    const missing = addedTo(v).filter((p) => addedTypeFor(v, p) == null);
+    if (missing.length) {
+      setError(`Pick a visit type for ${joinNames(missing.map((p) => p.name))}`);
+      return;
+    }
+    setUpcoming((u) => ({ ...u, [v.key]: { ...u[v.key], clSend: true } }));
+    setDirty(true);
+    setToast({ text: 'Marked for the CLs. Saved when you press Done.' });
+  }
+  function unmarkAddForCls(visitKey: string) {
+    setUpcoming((u) => ({ ...u, [visitKey]: { ...u[visitKey], clSend: false } }));
+  }
+
+  /** The forward-booking note: which visit to add the pet to, what it needs, the impact. */
+  function clNoteForAdd(v: UpcomingVisit, pet: PlannerPet): string {
+    const st = upcoming[v.key];
+    const added = addedTo(v);
+    const nameParts = (data?.clientName ?? '').trim().split(/\s+/).filter(Boolean);
+    const firstId = Number(v.appointments[0]?.id);
+    const note = addToVisitClNote({
+      petName: pet.name,
+      otherPetNames: added.filter((p) => p.patientId !== pet.patientId).map((p) => p.name),
+      householdName: nameParts.length ? nameParts[nameParts.length - 1]! : null,
+      visitStart: v.start,
+      windowStart: v.windowStart,
+      windowEnd: v.windowEnd,
+      provider: v.provider,
+      appointmentId: Number.isFinite(firstId) ? firstId : null,
+      needs: typeName(addedTypeFor(v, pet)),
+      petNote: notes[noteKey(pet.patientId, upKey(v.key))],
+      needsPremeds: premedsFor(pet, upKey(v.key)),
+      addedMinutes: st?.added?.minutes ?? null,
+      premedsWindow: premedsWindowFor(v),
+      lateStops: (st?.impact?.laterStops ?? [])
+        .filter((x) => x.warns)
+        .map((x) => ({ client: x.client, minutesPastWindow: x.minutesPastWindow })),
+    });
+    return clNote.trim() ? `${note}\nHousehold: ${clNote.trim()}` : note;
+  }
+  /** A visit's day as a CL row's target (the row's target date is that day). */
+  const visitInterval = (v: UpcomingVisit): PlannerInterval => ({
+    kind: 'date',
+    date: v.start.setZone(tz).toISODate()!,
+  });
+
   async function undoAdd(visitKey: string, booking: PlannerBooking) {
     if (!bookingUndoOpen(booking.bookedAtMs, Date.now())) return;
     setToast(null);
@@ -1129,6 +1214,10 @@ export default function ScheduleFollowUpsPlanner({
   }, [cards, upcoming, placements, data]);
 
   const clCards = cards.filter((c) => c.status === 'cl' && petsIn(c.key).length > 0);
+  /** Housemate visits whose added pets go to the CLs to add (Send to CLs). */
+  const clVisits = (data?.upcoming ?? []).filter(
+    (v) => upcoming[v.key]?.clSend && !upcoming[v.key]?.booking && addedTo(v).length > 0
+  );
   const labsPets = petsIn(LABS);
 
   const buildText = useCallback(() => {
@@ -1137,10 +1226,16 @@ export default function ScheduleFollowUpsPlanner({
       practiceName: PRACTICE_NAME,
       bookings,
       clMentions: mention.cl
-        ? clCards.map((c) => ({
-            petNames: petsIn(c.key).map((p) => p.name),
-            around: plannerTargetDate(c.interval, data!.today),
-          }))
+        ? [
+            ...clCards.map((c) => ({
+              petNames: petsIn(c.key).map((p) => p.name),
+              around: plannerTargetDate(c.interval, data!.today),
+            })),
+            ...clVisits.map((v) => ({
+              petNames: addedTo(v).map((p) => p.name),
+              around: v.start.startOf('day'),
+            })),
+          ]
         : [],
       labsPetNames: mention.labs ? labsPets.map((p) => p.name) : [],
     };
@@ -1158,7 +1253,7 @@ export default function ScheduleFollowUpsPlanner({
       )
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, mention, clCards.length, labsPets.length, data]);
+  }, [bookings, mention, clCards.length, clVisits.length, labsPets.length, data]);
   useEffect(() => {
     if (step === 'review' && !textEdited) setReviewText(buildText());
   }, [step, textEdited, buildText]);
@@ -1173,7 +1268,7 @@ export default function ScheduleFollowUpsPlanner({
       return `Book or send to the CLs: ${draftWithPets.map((c) => `"${cardLabel(c.key)}" card`).join(', ')}`;
     }
     for (const v of data?.upcoming ?? []) {
-      if (addedTo(v).length && !upcoming[v.key]?.booking) {
+      if (addedTo(v).length && !upcoming[v.key]?.booking && !upcoming[v.key]?.clSend) {
         return `Press Add on the ${v.start.toFormat('LLL d')} visit, or take the pets off it`;
       }
     }
@@ -1199,6 +1294,9 @@ export default function ScheduleFollowUpsPlanner({
           if (card === NONE) return [`no follow-up needed (${noneReason.trim()})`];
           if (card.startsWith('up:')) {
             const v = visitByKey.get(card.slice(3));
+            if (v && upcoming[card.slice(3)]?.clSend && !v.petIds.includes(pet.patientId)) {
+              return [`sent to the CLs to add to the ${v.start.toFormat('LLL d')} visit`];
+            }
             return upcoming[card.slice(3)]?.booking && v
               ? [
                   `added to the ${fmtDay(v.start)} visit${v.provider ? ` with ${providerTextLabel(v.provider)}` : ''}`,
@@ -1252,7 +1350,34 @@ export default function ScheduleFollowUpsPlanner({
             entryByPet.set(Number(e.patientId), Number(e.id))
         );
       }
-      setCards((cs) => cs.map((c) => (c.status === 'cl' ? { ...c, status: 'cl' } : c)));
+      // "Send to CLs" on a housemate visit: one row per added pet, aimed at that visit's
+      // day and provider, its note saying where to add the pet and what it needs.
+      const clNoteByPet = new Map<number, { interval: PlannerInterval; note: string }>();
+      for (const v of clVisits) {
+        const added = addedTo(v);
+        const { entries } = await createPlannerForwardBookings({
+          practiceId,
+          clientId: data.clientId,
+          pets: added,
+          interval: visitInterval(v),
+          today: data.today,
+          providerId: v.provider?.id ?? null,
+          typeIdFor: (p) => addedTypeFor(v, p)!,
+          premedsFor: (p) => premedsFor(p, upKey(v.key)),
+          serviceMinutes: upcoming[v.key]?.added?.minutes ?? 20,
+          notesFor: (p) => clNoteForAdd(v, p),
+          links: links.current,
+        });
+        entries.forEach(
+          (e) =>
+            !entryByPet.has(Number(e.patientId)) &&
+            entryByPet.set(Number(e.patientId), Number(e.id))
+        );
+        for (const p of added) {
+          if (!clNoteByPet.has(p.patientId))
+            clNoteByPet.set(p.patientId, { interval: visitInterval(v), note: clNoteForAdd(v, p) });
+        }
+      }
       // 2. Labs tasks, one per pet.
       const taskByPet = new Map<number, number>();
       const remindDays = LABS_REMIND.find((r) => r.key === labsRemind)?.days ?? 3;
@@ -1284,10 +1409,17 @@ export default function ScheduleFollowUpsPlanner({
         if (!mode) continue;
         const disposition: ForwardBookingDisposition = { mode };
         if (mode === 'forward_book_fields') {
-          const c = clCards.find((x) => petsIn(x.key).some((p) => p.patientId === pet.patientId))!;
-          Object.assign(disposition, plannerIntervalForApi(c.interval, data.today), {
-            bookingNotes: notesFor(c.key)(pet),
-          });
+          const c = clCards.find((x) => petsIn(x.key).some((p) => p.patientId === pet.patientId));
+          const toVisit = clNoteByPet.get(pet.patientId);
+          if (c) {
+            Object.assign(disposition, plannerIntervalForApi(c.interval, data.today), {
+              bookingNotes: notesFor(c.key)(pet),
+            });
+          } else if (toVisit) {
+            Object.assign(disposition, plannerIntervalForApi(toVisit.interval, data.today), {
+              bookingNotes: toVisit.note,
+            });
+          }
         }
         if (mode === 'not_appropriate') disposition.bookingNotes = noneReason.trim();
         if (mode === 'labs_pending') {
@@ -2061,17 +2193,11 @@ export default function ScheduleFollowUpsPlanner({
                               .
                             </b>{' '}
                             {(() => {
-                              const nowPremeds = added.some((p) => premedsFor(p, upKey(v.key)));
-                              const already = v.appointments.some((a) => a.needsPremeds === true);
-                              const first = v.appointments[0];
-                              const win =
-                                nowPremeds && !already && first
-                                  ? householdArrivalWindow(first, [{ needsPremeds: true }], tz)
-                                  : null;
+                              const win = premedsWindowFor(v);
                               return win
                                 ? `Arrival window narrows to ${fmtWindow(
-                                    DateTime.fromISO(win.startIso, { zone: 'utc' }).setZone(tz),
-                                    DateTime.fromISO(win.endIso, { zone: 'utc' }).setZone(tz)
+                                    win.start,
+                                    win.end
                                   )} for every pet (pre-meds).`
                                 : `Arrival window stays ${fmtWindow(v.windowStart, v.windowEnd)}.`;
                             })()}
@@ -2112,49 +2238,76 @@ export default function ScheduleFollowUpsPlanner({
                               No other visits after this one that day.
                             </div>
                           ) : null}
-                          <div className="fup-actions">
-                            <button
-                              type="button"
-                              className="fup-btn fup-btn--primary"
-                              disabled={st?.adding}
-                              onClick={() => void confirmAdd(v)}
-                            >
-                              {st?.adding
-                                ? 'Adding…'
-                                : lateStops.length
-                                  ? 'Add anyway'
-                                  : `Add ${joinNames(added.map((p) => p.name))}`}
-                            </button>
-                            <button
-                              type="button"
-                              className="fup-btn"
-                              onClick={() =>
-                                viewOnCalendar(
-                                  Number(v.appointments[0].id),
-                                  v.start,
-                                  v.provider?.id ?? null,
-                                  fmtDay(v.start),
-                                  st?.impact
-                                    ? {
-                                        endIso: st.impact.newEnd.toUTC().toISO()!,
-                                        originalEndIso: v.appointments[0].appointmentEnd,
-                                      }
-                                    : undefined
-                                )
-                              }
-                            >
-                              View in calendar
-                            </button>
-                            {lateStops.length ? (
+                          {st?.clSend ? (
+                            <div className="fup-status-row">
+                              <div className="fup-status fup-status--cl">
+                                Goes to the CLs when you press Done: add{' '}
+                                {joinNames(added.map((p) => p.name))} to this visit.
+                              </div>
                               <button
                                 type="button"
-                                className="fup-btn fup-btn--ghost"
-                                onClick={() => moveAddedElsewhere(v)}
+                                className="fup-btn fup-btn--sm"
+                                onClick={() => unmarkAddForCls(v.key)}
                               >
-                                Find a different time
+                                Undo
                               </button>
-                            ) : null}
-                          </div>
+                            </div>
+                          ) : (
+                            <div className="fup-actions">
+                              <button
+                                type="button"
+                                className="fup-btn fup-btn--primary"
+                                disabled={st?.adding}
+                                onClick={() => void confirmAdd(v)}
+                              >
+                                {st?.adding
+                                  ? 'Adding…'
+                                  : lateStops.length
+                                    ? 'Add anyway'
+                                    : `Add ${joinNames(added.map((p) => p.name))}`}
+                              </button>
+                              {lateStops.length ? (
+                                <button
+                                  type="button"
+                                  className="fup-btn"
+                                  disabled={st?.adding}
+                                  title="Leave the visit as it is; the CLs add the pets at Done"
+                                  onClick={() => markAddForCls(v)}
+                                >
+                                  Send to CLs
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="fup-btn"
+                                onClick={() =>
+                                  viewOnCalendar(
+                                    Number(v.appointments[0].id),
+                                    v.start,
+                                    v.provider?.id ?? null,
+                                    fmtDay(v.start),
+                                    st?.impact
+                                      ? {
+                                          endIso: st.impact.newEnd.toUTC().toISO()!,
+                                          originalEndIso: v.appointments[0].appointmentEnd,
+                                        }
+                                      : undefined
+                                  )
+                                }
+                              >
+                                View in calendar
+                              </button>
+                              {lateStops.length ? (
+                                <button
+                                  type="button"
+                                  className="fup-btn fup-btn--ghost"
+                                  onClick={() => moveAddedElsewhere(v)}
+                                >
+                                  Find a different time
+                                </button>
+                              ) : null}
+                            </div>
+                          )}
                         </>
                       ) : null}
                       {booking ? (
@@ -2489,7 +2642,9 @@ export default function ScheduleFollowUpsPlanner({
                           onToggle={(id, checked) => {
                             labsPeopleEdited.current = true;
                             setLabsAssignees((cur) =>
-                              checked ? [...cur.filter((n) => n !== id), id] : cur.filter((n) => n !== id)
+                              checked
+                                ? [...cur.filter((n) => n !== id), id]
+                                : cur.filter((n) => n !== id)
                             );
                             if (checked) setLabsWatchers((cur) => cur.filter((n) => n !== id));
                           }}
@@ -2503,7 +2658,9 @@ export default function ScheduleFollowUpsPlanner({
                           onToggle={(id, checked) => {
                             labsPeopleEdited.current = true;
                             setLabsWatchers((cur) =>
-                              checked ? [...cur.filter((n) => n !== id), id] : cur.filter((n) => n !== id)
+                              checked
+                                ? [...cur.filter((n) => n !== id), id]
+                                : cur.filter((n) => n !== id)
                             );
                             if (checked) setLabsAssignees((cur) => cur.filter((n) => n !== id));
                           }}
@@ -2692,28 +2849,10 @@ export default function ScheduleFollowUpsPlanner({
           }}
           onBook={(slot, ctx) => bookFromPanel(layer.cardKey, slot, ctx)}
           onBooked={() => setLayer(null)}
+          onReview={(slot, ctx) => void reviewSlotInNewTab(slot, ctx)}
           onOpenFull={() => openFullCalendarInNewTab(layer.request)}
           onClose={() => void closeLayer()}
         />
-      ) : layer ? (
-        <aside className="fup-layer" role="dialog" aria-modal="true" aria-label="Calendar">
-          <div className="fup-layer__head">
-            <div>
-              <b>Calendar · {layer.label}</b>
-              <div className="fup-muted">
-                The visit is highlighted. Reschedule or cancel it here if needed.
-              </div>
-            </div>
-            <button type="button" className="fup-btn" onClick={() => void closeLayer()}>
-              Back to follow-ups
-            </button>
-          </div>
-          <div className="fup-layer__body">
-            <Suspense fallback={<div className="fup-body--center">Loading the calendar…</div>}>
-              <RoutingCalendarWorkspace startRoutingCollapsed />
-            </Suspense>
-          </div>
-        </aside>
       ) : null}
 
       {leaveWarn ? (
@@ -2729,6 +2868,10 @@ export default function ScheduleFollowUpsPlanner({
               notSaved={[
                 ...clCards.map(
                   (c) => `${joinNames(petsIn(c.key).map((p) => p.name))} → forward booking list`
+                ),
+                ...clVisits.map(
+                  (v) =>
+                    `${joinNames(addedTo(v).map((p) => p.name))} → CLs, to add to the ${v.start.toFormat('LLL d')} visit`
                 ),
                 ...(labsPets.length
                   ? [`${joinNames(labsPets.map((p) => p.name))} → labs pending task`]

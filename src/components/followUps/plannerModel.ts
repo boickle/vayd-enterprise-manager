@@ -314,3 +314,93 @@ export const BOOKING_UNDO_MS = 10_000;
 export function bookingUndoOpen(bookedAtMs: number, nowMs: number): boolean {
   return nowMs - bookedAtMs < BOOKING_UNDO_MS;
 }
+
+// ---------------------------------------------------------------------------
+// Send to the CLs: add a pet to a household visit that would run late
+// ---------------------------------------------------------------------------
+
+/** "9:00–11:00 AM" (or "11:30 AM–1:30 PM" across noon). */
+export function timeRangeLabel(a: DateTime, b: DateTime): string {
+  return a.toFormat('a') === b.toFormat('a')
+    ? `${a.toFormat('h:mm')}–${b.toFormat('h:mm a')}`
+    : `${a.toFormat('h:mm a')}–${b.toFormat('h:mm a')}`;
+}
+
+/** "Dr. Dana Demo" for a doctor; the tech team keeps its own name. */
+export function providerFullLabel(p: PlannerProvider | null | undefined): string {
+  if (!p) return 'no provider';
+  if (providerIsTechTeam(p)) return p.name;
+  const name = p.name
+    .replace(/,.*$/, '')
+    .replace(/^dr\.?\s+/i, '')
+    .trim();
+  return name ? `Dr. ${name}` : 'no provider';
+}
+
+export type AddToVisitClNoteArgs = {
+  petName: string;
+  /** Other pets added to the same visit at the same time. */
+  otherPetNames: string[];
+  /** Household (client) last name, e.g. "Rivera". */
+  householdName: string | null;
+  visitStart: DateTime;
+  windowStart: DateTime;
+  windowEnd: DateTime;
+  provider: PlannerProvider | null;
+  appointmentId: number | null;
+  /** The pet's visit type, e.g. "Annual Wellness Visit". */
+  needs: string;
+  /** The doctor's own note for the pet, if any. */
+  petNote?: string;
+  needsPremeds?: boolean;
+  /** Extra time for all added pets together. */
+  addedMinutes: number | null;
+  /** The household's arrival window narrows to this for pre-meds. */
+  premedsWindow?: { start: DateTime; end: DateTime } | null;
+  /** Later stops that day that would arrive past (or at the edge of) their window. */
+  lateStops: { client: string; minutesPastWindow: number }[];
+};
+
+/**
+ * The forward-booking row's note when the doctor sends "add this pet to that visit" to
+ * the CLs instead of adding it (the visit would make later stops late): where to add it
+ * and what it needs, e.g. "Add Maple to the Rivera visit Wed Nov 25, 9:00–11:00 AM
+ * arrival, Dr. Dana Demo (appt #2010445). Needs: Annual Wellness Visit. Adds about 30
+ * min. Heads-up: Smith may arrive 15 min past their window."
+ */
+export function addToVisitClNote(a: AddToVisitClNoteArgs): string {
+  const visit = a.householdName ? `the ${a.householdName} visit` : "the household's visit";
+  const appt = a.appointmentId != null ? ` (appt #${a.appointmentId})` : '';
+  const others = a.otherPetNames.length ? `, together with ${joinNames(a.otherPetNames)}` : '';
+  const parts = [
+    `Add ${a.petName} to ${visit} ${a.visitStart.toFormat('ccc LLL d')}, ${timeRangeLabel(
+      a.windowStart,
+      a.windowEnd
+    )} arrival, ${providerFullLabel(a.provider)}${appt}${others}.`,
+    `Needs: ${a.needs.trim() || 'visit type not set'}${a.needsPremeds ? ' (needs pre-meds)' : ''}.`,
+  ];
+  const note = a.petNote?.trim();
+  if (note) parts.push(`Note: ${note.replace(/[.\s]+$/, '')}.`);
+  if (a.addedMinutes != null) {
+    parts.push(
+      `Adds about ${a.addedMinutes} min${a.otherPetNames.length ? ' for all the added pets' : ''}.`
+    );
+  }
+  if (a.premedsWindow) {
+    parts.push(
+      `Arrival window narrows to ${timeRangeLabel(a.premedsWindow.start, a.premedsWindow.end)} for every pet (pre-meds).`
+    );
+  }
+  if (a.lateStops.length) {
+    parts.push(
+      `Heads-up: ${a.lateStops
+        .map((s) =>
+          s.minutesPastWindow > 0
+            ? `${s.client} may arrive ${s.minutesPastWindow} min past their window`
+            : `${s.client} may arrive at the edge of their window`
+        )
+        .join('; ')}.`
+    );
+  }
+  return parts.join(' ');
+}

@@ -7,7 +7,11 @@ import {
   type ForwardBookingIntervalUnit,
 } from '../api/forwardBooking';
 import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
-import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
+import {
+  clearRoutingCalendarPreview,
+  ROUTING_CALENDAR_PREVIEW_STORAGE_KEY,
+  type RoutingCalendarPreviewPayloadV1,
+} from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
 
 export const ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY = 'vayd:routing-forward-booking-intent-v1';
@@ -203,14 +207,51 @@ const HANDOFF_PREFIX = 'vayd:routing-forward-booking-handoff:';
 const HANDOFF_MAX_AGE_MS = 10 * 60_000;
 
 /**
- * Copy the current intent where a new tab can read it once (sessionStorage is per tab).
- * Returns the key for the new tab's URL, or null when there is no intent.
+ * Schedule follow-ups → "View in calendar": the visit the new tab's calendar opens on
+ * (its day and doctor, highlighted), with the longer end time as a dashed preview when
+ * pets would be added.
  */
-export function stashRoutingForwardBookingIntentForNewTab(): string | null {
+export type RoutingCalendarFocusVisit = {
+  appointmentId: number;
+  startIso: string;
+  /** The visit's day in the practice time zone (`yyyy-MM-dd`). */
+  practiceDateKey: string;
+  providerId: number | null;
+  label: string;
+  previewEndIso?: string;
+  originalEndIso?: string;
+};
+
+export type RoutingCalendarHandoff = {
+  /** Copy this tab's forward-booking intent (when there is one). Default true. */
+  intent?: boolean;
+  /** A proposed slot for the calendar to show in place (Routing's calendar preview). */
+  calendarPreview?: RoutingCalendarPreviewPayloadV1;
+  focusVisit?: RoutingCalendarFocusVisit;
+};
+
+type StoredHandoff = {
+  at?: number;
+  raw?: string;
+  preview?: string;
+  focusVisit?: RoutingCalendarFocusVisit;
+};
+
+/**
+ * Leave what a new tab should open with where it can read it once (sessionStorage is
+ * per tab): this tab's forward-booking intent, and optionally a slot preview or a visit
+ * to focus. Returns the key for the new tab's URL, or null when there is nothing to hand off.
+ */
+export function stashRoutingCalendarHandoffForNewTab(
+  handoff: RoutingCalendarHandoff = {}
+): string | null {
   if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY);
-    if (!raw) return null;
+    const raw =
+      handoff.intent === false
+        ? null
+        : sessionStorage.getItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY);
+    if (!raw && !handoff.calendarPreview && !handoff.focusVisit) return null;
     const now = Date.now();
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
@@ -219,33 +260,76 @@ export function stashRoutingForwardBookingIntentForNewTab(): string | null {
       if (!Number.isFinite(at) || now - at > HANDOFF_MAX_AGE_MS) localStorage.removeItem(k);
     }
     const key = `${now.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem(HANDOFF_PREFIX + key, JSON.stringify({ at: now, raw }));
+    const stored: StoredHandoff = {
+      at: now,
+      ...(raw ? { raw } : {}),
+      ...(handoff.calendarPreview ? { preview: JSON.stringify(handoff.calendarPreview) } : {}),
+      ...(handoff.focusVisit ? { focusVisit: handoff.focusVisit } : {}),
+    };
+    localStorage.setItem(HANDOFF_PREFIX + key, JSON.stringify(stored));
     return key;
   } catch {
     return null;
   }
 }
 
-/** In the new tab: move a stashed intent into this tab's session (once). */
-export function claimRoutingForwardBookingIntentHandoff(search: string): boolean {
-  if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return false;
+/**
+ * Copy the current intent where a new tab can read it once (sessionStorage is per tab).
+ * Returns the key for the new tab's URL, or null when there is no intent.
+ */
+export function stashRoutingForwardBookingIntentForNewTab(): string | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  if (!sessionStorage.getItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY)) return null;
+  return stashRoutingCalendarHandoffForNewTab();
+}
+
+/** The calendar page URL that claims a stashed handoff (the plain page without one). */
+export function routingCalendarHandoffUrl(path: string, key: string | null): string {
+  return key ? `${path}?${ROUTING_FORWARD_BOOKING_HANDOFF_PARAM}=${encodeURIComponent(key)}` : path;
+}
+
+export type ClaimedRoutingCalendarHandoff = {
+  /** The forward-booking intent was moved into this tab's session. */
+  intent: boolean;
+  /** A slot preview was moved into this tab's session. */
+  preview: boolean;
+  focusVisit: RoutingCalendarFocusVisit | null;
+};
+
+/** In the new tab: move a stashed handoff into this tab's session (once). */
+export function claimRoutingCalendarHandoff(search: string): ClaimedRoutingCalendarHandoff {
+  const none: ClaimedRoutingCalendarHandoff = { intent: false, preview: false, focusVisit: null };
+  if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return none;
   try {
     const key = new URLSearchParams(search).get(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM)?.trim();
-    if (!key) return false;
+    if (!key) return none;
     const stored = localStorage.getItem(HANDOFF_PREFIX + key);
     localStorage.removeItem(HANDOFF_PREFIX + key);
-    if (!stored) return false;
-    const { at, raw } = JSON.parse(stored) as { at?: number; raw?: string };
-    if (!raw || !Number.isFinite(Number(at)) || Date.now() - Number(at) > HANDOFF_MAX_AGE_MS)
-      return false;
-    sessionStorage.setItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY, raw);
-    if (typeof window !== 'undefined') {
+    if (!stored) return none;
+    const { at, raw, preview, focusVisit } = JSON.parse(stored) as StoredHandoff;
+    if (!Number.isFinite(Number(at)) || Date.now() - Number(at) > HANDOFF_MAX_AGE_MS) return none;
+    if (raw) sessionStorage.setItem(ROUTING_FORWARD_BOOKING_INTENT_STORAGE_KEY, raw);
+    // Written before the calendar mounts, so it opens on the slot (and Book books it).
+    if (preview) sessionStorage.setItem(ROUTING_CALENDAR_PREVIEW_STORAGE_KEY, preview);
+    if (raw && typeof window !== 'undefined') {
       window.dispatchEvent(new Event(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT));
     }
-    return true;
+    return {
+      intent: !!raw,
+      preview: !!preview,
+      focusVisit:
+        focusVisit && Number.isFinite(Number(focusVisit.appointmentId)) && focusVisit.startIso
+          ? focusVisit
+          : null,
+    };
   } catch {
-    return false;
+    return none;
   }
+}
+
+/** In the new tab: move a stashed intent into this tab's session (once). */
+export function claimRoutingForwardBookingIntentHandoff(search: string): boolean {
+  return claimRoutingCalendarHandoff(search).intent;
 }
 
 export function markForwardBookingIntentAppliedToRoutingForm(): void {

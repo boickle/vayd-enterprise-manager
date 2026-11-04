@@ -198,6 +198,7 @@ vi.mock('../../pages/RoutingCalendarWorkspace', () => ({
 const bestFit = vi.hoisted(() => ({
   searchPlannerBestFit: vi.fn(),
   bookBestFitSlot: vi.fn(),
+  internalDoctorIdForPims: vi.fn(async () => '7'),
 }));
 vi.mock('./plannerBestFit', async (orig) => ({
   ...(await orig<typeof import('./plannerBestFit')>()),
@@ -950,5 +951,256 @@ describe('Rest of household', () => {
       'Could not load the rest of the household'
     );
     expect(screen.queryByText('Everyone else is booked or planned.')).toBeNull();
+  });
+});
+
+const HANDOFF_PREFIX = 'vayd:routing-forward-booking-handoff:';
+/** What the planner left for the new tab behind `/schedule/routing?fbHandoff=<key>`. */
+function handoffFor(url: string) {
+  const key = new URL(url, 'http://x').searchParams.get('fbHandoff');
+  expect(key).toBeTruthy();
+  return JSON.parse(localStorage.getItem(HANDOFF_PREFIX + key) ?? 'null') as {
+    raw?: string;
+    preview?: string;
+    focusVisit?: Record<string, unknown>;
+  };
+}
+
+describe('Adding a pet to a visit that would run late: Send to CLs', () => {
+  const PEPPER_NOTE =
+    'Add Pepper to the Okafor visit Wed Dec 2, 10:00 AM–12:00 PM arrival, Dr. Priya Patel ' +
+    '(appt #900). Needs: Ear Recheck. Adds about 14 min. ' +
+    'Heads-up: Ruiz household may arrive 5 min past their window.';
+
+  /** Today's four pets get "No follow-up needed" so Done only waits on the visit. */
+  function planTodaysPets() {
+    for (const name of ['Fluffy', 'Angel', 'Marvin', 'Biscuit'])
+      pick(trayPet(name), /No follow-up needed/);
+    fireEvent.click(screen.getByRole('button', { name: 'Client declined' }));
+  }
+  const gretaCard = () => screen.getByText('Wed, Dec 2').closest('article') as HTMLElement;
+
+  it('is offered only when the visit would make a later stop late', async () => {
+    const { loadAddPetImpact } = await import('./visitImpact');
+    vi.mocked(loadAddPetImpact).mockResolvedValueOnce({
+      newEnd: DateTime.fromISO('2026-12-02T11:05', { zone: TZ }),
+      laterStops: [],
+    });
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    pick(trayPet('Pepper'), /visit · Wed, Dec 2/);
+    await screen.findByText('No other visits after this one that day.');
+    expect(within(gretaCard()).getByRole('button', { name: 'Add Pepper' })).toBeTruthy();
+    expect(within(gretaCard()).queryByRole('button', { name: 'Send to CLs' })).toBeNull();
+    expect(within(gretaCard()).queryByRole('button', { name: 'Add anyway' })).toBeNull();
+  });
+
+  it('leaves the visit alone and makes one forward-booking row per pet at Done, with where to add it', async () => {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    planTodaysPets();
+    pick(trayPet('Pepper'), /visit · Wed, Dec 2/);
+    await screen.findByText(/5 min past their window/);
+    await screen.findByText(/Adds about 14 min/);
+    fireEvent.click(within(gretaCard()).getByRole('button', { name: 'Send to CLs' }));
+
+    expect(
+      within(gretaCard()).getByText(
+        'Goes to the CLs when you press Done: add Pepper to this visit.'
+      )
+    ).toBeTruthy();
+    expect(within(gretaCard()).queryByRole('button', { name: 'Add anyway' })).toBeNull();
+    // Nothing on the calendar changes, and nothing is saved before Done.
+    expect(actions.addPetsToUpcomingVisit).not.toHaveBeenCalled();
+    expect(actions.createPlannerForwardBookings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    await waitFor(() => expect(actions.createPlannerForwardBookings).toHaveBeenCalledTimes(1));
+    const call = actions.createPlannerForwardBookings.mock.calls[0][0];
+    expect(call.pets.map((p: { name: string }) => p.name)).toEqual(['Pepper']);
+    // The row aims at that visit's day and provider.
+    expect(call.interval).toEqual({ kind: 'date', date: '2026-12-02' });
+    expect(call.providerId).toBe(7);
+    expect(call.typeIdFor(call.pets[0])).toBe(3);
+    expect(call.serviceMinutes).toBe(14);
+    expect(call.notesFor(call.pets[0])).toBe(PEPPER_NOTE);
+    expect(actions.addPetsToUpcomingVisit).not.toHaveBeenCalled();
+    expect(actions.undoPlannerBooking).not.toHaveBeenCalled();
+  });
+
+  it('Undo takes it back: the Add buttons return and Done waits for a choice again', async () => {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    planTodaysPets();
+    pick(trayPet('Pepper'), /visit · Wed, Dec 2/);
+    await screen.findByText(/5 min past their window/);
+    fireEvent.click(within(gretaCard()).getByRole('button', { name: 'Send to CLs' }));
+    fireEvent.click(within(gretaCard()).getByRole('button', { name: 'Undo' }));
+    expect(screen.queryByText(/Goes to the CLs when you press Done: add Pepper/)).toBeNull();
+    expect(within(gretaCard()).getByRole('button', { name: 'Add anyway' })).toBeTruthy();
+    expect(within(gretaCard()).getByRole('button', { name: 'Send to CLs' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    expect(await screen.findByText(/Press Add on the Dec 2 visit/)).toBeTruthy();
+    expect(actions.createPlannerForwardBookings).not.toHaveBeenCalled();
+  });
+
+  it("today's pet sent to the CLs for a visit saves the forward-booking choice for that day", async () => {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    for (const name of ['Angel', 'Marvin', 'Biscuit']) pick(trayPet(name), /No follow-up needed/);
+    fireEvent.click(screen.getByRole('button', { name: 'Client declined' }));
+    pick(trayPet('Fluffy'), /visit · Wed, Dec 2/);
+    await screen.findByText(/5 min past their window/);
+    fireEvent.click(within(gretaCard()).getByRole('button', { name: 'Send to CLs' }));
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    await waitFor(() => expect(actions.savePetDisposition).toHaveBeenCalledTimes(4));
+    const fluffy = actions.savePetDisposition.mock.calls.find(([d]) => d.pet.name === 'Fluffy')![0];
+    expect(fluffy.entryId).toBe(500);
+    expect(fluffy.disposition).toMatchObject({
+      mode: 'forward_book_fields',
+      // Nov 3 → Dec 2.
+      intervalAmount: 29,
+      intervalUnit: 'days',
+    });
+    expect(fluffy.disposition.bookingNotes).toMatch(/^Add Fluffy to the Okafor visit Wed Dec 2/);
+  });
+
+  it('a pet the planner was opened for: Done says it went to the CLs for that visit', async () => {
+    vi.mocked(loadPlannerDataMock).mockResolvedValueOnce({
+      ...fixture,
+      todayProviderId: null,
+      pets: fixture.pets.map((p) => ({
+        ...p,
+        onTodaysVisit: false,
+        appointmentId: null,
+        soapEncounterId: null,
+        ...(p.patientId === 4 ? { focusReason: 'Labs are back', sourceAppointmentId: 104 } : {}),
+      })),
+    });
+    const { onSaved } = renderPlanner();
+    await screen.findByText('Labs are back · needs a plan');
+    pick(trayPet('Biscuit'), /visit · Wed, Dec 2/);
+    await screen.findByText(/5 min past their window/);
+    fireEvent.click(within(gretaCard()).getByRole('button', { name: 'Send to CLs' }));
+    fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+    await waitFor(() =>
+      expect(onSaved).toHaveBeenCalledWith({
+        focusSummary: 'Biscuit: sent to the CLs to add to the Dec 2 visit.',
+      })
+    );
+    expect(actions.createPlannerForwardBookings.mock.calls[0][0].pets[0].name).toBe('Biscuit');
+  });
+
+  it('View in calendar opens that visit, with the longer end time, in a new tab', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    try {
+      renderPlanner();
+      await screen.findByText(/Today.s visit · needs a plan/);
+      pick(trayPet('Pepper'), /visit · Wed, Dec 2/);
+      await screen.findByText(/5 min past their window/);
+      fireEvent.click(within(gretaCard()).getByRole('button', { name: 'View in calendar' }));
+      expect(open).toHaveBeenCalledTimes(1);
+      const [url, target] = open.mock.calls[0];
+      expect(target).toBe('_blank');
+      expect(String(url)).toMatch(/^\/schedule\/routing\?fbHandoff=/);
+      const stored = handoffFor(String(url));
+      expect(stored.raw).toBeUndefined();
+      expect(stored.focusVisit).toEqual({
+        appointmentId: 900,
+        startIso: '2026-12-02T15:00:00.000Z',
+        practiceDateKey: '2026-12-02',
+        providerId: 7,
+        label: 'Wed, Dec 2',
+        previewEndIso: '2026-12-02T16:05:00.000Z',
+        originalEndIso: '2026-12-02T15:45:00Z',
+      });
+      expect(screen.queryByText(/Embedded calendar/)).toBeNull();
+      expect(screen.queryByRole('dialog', { name: 'Calendar' })).toBeNull();
+    } finally {
+      open.mockRestore();
+    }
+  });
+});
+
+describe('Best-fit slots: Review in a new tab', () => {
+  const slot = {
+    key: 'P7-2027-11-02-0-0',
+    date: '2027-11-02',
+    suggestedStartIso: '2027-11-02T14:00:00Z',
+    windowStartIso: '2027-11-02T13:00:00Z',
+    windowEndIso: '2027-11-02T15:00:00Z',
+    doctorPimsId: 'P7',
+    doctorName: 'Priya Patel',
+    score: 12.5,
+    addedDriveSeconds: 360,
+    projectedDriveSeconds: 4800,
+    emptyDay: false,
+    isFallbackDoctor: false,
+    dayVisitCount: 4,
+    zoneName: 'Eastside',
+    option: { date: '2027-11-02', suggestedStartIso: '2027-11-02T14:00:00Z', insertionIndex: 1 },
+  };
+
+  it('opens the calendar at that slot in a new tab; Book stays; a booking there updates the card', async () => {
+    bestFit.searchPlannerBestFit.mockResolvedValue({
+      slots: [slot],
+      place: { address: '1 Elm St', lat: 43.66, lon: -70.25 },
+      doctorPimsId: 'P7',
+      error: null,
+    });
+    const tab = { location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    try {
+      renderPlanner();
+      await screen.findByText(/Today.s visit · needs a plan/);
+      pick(trayPet('Fluffy'), /"In 1 year" card/);
+      setType(cardTitled('In 1 year'), 'Fluffy', 1);
+      fireEvent.click(screen.getByRole('button', { name: 'Find a time now' }));
+      const panel = await screen.findByRole('dialog', { name: 'Find a time' });
+      const item = (await within(panel).findAllByRole('listitem'))[0];
+      expect(within(item).getByRole('button', { name: /^Book Tue, Nov 2, 2027/ })).toBeTruthy();
+
+      fireEvent.click(
+        within(item).getByRole('button', {
+          name: 'Review Tue, Nov 2, 2027 with Priya Patel in the calendar',
+        })
+      );
+      expect(open).toHaveBeenCalledWith('', '_blank');
+      await waitFor(() => expect(tab.location.href).toMatch(/^\/schedule\/routing\?fbHandoff=/));
+      expect(bestFit.internalDoctorIdForPims).toHaveBeenCalledWith('P7');
+      const stored = handoffFor(tab.location.href);
+      const preview = JSON.parse(stored.preview!);
+      expect(preview).toMatchObject({
+        version: 1,
+        listOptionKey: slot.key,
+        option: {
+          date: '2027-11-02',
+          suggestedStartIso: slot.suggestedStartIso,
+          doctorPimsId: '7',
+        },
+        appointmentTypeId: 1,
+        newApptMeta: { clientId: '50', address: '1 Elm St' },
+        previewPatients: [{ id: 1, name: 'Fluffy' }],
+      });
+      // Review books nothing; the panel and the card's search stay.
+      expect(bestFit.bookBestFitSlot).not.toHaveBeenCalled();
+      expect(actions.removePlannerForwardBookings).not.toHaveBeenCalled();
+      expect(
+        within(panel).getByText(/That time is open in the calendar in another tab/)
+      ).toBeTruthy();
+
+      act(() =>
+        notifyFollowUpPlannerBooked({
+          appointmentId: 556,
+          startIso: '2026-11-16T14:00:00Z',
+          endIso: '2026-11-16T15:00:00Z',
+          primaryProviderId: 7,
+        })
+      );
+      await screen.findByText(/✓ Booked · Mon, Nov 16/);
+      expect(screen.queryByRole('dialog', { name: 'Find a time' })).toBeNull();
+    } finally {
+      open.mockRestore();
+    }
   });
 });
