@@ -23,7 +23,12 @@
  *    POST /sms/client/:id so no text can leave, and asserts exactly ONE such request was made.
  */
 import '../support/e2e';
-import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  resetSeededHouseholdsInDb,
+  schedulingApi,
+  schedulingWorld,
+  signInAsScheduling,
+} from '../support/schedulingWorld';
 
 const TZ = 'America/New_York';
 /** The planner's own "Undo" window is 10 s; the test clicks Undo well inside it. */
@@ -56,6 +61,14 @@ function weekdayAtNy(daysAhead: number, hour: number): Date {
   return new Date(guess);
 }
 
+/**
+ * "Today's visit": the visit being checked out started a little while ago today. (A visit tomorrow would make the
+ * planner count its housemates' visits as upcoming ones already booked, not as part of this visit.) A random
+ * minute keeps same-pet visits from earlier runs from colliding.
+ */
+const todaysVisitStart = () =>
+  new Date(Date.now() - (60 + Math.floor(Math.random() * 90)) * 60_000);
+
 const asList = (body: any): any[] =>
   Array.isArray(body) ? body : (body?.items ?? body?.appointments ?? body?.data ?? []);
 
@@ -67,10 +80,10 @@ const petIdsOf = (a: any): number[] => {
 
 const ms = (iso: string) => new Date(iso).getTime();
 
-/** Household A's live (not deleted) appointments from now to 60 days out. */
+/** Household A's live (not deleted) appointments from a day ago (today's visits start in the past) to 60 days out. */
 function clientAppointments() {
   const w = schedulingWorld();
-  const start = new Date(Date.now() - 3600_000).toISOString();
+  const start = new Date(Date.now() - 24 * 3600_000).toISOString();
   const end = new Date(Date.now() + 60 * 24 * 3600_000).toISOString();
   return schedulingApi(
     'manager',
@@ -129,6 +142,8 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
   });
 
   beforeEach(() => {
+    // Visits whose chart was opened cannot be deleted through the API, so start each test from a clean household.
+    resetSeededHouseholdsInDb();
     // Hermetic: remember what already exists so afterEach removes only what this test made.
     clientAppointments().then((rows) => {
       leftoverAppointmentIds = new Set(rows.map((a) => Number(a.id)));
@@ -280,9 +295,9 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
     });
   }
 
-  function setUpTodaysVisit(hour = 10) {
+  function setUpTodaysVisit(_hour = 10) {
     const w = schedulingWorld();
-    const start = weekdayAtNy(1, hour);
+    const start = todaysVisitStart();
     return bookVisits(
       w.households.A.activePetIds,
       start,
@@ -372,7 +387,7 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
       const w = schedulingWorld();
       return bookVisits(
         [w.households.A.activePetIds[0]],
-        weekdayAtNy(1, 10),
+        todaysVisitStart(),
         60,
         w.types.medical,
         'SCH-13 e2e visit being checked out'
@@ -458,6 +473,11 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
         'GET',
         `/tasks?patientId=${idA}&includeDone=true&involvement=assigned`
       ).then((res): any => asList(res.body)) as Cypress.Chainable<any[]>;
+    // The planner files the task on every branch of the practice; the seeded manager only belongs to the seeded
+    // branch, so the API refuses (403). Narrow the request to that branch (setup only).
+    cy.intercept('POST', '**/tasks', (req) => {
+      req.body = { ...req.body, branchIds: [w.branchId] };
+    });
     setUpTodaysVisit(13).then(() => {
       labsTasks().then((before) => {
         openPlanner(todayVisitIds[0], idA);

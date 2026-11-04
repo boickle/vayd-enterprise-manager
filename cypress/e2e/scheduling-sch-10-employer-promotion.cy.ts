@@ -11,6 +11,12 @@
  */
 import '../support/e2e';
 import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  fillExistingClientForm,
+  freshVisitorIp,
+  setUpPortalForm,
+  waitForFormResponse,
+} from '../support/schedulingPortal';
 
 /** A New York wall-clock time on the weekday `workdaysAhead` weekdays from today (DST-safe). */
 function workdayAt(hour: number, minute: number, workdaysAhead: number): Date {
@@ -51,59 +57,35 @@ function workdayAt(hour: number, minute: number, workdaysAhead: number): Date {
 
 type PetRef = { id: number; name: string };
 
-/** Household A's existing-client form, up to (not including) Submit, with the given pets checked. */
-function fillExistingClientForm(petIndexes: number[]) {
-  cy.get('input[type="tel"]', { timeout: 15000 }).should('not.have.value', '');
-  cy.contains('Is this the address where we will come to see you')
-    .parent()
-    .find('input[value="Yes"]')
-    .check();
-  cy.get('input[type="checkbox"]', { timeout: 10000 });
-  for (const i of petIndexes) {
-    cy.get('input[type="checkbox"]').eq(i).check();
-    cy.get('[data-visit-reason="not-feeling-well"]').eq(i).click();
-  }
-  cy.get('textarea').first().type('Limping since yesterday');
-  cy.contains('How soon do you need to be seen?').scrollIntoView();
-  cy.get('[data-how-soon="Flexible"]').click();
-}
-
 describe('SCH-10-3: employer promotion shows on the first visit checkout', () => {
   beforeEach(() => {
-    cy.clearAllSessionStorage();
-    cy.clearAllCookies();
-    // Reference data the form loads; the client's own pets and contact come from the real API.
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1', {
-      fixture: 'species-breeds.json',
-    }).as('getSpecies');
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1&speciesId=*', {
-      fixture: 'breeds.json',
-    }).as('getBreeds');
-    cy.intercept('GET', '**/public/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAppointmentTypes'
-    );
-    cy.intercept('GET', '**/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAuthAppointmentTypes'
-    );
-    cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 200 }).as(
-      'checkZone'
-    );
-    cy.intercept('POST', '**/public/appointments/availability', {
-      fixture: 'availability-slots.json',
-    }).as('getAvailability');
-    cy.intercept('GET', '**/public/appointments/veterinarians*', {
-      fixture: 'veterinarians.json',
-    }).as('getPublicVeterinarians');
-    cy.intercept('GET', '**/employees/veterinarians*', { fixture: 'veterinarians.json' }).as(
-      'getVeterinarians'
-    );
+    setUpPortalForm();
   });
 
   it('books online with the code, then staff see "Employer promotion –$50.00" and confirm it', () => {
     const w = schedulingWorld();
-    const start = workdayAt(9, 0, 5);
+    // A random day and time avoids a clash with visits earlier runs left (a started visit cannot be cleared).
+    const start = workdayAt(
+      9 + Math.floor(Math.random() * 6),
+      Math.floor(Math.random() * 50),
+      5 + Math.floor(Math.random() * 20)
+    );
     const code = `SCHE2E${Date.now().toString(36).toUpperCase()}`;
-    const pet: PetRef = { id: w.households.A.activePetIds[0], name: 'Alder' };
+    // Household B is the booking client: its first (and only live) visit is this one. Household A carries visits from
+    // other specs (some started, so they cannot be cleared), and the promotion belongs only to a client's first visit.
+    const pet: PetRef = { id: w.households.B.petId, name: 'Dogwood' };
+    // Earlier runs leave unapplied redemptions on this client, and the checkout offers the oldest one first (so a
+    // second one would show again after confirming the first). Start from none. Test database only.
+    const db = String(Cypress.env('SCH_DB'));
+    expect(db, 'CYPRESS_SCH_DB must be a vayd_api_test* database').to.match(/^vayd_api_test[A-Za-z0-9_]*$/);
+    // The promotion belongs to the client's first live visit, and a visit an earlier run billed cannot be removed
+    // through the API, so retire any visits left on this client the same way (soft delete).
+    cy.exec(
+      `psql -d ${db} -c "update appointments set \\"isDeleted\\"=true where \\"clientId\\"=${w.households.B.clientId}"`
+    );
+    cy.exec(
+      `psql -d ${db} -c "delete from appointment_request_promotion_usage where \\"clientId\\"=${w.households.B.clientId} and \\"appliedAt\\" is null"`
+    );
     schedulingApi('manager', 'POST', '/appointment-request-promotions', {
       companyName: 'SCH e2e Acme',
       name: 'SCH e2e $50 off',
@@ -115,13 +97,14 @@ describe('SCH-10-3: employer promotion shows on the first visit checkout', () =>
 
     cy.intercept('POST', '**/public/appointments/form', (req) => {
       const body = req.body as Record<string, unknown>;
+      req.headers['x-forwarded-for'] = freshVisitorIp();
       req.body = {
         ...body,
         clientType: 'existing',
         isLoggedIn: true,
         practiceId: w.practiceId,
-        email: `${w.tag}+householdA@vayd.test`,
-        clientId: String(w.households.A.clientId),
+        email: `${w.tag}+householdB@vayd.test`,
+        clientId: String(w.households.B.clientId),
         pets: [
           { id: String(pet.id), dbId: pet.id, name: pet.name, species: 'Canine', breed: 'Mixed' },
         ],
@@ -153,7 +136,7 @@ describe('SCH-10-3: employer promotion shows on the first visit checkout', () =>
     fillExistingClientForm([0]);
     cy.contains('button', 'Submit').click();
 
-    cy.wait('@submitForm')
+    waitForFormResponse('@submitForm')
       .its('response.body')
       .then((body) => {
         expect(body.bookingOutcome).to.equal('booked');
@@ -161,9 +144,16 @@ describe('SCH-10-3: employer promotion shows on the first visit checkout', () =>
           (res) => {
             const appointmentId = res.body.bookedAppointmentId as number;
             expect(appointmentId, 'booked visit').to.be.a('number');
+            // The checkout page only shows an invoice once one is open ("add a charge above to open one"), so open
+            // this visit's own invoice (POST /visit-invoices, as starting the visit's chart does).
+            schedulingApi('cl', 'POST', '/visit-invoices', {
+              practiceId: w.practiceId,
+              appointmentId,
+              clientId: w.households.B.clientId,
+            });
             signInAsScheduling(
               'cl',
-              `/schedule/soap/${appointmentId}/${pet.id}/checkout?clientId=${w.households.A.clientId}`
+              `/schedule/soap/${appointmentId}/${pet.id}/checkout?clientId=${w.households.B.clientId}`
             );
             cy.get('[data-testid="employer-promotion-line"]', { timeout: 30000 })
               .should('be.visible')

@@ -12,7 +12,17 @@
  * APPOINTMENT_REQUEST_TEST_EMAIL set (lower environments only email that inbox).
  */
 import '../support/e2e';
-import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  schedulingApi,
+  schedulingWorld,
+  signInAsScheduling,
+} from '../support/schedulingWorld';
+import {
+  fillExistingClientForm,
+  freshVisitorIp,
+  setUpPortalForm,
+  showOnScreen,
+} from '../support/schedulingPortal';
 
 const D2_MESSAGE =
   'That time was just taken. Our team will call you within one business hour to find another.';
@@ -62,6 +72,9 @@ function routeFormToSeededSlot(start: Date, pets: PetRef[]) {
   cy.intercept('POST', '**/public/appointments/form', (req) => {
     const typeId = w.types.medical;
     const body = req.body as Record<string, unknown>;
+    // The form endpoint allows 3 submissions an hour per IP. The API trusts X-Forwarded-For from loopback, so each
+    // submission comes from its own made-up visitor address and reruns are not throttled.
+    req.headers['x-forwarded-for'] = freshVisitorIp();
     req.body = {
       ...body,
       clientType: 'existing',
@@ -130,52 +143,9 @@ function staffBook(o: {
   });
 }
 
-/** Household A's existing-client form, up to (not including) Submit, with the given pets checked. */
-function fillExistingClientForm(petIndexes: number[]) {
-  cy.get('input[type="tel"]', { timeout: 15000 }).should('not.have.value', '');
-  cy.contains('Is this the address where we will come to see you')
-    .parent()
-    .find('input[value="Yes"]')
-    .check();
-  cy.get('input[type="checkbox"]', { timeout: 10000 });
-  for (const i of petIndexes) {
-    cy.get('input[type="checkbox"]').eq(i).check();
-    cy.get('[data-visit-reason="not-feeling-well"]').eq(i).click();
-  }
-  cy.get('textarea').first().type('Limping since yesterday');
-  cy.contains('How soon do you need to be seen?').scrollIntoView();
-  cy.get('[data-how-soon="Flexible"]').click();
-}
-
 describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06-4)', () => {
   beforeEach(() => {
-    cy.clearAllSessionStorage();
-    cy.clearAllCookies();
-    // Reference data the form loads; the client's own pets and contact come from the real API.
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1', {
-      fixture: 'species-breeds.json',
-    }).as('getSpecies');
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1&speciesId=*', {
-      fixture: 'breeds.json',
-    }).as('getBreeds');
-    cy.intercept('GET', '**/public/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAppointmentTypes'
-    );
-    cy.intercept('GET', '**/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAuthAppointmentTypes'
-    );
-    cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 200 }).as(
-      'checkZone'
-    );
-    cy.intercept('POST', '**/public/appointments/availability', {
-      fixture: 'availability-slots.json',
-    }).as('getAvailability');
-    cy.intercept('GET', '**/public/appointments/veterinarians*', {
-      fixture: 'veterinarians.json',
-    }).as('getPublicVeterinarians');
-    cy.intercept('GET', '**/employees/veterinarians*', { fixture: 'veterinarians.json' }).as(
-      'getVeterinarians'
-    );
+    setUpPortalForm();
   });
 
   it('SCH-04-4: the picked slot is booked by staff first -> the client sees the D2 message, not "booked successfully"', () => {
@@ -200,7 +170,7 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
         expect(body.bookingOutcome).to.equal('slot_taken');
         expect(body.message).to.equal(D2_MESSAGE);
       });
-    cy.contains(D2_MESSAGE).should('be.visible');
+    showOnScreen(cy.contains(D2_MESSAGE)).should('be.visible');
     cy.contains('booked successfully').should('not.exist');
   });
 
@@ -225,8 +195,8 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
     cy.contains('button', 'Submit').click();
 
     cy.wait('@submitForm').its('response.body.bookingOutcome').should('equal', 'partial');
-    cy.contains('booked for Birch').should('be.visible');
-    cy.contains('our team will call you about Alder').should('be.visible');
+    showOnScreen(cy.contains('booked for Birch')).should('be.visible');
+    showOnScreen(cy.contains('our team will call you about Alder')).should('be.visible');
     cy.contains('booked successfully').should('not.exist');
   });
 
@@ -245,7 +215,7 @@ describe('Online booking outcomes on the public form (SCH-04-4, SCH-05-3, SCH-06
     });
 
     cy.wait('@submitForm');
-    cy.contains('Thank You!', { timeout: 20000 }).should('be.visible');
+    showOnScreen(cy.contains('Thank You!', { timeout: 20000 })).should('be.visible');
     cy.get('@submitForm.all').should('have.length', 1);
     cy.capturedEmails().then((emails) => {
       const confirmations = (emails as Array<{ subject?: string }>).filter((e) =>

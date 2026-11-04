@@ -9,7 +9,18 @@
  * then sent on to the real API. Needs CYPRESS_SCHEDULING_WORLD.
  */
 import '../support/e2e';
-import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
+import {
+  includeSeededDoctorsInProviderList,
+  schedulingApi,
+  schedulingWorld,
+  signInAsScheduling,
+} from '../support/schedulingWorld';
+import {
+  fillExistingClientForm,
+  freshVisitorIp,
+  setUpPortalForm,
+  waitForFormResponse,
+} from '../support/schedulingPortal';
 
 /** A New York wall-clock time on the weekday `workdaysAhead` weekdays from today (DST-safe). */
 function workdayAt(hour: number, minute: number, workdaysAhead: number): Date {
@@ -48,57 +59,19 @@ function workdayAt(hour: number, minute: number, workdaysAhead: number): Date {
   return new Date(guess);
 }
 
-/** Household A's existing-client form, up to (not including) Submit, with the given pets checked. */
-function fillExistingClientForm(petIndexes: number[]) {
-  cy.get('input[type="tel"]', { timeout: 15000 }).should('not.have.value', '');
-  cy.contains('Is this the address where we will come to see you')
-    .parent()
-    .find('input[value="Yes"]')
-    .check();
-  cy.get('input[type="checkbox"]', { timeout: 10000 });
-  for (const i of petIndexes) {
-    cy.get('input[type="checkbox"]').eq(i).check();
-    cy.get('[data-visit-reason="not-feeling-well"]').eq(i).click();
-  }
-  cy.get('textarea').first().type('Limping since yesterday');
-  cy.contains('How soon do you need to be seen?').scrollIntoView();
-  cy.get('[data-how-soon="Flexible"]').click();
-}
-
 describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
   beforeEach(() => {
-    cy.clearAllSessionStorage();
-    cy.clearAllCookies();
-    // Reference data the form loads; the client's own pets and contact come from the real API.
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1', {
-      fixture: 'species-breeds.json',
-    }).as('getSpecies');
-    cy.intercept('GET', '**/public/species-breeds?practiceId=1&speciesId=*', {
-      fixture: 'breeds.json',
-    }).as('getBreeds');
-    cy.intercept('GET', '**/public/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAppointmentTypes'
-    );
-    cy.intercept('GET', '**/appointment-types*', { fixture: 'appointment-types.json' }).as(
-      'getAuthAppointmentTypes'
-    );
-    cy.intercept('GET', '**/public/appointments/find-zone-by-address*', { statusCode: 200 }).as(
-      'checkZone'
-    );
-    cy.intercept('POST', '**/public/appointments/availability', {
-      fixture: 'availability-slots.json',
-    }).as('getAvailability');
-    cy.intercept('GET', '**/public/appointments/veterinarians*', {
-      fixture: 'veterinarians.json',
-    }).as('getPublicVeterinarians');
-    cy.intercept('GET', '**/employees/veterinarians*', { fixture: 'veterinarians.json' }).as(
-      'getVeterinarians'
-    );
+    setUpPortalForm();
   });
 
   it('shows the visit for Mochi on the Scheduler, not a HOLD', () => {
     const w = schedulingWorld();
-    const start = workdayAt(10, 0, 5);
+    // A random day and time avoids a clash with visits earlier runs left (a started visit cannot be cleared).
+    const start = workdayAt(
+      9 + Math.floor(Math.random() * 6),
+      Math.floor(Math.random() * 50),
+      5 + Math.floor(Math.random() * 20)
+    );
     const newPet = {
       id: `new-${Date.now()}`,
       name: 'Mochi',
@@ -114,6 +87,7 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
     };
     cy.intercept('POST', '**/public/appointments/form', (req) => {
       const body = req.body as Record<string, unknown>;
+      req.headers['x-forwarded-for'] = freshVisitorIp();
       req.body = {
         ...body,
         clientType: 'existing',
@@ -123,6 +97,8 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
         clientId: String(w.households.A.clientId),
         pets: [{ ...newPet, new: true }],
         allPets: undefined,
+        // The form ticked Alder; this visit is for the new pet only, and the API reads selectedPetIds first.
+        selectedPetIds: [],
         existingClientNewPets: [newPet],
         petSpecificData: {
           [newPet.id]: {
@@ -149,7 +125,7 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
     fillExistingClientForm([0]);
     cy.contains('button', 'Submit').click();
 
-    cy.wait('@submitForm')
+    waitForFormResponse('@submitForm')
       .its('response.body')
       .then((body) => {
         expect(body.bookingOutcome).to.equal('booked');
@@ -158,13 +134,19 @@ describe('SCH-14-4: new pet of an existing client books a normal visit', () => {
             const appointmentId = res.body.bookedAppointmentId as number;
             expect(appointmentId, 'booked visit').to.be.a('number');
             schedulingApi('cl', 'GET', `/appointments/${appointmentId}`).then((appt) => {
-              expect(appt.body.patientId, 'linked to a pet').to.be.a('number');
+              // GET /appointments/:id returns the pet as `patient`.
+              expect(appt.body.patient?.id, 'linked to a pet').to.be.a('number');
               expect(appt.body.appointmentType?.isHold ?? false).to.equal(false);
             });
             const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(
               start
             );
-            signInAsScheduling('cl', `/schedule/scheduler?fromMyDay=1&date=${ymd}`);
+            // Show doctor A's calendar (the seeded doctors may be missing from the cached provider list).
+            includeSeededDoctorsInProviderList();
+            signInAsScheduling(
+              'cl',
+              `/schedule/scheduler?fromMyDay=1&date=${ymd}&provider=${w.doctors.A}`
+            );
             cy.get(`[data-appt-id="${appointmentId}"]`, { timeout: 30000 })
               .first()
               .should('contain.text', 'Mochi')
