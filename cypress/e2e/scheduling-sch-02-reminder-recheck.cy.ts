@@ -58,8 +58,9 @@ describe('SCH-02-5: reminder not sent for a visit cancelled after the build', ()
 
   it('the cancelled visit gets no text, a kept visit still does', () => {
     const w = schedulingWorld();
-    const start = nyTomorrowAt(9);
-    const end = new Date(start.getTime() + 60 * 60_000);
+    // A random minute avoids a same-pet same-time clash with a visit left by an earlier run.
+    const start = new Date(nyTomorrowAt(9).getTime() + Math.floor(Math.random() * 50) * 60_000);
+    const end = new Date(start.getTime() + 5 * 60_000);
     const book = (patientId: number, doctorId: number, desc: string) =>
       schedulingApi('cl', 'POST', '/appointments', {
         practiceId: w.practiceId,
@@ -70,6 +71,7 @@ describe('SCH-02-5: reminder not sent for a visit cancelled after the build', ()
         appointmentStart: start.toISOString(),
         appointmentEnd: end.toISOString(),
         description: desc,
+        bookedViaRouting: true, // the cl login may not book this type by hand; routing bookings are allowed
       });
 
     cy.writeFile(capture(), '');
