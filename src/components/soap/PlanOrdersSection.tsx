@@ -146,6 +146,8 @@ type Props = {
   /** Optional class for Checkout's green add-charge treatment. */
   className?: string;
   searchPlaceholder?: string;
+  /** Offer the "Add as note" row (and Enter-to-add-note). Off for Checkout's add-charge search. */
+  allowNotes?: boolean;
 };
 
 function money(n: number): string {
@@ -177,6 +179,7 @@ export default function PlanOrdersSection({
   showList = true,
   className,
   searchPlaceholder,
+  allowNotes = true,
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchableItem[]>([]);
@@ -611,7 +614,10 @@ export default function PlanOrdersSection({
             <Search size={15} className="soap-plan-search-icon" />
             <input
               className="soap-input"
-              placeholder={searchPlaceholder ?? 'Type here to add a charge, or a note…'}
+              placeholder={
+                searchPlaceholder ??
+                (allowNotes ? 'Type here to add a charge, or a note…' : 'Type here to add a charge…')
+              }
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -623,7 +629,7 @@ export default function PlanOrdersSection({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && results.length === 0) {
                   e.preventDefault();
-                  void addNote(query);
+                  if (allowNotes) void addNote(query);
                 }
               }}
             />
@@ -701,6 +707,7 @@ export default function PlanOrdersSection({
                     </button>
                   );
                 })}
+              {allowNotes && (
               <button
                 type="button"
                 role="option"
@@ -716,10 +723,13 @@ export default function PlanOrdersSection({
                   Add as note: <strong>{query.trim()}</strong>
                 </span>
               </button>
+              )}
           </PlanSearchResults>
           <p className="soap-hint">
             Catalog prices use quantity tiers and membership/client discounts (same as Room Loader).
-            “Add as note” creates a text line you can edit and optionally price.
+            {allowNotes
+              ? ' “Add as note” creates a text line you can edit and optionally price.'
+              : null}
           </p>
         </div>
       ) : null}

@@ -2102,6 +2102,7 @@ export default function VisitCheckoutPanel({
         practiceId={practiceId}
         showList={false}
         showSearch
+        allowNotes={false}
         searchPlaceholder={petName ? `Add a charge for ${petName}` : undefined}
         onChange={(next) => {
           // A housemate's orders belong to their chart, not this one — the shared
