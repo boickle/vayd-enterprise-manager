@@ -36,7 +36,6 @@ import {
   type HouseholdRosterEntry,
   type PatientProblem,
   type PatientProblemAcuity,
-  type PatientProblemKind,
   type SoapEncounter,
 } from '../../api/visitWorkflow';
 import { PE_SYSTEMS, peExamFromValue, type PeExamState, type PeSystemFinding } from './peTemplate';
@@ -228,9 +227,8 @@ function toSuggestedProblems(
   return problems
     .filter((p) => p.label?.trim() && !existingLabels.has(norm(p.label)))
     .map((p) => ({
-      key: `problem:${norm(p.label)}|${p.kind}`,
+      key: `problem:${norm(p.label)}`,
       label: p.label.trim(),
-      kind: p.kind,
     }));
 }
 
@@ -1202,7 +1200,7 @@ export default function ScribePanel({
     const fromSingle = suggestion
       ? suggestion.problems
           .filter((p) => p.label?.trim() && !existingLabels.has(norm(p.label)))
-          .map((p) => ({ key: `problem:${norm(p.label)}|${p.kind}`, ...p }))
+          .map((p) => ({ key: `problem:${norm(p.label)}`, label: p.label.trim() }))
       : [];
     const fromMulti = multiProblemsForCurrent.filter(
       (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
@@ -1267,18 +1265,14 @@ export default function ScribePanel({
     }
   };
 
-  /** Accept a suggested problem onto the Master Problem List with the doctor's wording and acuity. */
-  const addProblem = (
-    p: { key: string; label: string; kind: PatientProblemKind },
-    acuity: PatientProblemAcuity
-  ) => {
+  /** Accept a suggested problem onto the pet's problem list with the doctor's wording and acuity. */
+  const addProblem = (p: { key: string; label: string }, acuity: PatientProblemAcuity) => {
     const label = (problemLabelEdits[p.key] ?? p.label).trim();
     if (!label) return;
     return runApply(p.key, async () => {
       const created = await createProblem({
         patientId,
         label,
-        kind: p.kind,
         acuity,
         createdInEncounterId: soapEncounterId,
       });
@@ -1538,9 +1532,7 @@ export default function ScribePanel({
               <div className="soap-scribe-card" key={p.key}>
                 <div className="soap-scribe-card-head">Problem list</div>
                 <label className="soap-scribe-problem-label">
-                  <span className="soap-scribe-problem-label-text">
-                    Problem <span className="soap-scribe-tag">{p.kind.replace(/_/g, ' ')}</span>
-                  </span>
+                  <span className="soap-scribe-problem-label-text">Problem</span>
                   <input
                     type="text"
                     value={problemLabelEdits[p.key] ?? p.label}

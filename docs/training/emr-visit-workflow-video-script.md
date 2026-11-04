@@ -91,7 +91,9 @@ Goal: record weight, TPR and the exam so the chart is ready to sign. **Everyone.
 
 **Techs:** "This is usually your part of the visit. Weigh, take TPR, and get it in before the doctor comes in."
 
-**Doctors:** "The exam and the Assessment tab (problem list and clinical reasoning) are yours. If you use AI Scribe, the same fields fill in from the recording, and you review them."
+**Doctors:** "The exam and the Assessment tab (the Problems list and clinical reasoning) are yours. To add a problem, type its name and click **Acute** or **Chronic**. A problem is Active until you set it to Resolved. The presenting complaint goes in Subjective, and rule-outs go in the clinical reasoning. If you use AI Scribe, the same fields fill in from the recording, and you review them. The Problems list is in the same place, and AI Scribe's suggested problems only ask Acute or Chronic."
+
+**Doctors:** "Pets coming over from eVet may show suggestions under **Chronic problems on this visit** at the top of the SOAP, and at the top of the pet's chart, like 'From eVet: Hyperthyroidism (Dr. …, Mar 2025)'. Click **Accept** to add it as a chronic, active problem. You can switch it to Acute in the Problems list. Click **X** to dismiss it, and it won't come back for this pet. If you ignore it, it stays there until someone decides." **[check on screen]**
 
 **Common mistakes**
 - **Skipping weight.** The wrap-up shows **Weight needed** and blocks signing.
@@ -100,6 +102,7 @@ Goal: record weight, TPR and the exam so the chart is ready to sign. **Everyone.
 
 **Demo data needed**
 - Same Rivera visit. Biscuit has an earlier weight on file (to show the change). Pepper has no weight on file.
+- Biscuit has an active eVet diagnosis that isn't on his problem list (to show an eVet suggestion card).
 
 ---
 
@@ -110,7 +113,7 @@ Goal: get today's vaccines and products onto the bill without doubling anything.
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
 | 1 | In the **Checkout** panel, click into "Add a charge for Biscuit" and type a vaccine name | A search list of catalog items | "To charge something, type it in the box at the top of Checkout for that pet." |
-| 2 | Pick the item | A toast, "Added vaccine to the plan". The line appears on the invoice | "It lands on the bill and a line goes into the treatment plan for you." |
+| 2 | Pick the item | The line appears on the invoice | "It lands on the bill. The plan narrative is yours (or AI Scribe's) to write; charges don't add to it." |
 | 3 | Add the same item again for Biscuit | A window, **Already entered for this pet**: "This item was already entered for this pet today on this invoice. Already there:" and the existing line. Buttons **Add anyway** and **Cancel** | "If you add the same item for the same pet on the same invoice on the same day, Scout stops and shows you what's already there." |
 | 4 | Click **Cancel** | Nothing is added | "Most of the time it's a double tap. Cancel, and nothing changes." |
 | 5 | On the existing line, raise the quantity to 2 | Qty 2 on one line. No warning | "If you really gave two, the normal way is quantity 2 on the one line. Only use Add anyway when it really needs to be a separate line." |

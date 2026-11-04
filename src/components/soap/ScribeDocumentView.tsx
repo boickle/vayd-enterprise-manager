@@ -49,6 +49,8 @@ type Props = {
   onPlanNotesBlur: (value: string) => void;
   /** Vitals, above the Objective narrative — the tech's weight confirmation lives here. */
   vitalsSlot?: ReactNode;
+  /** The pet's problem list, above the Assessment text — the same section Manual mode shows. */
+  assessmentSlot?: ReactNode;
   /** True while the weight still needs a tech, so the O tab can say so. */
   objectiveNeedsAttention?: boolean;
   /** Checkout prep body (match transcript items to catalog). Not part of the signed chart. */
@@ -123,6 +125,7 @@ export default function ScribeDocumentView({
   onPlanNotesChange,
   onPlanNotesBlur,
   vitalsSlot,
+  assessmentSlot,
   objectiveNeedsAttention,
   checkoutPrepSlot,
   checkoutPrepPendingCount = 0,
@@ -302,6 +305,7 @@ export default function ScribeDocumentView({
             hidden={!isActive}
           >
             {tab.id === 'objective' ? vitalsSlot : null}
+            {tab.id === 'assessment' ? assessmentSlot : null}
 
             <div className="soap-doc-section-head">
               <h3>

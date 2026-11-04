@@ -65,6 +65,7 @@ import {
 } from '../components/soap/peTemplate';
 import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
+import EvetProblemSuggestions from '../components/soap/EvetProblemSuggestions';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import SoapPatientAlerts from '../components/soap/SoapPatientAlerts';
 import SoapAddendaSection from '../components/soap/SoapAddendaSection';
@@ -127,10 +128,6 @@ import {
 } from '../utils/roomLoaderSubjectiveText';
 import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
-import {
-  appendTreatmentPlanMedicationBullet,
-  removeTreatmentPlanMedicationBullet,
-} from '../utils/planNotesSections';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 import { usePermissions } from '../permissions/PermissionContext';
 import { SignOffNotice } from '../components/soap/SignOffGate';
@@ -428,15 +425,6 @@ export default function SoapEncounterPage() {
   // local chart draft); the 8s flush and the browser's `online` event retry it.
   const [notSavedOffline, setNotSavedOffline] = useState(false);
   const [showEuthanasia, setShowEuthanasia] = useState(false);
-  const [planToast, setPlanToast] = useState<string | null>(null);
-  const planToastTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (planToastTimerRef.current != null) window.clearTimeout(planToastTimerRef.current);
-    };
-  }, []);
-
   useEffect(() => {
     if (!Number.isFinite(patientId) || patientId <= 0 || !patientName.trim()) return;
     const ownerId = clientIdParam?.trim();
@@ -1594,46 +1582,6 @@ export default function SoapEncounterPage() {
     [subjective, objectiveNotes, reasoning, planNotes, save, saveSubjective]
   );
 
-  const showPlanToast = useCallback((message: string) => {
-    setPlanToast(message);
-    if (planToastTimerRef.current != null) window.clearTimeout(planToastTimerRef.current);
-    planToastTimerRef.current = window.setTimeout(() => {
-      setPlanToast(null);
-      planToastTimerRef.current = null;
-    }, 2800);
-  }, []);
-
-  /**
-   * Inventory catalog picks also land under Treatment Plan/Medications in the Plan narrative
-   * so the charted plan stays in sync with checkout — whether the doctor used Plan search or
-   * "Plan items for checkout". Vaccines get "Vx administered: … SQ"; meds get "Rx'ed …".
-   */
-  const appendInventoryToTreatmentPlan = useCallback(
-    (item: { name: string; isVaccine?: boolean }) => {
-      const next = appendTreatmentPlanMedicationBullet(planNotesRef.current, item.name, {
-        kind: item.isVaccine ? 'vaccine' : 'medication',
-      });
-      if (next === planNotesRef.current) return;
-      planNotesRef.current = next;
-      setPlanNotes(next);
-      void save({ planNotes: next });
-      const short = item.name.trim().replace(/\s+/g, ' ');
-      showPlanToast(item.isVaccine ? `Added vaccine to the plan` : `Added ${short} to the plan`);
-    },
-    [save, showPlanToast]
-  );
-
-  const removeInventoryFromTreatmentPlan = useCallback(
-    (itemName: string) => {
-      const next = removeTreatmentPlanMedicationBullet(planNotesRef.current, itemName);
-      if (next === planNotesRef.current) return;
-      planNotesRef.current = next;
-      setPlanNotes(next);
-      void save({ planNotes: next });
-    },
-    [save]
-  );
-
   const clientQuery = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
   const headerClientId =
     encounter?.clientId ??
@@ -1755,13 +1703,27 @@ export default function SoapEncounterPage() {
     return <div className="soap-page soap-error-page">{error}</div>;
   }
 
+  /**
+   * The pet's one problem list (owner decision Nov 4, 2026): the same section, in the same place
+   * (Assessment, above the clinical reasoning), in Manual SOAP and AI Scribe.
+   */
+  const problemsSection = encounter ? (
+    <div className="soap-problems-section">
+      <div className="soap-subhead">Problems</div>
+      <MasterProblemListSection
+        patientId={patientId}
+        encounterId={encounter.id}
+        problems={problems}
+        linkedProblemIds={linkedProblemIds}
+        disabled={locked}
+        onChange={setProblems}
+        onToggleLink={toggleProblemLink}
+      />
+    </div>
+  ) : null;
+
   return (
     <div className={`soap-page soap-page--workspace${splitDragging ? ' is-resizing' : ''}`}>
-      {planToast && (
-        <div className="soap-plan-toast" role="status" aria-live="polite">
-          {planToast}
-        </div>
-      )}
       {coEditNotice && (
         <div className="soap-coedit-toast" role="status" aria-live="polite">
           {coEditNotice}
@@ -2008,6 +1970,17 @@ export default function SoapEncounterPage() {
             onProblemRemoved={(id) =>
               setProblems((prev) => prev.filter((p) => p.id !== id))
             }
+            suggestionsSlot={
+              <EvetProblemSuggestions
+                patientId={patientId}
+                problems={problems}
+                encounterId={encounter?.id}
+                disabled={locked}
+                onAccepted={(created) =>
+                  setProblems((prev) => [created, ...prev.filter((p) => p.id !== created.id)])
+                }
+              />
+            }
           />
 
           {effectiveEntryMode === 'scribe' && encounter && (
@@ -2081,6 +2054,7 @@ export default function SoapEncounterPage() {
               activeTab={activeTab}
               onActiveTabChange={setActiveTab}
               checkoutPrepPendingCount={checkoutPrepPendingCount}
+              assessmentSlot={problemsSection}
               vitalsSlot={
                 <SoapVitalsFields
                   vitals={vitals}
@@ -2107,19 +2081,7 @@ export default function SoapEncounterPage() {
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                       onPendingCountChange={setCheckoutPrepPendingCount}
-                      onOrderAdded={(order, meta) => {
-                        onScribeOrderCreated(order);
-                        if (
-                          order.catalogItemType === 'inventory' &&
-                          !meta?.skipPlanNarrative &&
-                          !/sharps/i.test(order.name)
-                        ) {
-                          appendInventoryToTreatmentPlan({
-                            name: order.name,
-                            isVaccine: meta?.isVaccine,
-                          });
-                        }
-                      }}
+                      onOrderAdded={onScribeOrderCreated}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
                       onAppendToSoapSection={appendBulletToSoapSection}
                     />
@@ -2135,8 +2097,6 @@ export default function SoapEncounterPage() {
                       showSearch={false}
                       onChange={setOrders}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
-                      onInventoryItemAdded={appendInventoryToTreatmentPlan}
-                      onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
                     />
                   </>
                 )
@@ -2264,18 +2224,7 @@ export default function SoapEncounterPage() {
                     <h2>
                       <ListChecks size={16} /> Assessment
                     </h2>
-                    <div className="soap-subhead">Master Problem List</div>
-                    {encounter && (
-                      <MasterProblemListSection
-                        patientId={patientId}
-                        encounterId={encounter.id}
-                        problems={problems}
-                        linkedProblemIds={linkedProblemIds}
-                        disabled={locked}
-                        onChange={setProblems}
-                        onToggleLink={toggleProblemLink}
-                      />
-                    )}
+                    {problemsSection}
                     <div className="soap-subhead">Clinical reasoning / problem list</div>
                     <textarea
                       className="soap-textarea"
@@ -2351,19 +2300,7 @@ export default function SoapEncounterPage() {
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                         onPendingCountChange={setCheckoutPrepPendingCount}
-                        onOrderAdded={(order, meta) => {
-                          onScribeOrderCreated(order);
-                          if (
-                            order.catalogItemType === 'inventory' &&
-                            !meta?.skipPlanNarrative &&
-                            !/sharps/i.test(order.name)
-                          ) {
-                            appendInventoryToTreatmentPlan({
-                              name: order.name,
-                              isVaccine: meta?.isVaccine,
-                            });
-                          }
-                        }}
+                        onOrderAdded={onScribeOrderCreated}
                         onInvoiceShouldRefresh={() => void refreshInvoice()}
                         onAppendToSoapSection={appendBulletToSoapSection}
                       />
@@ -2379,8 +2316,6 @@ export default function SoapEncounterPage() {
                         showSearch={false}
                         onChange={setOrders}
                         onInvoiceShouldRefresh={() => void refreshInvoice()}
-                        onInventoryItemAdded={appendInventoryToTreatmentPlan}
-                        onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
                       />
                     </>
                   )}
@@ -2473,18 +2408,12 @@ export default function SoapEncounterPage() {
               void refreshInvoice();
             }}
             onInvoiceShouldRefresh={() => void refreshInvoice()}
-            onInventoryItemAdded={appendInventoryToTreatmentPlan}
-            onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
             onRoomLoaderOrderIds={rememberRoomLoaderOrderIds}
             focusOrderId={focusOrderId}
             onOrderRemoved={(orderId) => {
-              const removed = orders.find((o) => o.id === orderId);
               setOrders((prev) => prev.filter((o) => o.id !== orderId));
               void refreshInvoice();
-              if (removed?.catalogItemType === 'inventory') {
-                removeInventoryFromTreatmentPlan(removed.name);
-              }
             }}
             // Payment and forward booking happen on the checkout screen, where the
             // household pays once for every pet on the visit.

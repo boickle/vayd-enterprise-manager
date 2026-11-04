@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Plus, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Plus, Search, X } from 'lucide-react';
 import type { PatientPrescription, PatientProblem, PatientProblemAcuity } from '../../api/visitWorkflow';
 import { deleteProblem, updateProblem } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
+import ProblemAddControl from './ProblemAddControl';
 import { appConfirm } from '../../utils/appDialog';
 import {
   newSoapChronicDraftId,
@@ -21,6 +22,8 @@ type Props = {
   onDraftChange: (draft: SoapChronicDraft) => void;
   onProblemSaved?: (problem: PatientProblem) => void;
   onProblemRemoved?: (problemId: string) => void;
+  /** eVet suggestions shown under the chronic problems (SOAP only). */
+  suggestionsSlot?: ReactNode;
 };
 
 /**
@@ -39,6 +42,7 @@ export default function SoapPatientChronicSummary({
   onDraftChange,
   onProblemSaved,
   onProblemRemoved,
+  suggestionsSlot,
 }: Props) {
   const visibleProblems = useMemo(() => {
     const recorded = problems.filter(
@@ -91,7 +95,6 @@ export default function SoapPatientChronicSummary({
     ];
   }, [chronicMedications, draft.addMedications, draft.discontinueRxIds]);
 
-  const [problemLabel, setProblemLabel] = useState('');
   const [editingProblemId, setEditingProblemId] = useState<string | null>(null);
   const [editingProblemLabel, setEditingProblemLabel] = useState('');
   const [editingMedId, setEditingMedId] = useState<string | null>(null);
@@ -229,8 +232,7 @@ export default function SoapPatientChronicSummary({
     });
   };
 
-  const addProblem = (acuity: PatientProblemAcuity) => {
-    const label = problemLabel.trim();
+  const addProblem = (label: string, acuity: PatientProblemAcuity) => {
     if (!label || disabled) return;
     onDraftChange({
       ...draft,
@@ -239,7 +241,6 @@ export default function SoapPatientChronicSummary({
         { tempId: newSoapChronicDraftId('prob'), label, acuity },
       ],
     });
-    setProblemLabel('');
   };
 
   const addMedication = (opts?: { name?: string; inventoryItemId?: number | null }) => {
@@ -372,37 +373,12 @@ export default function SoapPatientChronicSummary({
             ))}
           </ul>
         ) : null}
-        <div className="soap-scribe-add-problem soap-patient-chronic-add">
-          <input
-            className="soap-input"
-            placeholder="Add a problem…"
-            value={problemLabel}
-            disabled={disabled}
-            onChange={(e) => setProblemLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addProblem('chronic');
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="soap-btn small primary"
-            disabled={disabled || !problemLabel.trim()}
-            onClick={() => addProblem('acute')}
-          >
-            <Check size={12} /> Acute
-          </button>
-          <button
-            type="button"
-            className="soap-btn small primary"
-            disabled={disabled || !problemLabel.trim()}
-            onClick={() => addProblem('chronic')}
-          >
-            <Check size={12} /> Chronic
-          </button>
-        </div>
+        <ProblemAddControl
+          disabled={disabled}
+          className="soap-patient-chronic-add"
+          onAdd={addProblem}
+        />
+        {suggestionsSlot}
       </div>
 
       <div className="soap-scribe-chronic soap-scribe-chronic--meds">

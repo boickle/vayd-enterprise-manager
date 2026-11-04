@@ -203,23 +203,6 @@ a.soap-header-client:hover {
   box-shadow: 0 10px 28px rgba(146, 64, 14, 0.18);
   pointer-events: none;
 }
-.soap-plan-toast {
-  position: fixed;
-  left: 50%;
-  bottom: max(24px, env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
-  z-index: 2400;
-  max-width: min(420px, calc(100vw - 24px));
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid #93c5fd;
-  background: #eff6ff;
-  color: #1e3a8a;
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 10px 28px rgba(30, 58, 138, 0.18);
-  pointer-events: none;
-}
 .soap-provider-prompt-btn {
   display: inline-flex;
   align-items: center;

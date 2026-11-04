@@ -14,8 +14,10 @@ export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 export type SoapEncounterMode = 'quick' | 'comprehensive' | 'medical_note';
 export type SoapEncounterStatus = 'draft' | 'completed';
 
+/** Legacy column, no longer asked for or shown (owner decision Nov 4, 2026). */
 export type PatientProblemKind = 'presenting_complaint' | 'rule_out' | 'diagnosis';
-export type PatientProblemStatus = 'open' | 'active' | 'resolved';
+/** A problem is Active or Resolved. The server reads a legacy "open" as Active. */
+export type PatientProblemStatus = 'active' | 'resolved';
 /** Chronic problems pin to the top of the patient record; null means nobody has classified it yet. */
 export type PatientProblemAcuity = 'acute' | 'chronic';
 export type PrescriptionAcuity = 'acute' | 'chronic';
@@ -55,7 +57,8 @@ export type PatientProblem = {
   practiceId: number;
   patientId: number;
   label: string;
-  kind: PatientProblemKind;
+  /** Legacy; not shown. */
+  kind?: PatientProblemKind;
   status: PatientProblemStatus;
   acuity: PatientProblemAcuity | null;
   note: string | null;
@@ -1046,12 +1049,12 @@ export async function listProblems(
   return data;
 }
 
+/** Add a problem. Acute or Chronic is required (chosen in the add control). */
 export async function createProblem(body: {
   patientId: number;
   label: string;
-  kind?: PatientProblemKind;
   status?: PatientProblemStatus;
-  acuity?: PatientProblemAcuity;
+  acuity: PatientProblemAcuity;
   note?: string;
   createdInEncounterId?: string;
 }): Promise<PatientProblem> {
@@ -1064,7 +1067,7 @@ export async function createProblem(body: {
 
 export async function updateProblem(
   id: string,
-  body: Partial<Pick<PatientProblem, 'label' | 'kind' | 'status' | 'acuity' | 'note'>>
+  body: Partial<Pick<PatientProblem, 'label' | 'status' | 'acuity' | 'note'>>
 ): Promise<PatientProblem> {
   const { data } = await http.patch<PatientProblem>(`/patient-problems/${encodeURIComponent(id)}`, {
     practiceId: pid(),
@@ -1076,6 +1079,58 @@ export async function updateProblem(
 export async function deleteProblem(id: string): Promise<void> {
   await http.delete(`/patient-problems/${encodeURIComponent(id)}`, {
     params: { practiceId: pid() },
+  });
+}
+
+/**
+ * An active eVet diagnosis or eVet master problem not yet on the pet's problem list, offered as a
+ * chronic problem (owner decision Nov 4, 2026). Stays until accepted or dismissed.
+ */
+export type EvetProblemSuggestion = {
+  /** Lower-cased name; send back to accept or dismiss. */
+  key: string;
+  label: string;
+  source: 'diagnosis' | 'master_problem';
+  /** Latest date recorded, ISO. */
+  date: string | null;
+  doctorName: string | null;
+  /** Master problem only: eVet's status label ("Onset", …). */
+  statusLabel: string | null;
+  comments: string | null;
+  recordCount: number;
+};
+
+export async function listEvetProblemSuggestions(
+  patientId: number
+): Promise<EvetProblemSuggestion[]> {
+  const { data } = await http.get<EvetProblemSuggestion[]>('/patient-problems/evet-suggestions', {
+    params: { practiceId: pid(), patientId },
+  });
+  return data;
+}
+
+/** Accept: adds a Chronic (unless `acuity` says Acute), Active problem. */
+export async function acceptEvetProblemSuggestion(body: {
+  patientId: number;
+  key: string;
+  acuity?: PatientProblemAcuity;
+  createdInEncounterId?: string;
+}): Promise<PatientProblem> {
+  const { data } = await http.post<PatientProblem>('/patient-problems/evet-suggestions/accept', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+/** X: the suggestion never comes back for this pet. */
+export async function dismissEvetProblemSuggestion(body: {
+  patientId: number;
+  key: string;
+}): Promise<void> {
+  await http.post('/patient-problems/evet-suggestions/dismiss', {
+    practiceId: pid(),
+    ...body,
   });
 }
 

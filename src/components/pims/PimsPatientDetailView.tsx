@@ -102,6 +102,7 @@ import {
 import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { searchRoomLoaders, type RoomLoader } from '../../api/roomLoader';
 import PimsPatientChronicAdders from './PimsPatientChronicAdders';
+import EvetProblemSuggestions from '../soap/EvetProblemSuggestions';
 import {
   listScoutChartNotes,
   removeScoutChartNoteFromChart,
@@ -2694,6 +2695,16 @@ export default function PimsPatientDetailView({
                   ))}
                 </ul>
               )}
+              {showRecordHistoryTab && Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
+                <EvetProblemSuggestions
+                  patientId={Number(patientId)}
+                  problems={problems}
+                  className="pims-emr-evet-suggestions"
+                  onAccepted={(created) => {
+                    setProblems((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+                  }}
+                />
+              ) : null}
               {Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
                 <PimsPatientChronicAdders
                   patientId={Number(patientId)}

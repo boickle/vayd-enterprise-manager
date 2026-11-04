@@ -12,7 +12,6 @@ import {
   type EncounterOrder,
   type EncounterOrderKind,
 } from '../../api/visitWorkflow';
-import { isVaccineSearchItem } from '../../utils/visitSharpsFee';
 import { appendCheckoutPrepDrafts } from '../../api/visitWrapUp';
 import { createTask } from '../../api/tasks';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
@@ -55,10 +54,8 @@ type Props = {
   patientId?: number;
   clientId?: number;
   practiceId: number;
-  onOrderAdded: (
-    order: EncounterOrder,
-    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
-  ) => void;
+  /** An order was created from a plan item. It goes on the bill only; the Plan text is untouched. */
+  onOrderAdded: (order: EncounterOrder) => void;
   onInvoiceShouldRefresh: () => void;
   /** @deprecated Checkout prep no longer writes SOAP bullets. Kept so existing callers compile. */
   onAppendToSoapSection?: (section: SoapNarrativeSection, text: string) => void;
@@ -332,8 +329,8 @@ export default function ScribeSuggestedPlanItems({
               clientId={clientId}
               practiceId={practiceId}
               existingOrders={orders}
-              onAdded={(order, meta) => {
-                onOrderAdded(order, meta);
+              onAdded={(order) => {
+                onOrderAdded(order);
                 onInvoiceShouldRefresh();
                 markResolved(s.key);
               }}
@@ -352,8 +349,8 @@ export default function ScribeSuggestedPlanItems({
               clientId={clientId}
               practiceId={practiceId}
               existingOrders={orders}
-              onAdded={(order, meta) => {
-                onOrderAdded(order, meta);
+              onAdded={(order) => {
+                onOrderAdded(order);
                 onInvoiceShouldRefresh();
                 setExtraRows((prev) => prev.filter((k) => k !== key));
               }}
@@ -396,10 +393,7 @@ function PlanItemSearchRow({
   clientId?: number;
   practiceId: number;
   existingOrders: EncounterOrder[];
-  onAdded: (
-    order: EncounterOrder,
-    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
-  ) => void;
+  onAdded: (order: EncounterOrder) => void;
   onResolved: () => void;
   onDismiss: () => void;
 }) {
@@ -464,13 +458,12 @@ function PlanItemSearchRow({
         practiceId,
         clientId,
       });
-      const isVaccine = isVaccineSearchItem(item);
-      onAdded(order, { isVaccine });
+      onAdded(order);
       // The server may have added the sharps fee alongside a needle item.
       try {
         const known = new Set([...existingOrders.map((o) => o.id), order.id]);
         for (const o of await listOrders(encounterId)) {
-          if (!known.has(o.id)) onAdded(o, { skipPlanNarrative: true });
+          if (!known.has(o.id)) onAdded(o);
         }
       } catch {
         /* The plan picks it up on the next reload. */
@@ -506,7 +499,7 @@ function PlanItemSearchRow({
           ? how.note.trim() || undefined
           : offRecordDeclineNote(how.note),
       });
-      onAdded(order, { skipPlanNarrative: true });
+      onAdded(order);
       onResolved();
     } finally {
       setAdding(false);

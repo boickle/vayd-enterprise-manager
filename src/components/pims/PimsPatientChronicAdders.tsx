@@ -103,7 +103,6 @@ export default function PimsPatientChronicAdders({
       const created = await createProblem({
         patientId,
         label,
-        kind: 'presenting_complaint',
         acuity: 'chronic',
       });
       onProblemCreated(created);

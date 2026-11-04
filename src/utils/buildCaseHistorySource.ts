@@ -410,7 +410,7 @@ export function buildCaseHistorySource(opts: {
     lines.push('- None listed');
   } else {
     for (const p of open) {
-      const flags = [p.kind.replace(/_/g, ' '), p.acuity, p.status].filter(Boolean).join(', ');
+      const flags = [p.acuity, p.status].filter(Boolean).join(', ');
       lines.push(`- ${p.label}${flags ? ` (${flags})` : ''}${chronic.includes(p) ? ' [chronic]' : ''}`);
     }
   }
