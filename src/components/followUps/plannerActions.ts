@@ -1,5 +1,10 @@
 import { DateTime } from 'luxon';
-import { createAppointment, deleteAppointment, patchAppointment } from '../../api/appointments';
+import {
+  createAppointment,
+  deleteAppointment,
+  fetchAppointmentById,
+  patchAppointment,
+} from '../../api/appointments';
 import { sendClientSms } from '../../api/clientSms';
 import { apiBaseUrl, getToken, practiceHostHeaders } from '../../api/http';
 import {
@@ -302,21 +307,84 @@ export type PetDisposition = {
   taskId?: number | null;
 };
 
+/**
+ * The branches a labs task is filed on. The API only lets staff file tasks on branches
+ * they belong to (admins excepted), so:
+ * - the visit's branch when the signed-in staff member belongs to it;
+ * - otherwise the practice branches they belong to;
+ * - otherwise (their branches could not be loaded) the visit's branch.
+ * Never every branch of the practice.
+ */
+export function chooseLabsTaskBranchIds(args: {
+  visitBranchId: number | null;
+  staffBranchIds: readonly number[];
+  practiceBranchIds: readonly number[];
+}): number[] {
+  const inPractice = new Set(args.practiceBranchIds);
+  const mine = [...new Set(args.staffBranchIds)].filter(
+    (id) => inPractice.size === 0 || inPractice.has(id)
+  );
+  const visit = args.visitBranchId;
+  if (visit != null && mine.includes(visit)) return [visit];
+  if (mine.length) return mine;
+  return visit != null ? [visit] : [];
+}
+
+function appointmentBranchId(a: Appointment | null | undefined): number | null {
+  const raw = (a as { branch?: { id?: unknown } | null; branchId?: unknown } | null) ?? null;
+  const n = Number(raw?.branch?.id ?? raw?.branchId);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * Branches for one visit's labs task (see chooseLabsTaskBranchIds). Reads the visit's
+ * branch from the row when the caller has it, otherwise loads the visit.
+ */
+export async function resolveLabsTaskBranchIds(args: {
+  appointmentId: number;
+  appointment?: Appointment | null;
+  practiceId: number;
+  staffBranchIds: readonly number[];
+  practiceBranchIds: readonly number[];
+}): Promise<number[]> {
+  let visitBranchId = appointmentBranchId(args.appointment);
+  if (visitBranchId == null) {
+    visitBranchId = appointmentBranchId(
+      await fetchAppointmentById(args.appointmentId, { practiceId: args.practiceId })
+    );
+  }
+  return chooseLabsTaskBranchIds({
+    visitBranchId,
+    staffBranchIds: args.staffBranchIds,
+    practiceBranchIds: args.practiceBranchIds,
+  });
+}
+
 export async function createLabsTask(args: {
   pet: PlannerPet;
   clientId: number;
-  branchIds: number[];
+  practiceId: number;
+  /** Branches the signed-in staff member belongs to. */
+  staffBranchIds: number[];
+  /** Active branches of the practice. */
+  practiceBranchIds: number[];
   assigneeIds: number[];
   startAt: string;
   note: string;
 }): Promise<number> {
   if (!args.pet.appointmentId)
     throw new Error(`${args.pet.name} has no visit to link the labs task to.`);
-  if (args.branchIds.length === 0)
+  const branchIds = await resolveLabsTaskBranchIds({
+    appointmentId: args.pet.appointmentId,
+    practiceId: args.practiceId,
+    staffBranchIds: args.staffBranchIds,
+    practiceBranchIds: args.practiceBranchIds,
+  });
+  if (branchIds.length === 0)
     throw new Error('Could not determine practice branches for the task.');
   const id = await createLabsPendingForwardBookingTasks({
     title: `Forward book ${args.pet.name} once labs are back${args.note ? ` (${args.note})` : ''}`,
-    branchIds: args.branchIds,
+    branchIds,
     assigneeEmployeeIds: args.assigneeIds,
     startAt: args.startAt,
     dueAt: null,

@@ -201,11 +201,22 @@ vi.mock('../../api/appointmentSettings', async (orig) => ({
 }));
 vi.mock('../../api/branchInventory', async (orig) => ({
   ...(await orig<typeof import('../../api/branchInventory')>()),
-  listPracticeBranches: vi.fn(async () => [{ id: 1, isActive: true }]),
+  // The practice has several offices; the signed-in staff member works at two of them.
+  listPracticeBranches: vi.fn(async () => [
+    { id: 1, isActive: true },
+    { id: 2, isActive: true },
+    { id: 3, isActive: true },
+    { id: 4, isActive: false },
+  ]),
+  getEmployeeBranches: vi.fn(async () => [
+    { branchId: 3, isPrimary: true, defaultInventoryLocationId: null },
+    { branchId: 4, isPrimary: false, defaultInventoryLocationId: null },
+  ]),
 }));
 
 import ScheduleFollowUpsPlanner from './ScheduleFollowUpsPlanner';
 import { fetchPremedsHistory } from '../../api/appointments';
+import { getEmployeeBranches } from '../../api/branchInventory';
 import { loadFollowUpPlannerData as loadPlannerDataMock } from './plannerData';
 
 const visit = {
@@ -243,7 +254,11 @@ const setType = (scope: HTMLElement, petName: string, typeId: number) =>
     target: { value: String(typeId) },
   });
 
+/** A signed-in staff token (employee 42); only its payload is read. */
+const staffToken = `x.${btoa(JSON.stringify({ sub: 5, employeeId: 42 }))}.y`;
+
 beforeEach(() => {
+  localStorage.setItem('accessToken', staffToken);
   Object.values(actions).forEach((fn) => fn.mockClear());
   actions.createPlannerForwardBookings.mockImplementation(
     async ({ pets }: { pets: { patientId: number }[] }) => ({
@@ -353,6 +368,15 @@ describe('Schedule follow-ups planner', () => {
       Biscuit: 'labs_pending',
     });
     expect(actions.createLabsTask).toHaveBeenCalledTimes(1);
+    // SCH-13-4: the labs task is filed using the signed-in staff member's branches, not
+    // every branch of the practice (the API refuses branches staff do not belong to).
+    expect(getEmployeeBranches).toHaveBeenCalledWith(1, 42);
+    expect(actions.createLabsTask.mock.calls[0][0]).toMatchObject({
+      practiceId: 1,
+      staffBranchIds: [3, 4],
+      practiceBranchIds: [1, 2, 3],
+    });
+    expect(actions.createLabsTask.mock.calls[0][0]).not.toHaveProperty('branchIds');
     const clCall = actions.createPlannerForwardBookings.mock.calls.at(-1)![0];
     expect(clCall.pets.map((p: { name: string }) => p.name)).toEqual(['Fluffy', 'Angel', 'Marvin']);
     expect(clCall.notesFor(clCall.pets[0])).toContain('Household: Prefers Tuesdays');

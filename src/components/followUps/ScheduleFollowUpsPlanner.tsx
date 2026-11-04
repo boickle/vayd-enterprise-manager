@@ -4,7 +4,9 @@ import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { CalendarPlus, X } from 'lucide-react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
-import { listPracticeBranches } from '../../api/branchInventory';
+import { getEmployeeBranches, listPracticeBranches } from '../../api/branchInventory';
+import { getToken } from '../../api/http';
+import { resolveEmployeeIdFromToken } from '../../utils/practiceIdFromToken';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { dispatchRoutingFocusHouseholdVisit } from '../../utils/bookingHouseholdVisitWarning';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
@@ -190,7 +192,9 @@ export default function ScheduleFollowUpsPlanner({
   const [noneReason, setNoneReason] = useState('');
   const [clNote, setClNote] = useState('');
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [branchIds, setBranchIds] = useState<number[]>([]);
+  /** Labs task branches: the practice's active ones and the signed-in staff member's. */
+  const [practiceBranchIds, setPracticeBranchIds] = useState<number[]>([]);
+  const [staffBranchIds, setStaffBranchIds] = useState<number[]>([]);
   const [menu, setMenu] = useState<{
     petId: number;
     from: string | null;
@@ -278,13 +282,23 @@ export default function ScheduleFollowUpsPlanner({
   const usesLabs = Object.values(placements).some((p) => p.includes(LABS));
   useEffect(() => {
     if (!usesLabs || employees.length) return;
-    void Promise.all([fetchAllEmployees(), listPracticeBranches(practiceId)])
-      .then(([emps, branches]) => {
+    const me = resolveEmployeeIdFromToken(getToken());
+    void Promise.all([
+      fetchAllEmployees(),
+      listPracticeBranches(practiceId),
+      me != null ? getEmployeeBranches(practiceId, me).catch(() => []) : Promise.resolve([]),
+    ])
+      .then(([emps, branches, mine]) => {
         setEmployees(Array.isArray(emps) ? emps : []);
-        setBranchIds(
+        setPracticeBranchIds(
           (Array.isArray(branches) ? branches : [])
             .filter((b) => b.isActive !== false)
             .map((b) => b.id)
+        );
+        setStaffBranchIds(
+          (Array.isArray(mine) ? mine : [])
+            .map((b) => Number(b.branchId))
+            .filter((id) => Number.isInteger(id) && id > 0)
         );
       })
       .catch(() => undefined);
@@ -1063,7 +1077,9 @@ export default function ScheduleFollowUpsPlanner({
           await createLabsTask({
             pet: p,
             clientId: data.clientId,
-            branchIds,
+            practiceId,
+            staffBranchIds,
+            practiceBranchIds,
             assigneeIds: labsAssignee ? [labsAssignee] : [],
             startAt: data.today
               .plus({ days: remindDays })

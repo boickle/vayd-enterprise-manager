@@ -14,7 +14,10 @@ import {
   type ForwardBookingDisposition,
   type ForwardBookingDispositionMode,
 } from '../api/forwardBookingDisposition';
-import { listPracticeBranches } from '../api/branchInventory';
+import { getEmployeeBranches, listPracticeBranches } from '../api/branchInventory';
+import { getToken } from '../api/http';
+import { resolveEmployeeIdFromToken } from '../utils/practiceIdFromToken';
+import { resolveLabsTaskBranchIds } from '../components/followUps/plannerActions';
 import { createForwardBooking, fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import type { Appointment } from '../api/roomLoader';
 import type { TaskLinkInput } from '../api/tasks';
@@ -436,7 +439,9 @@ export function SchedulerActualVisitTimeModal({
   const [forwardNeedsPremedsOverride] = useState<boolean | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  /** Labs task branches: the practice's active ones and the signed-in staff member's (SCH-13-4). */
   const [branchIds, setBranchIds] = useState<number[]>([]);
+  const [staffBranchIds, setStaffBranchIds] = useState<number[]>([]);
   const [, setForwardBookingMetaLoading] = useState(false);
   const [dispositionLocked, setDispositionLocked] = useState(() =>
     shouldLockForwardBookingDisposition(appt)
@@ -827,9 +832,6 @@ export function SchedulerActualVisitTimeModal({
       if (labsAssigneeEmployeeIds.length === 0) {
         throw new Error('Select at least one person to do the labs pending task.');
       }
-      if (branchIds.length === 0) {
-        throw new Error('Could not determine practice branches for the task.');
-      }
       const visitsToTask = labsPendingVisitsToTask(
         householdVisits,
         selectedHouseholdPatientIds,
@@ -856,9 +858,22 @@ export function SchedulerActualVisitTimeModal({
         if (!title.trim()) {
           throw new Error('Enter a task description.');
         }
+        // The visit's branch or the staff member's own; never every practice branch.
+        const taskBranchIds = await resolveLabsTaskBranchIds({
+          appointmentId: visit.appointmentId,
+          appointment:
+            sameCalendarDayAppointments.find((a) => Number(a.id) === Number(visit.appointmentId)) ??
+            (Number(appt.id) === Number(visit.appointmentId) ? appt : null),
+          practiceId,
+          staffBranchIds,
+          practiceBranchIds: branchIds,
+        });
+        if (taskBranchIds.length === 0) {
+          throw new Error('Could not determine practice branches for the task.');
+        }
         await createLabsPendingForwardBookingTasks({
           title,
-          branchIds,
+          branchIds: taskBranchIds,
           assigneeEmployeeIds: labsAssigneeEmployeeIds,
           watcherEmployeeIds: labsWatcherEmployeeIds,
           startAt,
@@ -946,6 +961,7 @@ export function SchedulerActualVisitTimeModal({
     appt,
     bookingNotes,
     branchIds,
+    staffBranchIds,
     dispositionLocked,
     effectiveForwardBookingPatientIds,
     effectiveForwardBookingSourceIds,
@@ -974,21 +990,29 @@ export function SchedulerActualVisitTimeModal({
     setForwardBookingMetaLoading(true);
     void (async () => {
       try {
-        const [branchList, employeeList, providerList] = await Promise.all([
+        const me = resolveEmployeeIdFromToken(getToken());
+        const [branchList, employeeList, providerList, myBranches] = await Promise.all([
           listPracticeBranches(practiceId),
           fetchAllEmployees(),
           fetchPrimaryProviders(),
+          me != null ? getEmployeeBranches(practiceId, me).catch(() => []) : Promise.resolve([]),
         ]);
         if (!on) return;
         const activeBranchIds = (Array.isArray(branchList) ? branchList : [])
           .filter((b) => b.isActive !== false)
           .map((b) => b.id);
         setBranchIds(activeBranchIds);
+        setStaffBranchIds(
+          (Array.isArray(myBranches) ? myBranches : [])
+            .map((b) => Number(b.branchId))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        );
         setEmployees(Array.isArray(employeeList) ? employeeList : []);
         setProviders(Array.isArray(providerList) ? providerList : []);
       } catch {
         if (!on) return;
         setBranchIds([]);
+        setStaffBranchIds([]);
         setEmployees([]);
         setProviders([]);
       } finally {
