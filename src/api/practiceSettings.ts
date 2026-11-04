@@ -143,6 +143,11 @@ export type ReminderSettings = {
    * type window (never widens it). Unset = 30.
    */
   'scheduling.premedsWindowMinutes'?: string;
+  /**
+   * Practice-wide closed days (JSON array string of YYYY-MM-DD, practice-local). Online booking
+   * offers no times on these days; staff can still book by hand.
+   */
+  'scheduling.closedDates'?: string;
 };
 
 /** True only when the practice explicitly enabled an online store (default No). */
