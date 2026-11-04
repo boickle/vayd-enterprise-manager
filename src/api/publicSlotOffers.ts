@@ -11,7 +11,11 @@ export type SlotOfferConfirmStatus =
   | 'accepted'
   | 'manual_review'
   | 'superseded'
-  | 'unavailable';
+  | 'unavailable'
+  /** SCH-09: a pet on the offer is no longer active; the page shows no pet names. */
+  | 'closed'
+  /** SCH-09: staff booked these pets for this visit type after the offer was sent. */
+  | 'already_booked';
 
 export type SlotOfferConfirmPetReminder = {
   description: string;
@@ -37,9 +41,18 @@ export type SlotOfferConfirmResponse = {
   declineMessage?: string | null;
   clientDeclineNote?: string | null;
   message?: string | null;
+  /** SCH-09-4: some pets were booked; the care team follows up on the rest. */
+  partiallyBooked?: boolean;
 };
 
-export type SlotOfferTapOutcome = 'accepted' | 'expired' | 'retry_sent' | 'manual_review';
+export type SlotOfferTapOutcome =
+  | 'accepted'
+  | 'expired'
+  | 'retry_sent'
+  | 'manual_review'
+  | 'closed'
+  | 'already_booked'
+  | 'partial';
 
 export type SlotOfferTapResponse = {
   outcome: SlotOfferTapOutcome;

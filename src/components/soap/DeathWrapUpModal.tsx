@@ -12,6 +12,7 @@ import {
   INACTIVATION_REASON_OPTIONS,
   type PatientInactivationReason,
 } from '../../api/patients';
+import { practiceTimeZoneOrDefault } from '../../utils/practiceTimezone';
 import './DeathWrapUpModal.css';
 
 type Props = {
@@ -36,6 +37,40 @@ function reminderLabel(description: string | null | undefined, dueDate?: string 
   const d = new Date(dueDate);
   if (Number.isNaN(d.getTime())) return name;
   return `${name} · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+function shortDate(iso: string | null | undefined, withTime = false): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('en-US', {
+    timeZone: practiceTimeZoneOrDefault(undefined),
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    ...(withTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+  });
+}
+
+/** "Expiring 1 text offer", plus the shared ones the pet is only taken off. */
+function closeHeading(
+  label: { one: string; many: string },
+  closeVerb: string,
+  closing: number,
+  sharedCount: number,
+  petName: string,
+): string {
+  const parts: string[] = [];
+  if (closing > 0) parts.push(`${closeVerb} ${plural(closing, label.one, label.many)}`);
+  if (sharedCount > 0) {
+    parts.push(`Taking ${petName} off ${plural(sharedCount, `shared ${label.one}`, `shared ${label.many}`)}`);
+  }
+  if (parts.length) return parts.join(' · ');
+  return label.many.charAt(0).toUpperCase() + label.many.slice(1);
 }
 
 function defaultTitle(kind: DeathWrapUpKind, many: boolean): string {
@@ -160,6 +195,8 @@ function PetActions({
         )}
       </section>
 
+      <SchedulingSections preview={preview} />
+
       <section className="death-wrapup-section">
         <h4>{heading(preview.futureAppointments.length, 'Cancelling', 'appointments')}</h4>
         {preview.futureAppointments.length === 0 ? (
@@ -176,6 +213,103 @@ function PetActions({
         )}
       </section>
     </div>
+  );
+}
+
+/** SCH-08 (D5): follow-ups, text offers and waitlist rows. The server closes them on inactivation. */
+function SchedulingSections({ preview }: { preview: DeathWrapUpPreview }) {
+  const followUps = preview.followUps ?? [];
+  const offers = preview.textOffers ?? [];
+  const waitlist = preview.waitlist ?? [];
+  const expiring = offers.filter((row) => row.action === 'expire').length;
+  const removing = waitlist.filter((row) => row.action === 'remove').length;
+  const others = (names: string[]) => names.join(', ');
+  return (
+    <>
+      <section className="death-wrapup-section">
+        <h4>
+          {followUps.length > 0
+            ? `Removing ${plural(followUps.length, 'follow-up', 'follow-ups')}`
+            : 'Follow-ups'}
+        </h4>
+        {followUps.length === 0 ? (
+          <p className="death-wrapup-empty">None to remove</p>
+        ) : (
+          <ul>
+            {followUps.map((row) => (
+              <li key={row.id}>
+                <strong>{row.appointmentTypeName?.trim() || 'Follow-up'}</strong>
+                <span>
+                  {[shortDate(row.targetDueDate) && `Due ${shortDate(row.targetDueDate)}`, 'Taken off the follow-up queue']
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="death-wrapup-section">
+        <h4>
+          {closeHeading(
+            { one: 'text offer', many: 'text offers' },
+            'Expiring',
+            expiring,
+            offers.length - expiring,
+            preview.patientName,
+          )}
+        </h4>
+        {offers.length === 0 ? (
+          <p className="death-wrapup-empty">None to expire</p>
+        ) : (
+          <ul>
+            {offers.map((row) => (
+              <li key={row.id}>
+                <strong>
+                  {[row.appointmentTypeName?.trim() || 'Visit', shortDate(row.offeredSlotDatetime, true)]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </strong>
+                <span>
+                  {row.action === 'expire'
+                    ? 'The link stops working'
+                    : `Stays open for ${others(row.otherPetNames)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="death-wrapup-section">
+        <h4>
+          {closeHeading(
+            { one: 'waitlist entry', many: 'waitlist entries' },
+            'Removing',
+            removing,
+            waitlist.length - removing,
+            preview.patientName,
+          )}
+        </h4>
+        {waitlist.length === 0 ? (
+          <p className="death-wrapup-empty">None to remove</p>
+        ) : (
+          <ul>
+            {waitlist.map((row) => (
+              <li key={row.id}>
+                <strong>{row.appointmentTypeName?.trim() || 'Waitlist'}</strong>
+                <span>
+                  {row.action === 'remove'
+                    ? 'Taken off the waitlist'
+                    : `Stays on the waitlist for ${others(row.otherPetNames)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
   );
 }
 
