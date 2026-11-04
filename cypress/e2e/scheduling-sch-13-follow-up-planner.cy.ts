@@ -473,11 +473,6 @@ describe('SCH-13: Schedule follow-ups planner end to end', () => {
         'GET',
         `/tasks?patientId=${idA}&includeDone=true&involvement=assigned`
       ).then((res): any => asList(res.body)) as Cypress.Chainable<any[]>;
-    // The planner files the task on every branch of the practice; the seeded manager only belongs to the seeded
-    // branch, so the API refuses (403). Narrow the request to that branch (setup only).
-    cy.intercept('POST', '**/tasks', (req) => {
-      req.body = { ...req.body, branchIds: [w.branchId] };
-    });
     setUpTodaysVisit(13).then(() => {
       labsTasks().then((before) => {
         openPlanner(todayVisitIds[0], idA);
