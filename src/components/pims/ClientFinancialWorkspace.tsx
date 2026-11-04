@@ -7047,6 +7047,13 @@ export default function ClientFinancialWorkspace({
                                       lotNumber: saved.lotNumber ?? null,
                                     });
                                   }
+                                  // The dose is on the record; fold the line back up.
+                                  setRxRowOpenIds((prev) => {
+                                    if (!prev[line.id]) return prev;
+                                    const next = { ...prev };
+                                    delete next[line.id];
+                                    return next;
+                                  });
                                 }}
                                 onRemoved={() => {
                                   const orderId = line.orderId;

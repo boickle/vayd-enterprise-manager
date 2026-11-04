@@ -71,6 +71,8 @@ type Props = {
   onChronicMedicationsMaybeChanged?: () => void;
   /** Fired after any vaccine or prescription is recorded so checkout Approve can refresh. */
   onClinicalRecorded?: () => void;
+  /** A vaccine dose was recorded or updated (e.g. so checkout can fold the line up). */
+  onVaccinationSaved?: (orderId: string) => void;
   /** When set, only these order ids are listed (for per-line expand in checkout). */
   onlyOrderIds?: ReadonlySet<string> | string[];
   /** Hide the section chrome — used when embedded under an invoice line. */
@@ -151,6 +153,7 @@ export default function VisitDoseAndRxSection({
   onInvoiceShouldRefresh,
   onChronicMedicationsMaybeChanged,
   onClinicalRecorded,
+  onVaccinationSaved,
   onlyOrderIds,
   embedded,
   forceOpenOrderId,
@@ -316,6 +319,7 @@ export default function VisitDoseAndRxSection({
             setVaccinations((prev) => ({ ...prev, [order.id]: saved }));
             if (forceOpenOrderId == null) setExpanded(null);
             onClinicalRecorded?.();
+            onVaccinationSaved?.(order.id);
           }}
           onRemoved={() => {
             setVaccinations((prev) => {

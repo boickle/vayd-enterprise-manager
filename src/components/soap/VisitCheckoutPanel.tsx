@@ -3470,6 +3470,8 @@ export default function VisitCheckoutPanel({
                                   setVaccinationsByOrderId((prev) => ({ ...prev, [orderId]: saved }));
                                 }
                                 onClinicalRecorded?.();
+                                // The dose is on the record; fold the line back up.
+                                setExpandedLineId((cur) => (cur === l.id ? null : cur));
                               }}
                               onRemoved={() => {
                                 setVaccinationsByLineId((prev) => {
@@ -3554,6 +3556,9 @@ export default function VisitCheckoutPanel({
                               }}
                               onChronicMedicationsMaybeChanged={onChronicMedicationsMaybeChanged}
                               onClinicalRecorded={onClinicalRecorded}
+                              onVaccinationSaved={() =>
+                                setExpandedLineId((cur) => (cur === l.id ? null : cur))
+                              }
                             />
                           </div>
                         ) : null}
