@@ -322,3 +322,48 @@ describe('EMR-10-9 SOAP plan search: catalog result vs the note row', () => {
     expect(sentBodies()[0]).toMatchObject({ kind: 'note', catalogItemType: 'custom', unitPrice: 0 });
   });
 });
+
+describe('Checkout add-charge has no "Add as note"', () => {
+  for (const mode of ['plan', 'checkout'] as const) {
+    it(`${mode} search ${mode === 'plan' ? 'still offers' : 'does not offer'} the note row`, async () => {
+      vi.mocked(searchItems).mockResolvedValue([HIT] as any);
+      vi.mocked(listBundles).mockResolvedValue([] as any);
+      const onChange = vi.fn();
+      render(
+        <AppDialogProvider>
+          <PlanOrdersSection
+            encounterId="enc-1"
+            orders={[]}
+            practiceId={1}
+            onChange={onChange}
+            onInvoiceShouldRefresh={() => {}}
+            {...(mode === 'checkout'
+              ? { showList: false, showSearch: true, allowNotes: false, searchPlaceholder: 'Add a charge for Pip' }
+              : {})}
+          />
+        </AppDialogProvider>
+      );
+      const input = screen.getByPlaceholderText(
+        mode === 'checkout' ? 'Add a charge for Pip' : 'Type here to add a charge, or a note…'
+      );
+      fireEvent.change(input, { target: { value: 'cremation' } });
+      await screen.findByText('Private cremation', { selector: '.soap-plan-result-name' }, { timeout: 2000 });
+      const hasNote = document.querySelector('.soap-plan-result-note') !== null;
+      const hint = document.querySelector('.soap-hint')?.textContent ?? '';
+      expect(hasNote).toBe(mode === 'plan');
+      expect(hint.includes('Add as note')).toBe(mode === 'plan');
+      expect(hint).toContain('Catalog prices');
+      if (mode === 'checkout') {
+        // Enter with no catalog match creates nothing.
+        vi.mocked(searchItems).mockResolvedValue([] as any);
+        post.mockClear();
+        fireEvent.change(input, { target: { value: 'zzz nothing' } });
+        await waitFor(() => expect(screen.queryByText('Private cremation')).toBeNull());
+        fireEvent.keyDown(input, { key: 'Enter' });
+        await new Promise((r) => setTimeout(r, 50));
+        expect(post).not.toHaveBeenCalled();
+        expect(onChange).not.toHaveBeenCalled();
+      }
+    });
+  }
+});
