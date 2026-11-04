@@ -1762,8 +1762,8 @@ export default function AppointmentRequestForm() {
     };
   }, [calmingPremedAppointmentType]);
 
-  // Availability uses the visit reason the client picked. Calming meds no longer
-  // swap the search onto the Pre-Meds type; those visits use the new-patient lead time.
+  // Availability uses the visit reason the client picked. Calming meds and muzzle
+  // visits use the practice pre-med lead time instead of swapping onto the Pre-Meds type.
   const primaryAppointmentTypeId = useMemo(
     () => resolvePrimaryAppointmentTypeId(formData),
     [

@@ -15,6 +15,11 @@ export type OnlineBookingAutoBookSettings = {
   newClientLeadTimeHours: number;
   existingClientLeadTimeHours: number;
   /**
+   * Minimum hours before the first bookable slot when any pet needs calming
+   * medication or a muzzle (default 96). Uploading records does not shorten it.
+   */
+  calmingPremedLeadTimeHours: number;
+  /**
    * Existing-client hours before the first bookable slot, keyed by appointment type id.
    * Missing types use `existingClientLeadTimeHours`.
    */
@@ -32,6 +37,7 @@ export function defaultOnlineBookingAutoBookSettings(): OnlineBookingAutoBookSet
     multiPetPerPetMinutes: 30,
     newClientLeadTimeHours: 24,
     existingClientLeadTimeHours: 0,
+    calmingPremedLeadTimeHours: 96,
     leadTimeHoursByAppointmentTypeId: {},
     newClientLeadTimeHoursByAppointmentTypeId: {},
   };
@@ -101,6 +107,10 @@ export function parseOnlineBookingAutoBookSettings(
       obj.existingClientLeadTimeHours,
       defaults.existingClientLeadTimeHours,
     ),
+    calmingPremedLeadTimeHours: parseNonNegativeHours(
+      obj.calmingPremedLeadTimeHours,
+      defaults.calmingPremedLeadTimeHours,
+    ),
     leadTimeHoursByAppointmentTypeId: parseLeadTimeHoursByAppointmentTypeId(
       obj.leadTimeHoursByAppointmentTypeId,
     ),
@@ -125,7 +135,7 @@ export function isNewClientOrNewPatientVisit(
   return visitPets.some((pet) => pet.isNewPatient === true);
 }
 
-/** Calming meds, muzzle, or extra handling use the new-patient lead time. */
+/** Calming meds or a muzzle use the pre-med lead time. */
 export function visitNeedsCalmingLeadTime(
   visitPets?: readonly {
     needsCalmingMedications?: boolean;
@@ -213,6 +223,13 @@ export function resolveNewClientLeadTimeHours(
   );
 }
 
+/**
+ * Hours before the first bookable slot.
+ * New patients use the new-client lead time unless they upload records.
+ * A pet that needs calming medication or a muzzle uses the pre-med lead time,
+ * including when records are uploaded and when the pet is already a patient.
+ * The longer of those times applies.
+ */
 export function resolveOnlineBookingLeadTimeHours(
   settings: OnlineBookingAutoBookSettings,
   visitPets?: readonly RoutingVisitPetInput[],
@@ -220,14 +237,13 @@ export function resolveOnlineBookingLeadTimeHours(
   options?: { clientUploadedRecords?: boolean },
 ): number {
   const uploadedRecords = options?.clientUploadedRecords === true;
-  if (
-    visitNeedsCalmingLeadTime(visitPets) ||
-    (!uploadedRecords &&
-      isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest))
-  ) {
-    return resolveNewClientLeadTimeHours(settings, visitPets);
-  }
-  return resolveExistingClientLeadTimeHours(settings, visitPets);
+  const base =
+    !uploadedRecords &&
+    isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest)
+      ? resolveNewClientLeadTimeHours(settings, visitPets)
+      : resolveExistingClientLeadTimeHours(settings, visitPets);
+  if (!visitNeedsCalmingLeadTime(visitPets)) return base;
+  return Math.max(base, settings.calmingPremedLeadTimeHours);
 }
 
 export function computeEarliestOnlineBookingDateTime(
