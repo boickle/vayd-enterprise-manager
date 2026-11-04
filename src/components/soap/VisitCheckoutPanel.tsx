@@ -51,6 +51,7 @@ import {
   type VisitInvoice,
   type VisitInvoiceLine,
   type VisitTenderMethod,
+  getInvoiceVaccinations,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 import { HiddenButChargedTag } from '../pims/HiddenButChargedTag';
@@ -296,6 +297,15 @@ function checkoutRxMissingMessage(field: CheckoutRxMissingField, refills: string
 }
 
 /** Same Rx block as the client invoice: sig on the left, lot/refills on the right, Approve lower right. */
+/** A vaccine line is ready only once a dose is on file, by its order or by the line itself. */
+export function vaccineDoseRecorded(
+  l: Pick<VisitInvoiceLine, 'id' | 'orderId'>,
+  byOrderId: Record<string, unknown>,
+  byLineId: Record<string, unknown>,
+): boolean {
+  return Boolean((l.orderId && byOrderId[l.orderId]) || byLineId[l.id]);
+}
+
 export function CheckoutInvoiceRxFields({
   line,
   invoice,
@@ -1137,6 +1147,10 @@ export default function VisitCheckoutPanel({
   const [vaccinationsByOrderId, setVaccinationsByOrderId] = useState<
     Record<string, OrderVaccination>
   >({});
+  /** Doses recorded against an invoice line (direct invoice vaccines have no order). */
+  const [vaccinationsByLineId, setVaccinationsByLineId] = useState<
+    Record<string, OrderVaccination>
+  >({});
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
@@ -1589,16 +1603,42 @@ export default function VisitCheckoutPanel({
     return [...ids];
   }, [encounterId, roster, invoice?.lines, orders]);
 
+  // A new order or line on the SAME encounter changes none of the other keys, so a freshly
+  // added vaccine would not be flagged until a reload. Key on the ids themselves.
+  const clinicalContentKey = useMemo(
+    () =>
+      [
+        ...orders.map((o) => o.id),
+        ...(invoice?.lines ?? []).filter((l) => !l.isDeleted).map((l) => l.id),
+      ]
+        .sort()
+        .join(','),
+    [orders, invoice?.lines],
+  );
+
   // Household invoice: each pet's Rx lives on that pet's encounter. Loading only
   // the open SOAP chart is why Save Rx looked gone after leaving and coming back.
   useEffect(() => {
-    if (clinicalEncounterIds.length === 0) return;
+    if (clinicalEncounterIds.length === 0 && !invoice?.id) return;
     let canceled = false;
     void Promise.all(
-      clinicalEncounterIds.map((id) => getOrderClinicalDetails(id).catch(() => null)),
+      [
+        ...clinicalEncounterIds.map((id) => getOrderClinicalDetails(id).catch(() => null)),
+      ],
     )
-      .then((pages) => {
+      .then(async (pages) => {
+        const lineShots: Record<string, OrderVaccination> = {};
+        if (invoice?.id) {
+          try {
+            for (const v of await getInvoiceVaccinations(invoice.id)) {
+              if (v.visitInvoiceLineId) lineShots[v.visitInvoiceLineId] = v;
+            }
+          } catch {
+            /* keep what the orders say */
+          }
+        }
         if (canceled) return;
+        setVaccinationsByLineId(lineShots);
         const next: Record<string, OrderPrescription> = {};
         const vaxIds = new Set<string>();
         const shots: Record<string, OrderVaccination> = {};
@@ -1631,7 +1671,7 @@ export default function VisitCheckoutPanel({
     return () => {
       canceled = true;
     };
-  }, [clinicalEncounterIds.join(','), invoice?.id, clinicalRefreshSignal]);
+  }, [clinicalEncounterIds.join(','), invoice?.id, clinicalRefreshSignal, clinicalContentKey]);
 
   // In-house lab forms live on the lab line. The API opens a pending form for
   // each lab line that has one, so a snap test is entered right here in the SOAP.
@@ -2061,8 +2101,10 @@ export default function VisitCheckoutPanel({
     const mailed = invoice ? matchingMailOrderForLine(mailOrders, invoice.id, l) : null;
     const refillN = recorded?.refill ?? l.refillCount ?? 0;
 
-    if (l.orderId && vaccineOrderIds.has(l.orderId)) {
-      if (!vaccinationsByOrderId[l.orderId]) return 'Record the dose given';
+    if (isVaccineLine) {
+      if (!vaccineDoseRecorded(l, vaccinationsByOrderId, vaccinationsByLineId)) {
+        return 'Record the dose given';
+      }
     } else if (showRxLabel && mailed) {
       if (!l.rxApprovedAt) {
         return mailOrderWaitsForQueueApproval(mailed)
@@ -3270,8 +3312,13 @@ export default function VisitCheckoutPanel({
                               onShelfChange={(next) => void changeLineShelf(invoice, l, next).then(onInvoiceChange, (e: unknown) => setError(apiErrorMessage(e)))}
                               // A household line's order lives on the pet's own visit, not
                               // this chart's, so it lands here; show and track its dose too.
-                              recorded={l.orderId ? vaccinationsByOrderId[l.orderId] ?? null : null}
+                              recorded={
+                                (l.orderId ? vaccinationsByOrderId[l.orderId] : null) ??
+                                vaccinationsByLineId[l.id] ??
+                                null
+                              }
                               onSaved={(saved) => {
+                                setVaccinationsByLineId((prev) => ({ ...prev, [l.id]: saved }));
                                 const orderId = l.orderId;
                                 if (orderId) {
                                   setVaccinationsByOrderId((prev) => ({ ...prev, [orderId]: saved }));
@@ -3279,6 +3326,11 @@ export default function VisitCheckoutPanel({
                                 onClinicalRecorded?.();
                               }}
                               onRemoved={() => {
+                                setVaccinationsByLineId((prev) => {
+                                  const next = { ...prev };
+                                  delete next[l.id];
+                                  return next;
+                                });
                                 const orderId = l.orderId;
                                 if (orderId) {
                                   setVaccinationsByOrderId((prev) => {
