@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSubmitOnce } from '../../hooks/useSubmitOnce';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { CalendarPlus, X } from 'lucide-react';
@@ -1131,7 +1132,7 @@ export default function ScheduleFollowUpsPlanner({
   const canText = !!data?.clientPhone && !data?.doNotSms;
   const sendProvider = confirmationSendProvider(bookings);
 
-  async function sendText() {
+  async function sendTextImpl() {
     if (!data) return;
     setBusy('send');
     setError(null);
@@ -1150,6 +1151,8 @@ export default function ScheduleFollowUpsPlanner({
       setBusy(null);
     }
   }
+
+  const sendText = useSubmitOnce(sendTextImpl);
 
   function finish(message: string) {
     setStep('plan');
