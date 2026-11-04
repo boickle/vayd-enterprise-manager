@@ -1430,6 +1430,7 @@ a.soap-header-client:hover {
 /* Checkout */
 .soap-invoice-pet-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1451,7 +1452,7 @@ a.soap-header-client:hover {
   gap: 6px;
   min-width: 0;
 }
-.soap-invoice-pet-head > span:last-child {
+.soap-invoice-pet-head > span:nth-child(2) {
   font-variant-numeric: tabular-nums;
   color: #64748b;
   font-weight: 600;
@@ -1463,6 +1464,16 @@ a.soap-header-client:hover {
 .soap-invoice-pet-head .membership-benefits-paused-tag--link {
   margin-left: 8px;
   vertical-align: middle;
+}
+.soap-invoice-pet-signalment {
+  flex: 0 0 100%;
+  min-width: 0;
+  order: 3;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .soap-invoice-pet-head-right {
   display: inline-flex;

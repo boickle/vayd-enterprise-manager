@@ -128,7 +128,7 @@ import {
 } from '../utils/roomLoaderSubjectiveText';
 import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
-import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
+import { patientSexNaturalLabelFromRecord } from '../utils/schedulerVisitDisplay';
 import { usePermissions } from '../permissions/PermissionContext';
 import { SignOffNotice } from '../components/soap/SignOffGate';
 import SwitchEncounterModeButton from '../components/soap/SwitchEncounterModeButton';
@@ -1683,7 +1683,7 @@ export default function SoapEncounterPage() {
   }, [ordersRevision, refreshInvoice]);
 
   const signalment = useMemo(() => {
-    const sex = patientProfile ? patientSexDisplayFromRecord(patientProfile) : null;
+    const sex = patientProfile ? patientSexNaturalLabelFromRecord(patientProfile) : null;
     const age = patientAge(patientProfile, appointmentStart);
     const breed = patientBreed(patientProfile);
     const visitWeight = formatVitalWeight(vitals);
@@ -2390,6 +2390,11 @@ export default function SoapEncounterPage() {
             }
             patientId={patientId}
             roster={roster}
+            todayWeight={
+              !vitals.weightNotTaken && vitals.weight.trim()
+                ? { value: vitals.weight.trim(), unit: vitals.weightUnit }
+                : null
+            }
             practiceId={VISIT_WORKFLOW_PRACTICE_ID}
             onClinicalRecorded={() => setClinicalRefreshTick((t) => t + 1)}
             onChronicMedicationsMaybeChanged={refreshChronicMedications}

@@ -124,6 +124,7 @@ import { listPatientMemberships, type PatientMembership } from '../../api/member
 import { usedUpMembershipNote } from '../../utils/membershipLineUsage';
 import MembershipBenefitsPausedTag from '../pims/MembershipBenefitsPausedTag';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
+import CheckoutPetSignalment from './CheckoutPetSignalment';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
 const PRACTICE_TZ =
@@ -209,6 +210,8 @@ type Props = {
   patientId?: number | null;
   /** Pets on this visit. Lets the add bar bill a housemate without leaving this chart. */
   roster?: HouseholdRosterEntry[];
+  /** This chart's SOAP weight today, if entered; wins over the weight history for the header. */
+  todayWeight?: { value: string; unit: string } | null;
   practiceId?: number;
   onClinicalRecorded?: () => void;
   onChronicMedicationsMaybeChanged?: () => void;
@@ -1118,6 +1121,7 @@ export default function VisitCheckoutPanel({
   clientId,
   patientId,
   roster = [],
+  todayWeight = null,
   practiceId = VISIT_WORKFLOW_PRACTICE_ID,
   onClinicalRecorded,
   onChronicMedicationsMaybeChanged,
@@ -2342,6 +2346,12 @@ export default function VisitCheckoutPanel({
                         {sectionPrevisit.length ? `${sectionPrevisit.length} pre-visit` : 'No items'}
                       </span>
                     </span>
+                    {section.patientId != null ? (
+                      <CheckoutPetSignalment
+                        patientId={section.patientId}
+                        todayWeight={section.patientId === patientId ? todayWeight : null}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 {multiPetRoster ? renderAddCharge(section.patientId, section.label) : null}
@@ -2507,6 +2517,12 @@ export default function VisitCheckoutPanel({
                       />
                     </span>
                     <span>{petHeadRight}</span>
+                    {section.patientId != null ? (
+                      <CheckoutPetSignalment
+                        patientId={section.patientId}
+                        todayWeight={section.patientId === patientId ? todayWeight : null}
+                      />
+                    ) : null}
                   </div>
                 ) : allSections.length > 1 ? (
                   <div className={`soap-invoice-pet-head${section.isCurrent ? ' is-current' : ''}`}>
@@ -2524,6 +2540,12 @@ export default function VisitCheckoutPanel({
                       {section.onRoster ? renderPetRefills(section.patientId, section.label) : null}
                       <span>{petHeadRight}</span>
                     </span>
+                    {section.patientId != null ? (
+                      <CheckoutPetSignalment
+                        patientId={section.patientId}
+                        todayWeight={section.patientId === patientId ? todayWeight : null}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 {multiPetRoster && section.onRoster && section.patientId != null
