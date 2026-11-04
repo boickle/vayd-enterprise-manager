@@ -134,6 +134,8 @@ import {
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 import { usePermissions } from '../permissions/PermissionContext';
 import { SignOffNotice } from '../components/soap/SignOffGate';
+import SwitchEncounterModeButton from '../components/soap/SwitchEncounterModeButton';
+import { soapHasEnteredContent } from '../utils/encounterModeSwitch';
 
 
 function patientField(patient: Record<string, unknown> | null, ...keys: string[]): string | null {
@@ -1902,6 +1904,29 @@ export default function SoapEncounterPage() {
             </>
           ) : (
             <>
+              {/* A wrong pick on the calendar: only while nothing is entered (the API re-checks). */}
+              <SwitchEncounterModeButton
+                encounterId={encounter?.id}
+                to="medical_note"
+                hidden={
+                  mode === 'medical_note' ||
+                  soapHasEnteredContent({
+                    subjective,
+                    vitals,
+                    exam,
+                    objectiveNotes,
+                    reasoning,
+                    planNotes,
+                  })
+                }
+                onSwitched={() =>
+                  navigate(
+                    `/schedule/note/${appointmentId}/${patientId}${
+                      clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
+                    }`
+                  )
+                }
+              />
               <SignOffNotice mode={mode} />
               <button
                 type="button"

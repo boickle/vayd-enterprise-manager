@@ -41,6 +41,8 @@ import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import ScribeSuggestedPlanItems from '../components/soap/ScribeSuggestedPlanItems';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import { SignOffNotice, useSignOffBlock } from '../components/soap/SignOffGate';
+import SwitchEncounterModeButton from '../components/soap/SwitchEncounterModeButton';
+import { chartNoteBelongsToEncounter } from '../utils/encounterModeSwitch';
 import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
@@ -191,6 +193,8 @@ export default function MedicalNoteEncounterPage() {
   const [copied, setCopied] = useState<'all' | 'recap' | null>(null);
   const [activeTab, setActiveTab] = useState<MedNoteTab>('history');
   const [checkoutPrepPendingCount, setCheckoutPrepPendingCount] = useState(0);
+  /** This visit's note is already wrapped up (finalized): it can no longer become a SOAP. */
+  const [noteSigned, setNoteSigned] = useState(false);
 
   const petsRef = useRef(pets);
   petsRef.current = pets;
@@ -282,6 +286,14 @@ export default function MedicalNoteEncounterPage() {
         if (canceled) return;
         setEncounter(enc);
         if (enc.clientId != null) setClientId(enc.clientId);
+        void listScoutChartNotes(patientId, 'finalized')
+          .then((finalized) => {
+            if (canceled) return;
+            setNoteSigned(
+              finalized.some((n) => chartNoteBelongsToEncounter(n.noteDate, enc.created))
+            );
+          })
+          .catch(() => undefined);
 
         void Promise.all([
           listOrders(enc.id).catch(() => [] as EncounterOrder[]),
@@ -575,6 +587,29 @@ export default function MedicalNoteEncounterPage() {
     }
   };
 
+  /** Save this pet's note as it stands, so all of it moves into the SOAP. */
+  const flushNoteForSwitch = async (): Promise<{ chartNoteId?: string | null }> => {
+    const pet = petsRef.current.find((p) => p.patientId === patientId);
+    if (!pet) return {};
+    const body = composeChartBody(pet.history, pet.plan);
+    if (pet.noteId) {
+      if (body !== pet.savedBody) {
+        await updateScoutChartNote(pet.noteId, body);
+        updatePet(pet.patientId, { savedBody: body });
+      }
+      return { chartNoteId: pet.noteId };
+    }
+    if (!body.trim()) return {};
+    const created = await createScoutChartNote({
+      patientId,
+      clientId,
+      body,
+      noteDate: encounter?.created ?? undefined,
+    });
+    updatePet(pet.patientId, { noteId: created.id, savedBody: body });
+    return { chartNoteId: created.id };
+  };
+
   if (!Number.isFinite(appointmentId) || !Number.isFinite(patientId)) {
     return (
       <div className="soap-page">
@@ -639,6 +674,22 @@ export default function MedicalNoteEncounterPage() {
           <Link className="soap-btn" to="/schedule/home">
             <ArrowLeft size={15} /> Schedule
           </Link>
+          <SwitchEncounterModeButton
+            encounterId={encounter?.id}
+            to="soap"
+            hidden={
+              encounter?.mode !== 'medical_note' || encounter?.status === 'completed' || noteSigned
+            }
+            disabled={wrapping || writingUp}
+            beforeSwitch={flushNoteForSwitch}
+            onSwitched={() =>
+              navigate(
+                `/schedule/soap/${appointmentId}/${patientId}${
+                  clientId != null ? `?clientId=${encodeURIComponent(String(clientId))}` : ''
+                }`
+              )
+            }
+          />
           <SignOffNotice mode="medical_note" />
           <button
             type="button"

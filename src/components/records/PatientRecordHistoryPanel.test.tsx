@@ -90,6 +90,33 @@ describe('EMR-HIST: pet History on the chart', () => {
     expect(region).toHaveClass('record-history');
   });
 
+  it('EMR-MODE-5: lists a visit switched between a medical note and a SOAP', async () => {
+    getPatientRecordHistory.mockResolvedValue([
+      {
+        id: 'm1',
+        at: '2026-11-04T15:00:00.000Z',
+        kind: 'mode_switched',
+        entityType: 'encounter',
+        entityId: 'enc-1',
+        subject: 'Visit #4410',
+        actorName: 'Odile Oakhollow',
+        actorRole: 'vet',
+        forName: null,
+        rxNumber: null,
+        before: { mode: 'medical_note', appointmentId: 4410 },
+        after: { mode: 'comprehensive', appointmentId: 4410 },
+        text: 'Switched from medical note to SOAP by Odile Oakhollow (vet)',
+      },
+    ]);
+    render(<PatientRecordHistoryPanel patientId={42} />);
+    const region = await screen.findByRole('region', { name: 'Pet record history' });
+    await waitFor(() => expect(within(region).getAllByRole('row')).toHaveLength(2));
+    const row = within(region).getAllByRole('row')[1];
+    expect(row.textContent).toContain('Visit record · Visit #4410');
+    expect(row.textContent).toContain('Switched from medical note to SOAP by Odile Oakhollow (vet)');
+    expect(row.getAttribute('data-history-entity')).toBe('encounter');
+  });
+
   it('says so when nothing is logged', async () => {
     getPatientRecordHistory.mockResolvedValue([]);
     render(<PatientRecordHistoryPanel patientId={42} />);

@@ -550,6 +550,24 @@ export function recordConflictFrom(e: unknown): RecordConflict | null {
   };
 }
 
+/**
+ * Switch an unsigned encounter between a medical note and a SOAP (owner decision Nov 4, 2026).
+ * Medical note -> SOAP moves the note text into the SOAP (History -> Subjective, Plan -> Plan).
+ * The API refuses (409) once signed, or SOAP -> medical note when the SOAP has anything entered.
+ * `chartNoteId`: the chart note the medical note page is editing, so its text moves too.
+ */
+export async function switchEncounterMode(
+  id: string,
+  mode: SoapEncounterMode,
+  opts: { chartNoteId?: string | null } = {}
+): Promise<SoapEncounter> {
+  const { data } = await http.post<SoapEncounter>(
+    `/soap-encounters/${encodeURIComponent(id)}/switch-mode`,
+    { practiceId: pid(), mode, ...(opts.chartNoteId ? { chartNoteId: opts.chartNoteId } : {}) }
+  );
+  return data;
+}
+
 export async function completeEncounter(id: string): Promise<SoapEncounter> {
   const { data } = await http.post<SoapEncounter>(
     `/soap-encounters/${encodeURIComponent(id)}/complete`,
