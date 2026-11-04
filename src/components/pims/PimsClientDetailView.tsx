@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  AddressChangeVisitsWarning,
+  upcomingVisitsFromWrite,
+  type UpcomingVisitAffected,
+} from './AddressChangeVisitsWarning';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   ChevronDown,
@@ -1404,6 +1409,17 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     [clientId],
   );
 
+  const [addressVisits, setAddressVisits] = useState<UpcomingVisitAffected[]>([]);
+  /** Address save: same as saveFields, then keeps the list of upcoming visits it affects. */
+  const saveAddress = useCallback(
+    async (body: ScoutClientWrite) => {
+      const result = await patchClientStaff(clientId, body);
+      setAddressVisits(upcomingVisitsFromWrite(result));
+      await applyWriteResult(result);
+    },
+    [applyWriteResult, clientId],
+  );
+
   const saveFields = useCallback(
     async (body: ScoutClientWrite) => {
       await applyWriteResult(await patchClientStaff(clientId, body));
@@ -2118,6 +2134,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
 
       {actionError ? <p className="pims-detail__banner-error">{actionError}</p> : null}
 
+      <AddressChangeVisitsWarning visits={addressVisits} onDismiss={() => setAddressVisits([])} />
+
       <ClientCallPill
         clientId={Number.isFinite(Number(clientId)) ? Number(clientId) : null}
         clientName={name}
@@ -2241,7 +2259,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               geo={geo}
               onCancel={() => setHeaderEdit(null)}
               onSave={async (body) => {
-                await saveFields(body);
+                await saveAddress(body);
                 setHeaderEdit(null);
               }}
             />
