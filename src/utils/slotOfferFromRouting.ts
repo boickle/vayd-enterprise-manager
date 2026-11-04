@@ -1,8 +1,10 @@
 import { DateTime } from 'luxon';
+import type { Provider } from '../api/employee';
 import type { SendSlotOfferPayload } from '../api/slotOffers';
 import type { RoutingCalendarPreviewPayloadV1 } from './routingCalendarPreviewStorage';
 import type { ForwardBookingCreatedVia } from '../api/forwardBooking';
 import { isScheduleLoaderCalendarPreview, isWaitlistCalendarPreview } from './routingCalendarPreviewStorage';
+import { resolveAppointmentChangeActorFromAuth } from './appointmentChangeAuditNote';
 
 type RoutingPreviewOption = RoutingCalendarPreviewPayloadV1['option'] & {
   suggestedStartSec?: number;
@@ -71,6 +73,33 @@ export function clFirstNameFromStaffEmail(userEmail?: string | null): string {
   const part = local.split(/[._-]/)[0] ?? local;
   if (!part) return 'Your care team';
   return part.charAt(0).toUpperCase() + part.slice(1);
+}
+
+/**
+ * CL first name for text/email offer attribution. Prefer the logged-in staff
+ * employee first name (JWT / providers directory) over email local-part guessing,
+ * which falls back to "Your care team" when `userEmail` is missing from auth state.
+ */
+export function resolveClFirstNameForOffer(opts: {
+  token?: string | null;
+  userEmail?: string | null;
+  doctorId?: string | null;
+  providers?: readonly Provider[];
+}): string {
+  const actor = resolveAppointmentChangeActorFromAuth({
+    token: opts.token ?? null,
+    userEmail: opts.userEmail ?? null,
+    doctorId: opts.doctorId ?? null,
+    providers: opts.providers ?? [],
+  });
+  const first = actor.firstName?.trim();
+  if (first) return first;
+  const fallback = actor.fallbackLabel?.trim();
+  if (fallback && fallback.toLowerCase() !== 'staff') {
+    const firstWord = fallback.split(/\s+/)[0]?.trim();
+    if (firstWord) return firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
+  }
+  return clFirstNameFromStaffEmail(opts.userEmail);
 }
 
 /** Resolve internal client id from book-modal / routing preview state (not only React selectedClientId). */
