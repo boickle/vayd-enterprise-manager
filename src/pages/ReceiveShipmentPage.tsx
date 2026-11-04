@@ -2327,7 +2327,7 @@ export default function ReceiveShipmentPage() {
             disabled={busy || !headerReady}
             onClick={() => void addLine()}
           >
-            Add to shipment
+            Add to Unboxed Shipments
           </button>
         </div>
       )}
