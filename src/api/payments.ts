@@ -539,10 +539,6 @@ export async function updateMembershipDiscount(
   return data as MembershipDiscountRecord;
 }
 
-export async function deleteMembershipDiscount(id: string): Promise<void> {
-  await http.delete(`${stripeMembershipDiscountsBase()}/${encodeURIComponent(id)}`);
-}
-
 export async function createMembershipDiscountLink(
   payload: CreateMembershipDiscountLinkRequest,
 ): Promise<CreateMembershipDiscountLinkResponse> {

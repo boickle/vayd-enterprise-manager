@@ -27,6 +27,9 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { DateTime } from 'luxon';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import { optionalExpiresIso, toDateInputValue } from '../utils/promotionExpiry';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
@@ -59,24 +62,8 @@ function formatDiscount(row: AppointmentRequestPromotion): string {
 
 function formatDate(iso?: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString();
-}
-
-/** `YYYY-MM-DD` for `<input type="date">` from an ISO timestamp. */
-function toDateInputValue(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
-}
-
-/** Noon UTC on the given calendar day — avoids timezone day-shift; undefined when blank. */
-function optionalExpiresIso(dateOnly: string): string | undefined {
-  const t = dateOnly.trim();
-  if (!t) return undefined;
-  const d = new Date(`${t}T12:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return undefined;
-  return d.toISOString();
+  const dt = DateTime.fromISO(iso, { zone: DEFAULT_PRACTICE_TIMEZONE });
+  return dt.isValid ? dt.toLocaleString(DateTime.DATE_SHORT) : '—';
 }
 
 type CodeOption = 'none' | 'generate' | 'custom';
