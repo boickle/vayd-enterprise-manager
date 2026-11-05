@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Smartphone,
   ShieldCheck,
+  Wallet,
   X,
 } from 'lucide-react';
 import {
@@ -139,6 +140,7 @@ import { BookPatientChartButton } from '../BookPatientChartButton';
 import { useCan } from '../../permissions/PermissionContext';
 import { PermissionGate } from '../../permissions/PermissionGate';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
+import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
 import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import '../pims/ClientFinancialWorkspace.css';
 import { paymentErrorMessage } from '../../api/http';
@@ -2075,6 +2077,7 @@ export default function VisitCheckoutPanel({
   const [voidPromptOpen, setVoidPromptOpen] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const [giftCardOpen, setGiftCardOpen] = useState(false);
+  const [accountCreditOpen, setAccountCreditOpen] = useState(false);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -3905,6 +3908,19 @@ export default function VisitCheckoutPanel({
                     <Gift size={14} /> Gift card
                   </button>
                 </PermissionGate>
+                {invoice?.clientId ? (
+                  <PermissionGate permission="payment.take">
+                    <button
+                      type="button"
+                      className={`soap-btn ghost${accountCreditOpen ? ' is-active' : ''}`}
+                      disabled={payDisabled}
+                      title={!branchReady ? 'Choose the branch and location inventory is drawn from' : "Use the client's account credit"}
+                      onClick={() => setAccountCreditOpen((open) => !open)}
+                    >
+                      <Wallet size={14} /> Account credit
+                    </button>
+                  </PermissionGate>
+                ) : null}
               </>
             )}
             {!isPaid && !isVoid && status !== 'open' && invoice?.hasReturns && (
@@ -3940,6 +3956,19 @@ export default function VisitCheckoutPanel({
               </button>
             )}
           </div>
+          {accountCreditOpen && invoice?.clientId && !isPaid && !isVoid ? (
+            <AccountCreditTenderForm
+              invoiceId={invoice.id}
+              clientId={invoice.clientId}
+              due={Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0))}
+              onCancel={() => setAccountCreditOpen(false)}
+              onApplied={(next, applied, left) => {
+                onInvoiceChange(next);
+                setAccountCreditOpen(false);
+                setNote(`Used $${applied.toFixed(2)} of account credit. $${left.toFixed(2)} credit left.`);
+              }}
+            />
+          ) : null}
           {giftCardOpen && invoice && !isPaid && !isVoid ? (
             <GiftCardTenderForm
               invoiceId={invoice.id}

@@ -106,7 +106,15 @@ export type EncounterOrder = {
   } | null;
 };
 
-export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'gift_card' | 'other';
+export type VisitTenderMethod =
+  | 'card'
+  | 'cash'
+  | 'check'
+  | 'carecredit'
+  | 'gift_card'
+  | 'other'
+  /** PAY-06: spends the client's account credit (Scout credits, then eVet balance). */
+  | 'account_credit';
 
 export type VisitInvoiceLine = {
   id: string;
@@ -1361,6 +1369,24 @@ export async function addVisitTender(
   const { data } = await http.post<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders`,
     { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** PAY-06: what the client can spend now; eVet credit is held while the practice's eVet sync is on. */
+export type AvailableAccountCredit = {
+  scout: number;
+  evet: number;
+  evetHeld: boolean;
+  evetHeldAmount: number;
+  total: number;
+  heldNote: string | null;
+};
+
+export async function fetchAvailableAccountCredit(clientId: number): Promise<AvailableAccountCredit> {
+  const { data } = await http.get<AvailableAccountCredit>(
+    `/visit-invoices/client/${encodeURIComponent(String(clientId))}/account-credit`,
+    { params: { practiceId: pid() } }
   );
   return data;
 }
