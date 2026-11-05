@@ -564,9 +564,25 @@ export async function deleteRoomLoaders(ids: number[]): Promise<{ ok: boolean; d
 
 // Search items for room loader
 export type SearchableItem = {
-  itemType: 'inventory' | 'lab' | 'procedure' | string;
+  itemType: 'inventory' | 'lab' | 'procedure' | 'package' | string;
   inventoryItem?: any;
   lab?: any;
+  /** Set when itemType is `package` (eVet treatment package). */
+  packageId?: number;
+  /**
+   * Constituent catalog lines when itemType is `package`.
+   * Line `price` values are already allocated so they sum to the package total (e.g. $18).
+   */
+  packageItems?: Array<{
+    itemType?: string;
+    name?: string;
+    price?: number | string | null;
+    code?: string | null;
+    inventoryItem?: any;
+    lab?: any;
+    procedure?: any;
+    item?: any;
+  }>;
   price: number;
   name: string;
   code?: string;
@@ -698,11 +714,15 @@ export type CheckItemPricingRequest = {
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;
-  item: {
+  /** Catalog row. Omit when using `customPrice` (e.g. package-allocated lines). */
+  item?: {
     lab?: Record<string, unknown>;
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** Pre-discount amount when there is no catalog row / package-allocated price must be preserved. */
+  customPrice?: number;
+  customName?: string;
 };
 
 export type CheckItemPricingResponse = {
@@ -757,7 +777,26 @@ export type CheckItemPricingResponse = {
 };
 
 export async function checkItemPricing(request: CheckItemPricingRequest): Promise<CheckItemPricingResponse> {
-  const { data } = await http.post<CheckItemPricingResponse>('/room-loader/check-item-pricing', request);
+  const body: Record<string, unknown> = {
+    patientId: request.patientId,
+    practiceId: request.practiceId,
+    clientId: request.clientId,
+    itemType: request.itemType,
+  };
+  if (request.species != null && String(request.species).trim() !== '') {
+    body.species = request.species;
+  }
+  const useCustom =
+    request.customPrice != null && request.customPrice !== undefined && Number.isFinite(Number(request.customPrice));
+  if (useCustom) {
+    body.customPrice = Number(request.customPrice);
+    if (request.customName != null && String(request.customName).trim() !== '') {
+      body.customName = String(request.customName).trim();
+    }
+  } else if (request.item != null) {
+    body.item = request.item;
+  }
+  const { data } = await http.post<CheckItemPricingResponse>('/room-loader/check-item-pricing', body);
   return data;
 }
 

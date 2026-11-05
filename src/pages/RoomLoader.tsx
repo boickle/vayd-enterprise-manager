@@ -31,6 +31,10 @@ import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
 } from '../utils/roomLoaderSharps';
+import {
+  expandPackageSearchItem,
+  isRoomLoaderPackageSearchItem,
+} from '../utils/roomLoaderPackageSearch';
 import './RoomLoader.css';
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
@@ -1509,62 +1513,77 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       return;
     }
 
-    // First, add the item with the original price
-    const itemWithOriginalPrice = { ...item };
+    // Packages expand into constituent lines with prices already allocated to the package total.
+    const fromPackage = isRoomLoaderPackageSearchItem(item);
+    const linesToAdd = expandPackageSearchItem(item).map((line) => ({ ...line }));
+    if (linesToAdd.length === 0) return;
+
+    const startIndex = (addedItems[petId] || []).length;
     setAddedItems((prev) => ({
       ...prev,
-      [petId]: [...(prev[petId] || []), itemWithOriginalPrice],
+      [petId]: [...(prev[petId] || []), ...linesToAdd],
     }));
 
     // Clear search
     setSearchQuery((prev) => ({ ...prev, [petId]: '' }));
     setSearchResults((prev) => ({ ...prev, [petId]: [] }));
 
-    // Check pricing for the item
-    try {
-      // Construct the item object based on itemType
-      const itemPayload: any = {};
-      // Pass the full item object (from search) so backend has all fields
-      if (item.itemType === 'lab' && item.lab) {
-        itemPayload.lab = item.lab;
-      } else if (item.itemType === 'procedure' && (item as any).procedure) {
-        itemPayload.procedure = (item as any).procedure;
-      } else if (item.itemType === 'inventory' && item.inventoryItem) {
-        itemPayload.inventoryItem = item.inventoryItem;
-      } else if (item.lab) {
-        itemPayload.lab = item.lab;
-      } else if ((item as any).procedure) {
-        itemPayload.procedure = (item as any).procedure;
-      } else if (item.inventoryItem) {
-        itemPayload.inventoryItem = item.inventoryItem;
-      }
+    const speciesLabel =
+      patientData.patient.species?.trim() ||
+      patientData.patient.speciesEntity?.name?.trim() ||
+      undefined;
 
-      const speciesLabel =
-        patientData.patient.species?.trim() ||
-        patientData.patient.speciesEntity?.name?.trim() ||
-        undefined;
+    // Check pricing for each added line (package picks keep allocated/package prices via customPrice).
+    for (let offset = 0; offset < linesToAdd.length; offset++) {
+      const line = linesToAdd[offset];
+      const absoluteIndex = startIndex + offset;
+      try {
+        let pricingResponse: Awaited<ReturnType<typeof checkItemPricing>>;
+        if (fromPackage) {
+          const allocated = Number(line.price ?? 0);
+          pricingResponse = await checkItemPricing({
+            patientId: petId,
+            practiceId: selectedRoomLoader.practice.id,
+            clientId: patientData.client.id,
+            species: speciesLabel,
+            itemType: isRoomLoaderPackageSearchItem(line)
+              ? 'inventory'
+              : line.itemType || 'inventory',
+            customPrice: Number.isFinite(allocated) ? allocated : 0,
+            customName: String(line.name ?? '').trim() || 'Package item',
+          });
+        } else {
+          const itemPayload: any = {};
+          if (line.itemType === 'lab' && line.lab) {
+            itemPayload.lab = line.lab;
+          } else if (line.itemType === 'procedure' && (line as any).procedure) {
+            itemPayload.procedure = (line as any).procedure;
+          } else if (line.itemType === 'inventory' && line.inventoryItem) {
+            itemPayload.inventoryItem = line.inventoryItem;
+          } else if (line.lab) {
+            itemPayload.lab = line.lab;
+          } else if ((line as any).procedure) {
+            itemPayload.procedure = (line as any).procedure;
+          } else if (line.inventoryItem) {
+            itemPayload.inventoryItem = line.inventoryItem;
+          }
 
-      const pricingResponse = await checkItemPricing({
-        patientId: petId,
-        practiceId: selectedRoomLoader.practice.id,
-        clientId: patientData.client.id,
-        species: speciesLabel,
-        itemType: item.itemType,
-        item: itemPayload,
-      });
+          pricingResponse = await checkItemPricing({
+            patientId: petId,
+            practiceId: selectedRoomLoader.practice.id,
+            clientId: patientData.client.id,
+            species: speciesLabel,
+            itemType: line.itemType,
+            item: itemPayload,
+          });
+        }
 
-      // Update the item with the adjusted price and wellness plan info
-      setAddedItems((prev) => {
-        const items = prev[petId] || [];
-        const itemIndex = items.findIndex((i, idx) => {
-          // Find the last added item (the one we just added)
-          return idx === items.length - 1 && i.name === item.name;
-        });
-        
-        if (itemIndex !== -1) {
+        setAddedItems((prev) => {
+          const items = prev[petId] || [];
+          if (absoluteIndex < 0 || absoluteIndex >= items.length) return prev;
           const updatedItems = [...items];
-          updatedItems[itemIndex] = {
-            ...updatedItems[itemIndex],
+          updatedItems[absoluteIndex] = {
+            ...updatedItems[absoluteIndex],
             price: pricingResponse.adjustedPrice,
             originalPrice: pricingResponse.originalPrice,
             wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
@@ -1575,12 +1594,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             ...prev,
             [petId]: updatedItems,
           };
-        }
-        return prev;
-      });
-    } catch (err: any) {
-      console.error('Error checking item pricing:', err);
-      // Item was already added with original price, so we just log the error
+        });
+      } catch (err: any) {
+        console.error('Error checking item pricing:', err);
+        // Line was already added with original/allocated price
+      }
     }
   }
 
@@ -1760,11 +1778,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     }));
 
     try {
-      const results = await searchItems({
+      const results = (await searchItems({
         q: query,
         practiceId: selectedRoomLoader.practice.id,
         limit: 50,
-      });
+      })).filter((r) => !isRoomLoaderPackageSearchItem(r));
       setReminderCorrections((prev) => ({
         ...prev,
         [key]: { ...prev[key], results, loading: false },
@@ -4959,11 +4977,21 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                           >
                             <div style={{ flex: 1 }}>
                               <div style={{ fontWeight: 500, color: '#212529' }}>{result.name}</div>
-                              {result.code && (
-                                <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '2px' }}>
-                                  {result.code} • {result.itemType}
-                                </div>
-                              )}
+                              <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '2px' }}>
+                                {(() => {
+                                  const isPkg = isRoomLoaderPackageSearchItem(result);
+                                  const pkgCount = Array.isArray(result.packageItems)
+                                    ? result.packageItems.length
+                                    : 0;
+                                  const bits: string[] = [];
+                                  if (result.code) bits.push(String(result.code));
+                                  bits.push(String(result.itemType || 'item'));
+                                  if (isPkg && pkgCount > 0) {
+                                    bits.push(`${pkgCount} item${pkgCount === 1 ? '' : 's'}`);
+                                  }
+                                  return bits.join(' • ');
+                                })()}
+                              </div>
                             </div>
                             <div style={{ marginLeft: '15px', fontWeight: 600, color: '#2e7d32' }}>
                               ${result.price != null ? Number(result.price).toFixed(2) : '0.00'}
