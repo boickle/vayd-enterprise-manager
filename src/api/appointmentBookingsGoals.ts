@@ -107,8 +107,19 @@ export async function saveAppointmentBookingsGoalsByDow(
   );
 }
 
+/** Practice-wide bookings per Sunday–Saturday week when no period goal is saved. */
+export const DEFAULT_WEEKLY_APPOINTMENT_BOOKINGS_GOAL = 233;
+
+/** Weeks in a year. Month and quarter defaults scale the weekly goal by this. */
+const WEEKS_PER_YEAR = 52;
+
 export function defaultAppointmentBookingsPeriodGoals(): AppointmentBookingsPeriodGoals {
-  return { weekly: 0, monthly: 0, quarterly: 0 };
+  const weekly = DEFAULT_WEEKLY_APPOINTMENT_BOOKINGS_GOAL;
+  return {
+    weekly,
+    monthly: Math.round((weekly * WEEKS_PER_YEAR) / 12),
+    quarterly: (weekly * WEEKS_PER_YEAR) / 4,
+  };
 }
 
 function readNonNegative(value: unknown): number | null {

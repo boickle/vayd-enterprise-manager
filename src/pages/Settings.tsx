@@ -1722,7 +1722,9 @@ export default function Settings() {
                   <p className="settings-muted" style={{ marginBottom: 12 }}>
                     Practice-wide totals for the current week (Sunday–Saturday), calendar month, and
                     calendar quarter. Shown at the top of Appointments for the periods that include
-                    the selected end date. Leave a field blank if that period has no goal.
+                    the selected end date. Until you save a number, the defaults are 233 a week,
+                    1,010 a month (233 × 52 ÷ 12), and 3,029 a quarter (233 × 13). Clear a field to
+                    turn that period’s goal off.
                   </p>
                   <div
                     className="settings-form-group"
