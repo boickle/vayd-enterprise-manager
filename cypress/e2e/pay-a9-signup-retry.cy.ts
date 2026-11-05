@@ -148,16 +148,22 @@ describe('PAY-A9-2: paying again after the reply was cut starts one subscription
       });
     });
 
-    // The first checkout reaches the API; the reply is cut on its way back to the browser.
+    // "The API did the work but the reply never reached the page." Cutting a reply mid-flight is not
+    // reliable in Cypress/Chromium (the browser silently resends the POST, or no response event fires),
+    // so: the page's first post fails in the browser, and the spec then delivers that exact post (same
+    // body, key and login) to the API itself. To the page and to the API this is the same situation.
     let checkoutCalls = 0;
     const sentKeys: string[] = [];
+    // Chromium silently resends a POST whose connection dropped, so every post of the first Pay is
+    // failed until the page shows the error (none of them reaches the API).
+    let firstPost: { url: string; body: unknown; authorization?: string } | null = null;
+    let cutting = true;
     cy.intercept('POST', '**/stripe/payment-processing/payments', (req) => {
       checkoutCalls += 1;
       sentKeys.push(String(req.body?.idempotencyKey ?? ''));
-      if (checkoutCalls === 1) {
-        req.continue((res) => {
-          res.send({ forceNetworkError: true });
-        });
+      if (cutting) {
+        firstPost ??= { url: req.url, body: req.body, authorization: req.headers['authorization'] as string | undefined };
+        req.reply({ forceNetworkError: true });
       } else {
         req.continue();
       }
@@ -192,6 +198,21 @@ describe('PAY-A9-2: paying again after the reply was cut starts one subscription
     cy.wait('@checkout', { timeout: 60000 });
     cy.contains('h1', 'Payment Successful').should('not.exist');
     cy.contains('button', /Pay & Enroll/i, { timeout: 30000 }).should('not.be.disabled');
+    cy.then(() => {
+      cutting = false;
+      expect(firstPost, 'the first checkout post was captured').to.not.equal(null);
+      const p = firstPost!;
+      return cy
+        .request({
+          method: 'POST',
+          url: p.url,
+          body: p.body as Cypress.RequestBody,
+          headers: p.authorization ? { Authorization: p.authorization } : {},
+          failOnStatusCode: false,
+        })
+        .its('status')
+        .should('be.oneOf', [200, 201]);
+    });
 
     // The first reply was cut AFTER the API did the work: one subscription already exists.
     cy.get<number>('@stripeBefore').then((before) => {
@@ -202,10 +223,15 @@ describe('PAY-A9-2: paying again after the reply was cut starts one subscription
       });
     });
 
-    // Second Pay from the same page.
+    // Second Pay from the same page (its own alias; the newer intercept handles it).
+    cy.intercept('POST', '**/stripe/payment-processing/payments', (req) => {
+      checkoutCalls += 1;
+      sentKeys.push(String(req.body?.idempotencyKey ?? ''));
+      req.continue();
+    }).as('retry');
     fillPaymentForm(w.email);
     cy.contains('button', /Pay & Enroll/i).should('not.be.disabled').click();
-    cy.wait('@checkout', { timeout: 60000 }).then(({ response }) => {
+    cy.wait('@retry', { timeout: 60000 }).then(({ response }) => {
       expect(response?.statusCode, 'second checkout status').to.eq(201);
       expect(response?.body?.success, 'second checkout success').to.eq(true);
     });
@@ -213,9 +239,9 @@ describe('PAY-A9-2: paying again after the reply was cut starts one subscription
     cy.contains(`${w.petName} is now enrolled`);
 
     cy.then(() => {
-      expect(checkoutCalls, 'checkout posts').to.eq(2);
+      expect(checkoutCalls, 'checkout posts from the page (first Pay and its browser resends, then Pay again)').to.be.at.least(2);
       expect(sentKeys[0], 'first key').to.match(/\S/);
-      expect(sentKeys[1], 'the retry reuses the first attempt key').to.eq(sentKeys[0]);
+      for (const k of sentKeys) expect(k, 'Pay again reuses the first attempt key').to.eq(sentKeys[0]);
     });
 
     // One subscription in fake Stripe, one active Scout membership, one welcome email.
