@@ -10,6 +10,7 @@ import {
   type PaymentOptionType,
   type PracticePaymentType,
 } from '../../api/paymentTypes';
+import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -67,6 +68,8 @@ type Props = {
 };
 
 export default function SettingsPaymentTypes({ onMessage }: Props) {
+  // PAY-A8 / D3: only practice manager and admin change payment types; the server checks it too.
+  const canManage = useCanOrAdminLogin('payment_type.manage');
   const [rows, setRows] = useState<PracticePaymentType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,9 +167,11 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
             whether it is left off income on the sales report.
           </p>
         </div>
-        <button type="button" className="btn" onClick={openNew}>
-          Add a payment option
-        </button>
+        {canManage ? (
+          <button type="button" className="btn" onClick={openNew}>
+            Add a payment option
+          </button>
+        ) : null}
       </div>
       {loading ? (
         <p className="settings-muted">Loading payment types…</p>
@@ -201,23 +206,27 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
                 <td>{row.getsDeposited ? 'Yes' : '—'}</td>
                 <td>{inactive ? 'Inactive' : 'Active'}</td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => openEdit(row)}
-                    title="Edit payment option"
-                  >
-                    <Pencil size={14} /> Edit
-                  </button>
-                  {' · '}
-                  <button
-                    type="button"
-                    className="btn-link"
-                    disabled={saving}
-                    onClick={() => void setActive(row, inactive)}
-                  >
-                    {inactive ? 'Reactivate' : 'Inactivate'}
-                  </button>
+                  {canManage ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => openEdit(row)}
+                        title="Edit payment option"
+                      >
+                        <Pencil size={14} /> Edit
+                      </button>
+                      {' · '}
+                      <button
+                        type="button"
+                        className="btn-link"
+                        disabled={saving}
+                        onClick={() => void setActive(row, inactive)}
+                      >
+                        {inactive ? 'Reactivate' : 'Inactivate'}
+                      </button>
+                    </>
+                  ) : null}
                 </td>
               </tr>
               );

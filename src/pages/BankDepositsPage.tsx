@@ -42,6 +42,9 @@ import {
 } from '../api/depositBankAccounts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import DepositSlip from '../components/deposits/DepositSlip';
+import { usePermissions } from '../permissions/PermissionContext';
+import { PermissionDenied } from '../permissions/PermissionGate';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 
 function fmtUSD(n: number) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
@@ -70,7 +73,9 @@ function isCheckTender(t: Pick<UndepositedTender, 'method' | 'paymentTypeName'>)
   return m === 'check' || n.includes('check') || n.includes('cheque');
 }
 
-export default function BankDepositsPage() {
+function BankDepositsPageContent() {
+  // PAY-A8 / D3: anyone who may create a deposit sees the form; only managers and admins void one.
+  const canVoid = useCanOrAdminLogin('deposit.void');
   const [from, setFrom] = useState<Dayjs>(() => dayjs().subtract(13, 'day'));
   const [to, setTo] = useState<Dayjs>(() => dayjs());
   const [providerEmployeeId, setProviderEmployeeId] = useState<number | ''>('');
@@ -867,7 +872,7 @@ export default function BankDepositsPage() {
                               <Button size="small" onClick={() => setSlipDeposit(d)}>
                                 Slip
                               </Button>
-                              {d.status !== 'void' ? (
+                              {d.status !== 'void' && canVoid ? (
                                 <Button
                                   size="small"
                                   color="warning"
@@ -921,4 +926,13 @@ export default function BankDepositsPage() {
       </Dialog>
     </LocalizationProvider>
   );
+}
+
+export default function BankDepositsPage() {
+  const canCreate = useCanOrAdminLogin('deposit.create');
+  const { effective } = usePermissions();
+  // Hold the space until permissions load so the denial does not flash.
+  if (!canCreate && !effective) return null;
+  if (!canCreate) return <PermissionDenied what="Bank deposits" />;
+  return <BankDepositsPageContent />;
 }
