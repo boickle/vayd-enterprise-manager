@@ -28,7 +28,12 @@ import {
 import { patientsForAppointment } from '../../utils/schedulerAddPet';
 import { notifyTasksChanged } from '../../utils/taskOwnership';
 import { createLabsPendingForwardBookingTasks } from '../forwardBooking/saveForwardBookingDecision';
-import { householdArrivalWindow, type PlannerPet, type UpcomingVisit } from './plannerData';
+import {
+  householdArrivalWindow,
+  withEffectiveWindows,
+  type PlannerPet,
+  type UpcomingVisit,
+} from './plannerData';
 import { plannerIntervalForApi, type PlannerInterval, type PlannerProvider } from './plannerModel';
 
 export type PlannerBooking = {
@@ -180,12 +185,13 @@ export async function findBookedAppointments(args: {
     end: start.plus({ hours: 12 }).toISO()!,
   });
   const pets = new Set(args.petIds);
-  return rows.filter((a) => {
+  const booked = rows.filter((a) => {
     if (a.isDeleted) return false;
     const s = DateTime.fromISO(a.appointmentStart, { zone: 'utc' });
     if (!s.isValid || Math.abs(s.toMillis() - start.toMillis()) > 60_000) return false;
     return patientsForAppointment(a).some((p) => pets.has(Number(p.id)));
   });
+  return withEffectiveWindows(booked, args.practiceId);
 }
 
 export function bookingFromAppointments(

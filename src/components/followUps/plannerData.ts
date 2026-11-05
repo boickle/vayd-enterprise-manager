@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import {
+  fetchAppointmentById,
   isAppointmentCancelledOnPracticeCalendar,
   isPracticeCalendarBlockAppointment,
 } from '../../api/appointments';
@@ -125,6 +126,36 @@ function dueDate(raw: string | null | undefined, tz: string): DateTime | null {
 }
 
 /**
+ * The client's visit list doesn't carry each visit's effective arrival window (which respects the
+ * doctor's work start, so an 8:00 first stop arrives 8:00–10:00, not 7:00–9:00). Visits that share a
+ * start and provider are one house call, so one GET /appointments/:id per call fills it in.
+ */
+export async function withEffectiveWindows(
+  rows: Appointment[],
+  practiceId: number
+): Promise<Appointment[]> {
+  const callKey = (a: Appointment) => `${a.appointmentStart}|${a.primaryProvider?.id ?? ''}`;
+  const missing = new Map<string, Appointment>();
+  for (const a of rows) {
+    if (a.effectiveWindow?.startIso && a.effectiveWindow?.endIso) continue;
+    if (!missing.has(callKey(a))) missing.set(callKey(a), a);
+  }
+  const found = new Map<string, Pick<Appointment, 'effectiveWindow' | 'arrivalWindow'>>();
+  await Promise.all(
+    [...missing.entries()].map(async ([key, a]) => {
+      const full = await fetchAppointmentById(a.id, { practiceId });
+      if (full?.effectiveWindow?.startIso && full.effectiveWindow.endIso) {
+        found.set(key, { effectiveWindow: full.effectiveWindow, arrivalWindow: full.arrivalWindow });
+      }
+    })
+  );
+  return rows.map((a) => {
+    const w = found.get(callKey(a));
+    return w && !a.effectiveWindow ? { ...a, ...w } : a;
+  });
+}
+
+/**
  * Household visits from now on, one entry per visit. Each pet has its own appointment
  * row, so rows with the same start and provider are the same house call.
  */
@@ -144,6 +175,16 @@ export function householdArrivalWindow(
   return appointmentArrivalWindowIsosForSms(
     { ...first, needsPremeds: true, effectiveWindow: undefined, arrivalWindow: undefined },
     tz
+  );
+}
+
+/** Household visits still ahead (not today's), the only ones the planner lists as upcoming. */
+function upcomingRows(appts: Appointment[], now: DateTime, todayIds: Set<number>): Appointment[] {
+  return appts.filter(
+    (a) =>
+      !a.isDeleted &&
+      !todayIds.has(Number(a.id)) &&
+      DateTime.fromISO(a.appointmentStart, { zone: 'utc' }).toMillis() > now.toMillis()
   );
 }
 
@@ -452,7 +493,11 @@ export async function loadFollowUpPlannerData(args: {
         ? 'Could not load the rest of the household. Close and reopen to try again.'
         : null,
     remindersByPet,
-    upcoming: groupUpcomingVisits(appts, { tz, now, excludeAppointmentIds: todayIds }),
+    upcoming: groupUpcomingVisits(await withEffectiveWindows(upcomingRows(appts, now, todayIds), args.practiceId), {
+      tz,
+      now,
+      excludeAppointmentIds: todayIds,
+    }),
     providers: plannerProviders,
     todayProviderId,
     appointmentTypes,
