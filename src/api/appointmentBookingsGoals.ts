@@ -200,6 +200,39 @@ export function percentOfBookingGoal(booked: number, goal: number): number | nul
   return Math.round((booked / goal) * 100);
 }
 
+export type BookingGoalPace = {
+  projected: number;
+  percent: number;
+};
+
+/**
+ * Straight-line pace for a period that still includes `today`, matching
+ * production incentives: booked × total days ÷ days elapsed (today counts).
+ * Null once the period is over or has not started.
+ */
+export function bookingGoalPace(
+  booked: number,
+  goal: number,
+  startDate: string,
+  endDate: string,
+  todayDate: string
+): BookingGoalPace | null {
+  if (!(goal > 0) || !Number.isFinite(booked)) return null;
+  if (todayDate < startDate || todayDate > endDate) return null;
+  const start = DateTime.fromISO(startDate);
+  const end = DateTime.fromISO(endDate);
+  const today = DateTime.fromISO(todayDate);
+  if (!start.isValid || !end.isValid || !today.isValid) return null;
+  const totalDays = Math.round(end.diff(start, 'days').days) + 1;
+  const elapsedDays = Math.round(today.diff(start, 'days').days) + 1;
+  if (totalDays <= 0 || elapsedDays <= 0) return null;
+  const projected = Math.round((booked * totalDays) / elapsedDays);
+  return {
+    projected,
+    percent: Math.round((projected / goal) * 100),
+  };
+}
+
 /**
  * Week (Sunday–Saturday), calendar month, and calendar quarter that contain
  * `anchor`. The fetch span covers every day those three windows need.
