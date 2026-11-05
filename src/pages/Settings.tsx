@@ -48,9 +48,11 @@ import {
 } from '../api/employeeGoals';
 import {
   defaultAppointmentBookingsGoalsByDow,
-  fetchAppointmentBookingsGoalsByDow,
-  saveAppointmentBookingsGoalsByDow,
+  defaultAppointmentBookingsPeriodGoals,
+  fetchAppointmentBookingsGoalSettings,
+  saveAppointmentBookingsGoalSettings,
   type AppointmentBookingsGoalsByDow,
+  type AppointmentBookingsPeriodGoals,
 } from '../api/appointmentBookingsGoals';
 import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
@@ -235,6 +237,9 @@ export default function Settings() {
   const [bookingsGoalsByDow, setBookingsGoalsByDow] = useState<AppointmentBookingsGoalsByDow>(
     defaultAppointmentBookingsGoalsByDow
   );
+  const [bookingsPeriodGoals, setBookingsPeriodGoals] = useState<AppointmentBookingsPeriodGoals>(
+    defaultAppointmentBookingsPeriodGoals
+  );
   const [bookingsGoalsLoading, setBookingsGoalsLoading] = useState(false);
   const [bookingsGoalsSaving, setBookingsGoalsSaving] = useState(false);
   const [bookingsGoalsLoadError, setBookingsGoalsLoadError] = useState<string | null>(null);
@@ -388,13 +393,15 @@ export default function Settings() {
     setBookingsGoalsLoadError(null);
     setBookingsGoalsLoading(true);
     try {
-      const goals = await fetchAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID);
-      setBookingsGoalsByDow(goals);
+      const goals = await fetchAppointmentBookingsGoalSettings(REMINDERS_PRACTICE_ID);
+      setBookingsGoalsByDow(goals.byDayOfWeek);
+      setBookingsPeriodGoals(goals.period);
     } catch (err: any) {
       setBookingsGoalsLoadError(
         err?.response?.data?.message || err?.message || 'Failed to load appointment bookings goals'
       );
       setBookingsGoalsByDow(defaultAppointmentBookingsGoalsByDow());
+      setBookingsPeriodGoals(defaultAppointmentBookingsPeriodGoals());
     } finally {
       setBookingsGoalsLoading(false);
     }
@@ -405,8 +412,12 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      const saved = await saveAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID, bookingsGoalsByDow);
-      setBookingsGoalsByDow(saved);
+      const saved = await saveAppointmentBookingsGoalSettings(REMINDERS_PRACTICE_ID, {
+        byDayOfWeek: bookingsGoalsByDow,
+        period: bookingsPeriodGoals,
+      });
+      setBookingsGoalsByDow(saved.byDayOfWeek);
+      setBookingsPeriodGoals(saved.period);
       setSuccess('Appointment bookings goals updated successfully');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
@@ -1662,8 +1673,8 @@ export default function Settings() {
             <div className="settings-card" style={{ marginBottom: 20 }}>
               <h3 className="settings-card-title">Practice appointment bookings goals</h3>
               <p className="settings-muted" style={{ marginBottom: 12 }}>
-                Total appointments the practice needs booked each day of the week (Routing Analytics).
-                Previously hardcoded at 37.
+                Total appointments the practice needs booked each day of the week. The Appointments
+                page compares a single selected day to that day’s goal. Previously hardcoded at 37.
               </p>
               {bookingsGoalsLoadError && (
                 <div className="settings-message settings-error-message">
@@ -1699,6 +1710,46 @@ export default function Settings() {
                             setBookingsGoalsByDow((prev) => ({
                               ...prev,
                               [dow]: Number.isFinite(next) && next >= 0 ? next : 0,
+                            }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <h4 className="settings-card-title" style={{ marginTop: 20, marginBottom: 8 }}>
+                    Week, month, and quarter
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 12 }}>
+                    Practice-wide totals for the current week (Sunday–Saturday), calendar month, and
+                    calendar quarter. Shown at the top of Appointments for the periods that include
+                    the selected end date. Leave a field blank if that period has no goal.
+                  </p>
+                  <div
+                    className="settings-form-group"
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}
+                  >
+                    {(
+                      [
+                        ['weekly', 'Weekly'],
+                        ['monthly', 'Monthly'],
+                        ['quarterly', 'Quarterly'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key}>
+                        <label className="settings-label">{label}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          placeholder="Not set"
+                          value={bookingsPeriodGoals[key] > 0 ? bookingsPeriodGoals[key] : ''}
+                          onChange={(e) => {
+                            const next =
+                              e.target.value === '' ? 0 : Number(e.target.value);
+                            setBookingsPeriodGoals((prev) => ({
+                              ...prev,
+                              [key]: Number.isFinite(next) && next >= 0 ? next : 0,
                             }));
                           }}
                         />
