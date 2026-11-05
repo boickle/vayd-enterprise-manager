@@ -1,6 +1,6 @@
 # EMR and visit workflow training videos: VAYD doctors and technicians
 
-Fifteen short videos, 2 to 4 minutes each, one task per video. One series that everyone on a visit watches. Where a step is different for your role, there is a short **Doctors:** / **Techs:** / **Liaisons:** line in the table. Written from the code on Nov 3, 2026, using the owner decisions of Nov 2 and 3, 2026. Screen names, tabs, buttons and messages come from the app source. Do a dry run on the demo database first. Places that need a visual check on the first take are marked **[check on screen]**.
+Seventeen short videos, 2 to 4 minutes each, one task per video. One series that everyone on a visit watches. Where a step is different for your role, there is a short **Doctors:** / **Techs:** / **Liaisons:** line in the table. Written from the code on Nov 3, 2026, using the owner decisions of Nov 2 and 3, 2026. Follow-ups (V5, V5b, V5c) updated Nov 4, 2026 for the Schedule follow-ups window and the shared labs-pending task. Screen names, tabs, buttons and messages come from the app source. Do a dry run on the demo database first. Places that need a visual check on the first take are marked **[check on screen]**.
 
 **Who this is for:** everyone who works a visit in Scout: veterinarians, licensed technicians, technicians, and (for the phone, payment and refill parts) client liaisons.
 
@@ -22,21 +22,24 @@ Fifteen short videos, 2 to 4 minutes each, one task per video. One series that e
 | Send pay links, refund a card payment | Yes | Yes | Yes | Yes |
 | Void an invoice | No | No | No | No (lead client liaisons, billing and managers only) |
 | See the pet's **History** tab | Yes | Yes | Yes | Yes (all staff) |
+| Plan follow-ups in **Schedule follow-ups** (book, send to the CLs, labs pending) | Yes | Yes | Yes **[check on screen]** | Yes, from **+ Forward Booking** **[check on screen]** |
+| Close or reopen their own copy of a shared labs-pending task | Yes | Yes | Yes | Yes, if it's on their list |
 
 **Which videos matter most for each role** (everyone can watch all of them; the steps are the same for everyone):
 
 | Role | Core videos | Also useful |
 |---|---|---|
-| Doctor | V1–V8, V10, V13, V14 | V9, V11, V12, V15 |
-| Licensed tech | V1–V8, V11, V12, V14 | V9, V10, V13, V15 |
-| Tech | V1–V5, V7, V8, V14 | V6 (what you can't sign), V11, V13 |
-| Client liaison | V9, V15 | V5, V11 (refills), V14 |
+| Doctor | V1–V5c, V6–V8, V10, V13, V14 | V9, V11, V12, V15 |
+| Licensed tech | V1–V5c, V6–V8, V11, V12, V14 | V9, V10, V13, V15 |
+| Tech | V1–V5c, V7, V8, V14 | V6 (what you can't sign), V11, V13 |
+| Client liaison | V9, V15 | V5, V5b, V11 (refills), V14 |
 
 **How to get to every screen**
 - **The visit:** **Home** is the calendar. Pick the doctor in the list at the top right (**Dana Demo** in the demo) and click **Today**. Right-click the appointment (long-press on a tablet) **[check on screen]**. Under **On Visit Day** there is **Start Encounter** (it says **Edit Encounter** once one exists) and **Start / End Visit**. **Start Encounter** asks **SOAP** ("Doctor exam — history, exam, assessment, and plan.") or **Medical note** ("Tech visit write-up — history, plan, and invoice. Not a SOAP.").
 - **From the pet's chart:** **Patients**, open the pet, then use the chart toolbar (**Medical note**, **Send form**, **Print document**, **Communicate**, **Invoice**). The chart also offers to continue an open SOAP or start one on a booked visit.
 - **The SOAP page** has the tabs **Subjective**, **Objective**, **Assessment**, **Plan** and **Checkout prep**. The **Checkout** panel is on the right. **Wrap up visit** is top right.
 - **Checkout** (the whole household pays once): the **Checkout** button at the bottom of the SOAP's Checkout panel.
+- **Schedule follow-ups:** the **Schedule follow-ups** button under **Follow-up** on the Checkout page (it becomes **Review follow-ups** once a plan is saved). The same window opens from **Start / End Visit**, from **+ Forward Booking** in the left menu or **+ Forward Book** in the header (find a pet or owner first), and from a labs-pending task.
 - **Euthanasia consent:** on the Scheduler, right-click a euthanasia visit, then **Visit Prep**, then **Send Euthanasia Consent** (it changes to **Re-send Euthanasia Consent** or **View Euthanasia Consent**).
 - **In-house labs:** **Labs**, then the **In-house labs** tab **[check on screen: where Labs sits in the top menu]**.
 - **Pay links and refunds:** **Clients**, open the client, scroll to **Ledger**.
@@ -171,7 +174,7 @@ Goal: take one payment for the whole family. **Everyone.**
 |---|---|---|---|
 | 1 | At the bottom of the SOAP's **Checkout** panel, read the line under the button | "Everything is recorded. Checkout collects for the whole household at once." or "… still need doses, scripts, or a lot picked." | "Before checkout, everything has to be recorded. If something's missing, the button tells you what." |
 | 2 | Click **Checkout** | The **Checkout** page: "One bill for 3 pets on this visit — the owner is charged once." **Follow-up** on the left, the invoice on the right | "This is the one screen where the family pays, for all three pets at once." |
-| 3 | Under **Follow-up**, record the next visit | The follow-up question | "Ask about the next visit while they're still here. Payment doesn't wait on it." |
+| 3 | Under **Follow-up**, click **Schedule follow-ups** and give every pet a plan (that's V5b) | "Ask now while they are still here, or leave it for Start/End Visit — payment does not wait on it." Afterwards: "✓ Biscuit · Booked at appointment" for each pet, and **Review follow-ups**. The pets' reminders sit under this section | "Ask about the next visit while they're still here. That has its own video. It's not required to take payment: if there isn't time, plan it later from Start / End Visit." |
 | 4 | Check **Branch** and **Location** | Filled in with your truck | "Make sure the branch and location are right. That's where the stock comes off." |
 | 5 | Card reader: pick the reader once, then **Tap to Pay** | "Sent $… to …. Present the card on the reader — this screen updates when payment succeeds." | "For the card reader, click Tap to Pay and hand the reader over. The screen updates on its own when it's paid." |
 | 6 | Or **Card on file** | "Charged the card on file." | "If the family has a card on file and agrees, use Card on file." |
@@ -191,27 +194,107 @@ Goal: take one payment for the whole family. **Everyone.**
 
 ---
 
+## V5b. Follow-ups: the Schedule follow-ups window (3 to 4 min)
+
+Goal: give every pet a plan: booked now, sent to the CLs, labs pending, or no follow-up needed. Best done at checkout while the family is there, but never required to take payment or sign the chart. If there isn't time, do it later from **Start / End Visit**. **Everyone. Liaisons** use the same window from **+ Forward Booking**.
+
+**Why it matters:** most importantly, the best care for our patients: rechecks and vaccines happen on time because the next visit is set before the family's day moves on. It also fills our future schedule with secure bookings, and booking early lets routing group visits, so future days have shorter drives.
+
+**Say at the start:** "Booking the next visit before we leave is the best thing we can do for the pet. Rechecks and vaccines stay on time. It also keeps our future days full, and lets us plan shorter drives."
+
+| Step | What to click | What's on screen | What I say |
+|---|---|---|---|
+| 1 | On the Checkout page, under **Follow-up**, click **Schedule follow-ups** | **Schedule follow-ups · Rivera**: "Group pets that should be seen together. One card is one future visit." On the left, **Today's visit · needs a plan** with Biscuit, Maple and Pepper, and **Rest of household · optional** with Olive | "Every pet should leave with a plan. One card is one future visit." |
+| 2 | Click **Biscuit**, choose the **"In 1 year" card**. Do the same for **Maple** | Both pets on the card | "Put pets that should be seen together on the same card." |
+| 3 | Click the **2 weeks** chip. Leave **Keep Dr. Dana Demo** ticked | "Target around …" | "Pick when. Keep Dr. keeps the same doctor for the household." |
+| 4 | For each pet, pick a **Visit type**. Point at **Needs pre-meds** | Pre-meds is already ticked for a pet that needed it last time | "Each pet needs its own visit type. If any pet needs pre-meds, the whole household gets the pre-meds arrival window." |
+| 5 | Point at the reminders under each pet | Reminders colored by whether they fall around the card's date **[check on screen]** | "Reminders due around that date show on the card, so you can catch them at the same visit." |
+| 6 | Click **Find a time now** | **Find a time · Biscuit, Maple**, "In 2 weeks · about 60 min · target … · Dr. Demo". Slot cards: "Wed, … · 8:00–10:00 AM arrival", a **Best fit**, **Great** or **Good** tag, a short reason, **Review** and **Book** | "Find a time searches the doctor's days near the target date, and ranks the best fits by drive time and how full each day is." |
+| 7 | Under **What works for the owner?**, tap **Mornings**, a weekday, **Earliest available** or **Any doctor in zone** | The list refreshes | "Ask the owner what works. Each choice runs the search again." |
+| 8 | Fill **What does Biscuit need?** and **What does Maple need?**, then click **Book** | A short "Booked …", then the card shows **Booked** with the day, arrival window and doctor, and **Undo** | "What you type becomes the visit description. Book books it right here, with no calendar step." |
+| 9 | Booked the wrong time? Click **Undo** within 10 seconds | "Booking undone" | "Undo removes the visits and the follow-ups. After ten seconds, change it on the calendar instead." |
+| 10 | Click **Review** on a slot, or **Open the full calendar in a new tab** | The calendar opens in a new tab on that day and doctor, with the visit in place | "Want the whole day in front of you? Review opens the calendar in a new tab. Book there and this card updates." |
+| 11 | Under **Rest of household**, add **Olive** to the household's visit next Tuesday with **Add Olive** | "Added Olive". If a later stop would run late: **Add anyway** and **Send to CLs** | "A pet can join a visit the household already has. If that would make the doctor late for the next stop, add anyway, or send it to the CLs to sort out." |
+| 12 | For a later visit: click **+ 1 year**, put a pet on that card, click **Send to CLs to book** | "Goes to the CLs when you press Done. Target …" with **Undo** | "Not booking it now? Send it to the CLs. It joins their call list when you press Done." |
+| 13 | A pet that needs nothing: put it on **No follow-up needed** and type the reason | "A reason is required." | "No follow-up is a choice too. Say why." |
+| 14 | Type in **Note for the CLs about this household** | "Saved with every forward booking row for this household when you press Done." | "Anything the CLs should know, like 'call the cell' or a gate code, goes here once for the whole household." |
+| 15 | Click **Done · next: text the owner** | **Text the owner · Rivera**: **What was set up today**, then the **Confirmation text** with **To**, "from Dr. Demo's line", **Reset wording**, "… characters · sends as 2 texts" and "Turn the screen around so the owner can check dates and pet names before you send." | "Scout writes one text with everything set up today. Turn the screen around so the owner can check it." |
+| 16 | Click **Send text & finish**, or **Finish without texting** | Back on Checkout: "✓ Biscuit · Booked at appointment" for each pet, and **Review follow-ups** | "One text, sent once. Review follow-ups opens the window again if you need to change something." |
+
+**Liaisons:** "Pets sent to the CLs land on the Forward Booking list with the household note. On the phone, use **+ Forward Booking**: find the pet or owner and the same window opens, with every pet optional."
+
+**Common mistakes**
+- **Skipping the visit type.** Find a time and Send to CLs refuse until each pet has one: "Pick a visit type for …".
+- **Waiting more than 10 seconds to undo.** After that, change the visit on the calendar.
+- **Add anyway when a later stop will run late,** without telling anyone. Send it to the CLs instead.
+- **Finishing without the text** when the owner wanted it.
+
+**Demo data needed**
+- The Rivera visit today (Biscuit, Maple, Pepper) with Dr. Dana Demo, plus a fourth Rivera pet, **Olive** (cat), not on today's visit and booked for a nail trim next Tuesday.
+- Dr. Dana Demo's weekly hours and zone covering the Riveras' address, and drive times working on the demo system (OSRM or the test fake).
+- Texting turned on for the Rivera household with a test phone number, and texts captured by the demo system, so nothing reaches a real phone.
+
+---
+
+## V5c. Labs pending: the task shared by the doctor and tech (2 to 3 min)
+
+Goal: when you'll book after lab results come back, the doctor and their tech both have the task, and it gets closed the right way. **Doctors and techs.**
+
+**Why it matters:** results that change the plan get acted on quickly, and no pet is forgotten while the team waits on a lab. With two people holding the task, it still moves when one of them is out.
+
+**Say at the start:** "When we're waiting on labs, the next visit can't be booked yet, but it can't be forgotten either. The doctor and the tech both hold the task until the pet has a plan."
+
+| Step | What to click | What's on screen | What I say |
+|---|---|---|---|
+| 1 | In Schedule follow-ups, put **Maple** on **Labs pending** | "Book once results are back. Creates a task for each pet." **Who reviews** already shows Dr. Dana Demo and Lee Demo | "If you'll book once labs are back, put the pet here." |
+| 2 | Point at **Who reviews** and **Watching** | "Starts with the visit's doctor and the techs who work with them. Each person gets their own linked copy." | "It starts with the doctor and every tech who works with them. That's set on the tech's profile, under Works with. Add or remove people, or add someone under Watching to keep them informed without the work." |
+| 3 | Press **Done**. Sign in as Lee Demo and open **Tasks** | The task to forward book Maple once labs are back, with **Shared with Dr. Dana Demo** in its heading | "Each person has their own copy, and the heading shows who else has it." |
+| 4 | Labs are back: on the task, click **Schedule follow-ups** | The window opens with Maple under **Labs are back · needs a plan** | "The task opens the same window. Book Maple, add her to a visit already on the books, send her to the CLs, or mark no follow-up." |
+| 5 | Book or send to the CLs, then press **Done** | The task closes with a note of what was done, for example "Maple: sent to the CLs (around …)", on every copy | "Finishing the plan closes everyone's copy." |
+| 6 | Or close it without booking: **Mark complete** | "Also close it for Dr. Dana Demo?" with **Close for everyone** and **Just me** | "Closing your copy asks about the others. Just me leaves it on the doctor's list." |
+| 7 | On the doctor's copy after **Close for everyone** | "Closed because Lee Demo closed their copy" | "Everyone can see who closed it." |
+| 8 | Click **Reopen** | Reopen for everyone, or for one person. If nobody on it still works here, assign it to someone else | "Reopening also restarts the overdue reminders." |
+
+**Doctors:** "If you're the relief doctor on the visit, the task comes to you, and all of our doctors are watching it."
+
+**Techs:** "You're added automatically when your profile says you work with that doctor. If you weren't added and should have been, ask a manager to check Works with on your profile."
+
+**Common mistakes**
+- **Just me when you meant everyone.** The doctor still has it open. Open your copy and close it for everyone, or ask them to close theirs.
+- **Closing the task instead of planning.** If the results are back, plan the follow-up from the task. That closes every copy and leaves a note.
+
+**Demo data needed**
+- Lee Demo's profile: **Works with** Dr. Dana Demo. Tess Demo not linked, to show she isn't added.
+- Maple on the Rivera visit, with Labs pending used once before recording step 3.
+
+---
+
 ## V6. Wrap-up: the client recap, and who signs what (3 to 4 min)
 
 Goal: send the recap and lock the charts, and know who's allowed to sign. **Everyone (signing is for doctors on a SOAP).**
 
+**Wrap-up and checkout are completely separate.** Wrap-up is for the charts: review, recap and signing. Checkout is for the family: payment, and planning follow-ups. Neither waits on the other. Signing doesn't need a follow-up plan, and it can happen later, outside the visit.
+
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | On the SOAP, click **Wrap up visit** | **Wrap up visit**. A card for each pet, then **Client recap** | "Wrap up is where you review the whole family's charts and send the recap." |
-| 2 | Point at each pet card | "4 of 4 sections charted", plus **Weight needed**, **Dose needed: …** or **Rx needed: …** if anything is missing | "Each pet shows how much is charted. A red button here takes you straight to whatever's missing." |
+| 1 | On the SOAP, click **Wrap up visit** | **Wrap up visit**. A card for each pet, then **Client recap** | "When the exam is charted, click Wrap up visit." |
+| 2 | Point at a pet's "4 of 4 sections charted", plus **Weight needed**, **Dose needed: …** or **Rx needed: …** if anything is missing | The pet's card | "Each pet has a card. Four of four means all four SOAP sections have notes. A red button takes you straight to whatever's missing." |
+| 2a | Click the pet's name to open the card, point at each section, then click the name again to close it | **Subjective**, **Objective**, **Assessment**, **Plan**, each editable | "Read them over, and fix anything right here. It saves when you click away." |
+| 2b | In **Problems**, type a problem, then click **Acute** or **Chronic** | The problem shows with "acute" or "chronic" | "Add a problem here. It goes on the problem list when the chart is signed." |
+| 2c | Point at **Medications** and **Add a callback** | Medication search; the callback form | "Medications work the same way. Add a callback if someone should check in with the family." |
 | 3 | In **Client recap**, read the draft | **To**, **Subject**, **Message**. The recap is written from the charts | "Scout writes the recap from the charts. Read it like the family will, and fix anything you'd say differently." |
 | 4 | Show a client marked Do not email | "This client is marked "Do not email", so their address was not filled in. Type an address only if the client asked for this email." | "If the family asked us not to email, the address stays blank. Only type one in if they asked for this email." |
-| 5 | Click **Send to client**, or **Don't email**, type **Why no recap?**, and click **Record: no recap** | "Sent … to …. Filed on each covered pet's EMR under Communications." | "Either send it, or record why you didn't. One of the two has to happen before signing." |
+| 5 | Click **Send to client**. Or click **Don't email**, type why, and click **Record: no recap** (one action per sentence: "So click Don't email, say why, and record it.") | "Sent … to …. Filed on each covered pet's EMR under Communications." | "Either send it, or record why you didn't. One of the two has to happen before signing." |
 | 6 | Point at the footer: **Client recap**, **Dose & Rx**, **Weight** | Each turns into a check when done | "These three checks have to be done before you can sign." |
-| 7 | Click **Sign & lock SOAP (3 charts)** | **SOAP signed & locked**. Each pet: "Signed & locked by Dr. Dana Demo — …" | "One click signs all three charts. After that they're locked." |
-| 8 | After signing, click **Redo client email** | The recap opens again | "Made a mistake in the email? You can still redo it after signing. The draft keeps saving, and the original stays on the record." |
+| 7 | Click **Sign & lock SOAP (3 charts)** | **SOAP signed & locked**. Each pet: "Signed & locked by Dr. Dana Demo — …" | "One click signs and locks all the charts. Only a licensed veterinarian can sign a full SOAP." |
+| 8 | After signing, click **Redo client email** (it reads **Write a recap after all** when no recap was sent) | The recap opens again | "Made a mistake in the email, or decided to send one after all? You can still do it after signing. The draft keeps saving, and anything already sent stays on the record." |
 | 9 | Back on a locked SOAP, point at **Write addendum** | "Append a dated note without unlocking the signed SOAP" | "Need to add something later? Write an addendum. The signed chart stays as it was." |
 
 **Doctors:** "Only a licensed veterinarian can sign and lock a full SOAP. That's you."
 
 **Techs:** "On a full SOAP the sign button is greyed out for you, with 'Only a licensed veterinarian can sign and lock a SOAP.' Get the recap and doses ready, then hand it to the doctor. Licensed techs can sign a medical note (see V12). Unlicensed staff don't sign anything."
 
-**What happens if nobody signs (say once, plain language):** "If a SOAP is still open a day later, Scout gives the visit's doctor a task called 'Finish the chart for Biscuit'. The medical director can see it too. It goes away when the chart is signed. **End Visit** on the calendar only records the visit times and the follow-up. It doesn't sign anything."
+**What happens if nobody signs (say once, plain language):** "If a SOAP is still open a day later, Scout gives the visit's doctor a task called 'Finish the chart for Biscuit'. The medical director can see it too. It goes away when the chart is signed. **End Visit** on the calendar only records the visit times, and its follow-up section opens the same Schedule follow-ups window. It doesn't sign anything."
 
 **Common mistakes**
 - **Thinking End Visit or payment signs the chart.** They don't.
@@ -336,6 +419,8 @@ Goal: make sure consent is on file before checkout, then collect the approved am
 **Demo data needed**
 - Clementine's visit today, with the estimate held on the test card (from V9) and one extra item added at the visit (to show the difference line).
 - A second euthanasia demo visit with consent not yet signed (for printed/oral), and Lee Demo and Tess Demo as witnesses.
+
+**After the visit (say once):** "When Clementine is marked as passed, the wrap-up lists everything still open for her and closes it: future visits, follow-ups waiting for the CLs, open text offers and waitlist entries, as well as memberships, auto-ships, reminders, refills and pharmacy orders. Nobody will call or text the family about her."
 
 ---
 
