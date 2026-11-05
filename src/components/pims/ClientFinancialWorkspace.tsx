@@ -66,6 +66,7 @@ import {
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
 import { useCan } from '../../permissions/PermissionContext';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
+import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
 import {
   LineProviderChangeDialog,
   PostedPaymentEditDialog,
@@ -1226,6 +1227,7 @@ function methodLabel(method: VisitTenderMethod, paymentTypeName?: string | null)
   if (named) return named;
   if (method === 'carecredit') return 'CareCredit';
   if (method === 'gift_card') return 'Gift card';
+  if (method === 'account_credit') return 'Account credit';
   return method.charAt(0).toUpperCase() + method.slice(1);
 }
 
@@ -1835,6 +1837,14 @@ export default function ClientFinancialWorkspace({
   const canEditPostedPayment = useCan('payment.posted.edit');
   const canApproveRx = useCan('rx.invoice.approve');
   const canRedeemGiftCard = useCan('gift_card.redeem');
+  // PAY-06: whoever takes payments may spend the client's account credit.
+  const canTakePayment = useCan('payment.take');
+  const payingByAccountCredit =
+    canTakePayment &&
+    tenderMethod === 'account_credit' &&
+    !tenderPaymentType &&
+    !useSavedCard &&
+    !payByPhone;
   const payingByGiftCard =
     canRedeemGiftCard &&
     tenderMethod === 'gift_card' &&
@@ -8126,6 +8136,7 @@ export default function ClientFinancialWorkspace({
                           </>
                         ) : null}
                         {canRedeemGiftCard ? <option value="gift_card">Gift card</option> : null}
+                        {canTakePayment ? <option value="account_credit">Account credit</option> : null}
                       </select>
                     </label>
                     {!useSavedCard && selectedPayType && isCreditPaymentType(selectedPayType) ? (
@@ -8161,7 +8172,24 @@ export default function ClientFinancialWorkspace({
                         />
                       </div>
                     ) : null}
-                    {!payingByGiftCard && !payByPhone && !useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
+                    {payingByAccountCredit ? (
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <AccountCreditTenderForm
+                          invoiceId={selected.id}
+                          clientId={selected.clientId ?? clientId}
+                          due={remaining}
+                          cashierEmployeeId={cashierEmployeeId}
+                          className="client-fin__btn"
+                          onApplied={(next, applied, left) => {
+                            setSelected(next);
+                            resetTenderMethod();
+                            void refreshList(next.id);
+                            setNote(`Used ${money(applied)} of account credit. ${money(left)} credit left.`);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    {!payingByGiftCard && !payingByAccountCredit && !payByPhone && !useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
                     <label className="client-fin__field">
                       Amount
                       <input
@@ -8268,7 +8296,7 @@ export default function ClientFinancialWorkspace({
                         Key in card instead
                       </button>
                     ) : null}
-                    {payingByGiftCard || payByPhone || useSavedCard || (selectedPayType && isCreditPaymentType(selectedPayType)) ? null : (
+                    {payingByGiftCard || payingByAccountCredit || payByPhone || useSavedCard || (selectedPayType && isCreditPaymentType(selectedPayType)) ? null : (
                       <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
                         Record {methodLabel(tenderMethod, tenderPaymentType)}
                       </button>
