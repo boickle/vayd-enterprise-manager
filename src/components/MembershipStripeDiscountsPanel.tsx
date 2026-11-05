@@ -49,6 +49,7 @@ import {
   type MembershipDiscountRecord,
   type UpdateMembershipDiscountRequest,
 } from '../api/payments';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 import { buildMembershipSignupPromoUrl } from '../utils/membershipStripeDiscount';
 
 function formatDiscountSummary(row: MembershipDiscountRecord): string {
@@ -120,6 +121,8 @@ const DEFAULT_FORM = {
 };
 
 export default function MembershipStripeDiscountsPanel() {
+  // PAY-A8 / D3: only practice manager and admin create, edit, pause or archive promotions.
+  const canManage = useCanOrAdminLogin('payment_type.manage');
   const [listView, setListView] = useState<ListView>('active');
   const [rows, setRows] = useState<MembershipDiscountRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -472,7 +475,7 @@ export default function MembershipStripeDiscountsPanel() {
               <Tab value="active" label="Active" />
               <Tab value="archived" label="Archived" />
             </Tabs>
-            {listView === 'active' ? (
+            {listView === 'active' && canManage ? (
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
@@ -566,6 +569,7 @@ export default function MembershipStripeDiscountsPanel() {
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           {listView === 'active' ? (
                             <>
+                              {canManage ? (
                               <Tooltip title="Edit">
                                 <span>
                                   <IconButton
@@ -577,6 +581,7 @@ export default function MembershipStripeDiscountsPanel() {
                                   </IconButton>
                                 </span>
                               </Tooltip>
+                              ) : null}
                               {row.linkToken ? (
                                 <Tooltip title={copiedToken === row.linkToken ? 'Copied!' : 'Copy signup link'}>
                                   <span>
@@ -604,6 +609,8 @@ export default function MembershipStripeDiscountsPanel() {
                                   </span>
                                 </Tooltip>
                               )}
+                              {canManage ? (
+                              <>
                               <Tooltip title={row.active ? 'Deactivate' : 'Reactivate'}>
                                 <span>
                                   <IconButton
@@ -632,8 +639,10 @@ export default function MembershipStripeDiscountsPanel() {
                                   </IconButton>
                                 </span>
                               </Tooltip>
+                              </>
+                              ) : null}
                             </>
-                          ) : (
+                          ) : canManage ? (
                             <Tooltip title="Restore to active list">
                               <span>
                                 <IconButton
@@ -646,7 +655,7 @@ export default function MembershipStripeDiscountsPanel() {
                                 </IconButton>
                               </span>
                             </Tooltip>
-                          )}
+                          ) : null}
                         </Stack>
                       </TableCell>
                     </TableRow>
