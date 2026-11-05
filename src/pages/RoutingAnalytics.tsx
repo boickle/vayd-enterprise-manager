@@ -57,6 +57,7 @@ import {
 } from '../api/appointmentBookingsAnalytics';
 import {
   appointmentBookingPeriodsContaining,
+  bookingGoalPace,
   fetchAppointmentBookingsGoalSettings,
   percentOfBookingGoal,
   sumBookedBetween,
@@ -537,7 +538,7 @@ function BookingGoalProgressSection({
     <Card sx={{ mb: 3 }}>
       <CardHeader
         title="Booking goals"
-        subheader="Practice appointments booked versus the weekly (Sunday–Saturday), monthly, and quarterly goals for the periods that include the selected end date. Counts are booked so far in each period."
+        subheader="Practice appointments booked versus the weekly (Sunday–Saturday), monthly, and quarterly goals for the periods that include the selected end date. Counts are booked so far. While a period is still open, on pace projects the finish the same way production incentives do: bookings so far, spread across every day in the period."
       />
       <CardContent>
         {error && (
@@ -565,6 +566,18 @@ function BookingGoalProgressSection({
               const percent = percentOfBookingGoal(booked, goal);
               const color =
                 percent == null ? undefined : totalBookedGoalMuiColor(booked, goal);
+              const today =
+                DateTime.now().setZone(DEFAULT_PRACTICE_TIMEZONE).toISODate() ?? '';
+              const pace = bookingGoalPace(
+                booked,
+                goal,
+                period.startDate,
+                period.endDate,
+                today
+              );
+              const paceColor = pace
+                ? totalBookedGoalMuiColor(pace.projected, goal)
+                : undefined;
               return (
                 <Box
                   key={period.key}
@@ -598,6 +611,23 @@ function BookingGoalProgressSection({
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
                         {bookingGoalGapLabel(booked, goal)}
                       </Typography>
+                      {pace && (
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            mt: 0.75,
+                            fontWeight: 600,
+                            color:
+                              paceColor === 'success'
+                                ? 'success.main'
+                                : paceColor === 'warning'
+                                  ? 'warning.main'
+                                  : 'error.main',
+                          }}
+                        >
+                          On pace for {pace.projected} ({pace.percent}%)
+                        </Typography>
+                      )}
                     </>
                   ) : (
                     <Typography variant="body2" color="text.secondary">
