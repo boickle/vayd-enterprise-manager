@@ -358,3 +358,18 @@ export function finish() {
   cy.wait(1500, { log: false });
   cy.task('trainingSave', null, { log: false });
 }
+
+/** Picks an option in a dropdown the way tap clicks: cursor, outline, click sound, then the choice. */
+export function choose(get: () => Cypress.Chainable<JQuery<HTMLElement>>, value: string) {
+  center(get).then(($el) => {
+    moveTo($el[0].ownerDocument, $el[0].getBoundingClientRect(), 2000);
+  });
+  cy.wait(1100, { log: false });
+  cy.task('trainingClick', null, { log: false });
+  get().then(($el) => {
+    const r = $el[0].getBoundingClientRect();
+    ripple($el[0].ownerDocument, r.left + r.width / 2, r.top + r.height / 2);
+  });
+  get().select(value);
+  cy.wait(400, { log: false });
+}

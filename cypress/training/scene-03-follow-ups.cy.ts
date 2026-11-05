@@ -16,6 +16,7 @@ import {
 } from '../support/schedulingWorld';
 import {
   catchNewTabs,
+  choose,
   closeNewTab,
   drag,
   finish,
@@ -82,7 +83,7 @@ describe('Training: Schedule follow-ups', () => {
         });
     const petButton = (id: number) => cy.contains('button.fup-pet', petName(id));
     const pickType = (petId: number, typeId: number) =>
-      cy.get(`select[aria-label="Visit type for ${petName(petId)}"]`).select(String(typeId));
+      choose(() => cy.get(`select[aria-label="Visit type for ${petName(petId)}"]`), String(typeId));
 
     // Nothing is sent: the text to the owner is answered here. Review's new tab shows as a window over the page.
     cy.intercept('POST', '**/sms/client/*', { statusCode: 200, body: { ok: true } }).as('sms');
@@ -146,106 +147,125 @@ describe('Training: Schedule follow-ups', () => {
 
     startClock();
 
-    line('s3-01', () => {
-      cy.then(() => pointAt(() => cy.get(`[data-appt-id="${today[juniper]}"]`).first()));
+    const visit = () => cy.get(`[data-appt-id="${today[juniper]}"]`).first();
+    const charge = (pet: number) => {
+      tap(() => cy.get(`input[placeholder="Add a charge for ${petName(pet)}"]`));
+      typeSlowly(() => cy.get(`input[placeholder="Add a charge for ${petName(pet)}"]`), 'Office exam');
+      tap(() => cy.contains('.soap-plan-result-name', 'Office exam', { timeout: 20000 }).closest('button'));
+    };
+
+    line('s3-01');
+    line('s3-01b', () => {
+      cy.then(() => pointAt(visit, 3500));
     });
-    line('s3-02', () => {
-      cy.then(() => cy.get(`[data-appt-id="${today[juniper]}"]`).first().rightclick());
-      cy.wait(600);
-      pointAt(() => cy.contains('.scheduler-ctx-parent-wrap', 'On Visit Day'));
+    line('s3-02a', () => {
+      cy.then(() => pointAt(visit, 1200));
+      cy.task('trainingClick', null, { log: false });
+      cy.then(() => visit().rightclick());
+      cy.wait(400);
+    });
+    line('s3-02b', () => {
+      pointAt(() => cy.contains('.scheduler-ctx-parent-wrap', 'On Visit Day'), 1500);
       cy.contains('.scheduler-ctx-parent-wrap', 'On Visit Day').trigger('mouseover');
-      cy.wait(500);
+      cy.wait(300);
+    });
+    line('s3-02c', () => {
       tap(() => cy.contains('button[role="menuitem"]', /Start Encounter|Edit Encounter/));
-      cy.wait(500);
+    });
+    line('s3-02d', () => {
       tap(() => cy.contains('.scheduler-modal-encounter-choice-title', /^SOAP$/));
       cy.get('input[placeholder^="Add a charge for"]', { timeout: 60000 }).should('exist');
     });
-    line('s3-03w', () => {
-      pointAt(() => cy.contains('button', 'Wrap up visit'));
-      cy.wait(3500);
-      pointAt(() => cy.get('.soap-checkout').first());
+    line('s3-03a');
+    line('s3-03b', () => {
+      pointAt(() => cy.contains('button', 'Wrap up visit'), 4000);
     });
-    line('s3-03', () => {
-      const charge = (pet: number) => {
-        tap(() => cy.get(`input[placeholder="Add a charge for ${petName(pet)}"]`));
-        typeSlowly(() => cy.get(`input[placeholder="Add a charge for ${petName(pet)}"]`), 'Office exam');
-        tap(() => cy.contains('.soap-plan-result-name', 'Office exam', { timeout: 20000 }).closest('button'));
-      };
-      charge(juniper);
-      charge(maple);
+    line('s3-03c', () => {
+      pointAt(() => cy.get('.soap-checkout').first(), 4000);
+    });
+    line('s3-03d', () => charge(juniper));
+    line('s3-03e', () => charge(maple));
+    line('s3-03f', () => {
       cy.get('.soap-checkout-goto button', { timeout: 30000 }).should('not.be.disabled');
       tap(() => cy.get('.soap-checkout-goto button'));
       cy.contains('button.fup-cta__btn', 'Schedule follow-ups', { timeout: 60000 }).should('be.visible');
     });
-    line('s3-04', () => {
+    line('s3-04a', () => {
       tap(() => cy.contains('button.fup-cta__btn', 'Schedule follow-ups'));
       cy.get('[role="dialog"][aria-labelledby="fup-title"]').should('be.visible');
     });
-    line('s3-05', () => {
+    line('s3-04b', () => pointAt(() => petButton(juniper), 2500));
+    line('s3-04c', () => pointAt(() => petButton(maple), 3500));
+    line('s3-05a', () => {
       drag(() => petButton(juniper), () => cy.contains('article.fup-card', 'In 1 year'));
       cy.contains('article.fup-card', 'In 1 year').should('contain.text', petName(juniper));
+    });
+    line('s3-05b', () => {
       tap(() => cy.get('[aria-label="How soon"]').contains('button', '2 weeks'));
     });
-    line('s3-06', () => {
-      pointAt(() => cy.contains('article.fup-card', 'In 2 weeks'));
-      tap(() => petButton(maple));
+    line('s3-06a', () => pointAt(() => cy.contains('article.fup-card', 'In 2 weeks'), 3500));
+    line('s3-06b', () => tap(() => petButton(maple)));
+    line('s3-06c', () => {
       tap(() => cy.contains('[role="menuitem"]', /"In 2 weeks" card/));
       cy.contains('article.fup-card', 'In 2 weeks').should('contain.text', petName(maple));
-      cy.wait(1500);
     });
-    line('s3-07', () => {
-      pickType(juniper, w.types.recheck);
-      cy.wait(800);
-      pickType(maple, w.types.wellness);
-    });
-    line('s3-08', () => {
-      pointAt(() => cy.get('article.fup-card--labs'));
-      cy.wait(2200);
-      pointAt(() => cy.get('article.fup-card--none'));
-    });
-    line('s3-09', () => {
+    line('s3-07');
+    line('s3-07a', () => pickType(juniper, w.types.recheck));
+    line('s3-07b', () => pickType(maple, w.types.wellness));
+    line('s3-08a', () => pointAt(() => cy.get('article.fup-card--labs'), 3500));
+    line('s3-08b', () => pointAt(() => cy.get('article.fup-card--none'), 3000));
+    line('s3-09a', () => {
       tap(() => cy.contains('article.fup-card', 'In 2 weeks').contains('button', 'Find a time now'));
-      slotsShown();
     });
-    line('s3-10', () => {
+    line('s3-09b', () => {
+      slotsShown();
+      pointAt(() => fit().find('.fup-fit__book').first().parent(), 4000);
+    });
+    line('s3-10');
+    line('s3-10b', () => {
       tap(() => fit().contains('button', 'Mornings'));
       slotsShown();
     });
-    line('s3-11', () => {
+    line('s3-11a', () => {
       tap(() => fit().find('.fup-fit__book').first().parent().contains('button', 'Review'));
       cy.get('#training-tab iframe', { timeout: 15000 }).should('exist');
-      cy.wait(7000);
-      closeNewTab();
     });
-    line('s3-12', () => {
-      fillNeeds();
+    line('s3-11b', () => cy.wait(1500));
+    line('s3-11c', () => closeNewTab());
+    line('s3-12a', () => fillNeeds());
+    line('s3-12b', () => {
       tap(() => fit().find('.fup-fit__book').first());
-      fit().find('.fup-fit__booked').should('contain.text', 'Booked');
       cy.get('[role="dialog"][aria-label="Find a time"]', { timeout: 15000 }).should('not.exist');
     });
     line('s3-13', () => {
       tap(() => cy.get('[role="status"]').contains('button', 'Undo'));
       cy.get('[role="status"]').should('contain.text', 'Booking undone');
     });
-    line('s3-14', () => {
+    line('s3-14a', () => {
       tap(() => cy.contains('article.fup-card', 'In 2 weeks').contains('button', 'Find a time now'));
       slotsShown();
       fillNeeds();
+    });
+    line('s3-14b', () => {
       tap(() => fit().find('.fup-fit__book').first());
       cy.get('[role="dialog"][aria-label="Find a time"]', { timeout: 15000 }).should('not.exist');
       cy.contains('.fup-status--ok', 'Booked').should('be.visible');
+      pointAt(() => cy.contains('.fup-status--ok', 'Booked'), 2000);
     });
-    line('s3-15', () => {
-      tap(() => cy.contains('button', '+ 1 year'));
-      drag(() => petButton(pepper), () => cy.contains('article.fup-card', 'In 1 year'));
-      pickType(pepper, w.types.wellness);
+    line('s3-15');
+    line('s3-15a', () => tap(() => cy.contains('button', '+ 1 year')));
+    line('s3-15b', () => drag(() => petButton(pepper), () => cy.contains('article.fup-card', 'In 1 year')));
+    line('s3-15c', () => pickType(pepper, w.types.wellness));
+    line('s3-15d', () => {
       tap(() => cy.contains('article.fup-card', 'In 1 year').contains('button', 'Send to CLs to book'));
       cy.contains('.fup-status--cl', 'Goes to the CLs when you press Done').should('be.visible');
     });
-    line('s3-16', () => {
+    line('s3-16a', () => {
       tap(() => cy.contains('button', /^Done/));
       cy.get('#fup-title').should('contain.text', 'Text the owner');
-      cy.wait(4500);
+    });
+    line('s3-16b', () => pointAt(() => cy.get('textarea[aria-label="Text message to the owner"]'), 6000));
+    line('s3-16c', () => {
       tap(() => cy.contains('button', 'Send text & finish'));
       cy.wait('@sms');
       cy.get('[role="dialog"][aria-labelledby="fup-title"]').should('not.exist');

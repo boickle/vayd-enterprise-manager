@@ -1,74 +1,48 @@
 [
-  {
-    "id": "s3-01",
-    "text": "Every pet should have a plan for the next visit. Booking it before you leave keeps rechecks and vaccines on time, which is the best care we can give. It also fills our future schedule, and lets us plan shorter drives. If there isn't time, you can do it later from Start and End Visit. We start on Home, with Dr. Lane's day open."
-  },
-  {
-    "id": "s3-02",
-    "text": "Right-click the visit, go to On Visit Day, and choose Start Encounter. Then pick SOAP."
-  },
-  {
-    "id": "s3-03w",
-    "text": "Two things finish a visit, and they're completely separate. Wrap up visit, up here, is for the charts: you review them, send the recap, and the doctor signs. Checkout is for the family: they pay, and we plan the follow-ups. Neither one waits on the other, and you can do them in either order."
-  },
-  {
-    "id": "s3-03",
-    "text": "When the exam is done, add the charges. Here, an office exam for each pet. Then the Checkout button, at the bottom of the Checkout panel, takes you to checkout."
-  },
-  {
-    "id": "s3-04",
-    "text": "On the checkout page, under Follow-up, open Schedule follow-ups. Today, Juniper was seen for an ear infection. Maple came along, and she's due for her annual exam and vaccines in a few weeks."
-  },
-  {
-    "id": "s3-05",
-    "text": "One card is one future visit. Drag Juniper onto the card, and set it to two weeks for her ear recheck."
-  },
-  {
-    "id": "s3-06",
-    "text": "Now look at Maple. Her annual exam and her vaccine come due around the same time. Tap Maple and put her on the same card, so one trip covers both pets."
-  },
-  {
-    "id": "s3-07",
-    "text": "Each pet needs its own visit type. Recheck for Juniper, and Wellness for Maple."
-  },
-  {
-    "id": "s3-08",
-    "text": "Not every pet gets booked today. If you're waiting on lab results, drag the pet to Labs pending. If a follow-up isn't needed, drop the pet here, and say why."
-  },
-  {
-    "id": "s3-09",
-    "text": "Now, Find a time now. It searches the doctor's days near the target date, and ranks the best fits by drive time and how full each day is."
-  },
-  {
-    "id": "s3-10",
-    "text": "Ask the owner what works. Tap Mornings, and the search runs again."
-  },
-  {
-    "id": "s3-11",
-    "text": "Want to see the whole day first? Review opens the calendar in a new tab, with this visit drawn in place. Nothing is booked until you choose. Close the tab to come back."
-  },
-  {
-    "id": "s3-12",
-    "text": "Say what each pet needs. That becomes the visit description. Then press Book. There's no calendar step."
-  },
-  {
-    "id": "s3-13",
-    "text": "Booked the wrong time? Undo, within ten seconds, removes the visits and the follow-ups."
-  },
-  {
-    "id": "s3-14",
-    "text": "Find a time again, and book. The card now shows Booked."
-  },
-  {
-    "id": "s3-15",
-    "text": "You can plan for the rest of the household too. Pepper wasn't seen today. Add a one-year card, put Pepper on it, and send it to the client liaisons to book."
-  },
-  {
-    "id": "s3-16",
-    "text": "Press Done. Check the text to the owner, then send it. They get one text, with every visit booked today."
-  },
-  {
-    "id": "s3-17",
-    "text": "That's it. Every pet has a plan before the family's day moves on."
-  }
+  {"id": "s3-01", "text": "Every pet should have a plan for the next visit. Booking it before you leave keeps rechecks and vaccines on time, which is the best care we can give. It also fills our future schedule, and lets us plan shorter drives."},
+  {"id": "s3-01b", "text": "We start on Home, with Dr. Lane's day open, and the Riveras' visit."},
+  {"id": "s3-02a", "text": "Right-click the visit,"},
+  {"id": "s3-02b", "text": "go to On Visit Day,"},
+  {"id": "s3-02c", "text": "and choose Start Encounter."},
+  {"id": "s3-02d", "text": "Then pick SOAP."},
+  {"id": "s3-03a", "text": "Two things finish a visit, and they're completely separate."},
+  {"id": "s3-03b", "text": "Wrap up visit, up here, is for the charts: you review them, send the recap, and the doctor signs."},
+  {"id": "s3-03c", "text": "Checkout, down here, is for the family: they pay, and we plan the follow-ups. Neither one waits on the other."},
+  {"id": "s3-03d", "text": "When the exam is done, add the charges. An office exam for Juniper,"},
+  {"id": "s3-03e", "text": "and one for Maple."},
+  {"id": "s3-03f", "text": "Then click Checkout."},
+  {"id": "s3-04a", "text": "Under Follow-up, open Schedule follow-ups."},
+  {"id": "s3-04b", "text": "Today, Juniper was seen for an ear infection."},
+  {"id": "s3-04c", "text": "Maple came along, and she's due for her annual exam and vaccines in a few weeks."},
+  {"id": "s3-05a", "text": "One card is one future visit. Drag Juniper onto the card,"},
+  {"id": "s3-05b", "text": "and set it to two weeks, for her ear recheck."},
+  {"id": "s3-06a", "text": "Maple's exam and vaccines come due around then too, so she can come on the same trip."},
+  {"id": "s3-06b", "text": "Tap Maple,"},
+  {"id": "s3-06c", "text": "and put her on the same card."},
+  {"id": "s3-07", "text": "Each pet gets its own visit type."},
+  {"id": "s3-07a", "text": "Recheck for Juniper,"},
+  {"id": "s3-07b", "text": "and Wellness for Maple."},
+  {"id": "s3-08a", "text": "Not every pet gets booked today. Waiting on lab results? Drag the pet to Labs pending."},
+  {"id": "s3-08b", "text": "No follow-up needed? Drop the pet here, and say why."},
+  {"id": "s3-09a", "text": "Now click Find a time now."},
+  {"id": "s3-09b", "text": "It searches the doctor's days near the target date, and ranks the best fits by drive time and how full each day is."},
+  {"id": "s3-10", "text": "Ask the owner what works."},
+  {"id": "s3-10b", "text": "If they like mornings, tap Mornings, and it searches again."},
+  {"id": "s3-11a", "text": "Want to see the whole day first? Click Review."},
+  {"id": "s3-11b", "text": "The calendar opens in a new tab, with this visit drawn in place. Nothing is booked until you choose."},
+  {"id": "s3-11c", "text": "Close the tab to come back."},
+  {"id": "s3-12a", "text": "Type what each pet needs. That becomes the visit description."},
+  {"id": "s3-12b", "text": "Then click Book. There's no calendar step."},
+  {"id": "s3-13", "text": "Booked the wrong time? Click Undo. For ten seconds, it removes the visits and the follow-ups."},
+  {"id": "s3-14a", "text": "Find a time again,"},
+  {"id": "s3-14b", "text": "and book. The card now shows Booked."},
+  {"id": "s3-15", "text": "You can plan for the rest of the household too. Pepper wasn't seen today."},
+  {"id": "s3-15a", "text": "Add a one-year card,"},
+  {"id": "s3-15b", "text": "put Pepper on it,"},
+  {"id": "s3-15c", "text": "pick Wellness,"},
+  {"id": "s3-15d", "text": "and send it to the client liaisons to book."},
+  {"id": "s3-16a", "text": "Click Done."},
+  {"id": "s3-16b", "text": "Here's the text to the owner. It lists every visit booked today, with its arrival window. Change the wording if you like."},
+  {"id": "s3-16c", "text": "Then send it."},
+  {"id": "s3-17", "text": "That's it. Every pet leaves with a plan. If there isn't time before you leave, do it later from Start and End Visit. Just don't skip it."}
 ]
