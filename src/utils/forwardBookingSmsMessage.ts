@@ -398,6 +398,45 @@ export function formatForwardBookingSmsBookedSlotFromEntry(
   );
 }
 
+function entriesShareSmsTimeframe(entries: ForwardBookingEntry[]): boolean {
+  if (entries.length < 2) return true;
+  const first = forwardBookingSmsTimeFramePhrase(entries[0]!);
+  return entries.every((entry) => forwardBookingSmsTimeFramePhrase(entry) === first);
+}
+
+/**
+ * One client message covering every pet on a household card.
+ * Shared intervals keep the single-visit wording; different intervals name each pet's timeframe.
+ */
+export function buildForwardBookingHouseholdSmsMessage(
+  entries: ForwardBookingEntry[],
+  opts?: {
+    bookedSlot?: ForwardBookingSmsBookedSlot;
+    holdRelease?: HoldSpotReleaseSmsOpts;
+  },
+): string {
+  if (entries.length === 0) return '';
+  if (entries.length === 1 || entriesShareSmsTimeframe(entries)) {
+    const names = entries
+      .map((entry) => pickStr(entry.patient?.name))
+      .filter((name): name is string => Boolean(name));
+    return buildForwardBookingSmsMessage(entries[0]!, {
+      petNames: names.length > 0 ? names : undefined,
+      bookedSlot: opts?.bookedSlot,
+      holdRelease: opts?.holdRelease,
+    });
+  }
+
+  const first = clientFirstName(entries[0]!);
+  const parts = entries.map((entry) => {
+    const name =
+      pickStr(entry.patient?.name) ||
+      (entry.patientId ? `patient #${entry.patientId}` : 'your pet');
+    return `${name} in ${forwardBookingSmsTimeFramePhrase(entry)}`;
+  });
+  return `Hi ${first}, following up on the request to schedule follow-up visits for ${formatPetNamesList(parts)}. Let us know what times work for you.`;
+}
+
 export function buildForwardBookingSmsMessage(
   entry: ForwardBookingEntry,
   opts?: {

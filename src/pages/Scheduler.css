@@ -4134,6 +4134,28 @@ label.scheduler-household-pet-row {
   outline-offset: -1px;
 }
 
+.scheduler-forward-booking-pet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scheduler-forward-booking-pet-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.scheduler-forward-booking-pet-card .scheduler-household-pet-row {
+  margin: 0;
+  border-radius: 0;
+}
+
+.scheduler-forward-booking-pet-options {
+  padding: 2px 12px 12px;
+}
+
 .scheduler-household-pet-row-badge {
   display: inline-block;
   margin-left: 8px;
