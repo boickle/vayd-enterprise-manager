@@ -157,7 +157,7 @@ function fillNewClientClientInfo(options: {
   cy.wait('@checkZone');
   cy.wait('@getPublicVeterinarians');
   cy.wait('@getAppointmentTypes');
-  cy.contains('Previous Veterinarian').parent().find('textarea').type(options.previousVet);
+  cy.contains('Which veterinary practice(s), including specialists').parent().find('textarea').type(options.previousVet);
 }
 
 function fillNewClientPetInfo(options: {
@@ -236,6 +236,7 @@ function fillSimplifiedPetFields(options: {
     }
     cy.get(`[data-pet-sex-option="${sex}"]`).click();
     cy.get('input[placeholder="e.g. 5 years, or DOB if you know it"]').type(age);
+    cy.get('input[placeholder="e.g. 45 lbs"]').clear().type('25 lbs');
     cy.get('[data-handling-need="none"]').click();
     cy.get(`[data-visit-reason="${visitReason}"]`).click();
   });
@@ -248,6 +249,7 @@ function submitNewClientAppointmentRequest() {
 function fillExistingClientBasics(options?: {
   addressAnswer?: 'Yes' | 'No';
   newAddress?: { preset: keyof typeof GEO_ADDRESSES; query: string };
+  hadVetCareElsewhere?: 'Yes' | 'No';
 }) {
   cy.get('input[type="tel"]').should('not.have.value', '');
   const addressAnswer = options?.addressAnswer ?? 'Yes';
@@ -257,6 +259,11 @@ function fillExistingClientBasics(options?: {
     pickAddress('new-physical-address', options.newAddress.query, GEO_ADDRESSES[options.newAddress.preset].suggestion.description);
     cy.wait('@checkZone');
   }
+  const careElsewhere = options?.hadVetCareElsewhere ?? 'No';
+  cy.contains('Did your pet(s) get veterinary care from another hospital')
+    .parent()
+    .find(`input[value="${careElsewhere}"]`)
+    .check();
 }
 
 function selectExistingClientPetVisitReason(
@@ -265,6 +272,9 @@ function selectExistingClientPetVisitReason(
 ) {
   cy.get('input[type="checkbox"]').eq(petIndex).check();
   cy.get(`[data-visit-reason="${visitReason}"]`).eq(petIndex).click();
+  if (visitReason === 'end-of-life') {
+    cy.get(`[data-form-field^="weight."]`).eq(petIndex).find('input').clear().type('40 lbs');
+  }
 }
 
 function selectHowSoonExisting(value: string) {
@@ -452,7 +462,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       stubGeoAddress('freeport');
       pickAddress('physical-address', '456 Oak', GEO_ADDRESSES.freeport.suggestion.description);
       cy.wait('@getPublicVeterinarians');
-      cy.contains('Previous Veterinarian').parent().find('textarea').type('Freeport Animal Clinic');
+      cy.contains('Which veterinary practice(s), including specialists').parent().find('textarea').type('Freeport Animal Clinic');
       cy.contains('button', 'Next').click();
       cy.contains("Now let's meet your pet").should('be.visible');
 
@@ -494,7 +504,7 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       stubGeoAddress('portland');
       pickAddress('physical-address', '789 Emer', GEO_ADDRESSES.portland.suggestion.description);
       cy.wait('@getPublicVeterinarians');
-      cy.contains('Previous Veterinarian').parent().find('textarea').type('Emergency Clinic');
+      cy.contains('Which veterinary practice(s), including specialists').parent().find('textarea').type('Emergency Clinic');
       cy.contains('button', 'Next').click();
       cy.contains("Now let's meet your pet").should('be.visible');
 
