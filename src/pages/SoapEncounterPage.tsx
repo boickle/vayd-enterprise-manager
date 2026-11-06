@@ -874,6 +874,10 @@ export default function SoapEncounterPage() {
         });
         if (canceled) return;
         setEncounter(enc);
+        // When the chart was last really saved. The steps below write to it as the page opens
+        // (check-in block, prep notes, Process restore), which would make an offline draft
+        // typed before this open look older than the server and get thrown away.
+        const serverSavedAtOpen = enc.updated;
 
         // Room Loader proposed orders are ready as soon as create/preload returns.
         // Don't wait for intake summarize — checkout would look empty on first paint.
@@ -1024,7 +1028,7 @@ export default function SoapEncounterPage() {
 
         const parked =
           enc.status !== 'completed' ? readSoapChartDraft(enc.id) : null;
-        const useParked = Boolean(parked && soapChartDraftIsNewer(parked, enc.updated));
+        const useParked = Boolean(parked && soapChartDraftIsNewer(parked, serverSavedAtOpen));
         let display = useParked && parked ? mergeParkedSoapDraft(parked, hydrated) : hydrated;
 
         const needsScribeFill =
