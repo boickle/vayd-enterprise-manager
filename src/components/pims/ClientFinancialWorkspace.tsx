@@ -8464,9 +8464,6 @@ export default function ClientFinancialWorkspace({
                               : ''}
                             {' · '}
                             {money(cardAvail)} can still go back to the card
-                            {creditAvail > 0.009
-                              ? `, then ${money(creditAvail)} back as account credit`
-                              : ''}
                           </p>
                         ) : (
                           <p className="client-fin__muted client-fin__return-paid">

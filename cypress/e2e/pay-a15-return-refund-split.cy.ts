@@ -92,7 +92,8 @@ describe('PAY-A15c: Return & refund splits card and account credit', () => {
           cy.contains('button', 'Return items', { timeout: 40000 }).click();
           cy.contains('.client-fin__return-paid', 'Paid on this invoice', { timeout: 20000 })
             .should('contain', 'Account credit $50.00')
-            .and('contain', '$70.00 can still go back to the card, then $50.00 back as account credit');
+            .and('contain', '$70.00 can still go back to the card')
+            .and('not.contain', 'then $50.00 back as account credit');
 
           // 1 of 2 exams: $60, inside the card's $70.
           cy.get('input[placeholder="≤ 2"]').first().clear().type('1');
