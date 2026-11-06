@@ -25,3 +25,7 @@
   background: #e6f4ee;
   color: #0f766e;
 }
+.lab-chip--complete {
+  background: #e5e7eb;
+  color: #374151;
+}

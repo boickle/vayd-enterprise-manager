@@ -306,62 +306,70 @@ Goal: send the recap and lock the charts, and know who's allowed to sign. **Ever
 
 ---
 
-## V7. A sick visit: patient alerts and an in-house lab (3 to 4 min)
+## V7. A sick visit: patient alerts and an in-house lab (2 to 3 min)
 
-Goal: see the alert before you start, and run an ear cytology in-house. **Everyone except client liaisons.**
+Goal: run an ear cytology in-house, keep checkout moving, and find the result on the chart afterward. The patient alert gets a brief mention. **Everyone except client liaisons.**
+
+**Why it matters:** starting in-house labs during the visit puts every result on the chart, and a lab that's ordered but not finished never gets lost, because it stays on the worklist. You don't have to finish the lab before checkout.
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Open the SOAP for **Rocket** (Gus Okafor) | A banner at the top: **Patient alerts — Rocket**, the alert text, and who wrote it | "Always read the alert banner first. It's the same alert as on Rocket's record, like 'Bites — needs a muzzle for ears'." |
-| 2 | Add the ear cytology charge in **Checkout** | The lab line shows **Run the lab / view results** | "When you charge an in-house lab, the line tells you it still needs to be run." |
-| 3 | Click **Run the lab / view results** | The result form. For cytology: a notes box, "Describe what you saw." | "Do the cytology and write what you saw." |
-| 4 | Click **Save, finish later** | Saved, not finished | "If you're interrupted, Save, finish later keeps what you have." |
-| 5 | Or open **Labs**, **In-house labs**, **Waiting to run** | A list by day, filter **All providers** | "Anything ordered and not run yet is on this list, for the whole practice. Whoever's free can run it." |
-| 6 | Finish the result, click **Save results** | The lab moves to **Recently resulted** | "Save results completes it. It's on Rocket's chart now." |
-| 7 | Point at the pet's **History** tab (see V13) | "Lab result" rows with who entered and completed it | "Every entry and every edit is logged with your name." |
+| 1 | Open the SOAP for **Biscuit** (Tom Chen) | A banner at the top: **Patient alerts — Biscuit**, "Bites when his ears are handled. Muzzle for ear exams. — Jordan P." | "If a pet has an alert, it shows up top, with who wrote it. Give it a glance before you start." |
+| 2 | In **Checkout**, type **Ear cyto** in "Type here to add a charge…" and pick **Ear cytology** | The line shows a **Not run** chip | "The line says Not run. The lab is ordered, but nobody has done it yet." |
+| 3 | Click the arrow at the start of the line (its tooltip is "Run the lab / view results") | The result form. For cytology: a notes box, "Describe what you saw." | "Click the arrow to open the result. Write what you saw under the microscope." |
+| 4 | Click **Save, finish later**, then point at **Checkout** | Saved, still **Not run**. The Checkout button is still enabled | "Not done yet? Save, finish later keeps what you have. You don't have to finish the lab to keep going. Checkout still works, so the family can pay and you can head out. Finish the result back at the office, or in the car while a 4Dx runs." |
+| 5 | Click **Labs** in the top bar, then **In-house labs** | **Waiting to run (2)**, grouped by day, filter **All providers** | "Waiting to run lists every in-house lab that's ordered but not done, for the whole practice." |
+| 6 | Click Biscuit's row, finish the notes, click **Save results** | The lab moves to **Recently resulted** | "Open one, finish the notes, and click Save results." |
+| 7 | Click **Chart** on the row | The chart's Timeline opens on **By date**, with a **Lab** row for Ear cytology | "By date shows today's lab in line with the rest of his record." |
+| 8 | Click **View results** on the row, then the lab card (its label is **View**) | The finished notes | "Click View results to open it, then View to read the notes." |
+| 9 | Click the **Labs** tab | Only his labs | "The Labs tab lists only his labs." |
+| 10 | Click **History** | "Result entered by …" and "Result completed by …" rows, with times | "And History shows who entered the result, who finished it, and when." |
 
-**Techs:** "You can enter and complete in-house results yourself. No license is needed. Licensed or not, if you ran it, you can finish it."
+**Techs:** "You can enter and finish in-house results yourself. No license is needed."
+
+**Closing line:** "The mistake to avoid: leaving a lab on Save, finish later and forgetting it. Check Waiting to run before your day ends. Start labs in the visit, and finish every one you start."
 
 **Common mistakes**
-- **Not reading the alert.** It's at the top for a reason.
-- **Leaving labs on Save, finish later.** They stay on **Waiting to run** until someone saves the results.
+- **Leaving labs on Save, finish later and forgetting them.** They stay on **Waiting to run** until someone saves the results.
 - **Blank rows on a panel.** Scout asks for "a value or a comment on each row."
 
-**Demo data needed**
-- Client **Gus Okafor**, dog **Rocket**, with a patient alert ("Bites — muzzle for ear exams") written by Lee Demo. A sick visit today with Dr. Dana Demo.
-- An in-house **ear cytology** catalog item, and one other pending in-house lab from yesterday on the worklist.
+**Demo data needed** (made by `cypress/training/stack/demo-names.sh` and the V7 spec)
+- Tom Chen's dog **Biscuit**, with the alert written by Jordan Pike (tech). A sick visit today with Dr. Avery Lane.
+- In-house **Ear cytology** and **Skin cytology** catalog items, each with a "Describe what you saw" lab form. A skin cytology for **Maple** (Riveras) ordered yesterday and not run, so the worklist shows more than one pet.
 
 ---
 
-## V8. Prescriptions: directions, approval, the label and Rx history (3 to 4 min)
+## V8. Prescriptions: directions, approval, the label and Rx history (2 to 3 min)
 
-Goal: get Rocket's ear medication written, approved and labelled. **Everyone except client liaisons.**
+Goal: get Biscuit's ear medication written, approved and labelled. **Everyone except client liaisons.**
+
+**Why it matters:** every medication that goes home needs directions the family can follow, and an approval before it's dispensed. That keeps the label right and the pet safe.
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Add the ear medication charge. Its line says **No script entered yet** | The line is marked pending | "A medication going home needs a script before checkout." |
-| 2 | Click **Enter dose / Rx details** | **Name**, **Refills**, **Refill expiration** (+3m, +6m, +12m), **Start date**, **Acute or chronic**, **Instructions (sig)** **[check on screen: the invoice line also shows "Directions (sig)"]** | "If Rocket has had this before, the sig carries over from his last fill. Otherwise it starts from the item's default." |
-| 3 | Choose **Acute**, type the directions, click **Save Rx** | Summary "Acute · 0 refills · sig on file" | "Pick acute or chronic, check the directions, and save." |
-| 4 | Click **Approve** on the invoice line | "Approved by …" | "Approve means it's checked and ready to dispense." |
-| 5 | Click **Send Rx label to DYMO** | The label preview with the vet's name and license | "Print the label from here. It carries the doctor's name and license." |
-| 6 | Click **History** on the Rx row | "Nov 3, 10:42 AM — Directions entered by Lee Demo (tech) for Dr. Dana Demo: …" | "History shows exactly who entered the directions and for which doctor. Staff only, never printed." |
-| 7 | Show two people saving the same Rx | "Changed by Dr. Dana Demo, reload. Your entries are still on screen and have not been saved." with **Reload their version** and **Save mine anyway** | "If two of you edit the same script, the second save stops. Your typing is still there. Usually you want Reload their version, then add your change." |
+| 1 | In **Checkout**, add **Mometamax otic 15 g** | The line opens by itself and says **Approve the sig** | "The line opens by itself, and says Approve the sig. Checkout waits until it's approved." |
+| 2 | Read **Directions (sig)**, add to them, click **Save sig** | The item's default directions; then "Entered by Avery Lane" | "The directions start from the item's default. Read them, and fit them to this pet." |
+| 3 | Type **# Refills** (0 if none), pick **Acute or chronic**, check **Discard after**, click **Save Rx** | Refill expiration appears only when refills are above 0 | "Discard after is filled in for you. Change it if the medication expires sooner." |
+| 4 | Click **Approve** | The line closes with a check mark; Checkout says "Everything is recorded" | "It means the script is checked, and ready to dispense." |
+| 5 | Open the line again, click **Send label to DYMO** | **Print prescription label**: practice letterhead, pet and owner, the doctor and license, then **Print on DYMO** | "Review it first." |
+| 6 | Click **History** on the line | "Directions entered by Avery Lane (vet) for Dr. Avery Lane: …" and "Approved for dispensing by … Rx #…" | "It's for staff only, and never printed." |
 
-**Doctors:** "You write directions and refills directly, and you're the prescriber."
+**Doctors and techs:** "Doctors are the prescriber. Techs can enter directions and approve too, and Scout saves them for the visit's doctor."
 
-**Techs:** "You can enter the directions too. Scout saves them for the visit's vet, who is the prescriber. Then you can approve it for dispensing and print the label."
+**Liaisons:** "Client liaisons can't write directions. A new script waits for a doctor or tech, or goes to Mail order." (On screen: "A doctor or technician must approve — or switch to Mail order".)
 
-**Liaisons:** "You can't write directions. You can fill a refill of a script that's already on file (see V11). Anything new waits for a doctor or tech, or goes to the mail queue: 'A doctor or technician must approve — or switch to Mail order'."
+**Closing line:** "Two mistakes to avoid: typing directions and walking away without saving, and approving without reading them. Check the directions, save, then approve."
 
 **Common mistakes**
-- **Typing directions and walking away.** Prescriptions don't save by themselves. Press **Save sig** / **Save Rx** before you leave the line.
+- **Typing directions and walking away.** Press **Save sig** / **Save Rx** before you leave the line.
 - **Saving without Acute or chronic.** "Choose acute or chronic for this prescription."
 - **Refills past a year.** "Refill expiration cannot be more than 1 year from today."
-- **Clicking Save mine anyway without reading theirs.** You'll overwrite the doctor's change.
 
-**Demo data needed**
-- Rocket's visit from V7. An ear medication with a default sig. A previous fill of the same drug (to show "Sig carried over from this patient's last fill").
-- A DYMO printer, or the label preview only.
+**Not in this video:** the "Sig carried over from this patient's last fill" note and the two-people edit warning ("Changed by …, reload") belong to the dose section used for vaccines and non-label orders. A medication line with a label doesn't show them.
+
+**Demo data needed** (made by `cypress/training/stack/demo-names.sh` and the V8 spec)
+- Biscuit's ear visit with Dr. Avery Lane. **Mometamax otic 15 g** with default directions (lot tracking off on the test stack).
+- Stock locations **Car** (default) and **Office shelf** for the Raleigh office, and the practice letterhead for the label.
 
 ---
 
@@ -424,101 +432,100 @@ Goal: make sure consent is on file before checkout, then collect the approved am
 
 ---
 
-## V11. Refills of eVet prescriptions, eVet vaccines and the rabies certificate (3 min)
+## V11. Refills of eVet prescriptions, eVet vaccines and the rabies certificate (about 2 min)
 
-Goal: fill Mittens's refill from her old eVet script and reprint her rabies certificate. **Everyone. Refills are often a liaison task.**
+Goal: fill Maple's refill from her eVet script and reprint her rabies certificate. **Everyone. Refills are often a liaison task.**
+
+**Why it matters:** a refill copies the doctor's directions exactly, and keeps the count of refills right.
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Open Harold Benning's visit for Mittens. In **Checkout**, click **Refills** | **Refills for Mittens**, a list of prescriptions on file, each with "… refills left", who prescribed it, and the sig | "Prescriptions from eVet came across, so Mittens's old scripts are here." |
-| 2 | Click **Use this refill** | The line shows "Refill of Rx #…", "Prescribed by …", "Directions are locked to the prescription." | "Using a refill takes one off the script and copies the directions exactly. Nobody can change them." |
-| 3 | Already added the drug as a normal line? Click **Check refills** on that line | "See refills left on this pet's prescriptions for this item" | "If you added the drug first, Check refills turns that line into the refill." |
-| 4 | Point at **Undo refill** | "Put the refill back on the prescription and unlock the directions" | "Picked the wrong one? Undo refill puts it back." |
-| 5 | No refills left | "No prescriptions on file for Mittens." or no refills left | "No refills left means the doctor writes a new script. That's not a refill." |
-| 6 | Click Mittens's name, open the **By date** timeline **[check on screen: where eVet vaccine rows appear]** | Her vaccine history, including doses from eVet | "Her vaccine history from eVet is on her chart too." |
-| 7 | Chart toolbar, **Print document**, **Rabies certificate** | The certificate with the vet's name and license number | "The reprint shows the vet who gave the dose and their license number, as it was on the day of the dose." |
+| 1 | Open Maple's recheck (Maria Rivera). In **Checkout**, click **Refills** | **Refills for Maple**: "Rx #971204 · Carprofen 75 mg caplets · 2 refills left · Prescribed … by Avery Lane", the sig, **Use this refill**; Apoquel with "No refills left" | "Every prescription on file is listed, including the ones that came over from eVet." |
+| 2 | Point at Apoquel | No refills left | "That one needs a new script from the doctor, so it isn't a refill." |
+| 3 | Click **Use this refill** on Carprofen, then open the line | A **Refill** tag and "No production"; "Refill of Rx #971204 · Prescribed by Avery Lane · 1 refill left after this · through …", "Directions are locked to the prescription." | "The directions are locked, so nobody can change them." |
+| 4 | Click **View details** next to Maple's name | Her medical record; the **By date** timeline lists the eVet Carprofen, Apoquel and **Rabies 3yr Vaccine** rows | "Here's her rabies dose from eVet, with the vet who gave it." |
+| 5 | **Print document**, then the **Rabies certificate** card | "Only for a rabies vaccine we administered. Signed by the veterinarian who gave it…", **Veterinarian: Avery Lane · NC-VET-00417**, the tag and lot | "It's signed by the vet who gave the dose, and shows their license number." |
 
 **Liaisons:** "Refills are the one script you can add yourself, because you're only copying directions a vet already wrote."
 
-**Common mistakes**
-- **Typing a new sig instead of using the refill.** That's a new prescription and needs approval.
-- **Reprinting with the wrong vet.** The certificate takes the vet from the dose. Don't change it.
+**Closing line:** "Two mistakes to avoid: typing new directions instead of using the refill, and changing the vet on a certificate. Use the refill, and let the dose decide the vet."
 
-**Demo data needed**
-- Client **Harold Benning**, cat **Mittens**, with an eVet-imported prescription (2 refills left), one with none left, and an eVet rabies dose with a vet and license.
+**Not shown (check before adding back):** **Undo refill** and **Check refills** didn't appear on the SOAP checkout line in this build. The refill panel only shows Undo when the line can be edited there.
+
+**Demo data needed** (`cypress/training/setup/emr-v11.sql`, run by the spec)
+- Maple's eVet prescriptions: Carprofen 75 mg (2 refills left) and Apoquel 16 mg (none left), both by Dr. Avery Lane. An eVet rabies dose 8 months ago by Dr. Lane, tag R-20417.
+- The recheck exam is charged before the video starts. (Opening Refills on a visit with no charges yet fails; see the bug list.)
 
 ---
 
-## V12. A medical note signed by a licensed tech (2 to 3 min)
+## V12. A medical note signed by a licensed tech (about 2 min)
 
 Goal: write up a tech visit and sign it. **Licensed techs and doctors. Unlicensed techs watch to know what to hand off.**
 
+**Why it matters:** not every visit needs a doctor's exam. A tech visit is a medical note, and a licensed tech can sign it.
+
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Scheduler, Harold's visit, **Start Encounter**, **Medical note** | The page header: "… · Medical note · Visit #…" | "A tech visit, like a refill and a nail trim for Mittens, is a medical note, not a SOAP." |
-| 2 | Type in **History** and **Plan**, or use **Start AI scribe** and **Write up visit** | "Why they are here, how the pet is doing, owner observations…" | "History and plan, in plain words. Or record the room and let Write up visit draft it." |
-| 3 | **Checkout prep** and the **Checkout** panel | The bill on the right, with payment buttons | "Charges and payment are right here on the side." |
-| 4 | **Client email** tab | A subject and message | "Write a short email for Harold if he'd like one." |
-| 5 | Point at **Switch to SOAP** at the top, click it, then click **Cancel** | A box: "Switch this medical note to a SOAP? The note text moves into the SOAP." | "If you picked a medical note but the doctor ends up doing an exam, don't start over. Click Switch to SOAP. What you wrote moves into the SOAP and the SOAP opens. It works until the note is signed. We'll cancel here because Mittens really is a tech visit." |
-| 6 | Click **Wrap up** | The note is signed, and you're back on the schedule. **Switch to SOAP** is gone once the note is signed | "Wrap up signs and locks the note." |
-| 7 | Logged in as Tess Demo | **Wrap up** is greyed out: "Only a licensed veterinarian or licensed technician can sign this record." | "If you're not licensed, the button stays grey. Write it up and ask a licensed tech or the doctor to sign." |
+| 1 | Signed in as **Jordan Pike** (licensed tech). Scheduler, right-click Maple's nail trim, **On Visit Day**, **Start Encounter**, **Medical note** | "Maple · Maria Rivera · Medical note · Visit #…" | "Pick Medical note, not SOAP." |
+| 2 | Type in **History**, click **Plan**, type the plan | "Why they are here…" / "What was given today and what happens next…" | "A medical note has two parts." |
+| 3 | Point at **Start AI scribe** and **Write up visit** | | "You can also record the room, and Write up visit drafts both parts for you." |
+| 4 | Click **Checkout prep**, then **Client email** | The charges; a subject and message | "Client email is for a short note to the family, if they'd like one." |
+| 5 | Click **Switch to SOAP**, then **Cancel** | "Switch this medical note to a SOAP?" | "What you wrote moves into the SOAP. It works until the note is signed." |
+| 6 | Click **Wrap up** | The note is signed; back on the schedule | "It signs and locks the note." |
+| 7 | Biscuit's note, opened by a tech who isn't licensed | **Wrap up** is grey: "Only a licensed veterinarian or licensed technician can sign this record." | "Write it up, and ask a licensed tech or the doctor to sign it the same day." |
 
-**Techs:** "Licensed techs: you can sign a quick visit or a medical note. Unlicensed techs: you can write it, not sign it."
+**Doctors:** "Doctors can sign these too. But if you examined the pet, use a SOAP."
 
-**Doctors:** "You can sign these too, but a medical note is not a SOAP. If you examined the pet, use a SOAP."
+**Closing line:** "Two mistakes to avoid: using a medical note for a doctor's exam, and leaving it unsigned. Pick the right record, and get it signed today."
 
-**Note for the narrator:** the code also has a "Quick SOAP" type that a licensed tech may sign. No screen I found starts one, so this video uses the medical note **[check on screen: whether a Quick SOAP can be started]**.
+**Note:** the code also has a "Quick SOAP" type that a licensed tech may sign. No screen I found starts one, so this video uses the medical note.
 
-**Common mistakes**
-- **Using a medical note for a doctor exam.** Click **Switch to SOAP** before signing (step 5).
-- **Leaving it unsigned.** If you're not licensed, hand it off the same day.
-
-**Demo data needed**
-- Harold Benning's visit with Lee Demo as provider, a nail trim and the refill from V11.
+**Demo data needed** (made by the V12 spec)
+- Jordan Pike licensed as a technician (NC-RVT-01188) for the main part; the license is removed before step 7 and that page reload is cut from the video.
+- Maple's nail trim today with Dr. Avery Lane. Biscuit's nail trim, with its medical note already started. (Two Rivera visits on one day open as one household note, so the second pet is from the Chens.)
 
 ---
 
-## V13. The pet's History tab (2 min)
+## V13. The pet's History tab (about 1 min)
 
 Goal: find who entered or changed a record. **Everyone.**
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Open Rocket's record. In **Timeline**, click **History** | "Staff only. Who entered or changed prescriptions, vaccine doses after sign-off and lab results. Not part of the medical record." | "The History tab is our own audit trail. It's never part of the medical record." |
-| 2 | Read the table: **When**, **Record**, **What happened** | Rows like "Prescription · Rx #…", "Lab result · …", "Vaccine dose · …" | "Newest first. Every script, every lab, and every dose changed after sign-off, with who did it." |
-| 3 | Print the record | The printout has no History | "It never prints, it's not in records we send out, and families never see it in the portal." |
+| 1 | Open Maple's chart, scroll to **Timeline**, click **History** | "Staff only. Who entered or changed prescriptions, vaccine doses after sign-off and lab results, and who switched a visit between a medical note and a SOAP. Not part of the medical record." | "It's for staff only, and it isn't part of the medical record." |
+| 2 | Read the table: **When**, **Record**, **What happened** | Newest first: "Result completed by Avery Lane (vet)", "Result entered by Jordan Pike (tech)", "Dose changed by Avery Lane (vet): tag R-20471 → R-20417", "Label printed…", "Approved for dispensing…", "Directions entered by Jordan Pike (tech) for Dr. Avery Lane: …" | "Each row says when, which record, and what happened." |
+| 3 | Voice-over | | "It never prints, it isn't in the records we send out, and families never see it in the portal." |
 
-**Common mistakes**
-- **Looking for clinical notes here.** History is who-did-what, not the chart itself.
-- **Sending a screenshot to a client.** It's staff only.
+**Closing line:** "Two mistakes to avoid: looking here for clinical notes, and sending it to a client. History is who did what, and it's for staff only."
 
-**Demo data needed**
-- Rocket's chart after V7 and V8 (a lab result, a prescription entered by Lee for Dr. Dana Demo), plus one vaccine dose edited after signing.
+**Demo data needed** (`cypress/training/setup/emr-v13.sql`, which runs V11's setup first)
+- Maple's eVet Carprofen script and rabies dose, and six logged steps: directions entered by Jordan for Dr. Lane, approved, label printed; the rabies tag fixed after sign-off; a skin cytology entered by Jordan and completed by Dr. Lane.
 
 ---
 
-## V14. Working in the field with weak signal (2 to 3 min)
+## V14. Working in the field with weak signal (about 1.5 min)
 
 Goal: keep charting when the connection drops, and never double charge. **Everyone.**
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
-| 1 | Turn off Wi-Fi on the demo tablet | A brown banner across the top: "Offline — not saved. Your changes are kept on this page and will save when the connection returns." | "Driveways and farms lose signal. When that happens, this banner comes up." |
-| 2 | Keep typing in the SOAP | "Not saved yet — your text is kept here and will save when the connection returns." | "Keep going. Your text stays on the page and saves when the signal is back." |
-| 3 | Reload the page while offline, then reconnect | "Restored unsaved chart text from this device. It will save again in a few seconds." | "Even if the page reloads, Scout brings your text back on this device." |
-| 4 | Try a payment while offline | "Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns." | "If a payment doesn't go through because of the signal, this is what you'll see." |
-| 5 | Reconnect and wait | The invoice updates. Paid, or still open | "Wait for the signal, then look at the invoice. If it says paid, you're done." |
-| 6 | Voice-over | — | "Never press charge again and again. Once is enough. Check the invoice first. If it's still open, try once more." |
+| 1 | Biscuit's SOAP; the signal drops | A brown banner across the top: "Offline — not saved. Your changes are kept on this page and will save when the connection returns." | "This brown banner comes up." |
+| 2 | Keep typing in Subjective | "Not saved yet — your text is kept here and will save when the connection returns." | "Your text is kept right here." |
+| 3 | The signal comes back | The banner goes away and the text saves by itself | "Nothing to retype. Just stay on the page until it's saved." |
+| 4 | Click **Checkout**; the signal drops; click **Card on file** | "Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns." | "If the card was charged after all, it will show here when the connection returns." |
+| 5 | The signal comes back | The invoice is still **OPEN** | "If it's still open, like this one, try once more. If it says paid, you're done." |
 
-**Also on screen sometimes:** "{Name} also edited {section}. Your version is still on screen — click out to save it." That means a colleague changed the same chart. Your text is safe.
+**Closing line:** "Two mistakes to avoid: closing the tab while you're offline, and running the card again and again. Stay on the page until it saves, and check the invoice before you charge again."
 
 **Common mistakes**
-- **Closing the tab while offline.** Stay on the page until it saves.
+- **Closing the tab or reloading while offline.** Stay on the page until it saves. (See the bug below: a reload can lose the unsaved text today.)
 - **Running the card again and again.** Check the invoice first.
 - **Moving to another device.** Unsaved text lives on the device you typed it on.
 
-**Demo data needed**
-- A demo tablet you can switch to airplane mode. An open SOAP with some text, and an invoice with a balance.
+**Left out until fixed:** "Restored unsaved chart text from this device" after a reload. Today the SOAP page writes to the note as it loads (POST /soap-encounters twice, then two PATCHes of the history), which makes the local copy look older than the server's, so the page throws it away.
+
+**Demo data needed** (made by the V14 spec)
+- Biscuit's ear recheck with an Office exam charge, and a test card reference on the invoice so **Card on file** is offered. The video drops the signal by blocking API requests in the browser; nothing reaches Stripe.
 
 ---
 
