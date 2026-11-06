@@ -18,7 +18,7 @@ SELECT 1,'prescription',p.id::text,:pet,'label_printed',:tech,'Jordan Pike','tec
   FROM prescriptions p WHERE p."pimsId"='training-v11-rx-carprofen'
 UNION ALL
 SELECT 1,'vaccination',v.id::text,:pet,'dose_changed',:vet,'Avery Lane','vet',NULL,NULL,NULL,
-  '{"tagNumber":"R-20471"}'::jsonb,'{"tagNumber":"R-20417"}'::jsonb, now() - interval '2 days 4 hours'
+  '{"vaccineName":"Rabies 3yr Vaccine","tagNumber":"R-20471"}'::jsonb,'{"vaccineName":"Rabies 3yr Vaccine","tagNumber":"R-20417"}'::jsonb, now() - interval '2 days 4 hours'
   FROM vaccination_logs v WHERE v."pimsId"='training-v11-rabies-dose'
 UNION ALL
 SELECT 1,'lab_result','training-v13-lab',:pet,'result_entered',:tech,'Jordan Pike','tech',NULL,NULL,NULL,NULL,

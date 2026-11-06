@@ -19,9 +19,17 @@ rm -f "$S/world.json"; : > "$S/emails.jsonl"; : > "$S/stripe.jsonl"; : > "$S/sms
 NODE_ENV=test NODE_OPTIONS=--no-experimental-strip-types npx ts-node -T test/scripts/scheduling-e2e-seed.ts seed $DB "$S/world.json" > "$S/seed.log" 2>&1
 bash "$HERE/demo-names.sh" $DB "$S/world.json" > "$S/demo-names.log" 2>&1
 (PORT=4020 nohup node test/scripts/e2e-fake-osrm.js > "$S/osrm.log" 2>&1 & echo $! > "$S/osrm.pid")
-(PORT=4010 STRIPE_LOG="$S/stripe.jsonl" nohup node test/scripts/e2e-fake-stripe.js > "$S/stripe.log" 2>&1 & echo $! > "$S/stripe.pid")
+# Stripe: the fake at :4010 by default. TRAINING_STRIPE=test uses Stripe's own test mode instead (the card
+# fields load from stripe.com), with the sk_test_ key in $API/.env. Never a live key.
+STRIPE_BASE=http://127.0.0.1:4010
+if [ "${TRAINING_STRIPE:-fake}" = test ]; then
+  grep -q '^STRIPE_SECRET_KEY=sk_test_' "$API/.env" || { echo "Refusing: $API/.env has no sk_test_ STRIPE_SECRET_KEY"; exit 2; }
+  STRIPE_BASE=https://api.stripe.com
+else
+  (PORT=4010 STRIPE_LOG="$S/stripe.jsonl" nohup node test/scripts/e2e-fake-stripe.js > "$S/stripe.log" 2>&1 & echo $! > "$S/stripe.pid")
+fi
 (redis-cli -n 9 flushdb >/dev/null; PORT=3210 REDIS_URL=redis://127.0.0.1:6379/9 OSRM_URL=http://127.0.0.1:4020 ROUTING_PROVIDER=osrm \
-  DB_DATABASE=$DB MIGRATION_DB_NAME=$DB DISABLE_SCHEDULED_JOBS=true STRIPE_API_BASE=http://127.0.0.1:4010 \
+  DB_DATABASE=$DB MIGRATION_DB_NAME=$DB DISABLE_SCHEDULED_JOBS=true STRIPE_API_BASE=$STRIPE_BASE \
   E2E_API_DIR="$API" EMAIL_CAPTURE_PATH="$S/emails.jsonl" APPOINTMENT_REQUEST_TEST_EMAIL=deirdre@vetatyourdoor.com \
   APPOINTMENT_REQUEST_TEST_SMS= ROOM_LOADER_TEST_SMS= OPENPHONE_API_KEY= GMAIL_SMTP_PASS= GMAIL_SMTP_USER= GMAIL_OAUTH_CLIENT_SECRET= \
   NODE_OPTIONS="--require $API/test/scripts/e2e-capture-preload.js" nohup node dist/main.js > "$S/api.log" 2>&1 & echo $! > "$S/api.pid")
