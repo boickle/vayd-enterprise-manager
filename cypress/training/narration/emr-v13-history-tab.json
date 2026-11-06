@@ -1,0 +1,12 @@
+[
+  {"id": "v13-01", "text": "Every pet's chart has a History tab. It's our own record of who entered or changed a prescription, a vaccine dose or a lab result, so questions get answered fast."},
+  {"id": "v13-02", "text": "This is Maple's chart. Scroll down to Timeline."},
+  {"id": "v13-03", "text": "Click History."},
+  {"id": "v13-04", "text": "It's for staff only, and it isn't part of the medical record."},
+  {"id": "v13-05", "text": "Each row says when, which record, and what happened. Newest first."},
+  {"id": "v13-06", "text": "Here's a lab result: entered by Jordan, our tech, then completed by Dr. Lane."},
+  {"id": "v13-07", "text": "Her rabies tag was fixed after the dose was signed. The old tag and the new one are both shown."},
+  {"id": "v13-08", "text": "And her Carprofen script: directions entered by Jordan for Dr. Lane, approved, and the label printed."},
+  {"id": "v13-09", "text": "It never prints, it isn't in the records we send out, and families never see it in the portal."},
+  {"id": "v13-10", "text": "Two mistakes to avoid: looking here for clinical notes, and sending it to a client. History is who did what, and it's for staff only."}
+]

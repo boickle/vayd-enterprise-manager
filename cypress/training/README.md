@@ -14,9 +14,10 @@ Nothing on this stack can reach a real client:
 ## One-time setup
 
 - `brew install ffmpeg`
-- **Final voice:** OpenAI `gpt-4o-mini-tts`, voice Nova. The key lives in the macOS Keychain item `openai-tts`:
+- **Voice:** OpenAI `gpt-4o-mini-tts`, voice Nova. The key lives in the macOS Keychain item `openai-tts`:
   `security add-generic-password -a "$USER" -s openai-tts -w "$(pbpaste)"` (copy the key first).
-- **Dry runs:** any Mac voice, free, for example `Samantha`.
+  Clips are cached by their text in `~/.vayd-training/voice-cache`, so a re-take only pays for lines that changed.
+  Use Nova for dry runs too: the timing then matches the final video, and a clean dry run *is* the final video.
 
 ## Make a video
 
@@ -24,10 +25,7 @@ Nothing on this stack can reach a real client:
 export API_DIR=~/worktrees/<vayd-api checkout on build-doctor-flow>
 bash cypress/training/stack/stack-up.sh       # fresh DB, demo names, API :3210, app :5210
 
-# Dry run (free voice): check run.log and the frames, fix, repeat.
-bash cypress/training/record.sh emr-v6-wrap-up Samantha ~/.vayd-training/v6-dry.mp4
-
-# Final take
+# Record straight to the final file. Fix and repeat until it passes and the clicks are in sync.
 bash cypress/training/record.sh emr-v6-wrap-up openai:nova "$HOME/Movies/VAYD Training/EMR V6 - Wrap-up, recap and signing.mp4"
 
 bash cypress/training/stack/stack-down.sh
@@ -40,7 +38,11 @@ Each video is one spec plus one narration file with the same name:
 `record.sh` writes everything to `~/.vayd-training/<name>/`:
 - `run.log`;
 - `marks.json`, holding each line's start time and every click time;
-- `frames/`, one frame every 10 s.
+- `frames/`, one small frame every 10 s;
+- `fail.jpg`, a small screenshot of the app when a run fails.
+
+It prints only what's needed: on failure the error lines and `fail.jpg`; on success whether every click lands within
+2 s of its line. It restarts the stack itself when the sign-in tokens (4 h) are over 3.5 h old.
 
 ## Rules that keep sound and picture together
 
@@ -54,8 +56,8 @@ Each video is one spec plus one narration file with the same name:
   target to the middle of the screen, rest the cursor on it, outline it, then click with a ripple and a click sound.
 - **Open things up to show what they do**, for example a pet card's four SOAP sections, then close them again.
 - **Never mention something the viewer can't see.** Either set up data that shows it, or cut the sentence.
-- **After a take, compare click times to line starts.** `marks.json` has both. Every click should land within about
-  1.5 s of the line that names it.
+- **After a take, read the click line `record.sh` prints.** Every click should land within 2 s of the line that names
+  it (taps land about 1.6 s in). It lists any late ones.
 
 ## Demo data
 
@@ -100,14 +102,16 @@ Also show: <other roles, e.g. what a tech sees when the sign button is greyed ou
    needs to look lived-in, copy real records read-only from vayd_api_local into the test database and
    anonymize them as the README says.
 7. End with the script's most common mistake or two, in one closing line, then the one thing to remember.
-8. Dry run with a free Mac voice. Check the whole screen is visible, nothing hides under sticky headers, and
-   click times match their lines (marks.json). Send me questions and proposed changes before the final take.
-9. Reset the data, then record the final take with Nova (no captions). Save it to ~/Movies/VAYD Training/,
-   show me 3–4 frames, and list anything that looks like a bug. Don't change product code, commit or push
-   without asking.
+8. Record with Nova straight to ~/Movies/VAYD Training/ (no captions); voice clips are cached, so re-takes
+   are cheap. Fix and re-record until it passes and record.sh reports the clicks in sync. Check 3 small
+   frames (whole screen visible, nothing under sticky headers, no leftovers from earlier takes).
+9. List anything that looks like a bug. Don't change product code, commit or push without asking.
 ```
 
 To keep cost down:
-- start a new session for each video;
-- ask for at most 4–6 frames to be checked;
-- use Sonnet to re-record a scene that already works.
+- start a new session for each video (a long session re-reads its whole history on every step);
+- Sonnet is enough for most videos once the script is checked; use Opus for the script check on a new area;
+- grep the app for the exact selectors and labels before writing the spec, instead of learning them from
+  failed runs;
+- look at `fail.jpg` and the 800-px frames, never the full-size screenshots;
+- check 3 frames, not every one.

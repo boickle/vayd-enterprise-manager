@@ -373,3 +373,15 @@ export function choose(get: () => Cypress.Chainable<JQuery<HTMLElement>>, value:
   get().select(value);
   cy.wait(400, { log: false });
 }
+
+/**
+ * Cut what happens inside `actions` out of the final video (a full page reload, a slow save), so viewers don't
+ * sit through dead time. Use it between lines, never inside one: assemble.sh removes the stretch and moves
+ * every later voice line and click earlier by the same amount.
+ */
+export function offCamera(actions: () => void) {
+  cy.task('trainingCut', 'start', { log: false });
+  actions();
+  cy.wait(300, { log: false });
+  cy.task('trainingCut', 'end', { log: false });
+}

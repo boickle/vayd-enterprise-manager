@@ -14,7 +14,7 @@ if [[ "$VOICE" == openai:* ]]; then
   export OPENAI_API_KEY
 fi
 python3 -I - "$SRC" "$VOICE" "$OUT" <<'PY'
-import json, os, re, subprocess, sys, urllib.request
+import hashlib, json, os, re, shutil, subprocess, sys, time, urllib.request
 src, voice, out = sys.argv[1:4]
 lines = json.load(open(src))
 STYLE = ("Warm, calm and friendly, like an experienced veterinary technician teaching a new teammate. "
@@ -26,19 +26,38 @@ def openai_clip(text, name, wav):
         data=json.dumps({"model": "gpt-4o-mini-tts", "voice": name, "input": text,
                          "instructions": STYLE, "response_format": "wav"}).encode(),
         headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r, open(wav, "wb") as f:
-        f.write(r.read())
+    for attempt in range(3):  # the connection sometimes drops; try again before giving up
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = r.read()
+            break
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(5)
+    with open(wav, "wb") as f:
+        f.write(data)
 
+# Clips are cached by voice + style + text, so a re-take only makes the lines that changed.
+cache = os.path.join(os.environ.get("TRAINING_WORK", os.path.expanduser("~/.vayd-training")), "voice-cache")
+os.makedirs(cache, exist_ok=True)
+made = 0
 for l in lines:
     clip = f"{out}/voice/{l['id']}.aiff"
-    if voice.startswith("openai:"):
-        wav = f"{out}/voice/{l['id']}.wav"
-        openai_clip(l["text"], voice.split(":", 1)[1], wav)
-        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", wav, clip], check=True)
-    else:
-        subprocess.run(["say", "-v", voice, "-r", "175", "-o", clip, l["text"]], check=True)
+    key = hashlib.sha256(json.dumps([voice, STYLE, l["text"]]).encode()).hexdigest()[:20]
+    cached = f"{cache}/{key}.aiff"
+    if not os.path.exists(cached):
+        made += 1
+        if voice.startswith("openai:"):
+            wav = f"{cache}/{key}.wav"
+            openai_clip(l["text"], voice.split(":", 1)[1], wav)
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", wav, cached], check=True)
+            os.remove(wav)
+        else:
+            subprocess.run(["say", "-v", voice, "-r", "175", "-o", cached, l["text"]], check=True)
+    shutil.copyfile(cached, clip)
     info = subprocess.run(["afinfo", clip], capture_output=True, text=True, check=True).stdout
     l["ms"] = round(float(re.search(r"estimated duration: ([0-9.]+)", info).group(1)) * 1000)
 json.dump(lines, open(f"{out}/narration.json", "w"), indent=2)
-print(f"{len(lines)} lines, {sum(l['ms'] for l in lines)/1000:.1f} s of voice ({voice})")
+print(f"{len(lines)} lines ({made} new), {sum(l['ms'] for l in lines)/1000:.1f} s of voice ({voice})")
 PY

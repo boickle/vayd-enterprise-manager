@@ -25,10 +25,31 @@ q "UPDATE patients SET name='Juniper', species='Feline' WHERE id=$(j "w['househo
 q "UPDATE patients SET name='Pepper', species='Canine', \"isActive\"=true WHERE id=$(j "w['households']['A']['inactivePetId']")"
 q "UPDATE patients SET name='Biscuit', species='Canine' WHERE id=$(j "w['households']['B']['petId']")"
 
+q "UPDATE practices SET name='Vet At Your Door', address1='4500 Demo Park Drive', city='Raleigh', state='NC', zipcode='27606', phone1='9195550100' WHERE id=1"
+q "UPDATE practice_branch SET name='Raleigh office' WHERE name LIKE 'hsch-%'"
 q "UPDATE zones SET name='North' WHERE id=$(j "w['zoneId']")"
 
 # A catalog exam to charge at checkout (the test catalog has none).
 q "INSERT INTO procedures (name, price, cost, \"practiceId\", \"isActive\", \"isDeleted\", \"pimsType\") SELECT 'Office exam', 75, 0, 1, true, false, 'scout' WHERE NOT EXISTS (SELECT 1 FROM procedures WHERE name='Office exam' AND \"isDeleted\"=false)"
+
+# In-house cytologies (V7): the specs attach a "Describe what you saw" lab form to them.
+for n in 'Ear cytology' 'Skin cytology'; do
+  q "INSERT INTO procedures (name, price, cost, \"practiceId\", \"isActive\", \"isDeleted\", \"pimsType\") SELECT '$n', 45, 0, 1, true, false, 'scout' WHERE NOT EXISTS (SELECT 1 FROM procedures WHERE name='$n' AND \"isDeleted\"=false)"
+  q "INSERT INTO lab_form_templates (\"practiceId\", name, category, mode, \"seedKey\") SELECT 1, '$n', 'Cytology', 'summary', 'training-$n' WHERE NOT EXISTS (SELECT 1 FROM lab_form_templates WHERE \"seedKey\"='training-$n')"
+  q "INSERT INTO lab_form_template_procedures (\"labFormTemplateId\", \"procedureId\") SELECT t.id, p.id FROM lab_form_templates t, procedures p WHERE t.\"seedKey\"='training-$n' AND p.name='$n' AND p.\"isDeleted\"=false ON CONFLICT DO NOTHING"
+done
+
+# Stock locations for the demo branch, so a medication has somewhere to be filled from (V8).
+for loc in "CAR|Car|0|true" "MAIN|Office shelf|1|false"; do
+  IFS='|' read -r code name sort def <<< "$loc"
+  q "INSERT INTO inventory_branch_location (\"branchId\", code, name, \"sortOrder\", \"isDefault\") SELECT b.id, '$code', '$name', $sort, $def FROM practice_branch b WHERE b.name='Raleigh office' AND NOT EXISTS (SELECT 1 FROM inventory_branch_location l WHERE l.\"branchId\"=b.id AND l.code='$code')"
+done
+
+# Medications (V8): an ear medication with default directions, and the seed's Carprofen without its test tag.
+q "UPDATE inventory_items SET name='Carprofen 75 mg caplet' WHERE name LIKE 'Carprofen 75mg caplet EMRTEST-%'"
+q "INSERT INTO inventory_items (name, price, \"isMedication\", \"isActive\", \"practiceId\", \"pimsType\", \"dispenseNote\", \"staffDiscountMode\", \"storeAvailability\") SELECT 'Mometamax otic 15 g', 38, true, true, 1, 'scout', 'Clean the ear, then put 8 drops in the right ear once a day for 7 days.', 'charge', 'always' WHERE NOT EXISTS (SELECT 1 FROM inventory_items WHERE name='Mometamax otic 15 g')"
+# No stock is counted on the test stack, so the demo medication skips lot tracking (V4 covers lots).
+q "UPDATE inventory_items SET \"trackLots\"=false WHERE name='Mometamax otic 15 g'"
 
 # Visit types: drop the seed's tag prefix so the screens read "Recheck", "Medical Visit", ...
 for k in $(j "' '.join(w['types'].keys())"); do

@@ -35,6 +35,8 @@ export default defineConfig({
       let zero = 0;
       const marks: Record<string, number> = {};
       const clicks: number[] = [];
+      /** Stretches to cut out of the final video (a page reload, a slow save): [start, end] ms. */
+      const cuts: [number, number][] = [];
       on('task', {
         trainingNarration() {
           const file = process.env.TRAINING_NARRATION;
@@ -54,6 +56,11 @@ export default defineConfig({
           return null;
         },
         /** A click (or drop) happens now: the video gets a click sound here. */
+        trainingCut(edge: 'start' | 'end') {
+          if (edge === 'start') cuts.push([Date.now() - zero, Date.now() - zero]);
+          else if (cuts.length) cuts[cuts.length - 1][1] = Date.now() - zero;
+          return null;
+        },
         trainingClick() {
           clicks.push(Date.now() - zero);
           return null;
@@ -64,7 +71,7 @@ export default defineConfig({
         },
         trainingSave() {
           fs.mkdirSync(out, { recursive: true });
-          fs.writeFileSync(path.join(out, 'marks.json'), JSON.stringify({ ...marks, __clicks: clicks }, null, 2));
+          fs.writeFileSync(path.join(out, 'marks.json'), JSON.stringify({ ...marks, __clicks: clicks, __cuts: cuts }, null, 2));
           return null;
         },
       });

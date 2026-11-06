@@ -1,0 +1,16 @@
+[
+  {"id": "v11-01", "text": "When a pet needs more of a medication a doctor already prescribed, fill it as a refill. It copies the doctor's directions exactly, and keeps the count of refills right."},
+  {"id": "v11-02", "text": "Maple is here for a recheck, and her family wants more Carprofen. In Checkout, click Refills."},
+  {"id": "v11-03", "text": "Every prescription on file is listed, including the ones that came over from eVet. Each shows the refills left, who prescribed it, and the directions."},
+  {"id": "v11-04", "text": "Apoquel has no refills left. That one needs a new script from the doctor, so it isn't a refill."},
+  {"id": "v11-05", "text": "Carprofen has two left. Click Use this refill."},
+  {"id": "v11-06", "text": "Open the line to see it."},
+  {"id": "v11-07", "text": "It's a refill of that prescription, with who prescribed it and what's left. The directions are locked, so nobody can change them."},
+  {"id": "v11-10", "text": "Her vaccines from eVet are on her chart too. Click View details."},
+  {"id": "v11-11", "text": "Here's her rabies dose from eVet, with the vet who gave it."},
+  {"id": "v11-12", "text": "To reprint the rabies certificate, click Print document,"},
+  {"id": "v11-13", "text": "then Rabies certificate."},
+  {"id": "v11-14", "text": "It's signed by the vet who gave the dose, and shows their license number."},
+  {"id": "v11-15", "text": "Client liaisons: refills are the one script you can add yourself, because you're only copying directions a vet already wrote."},
+  {"id": "v11-16", "text": "Two mistakes to avoid: typing new directions instead of using the refill, and changing the vet on a certificate. Use the refill, and let the dose decide the vet."}
+]

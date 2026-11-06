@@ -12,6 +12,12 @@ marks = json.load(open(f"{out}/marks.json"))
 lines = json.load(open(f"{out}/narration.json"))
 frame = marks.pop("__frame")
 clicks = marks.pop("__clicks", [])
+cuts = [c for c in marks.pop("__cuts", []) if c[1] - c[0] > 200]
+# Cut stretches marked offCamera() and move everything after each cut earlier by its length.
+def shift(t):
+    return t - sum(min(max(t - a, 0), b - a) for a, b in cuts)
+marks = {k: round(shift(v)) for k, v in marks.items()}
+clicks = [round(shift(t)) for t in clicks]
 # A soft, short click for every click and drop, so viewers hear what they see.
 click_wav = f"{out}/click.wav"
 subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -48,7 +54,9 @@ for j, t in enumerate(clicks):
     filters.append(f"[{k}:a]adelay={t}|{t},aformat=channel_layouts=stereo,volume=0.5[c{j}]")
     labels.append(f"[c{j}]")
 filters.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0[voice]")
-filters.append(f"[0:v]{crop},scale=1920:-2:flags=lanczos,fps=30[v]")
+keep = "+".join(f"between(t,{a/1000:.3f},{b/1000:.3f})" for a, b in cuts)
+cut = f",select='not({keep})',setpts=N/30/TB" if cuts else ""
+filters.append(f"[0:v]{crop},fps=30{cut},scale=1920:-2:flags=lanczos[v]")
 cmd += ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[voice]", "-t", f"{last:.2f}",
         "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
         "-movflags", "+faststart", final]
