@@ -1,4 +1,5 @@
 import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
+import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefundSplit';
 import { useWitnessOptions } from '../inventory/WasteDetailFields';
 import {
   chosenReturnLots,
@@ -808,6 +809,23 @@ function invoiceCardRefundable(invoice: VisitInvoice | null): number {
   return (invoice.tenders ?? [])
     .filter((t) => tenderCanStripeRefund(t))
     .reduce((sum, t) => sum + tenderRefundable(t), 0);
+}
+
+/** PAY-A15: account credit payments on the bill that a return can still put back on the account. */
+function invoiceCreditTenders(invoice: VisitInvoice | null): VisitInvoiceTender[] {
+  if (!invoice) return [];
+  return (invoice.tenders ?? []).filter(
+    (t) => !t.voidedAt && t.method === 'account_credit' && tenderRefundable(t) > 0.009,
+  );
+}
+
+function invoiceCreditRefundable(invoice: VisitInvoice | null): number {
+  return invoiceCreditTenders(invoice).reduce((sum, t) => sum + tenderRefundable(t), 0);
+}
+
+/** Return & refund: cards first, then the bill's account credit payments (server returnLines). */
+function returnRefundSplit(invoice: VisitInvoice | null, amount: number) {
+  return splitReturnRefund(amount, invoiceCardRefundable(invoice), invoiceCreditRefundable(invoice));
 }
 
 /** Estimate return total (line + proportional tax) for the return qty draft. */
@@ -5128,17 +5146,22 @@ export default function ClientFinancialWorkspace({
       return;
     }
     const estimated = estimateReturnRefund(lines, returnQty);
+    const split = returnRefundSplit(selected, estimated);
     if (refundViaStripe) {
-      const available = invoiceCardRefundable(selected);
-      if (estimated > available + 0.009) {
+      if (split.over) {
         setError(
-          `Return total ${money(estimated)} exceeds refundable card payments (${money(available)}).`
+          split.credit > 0.009 || invoiceCreditRefundable(selected) > 0.009
+            ? `Return total ${money(estimated)} is more than the card and account credit payments can give back (${money(split.max)}).`
+            : `Return total ${money(estimated)} exceeds refundable card payments (${money(split.max)}).`,
         );
         return;
       }
       const ok = await appConfirm({
         title: 'Return & refund?',
-        message: `Return the selected items and refund ${money(estimated)} to the client's card via Stripe?`,
+        message:
+          split.credit > 0.009
+            ? `Return the selected items and refund ${money(estimated)}: ${describeReturnRefund(split)}. The card part goes back through Stripe.`
+            : `Return the selected items and refund ${money(estimated)} to the client's card via Stripe?`,
         confirmLabel: `Refund ${money(estimated)}`,
         danger: true,
       });
@@ -5168,7 +5191,9 @@ export default function ClientFinancialWorkspace({
       await refreshList(next.id);
       setNote(
         refundViaStripe
-          ? `Returned items and refunded ${money(estimated)} via Stripe.`
+          ? split.credit > 0.009
+            ? `Returned items and refunded ${money(estimated)}: ${describeReturnRefund(split)}.`
+            : `Returned items and refunded ${money(estimated)} via Stripe.`
           : 'Opened a credit invoice for the returned items.',
       );
     } catch (e: unknown) {
@@ -8413,6 +8438,9 @@ export default function ClientFinancialWorkspace({
                     const estimated = estimateReturnRefund(lines, returnQty);
                     const cardAvail = invoiceCardRefundable(selected);
                     const cardTenders = (selected.tenders ?? []).filter(tenderCanStripeRefund);
+                    const creditTenders = invoiceCreditTenders(selected);
+                    const creditAvail = invoiceCreditRefundable(selected);
+                    const split = returnRefundSplit(selected, estimated);
                     return (
                       <>
                         {/* The refund total stands alone; the original payment is shown apart, so
@@ -8429,8 +8457,16 @@ export default function ClientFinancialWorkspace({
                             {cardTenders
                               .map((t) => `${tenderPayLabel(t)} ${money(Number(t.amount) || 0)}`)
                               .join(', ')}
+                            {creditTenders.length
+                              ? `, ${creditTenders
+                                  .map((t) => `Account credit ${money(Number(t.amount) || 0)}`)
+                                  .join(', ')}`
+                              : ''}
                             {' · '}
                             {money(cardAvail)} can still go back to the card
+                            {creditAvail > 0.009
+                              ? `, then ${money(creditAvail)} back as account credit`
+                              : ''}
                           </p>
                         ) : (
                           <p className="client-fin__muted client-fin__return-paid">
@@ -8438,19 +8474,28 @@ export default function ClientFinancialWorkspace({
                             account as credit.
                           </p>
                         )}
+                        {cardAvail > 0.009 && split.credit > 0.009 && !split.over ? (
+                          <p className="client-fin__muted client-fin__return-split" role="note">
+                            More than the card can take: {describeReturnRefund(split)}.
+                          </p>
+                        ) : null}
                         {cardAvail > 0.009 ? (
                           <button
                             type="button"
                             className="client-fin__btn"
-                            disabled={busy || estimated <= 0.009 || estimated > cardAvail + 0.009}
+                            disabled={busy || estimated <= 0.009 || split.over}
                             title={
-                              estimated > cardAvail + 0.009
-                                ? `More than the ${money(cardAvail)} that can go back to the card. Return as account credit instead.`
+                              split.over
+                                ? creditAvail > 0.009
+                                  ? `More than the ${money(split.max)} the card and account credit payments can give back. Return as account credit instead.`
+                                  : `More than the ${money(cardAvail)} that can go back to the card. Return as account credit instead.`
                                 : undefined
                             }
                             onClick={() => void submitReturns(true)}
                           >
-                            Refund {money(estimated)} to card
+                            {split.credit > 0.009 && !split.over
+                              ? `Refund ${money(estimated)} (${describeReturnRefund(split)})`
+                              : `Refund ${money(estimated)} to card`}
                           </button>
                         ) : null}
                         <button
