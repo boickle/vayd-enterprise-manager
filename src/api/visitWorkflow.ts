@@ -50,6 +50,8 @@ export type SoapEncounter = {
   completedAt: string | null;
   created: string;
   updated: string;
+  /** Only on patient-chart lists (`patientId` query): the signed SOAP's addenda, oldest first. */
+  addenda?: SoapAddendum[];
 };
 
 export type PatientProblem = {
@@ -1986,6 +1988,21 @@ export async function releaseInvoiceLineRefill(
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/release-refill`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/**
+ * New directions instead of a refill: the old script's refills go to 0 and the line becomes a
+ * new, unapproved script under the visit's doctor, starting from the item's default directions.
+ */
+export async function rewriteInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/rewrite-refill`,
     { practiceId: pid() }
   );
   return data;

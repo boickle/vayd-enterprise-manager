@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { ExternalLink, FilePlus2, Lock, PenLine, X } from 'lucide-react';
 import { Link } from 'react-router';
 import SoapAddendaSection from '../soap/SoapAddendaSection';
-import type { SoapEncounter } from '../../api/visitWorkflow';
+import type { SoapAddendum, SoapEncounter } from '../../api/visitWorkflow';
 import { looksLikeHtmlFragment, sanitizeSoapHtml } from '../../utils/sanitizeCommunicationHtml';
 import './PimsSoapNoteModal.css';
 
@@ -11,6 +11,7 @@ type Props = {
   encounter: SoapEncounter;
   patientName: string | null;
   onClose: () => void;
+  onAddendumAdded?: (addendum: SoapAddendum) => void;
 };
 
 function formatWhen(iso: string | null): string {
@@ -80,7 +81,12 @@ function vitalsPairs(enc: SoapEncounter): { label: string; value: string }[] {
  * The SOAP itself is never editable here — editing happens on the SOAP page while
  * the chart is still open, and after signing only addenda may be added.
  */
-export default function PimsSoapNoteModal({ encounter, patientName, onClose }: Props) {
+export default function PimsSoapNoteModal({
+  encounter,
+  patientName,
+  onClose,
+  onAddendumAdded,
+}: Props) {
   const [writingAddendum, setWritingAddendum] = useState(false);
 
   useEffect(() => {
@@ -216,6 +222,7 @@ export default function PimsSoapNoteModal({ encounter, patientName, onClose }: P
               encounterId={encounter.id}
               writing={writingAddendum}
               onWritingChange={setWritingAddendum}
+              onAdded={onAddendumAdded}
             />
           )}
         </div>

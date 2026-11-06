@@ -4641,6 +4641,15 @@ export default function PimsPatientDetailView({
           encounter={selectedSoapNote}
           patientName={pname || null}
           onClose={() => setSelectedSoapNote(null)}
+          onAddendumAdded={(addendum) =>
+            setSoapNotes((prev) =>
+              prev.map((e) =>
+                e.id === addendum.soapEncounterId
+                  ? { ...e, addenda: [...(e.addenda ?? []), addendum] }
+                  : e,
+              ),
+            )
+          }
         />
       ) : null}
 
