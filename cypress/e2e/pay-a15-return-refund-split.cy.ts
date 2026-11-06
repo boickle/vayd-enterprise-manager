@@ -31,8 +31,29 @@ import {
  */
 type Pay06World = ReturnType<typeof emrWorld> & { households: { credit: EmrHousehold } };
 
+/** With CYPRESS_PAY_A15_SHOTS set: the return footer (refund total, payments, buttons) as a picture for the owner. */
 const shot = (name: string) => {
-  if (Cypress.env('PAY_A15_SHOTS')) cy.screenshot(name, { capture: 'viewport', overwrite: true });
+  if (!Cypress.env('PAY_A15_SHOTS')) return;
+  if (name.endsWith('confirm')) {
+    cy.screenshot(name, { capture: 'viewport', overwrite: true });
+    return;
+  }
+  // Picture only: the invoice pane scrolls on its own and runs past the window's right edge, so the
+  // real return footer (same markup and styles) is lifted into a fixed box for the shot, then put back.
+  cy.get('.client-fin__actions--stack').then(($el) => {
+    const el = $el[0] as HTMLElement;
+    el.dataset.shotStyle = el.getAttribute('style') || '';
+    Object.assign(el.style, {
+      position: 'fixed', top: '160px', left: '40px', width: '760px', zIndex: '99999',
+      background: '#fff', padding: '24px', boxShadow: '0 4px 24px rgba(0,0,0,.18)', borderRadius: '10px',
+    });
+  });
+  cy.screenshot(name, { capture: 'viewport', overwrite: true, clip: { x: 20, y: 140, width: 800, height: 420 } });
+  cy.get('.client-fin__actions--stack').then(($el) => {
+    const el = $el[0] as HTMLElement;
+    el.setAttribute('style', el.dataset.shotStyle || '');
+    delete el.dataset.shotStyle;
+  });
 };
 
 describe('PAY-A15c: Return & refund splits card and account credit', () => {
@@ -40,7 +61,7 @@ describe('PAY-A15c: Return & refund splits card and account credit', () => {
     const w = emrWorld() as unknown as Pay06World;
     const { clientId, pets } = w.households.credit;
     const [dog] = pets;
-    cy.viewport(1400, 1000);
+    cy.viewport(1920, 1080);
 
     openEncounter(dog, clientId).then((enc) => {
       addOrder(enc.id, w.items.examId, 'Wellness exam', 60, { qty: 2 });
@@ -90,11 +111,13 @@ describe('PAY-A15c: Return & refund splits card and account credit', () => {
           shot('pay-a15-return-above-card');
           cy.contains('button', 'Refund $120.00 ($70.00 to card, $50.00 back as account credit)').click();
 
-          cy.contains('Return & refund?', { timeout: 10000 });
-          cy.contains('Return the selected items and refund $120.00: $70.00 to card, $50.00 back as account credit.');
-          cy.contains("to the client's card").should('not.exist');
+          cy.get('[role="dialog"]', { timeout: 10000 }).within(() => {
+            cy.contains('Return & refund?');
+            cy.contains('Return the selected items and refund $120.00: $70.00 to card, $50.00 back as account credit.');
+            cy.contains("to the client's card").should('not.exist');
+          });
           shot('pay-a15-return-confirm');
-          cy.contains('button', 'Refund $120.00').click();
+          cy.get('[role="dialog"]').contains('button', 'Refund $120.00').click();
 
           cy.wait('@returns').then(() => {
             expect(sent?.refundViaStripe).to.eq(true);
