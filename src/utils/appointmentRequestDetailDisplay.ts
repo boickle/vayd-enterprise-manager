@@ -456,7 +456,8 @@ export function buildAppointmentRequestDetailSections(
     if (breed) facts.push({ label: 'Breed', value: breed });
     const age = formatPetAgeOrDob(pickStr(pet.age) ?? pickStr(pet.dob));
     if (age) facts.push({ label: 'Age / DOB', value: age });
-    const weight = pickStr(pet.weight);
+    const specific = petSpecificFor(requestData, pet);
+    const weight = pickStr(pet.weight) ?? pickStr((specific as { weight?: unknown } | null)?.weight);
     if (weight) facts.push({ label: 'Weight', value: weight });
     const sex = pickStr(pet.sex);
     if (sex) facts.push({ label: 'Sex', value: sex });
@@ -470,7 +471,6 @@ export function buildAppointmentRequestDetailSections(
       facts.push({ label: 'Primary provider', value: 'Not on file' });
     }
 
-    const specific = petSpecificFor(requestData, pet);
     if (specific) {
       const reason =
         pickStr(specific.needsToday) ??

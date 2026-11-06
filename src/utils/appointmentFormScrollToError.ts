@@ -78,6 +78,9 @@ const VISUAL_FIELD_PRIORITY: string[] = [
   'whatPets',
   'newClientPets',
   'selectedPetIds',
+  'previousVeterinaryPractices',
+  'hadVetCareElsewhere',
+  'previousVeterinaryHospitals',
   'howSoon',
   'preferredDoctorExisting',
   'preferredDoctor',
@@ -97,9 +100,10 @@ function sortErrorKeysByVisualPriority(keys: string[]): string[] {
     if (key.startsWith('newClientPet.')) return 50;
     if (key.startsWith('existingClientNewPet.')) return 51;
     if (key.startsWith('needsToday.')) return 52;
-    if (key.startsWith('euthanasiaReason.')) return 53;
-    if (key.startsWith('interestedInOtherOptions.')) return 54;
-    if (key.startsWith('aftercarePreference.')) return 55;
+    if (key.startsWith('weight.')) return 53;
+    if (key.startsWith('euthanasiaReason.')) return 54;
+    if (key.startsWith('interestedInOtherOptions.')) return 55;
+    if (key.startsWith('aftercarePreference.')) return 56;
 
     return 1000;
   };
@@ -187,6 +191,13 @@ function findScrollTargetForErrorKey(key: string): HTMLElement | null {
     );
   }
 
+  const chartWeight = key.match(/^weight\.(.+)$/);
+  if (chartWeight) {
+    return document.querySelector<HTMLElement>(
+      `[data-pet-id="${CSS.escape(chartWeight[1])}"] [data-form-field="weight.${CSS.escape(chartWeight[1])}"]`,
+    );
+  }
+
   const euthanasiaReason = key.match(/^euthanasiaReason\.(.+)$/);
   if (euthanasiaReason) {
     return document.querySelector<HTMLElement>(
@@ -229,6 +240,7 @@ function findPetFieldTarget(petId: string, field: string): HTMLElement | null {
   const fieldSelectors: Record<string, string> = {
     name: '[data-form-field$=".name"]',
     age: '[data-form-field$=".age"]',
+    weight: '[data-form-field$=".weight"]',
     species: '[data-species-picker]',
     sex: '[data-pet-sex-picker]',
     handlingNeeds: '[data-handling-needs-picker]',

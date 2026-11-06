@@ -34,6 +34,8 @@ export type PetVisitPetData = {
   appointmentTypeId?: number;
   appointmentTypeName?: string;
   needsCalmingMedications?: 'Yes' | 'No' | '';
+  /** Chart pets: collected when visit is euthanasia. */
+  weight?: string;
 };
 
 type Props = {
@@ -143,6 +145,29 @@ export function PetVisitQuestionsBlock({
         <div style={{ marginTop: sectionGap }}>
           {isEndOfLife ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: sectionGap }}>
+              <div data-form-field={`weight.${pet.id}`} style={{ maxWidth: 280 }}>
+                <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+                  Weight <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={petData.weight || ''}
+                  onChange={(e) => onUpdatePetData(pet.id, 'weight', e.target.value)}
+                  placeholder="e.g. 45 lbs"
+                  style={{
+                    width: '100%',
+                    padding: inputPadding,
+                    border: `1px solid ${errors[`weight.${pet.id}`] ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: inputRadius,
+                    fontSize: '14px',
+                  }}
+                />
+                {errors[`weight.${pet.id}`] && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                    {errors[`weight.${pet.id}`]}
+                  </div>
+                )}
+              </div>
               <div data-form-field={`euthanasiaReason.${pet.id}`}>
                 <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
                   Tell us more <span style={{ color: '#ef4444' }}>*</span>

@@ -81,6 +81,7 @@ import {
   type AppointmentFormSubmitSuccessKind,
 } from '../utils/onlineBooking';
 import { scrollToFirstAppointmentFormError } from '../utils/appointmentFormScrollToError';
+import { collectWeightAndPreviousVetErrors } from '../utils/appointmentRequestRequiredFields';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
 import {
@@ -425,6 +426,8 @@ type FormData = {
     needsTodayDetails?: string; // Details/reason for the selected need
     /** Existing chart pets: client reports calming meds for this visit. */
     needsCalmingMedications?: 'Yes' | 'No' | '';
+    /** Existing chart pets: required when visit is euthanasia. */
+    weight?: string;
     // Euthanasia-specific fields (for end-of-life option)
     euthanasiaReason?: string;
     beenToVetLastThreeMonths?: string;
@@ -1615,6 +1618,7 @@ export default function AppointmentRequestForm() {
     if (isEuthanasiaAppointmentType(sel)) {
       const t = (v: string | undefined) => (v ?? '').trim();
       return (
+        t(petData.weight) !== '' ||
         t(petData.euthanasiaReason) !== '' ||
         t(petData.interestedInOtherOptions as unknown as string) !== '' ||
         t(petData.aftercarePreference) !== ''
@@ -1633,6 +1637,7 @@ export default function AppointmentRequestForm() {
         appointmentTypeId: option.id,
         appointmentTypeName: option.name,
         needsTodayDetails: '',
+        weight: '',
         euthanasiaReason: '',
         beenToVetLastThreeMonths: '',
         interestedInOtherOptions: '',
@@ -1645,6 +1650,7 @@ export default function AppointmentRequestForm() {
       const keys = [
         `needsToday.${petId}`,
         `needsTodayDetails.${petId}`,
+        `weight.${petId}`,
         `euthanasiaReason.${petId}`,
         `beenToVetLastThreeMonths.${petId}`,
         `interestedInOtherOptions.${petId}`,
@@ -1733,6 +1739,7 @@ export default function AppointmentRequestForm() {
       if (isEuthanasiaAppointmentType(sel)) {
         out[petId] = {
           ...base,
+          ...(petData.weight?.trim() ? { weight: petData.weight.trim() } : {}),
           euthanasiaReason: petData.euthanasiaReason,
           beenToVetLastThreeMonths: petData.beenToVetLastThreeMonths,
           interestedInOtherOptions: petData.interestedInOtherOptions,
@@ -4100,6 +4107,29 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const validateWeightAndPreviousVet = (newErrors: Record<string, string>) => {
+    const chartPetIds = isLoggedIn
+      ? formData.selectedPetIds.filter(
+          (id) => !(formData.existingClientNewPets || []).some((p) => p.id === id),
+        )
+      : [];
+    const weightPrevErrors = collectWeightAndPreviousVetErrors({
+      isLoggedIn,
+      previousVeterinaryPractices: formData.previousVeterinaryPractices,
+      hadVetCareElsewhere: formData.hadVetCareElsewhere,
+      previousVeterinaryHospitals: formData.previousVeterinaryHospitals,
+      newClientPets: filterCompletedAppointmentRequestPets(formData.newClientPets),
+      existingClientNewPets: filterCompletedAppointmentRequestPets(
+        (formData.existingClientNewPets || []).filter((p) =>
+          formData.selectedPetIds.includes(p.id),
+        ),
+      ),
+      selectedChartPetIds: chartPetIds,
+      petSpecificData: formData.petSpecificData,
+    });
+    Object.assign(newErrors, weightPrevErrors);
+  };
+
   const validatePage = (page: Page): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -4112,6 +4142,10 @@ export default function AppointmentRequestForm() {
           if (!formData.fullName.last.trim()) newErrors['fullName.last'] = 'Last name is required';
           if (!formData.physicalAddress.line1.trim() || !formData.physicalAddress.city.trim() || !formData.physicalAddress.state.trim() || !formData.physicalAddress.zip.trim()) {
             newErrors['physicalAddress.line1'] = 'Please select your address from the suggestions';
+          }
+          if (!formData.previousVeterinaryPractices?.trim()) {
+            newErrors.previousVeterinaryPractices =
+              'Please tell us which veterinary practice(s) you have used previously';
           }
           if (!formData.howDidYouHearAboutUs) {
             newErrors.howDidYouHearAboutUs = 'Please tell us how you heard about us';
@@ -4127,6 +4161,7 @@ export default function AppointmentRequestForm() {
         break;
       case 'new-client-pet-info':
         validateNewClientPetInfo(newErrors);
+        validateWeightAndPreviousVet(newErrors);
         validateRecordsDelivery(newErrors, true);
         validateRequestVisitContinued(newErrors);
         break;
@@ -4134,6 +4169,7 @@ export default function AppointmentRequestForm() {
         if (isLoggedIn) {
           validateExistingClientIntro(newErrors);
           validateExistingClientPets(newErrors);
+          validateWeightAndPreviousVet(newErrors);
           validateRecordsDelivery(newErrors, formData.hadVetCareElsewhere === 'Yes');
           validateRequestVisitContinued(newErrors);
         }
@@ -4700,6 +4736,7 @@ export default function AppointmentRequestForm() {
                   alerts: petAlerts.get(p.id) ?? null,
                   needsCalmingMedications:
                     formData.petSpecificData?.[p.id]?.needsCalmingMedications || undefined,
+                  weight: formData.petSpecificData?.[p.id]?.weight?.trim() || undefined,
                 };
               }),
               // New pets added by existing client (only if selected and not an abandoned blank stub)
@@ -4776,6 +4813,7 @@ export default function AppointmentRequestForm() {
                   isSelected: formData.selectedPetIds.includes(p.id),
                   needsCalmingMedications:
                     formData.petSpecificData?.[p.id]?.needsCalmingMedications || undefined,
+                  weight: formData.petSpecificData?.[p.id]?.weight?.trim() || undefined,
                 };
               }) : []),
               // New pets added by existing client (omit abandoned blank stubs)
@@ -6031,9 +6069,11 @@ export default function AppointmentRequestForm() {
                 paddingTop: 20,
                 borderTop: '1px solid #d1d5db',
               }}
+              data-form-field="previousVeterinaryPractices"
             >
               <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                Which veterinary practice(s), including specialists, have you used previously for your pet(s)?
+                Which veterinary practice(s), including specialists, have you used previously for your pet(s)?{' '}
+                <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <textarea
                 value={formData.previousVeterinaryPractices || ''}
@@ -6042,13 +6082,18 @@ export default function AppointmentRequestForm() {
                 style={{
                   width: '100%',
                   padding: newClientInputPadding,
-                  border: '1px solid #d1d5db',
+                  border: `1px solid ${errors.previousVeterinaryPractices ? '#ef4444' : '#d1d5db'}`,
                   borderRadius: newClientInputRadius,
                   fontSize: '14px',
                   fontFamily: 'inherit',
                   resize: 'vertical',
                 }}
               />
+              {errors.previousVeterinaryPractices && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                  {errors.previousVeterinaryPractices}
+                </div>
+              )}
               <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
                 On the next step you can upload photos or a PDF of those records so we can see your pet sooner. If you don&apos;t have them, we will contact the practice(s) listed above.
               </p>
@@ -6409,7 +6454,7 @@ export default function AppointmentRequestForm() {
                         data-form-field={`newClientPet.${pet.id}.weight`}
                       >
                         <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                          Weight
+                          Weight <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
                           type="text"
@@ -6419,11 +6464,16 @@ export default function AppointmentRequestForm() {
                           style={{
                             width: '100%',
                             padding: newClientInputPadding,
-                            border: '1px solid #d1d5db',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                             borderRadius: newClientInputRadius,
                             fontSize: '14px',
                           }}
                         />
+                        {errors[`newClientPet.${pet.id}.weight`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.weight`]}
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ marginBottom: petFieldMb }} data-form-field={`newClientPet.${pet.id}.sex`}>
@@ -6647,9 +6697,12 @@ export default function AppointmentRequestForm() {
                         </div>
                       </div>
 
-                      <div style={{ marginBottom: petFieldMb, maxWidth: isMobile ? '100%' : 200 }}>
+                      <div
+                        style={{ marginBottom: petFieldMb, maxWidth: isMobile ? '100%' : 200 }}
+                        data-form-field={`newClientPet.${pet.id}.weight`}
+                      >
                         <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                          Weight
+                          Weight <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
                           type="text"
@@ -6658,12 +6711,17 @@ export default function AppointmentRequestForm() {
                           placeholder="e.g. 45 lbs"
                           style={{
                             padding: '8px',
-                            border: '1px solid #d1d5db',
+                            border: `1px solid ${errors[`newClientPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                             borderRadius: '6px',
                             fontSize: '14px',
                             width: '100%',
                           }}
                         />
+                        {errors[`newClientPet.${pet.id}.weight`] && (
+                          <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                            {errors[`newClientPet.${pet.id}.weight`]}
+                          </div>
+                        )}
                       </div>
 
                       {/* Calming medications & muzzle */}
@@ -7228,9 +7286,10 @@ export default function AppointmentRequestForm() {
               </>
             )}
 
-            <div style={{ marginBottom: '20px' }}>
+            <div style={{ marginBottom: '20px' }} data-form-field="hadVetCareElsewhere">
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                Did your pet(s) get veterinary care from another hospital (e.g. specialists, emergency, etc.) since the last time we saw your pet(s)?
+                Did your pet(s) get veterinary care from another hospital (e.g. specialists, emergency, etc.) since the last time we saw your pet(s)?{' '}
+                <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['Yes', 'No'].map((option) => (
@@ -7242,7 +7301,13 @@ export default function AppointmentRequestForm() {
                       gap: '8px',
                       cursor: 'pointer',
                       padding: '12px',
-                      border: `1px solid ${formData.hadVetCareElsewhere === option ? '#10b981' : '#d1d5db'}`,
+                      border: `1px solid ${
+                        formData.hadVetCareElsewhere === option
+                          ? '#10b981'
+                          : errors.hadVetCareElsewhere
+                            ? '#ef4444'
+                            : '#d1d5db'
+                      }`,
                       borderRadius: '8px',
                       backgroundColor: formData.hadVetCareElsewhere === option ? '#f0fdf4' : '#fff',
                       flex: 1,
@@ -7260,13 +7325,19 @@ export default function AppointmentRequestForm() {
                   </label>
                 ))}
               </div>
+              {errors.hadVetCareElsewhere && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                  {errors.hadVetCareElsewhere}
+                </div>
+              )}
             </div>
 
             {formData.hadVetCareElsewhere === 'Yes' && (
               <>
-                <div style={{ marginBottom: '20px' }}>
+                <div style={{ marginBottom: '20px' }} data-form-field="previousVeterinaryHospitals">
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please let us know which veterinary hospitals you went to.
+                    Please let us know which veterinary hospitals you went to.{' '}
+                    <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <textarea
                     value={formData.previousVeterinaryHospitals || ''}
@@ -7275,12 +7346,17 @@ export default function AppointmentRequestForm() {
                     style={{
                       width: '100%',
                       padding: '12px',
-                      border: '1px solid #d1d5db',
+                      border: `1px solid ${errors.previousVeterinaryHospitals ? '#ef4444' : '#d1d5db'}`,
                       borderRadius: '8px',
                       fontSize: '14px',
                       fontFamily: 'inherit',
                     }}
                   />
+                  {errors.previousVeterinaryHospitals && (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                      {errors.previousVeterinaryHospitals}
+                    </div>
+                  )}
                 </div>
 
                 {renderRecordsFields('existing')}
@@ -7789,7 +7865,7 @@ export default function AppointmentRequestForm() {
                               fontSize: '14px',
                             }}
                           >
-                            Weight
+                            Weight <span style={{ color: '#ef4444' }}>*</span>
                           </label>
                           <input
                             type="text"
@@ -7799,11 +7875,16 @@ export default function AppointmentRequestForm() {
                             style={{
                               width: '100%',
                               padding: ecInputPadding,
-                              border: '1px solid #d1d5db',
+                              border: `1px solid ${errors[`existingClientNewPet.${pet.id}.weight`] ? '#ef4444' : '#d1d5db'}`,
                               borderRadius: ecInputRadius,
                               fontSize: '14px',
                             }}
                           />
+                          {errors[`existingClientNewPet.${pet.id}.weight`] && (
+                            <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                              {errors[`existingClientNewPet.${pet.id}.weight`]}
+                            </div>
+                          )}
                         </div>
 
                         <div style={{ marginBottom: ecFieldMb }} data-form-field={`existingClientNewPet.${pet.id}.sex`}>
