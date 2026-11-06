@@ -146,6 +146,20 @@ function extractEmployeeIdFromToken(token: string | null): string | null {
   }
 }
 
+/** Login email claim — used when localStorage `vayd_email` was cleared but the session token remains. */
+function extractEmailFromToken(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const payload = decodeJwt(token);
+    const raw = payload?.email ?? payload?.user?.email ?? null;
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    return s && s.includes('@') ? s : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
@@ -157,7 +171,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [email, setEmail] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('vayd_email');
+      const stored = localStorage.getItem('vayd_email');
+      if (stored?.trim()) return stored;
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
+      const fromJwt = extractEmailFromToken(token);
+      if (fromJwt) {
+        try {
+          localStorage.setItem('vayd_email', fromJwt);
+        } catch {}
+        return fromJwt;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -263,6 +287,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const jwtEmployeeId = extractEmployeeIdFromToken(tokenState);
       if (jwtEmployeeId) {
         setEmployeeId(jwtEmployeeId);
+      }
+      const jwtEmail = extractEmailFromToken(tokenState);
+      if (jwtEmail) {
+        setEmail((prev) => {
+          if (prev?.trim()) return prev;
+          try {
+            localStorage.setItem('vayd_email', jwtEmail);
+          } catch {}
+          return jwtEmail;
+        });
       }
     } else {
       setRole([]);

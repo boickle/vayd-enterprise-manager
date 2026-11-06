@@ -87,7 +87,7 @@ import {
 import { lookupClientZoneForAddress } from '../api/zoneLookup';
 import {
   buildSendSlotOfferPayload,
-  clFirstNameFromStaffEmail,
+  resolveClFirstNameForOffer,
   resolveSlotOfferClientId,
   resolveSlotOfferPetIds,
   resolveSlotOfferBookNotes,
@@ -3015,7 +3015,12 @@ export function SchedulerBookModal({
       petIds,
       doctorId: Number(providerId),
       appointmentTypeId: Number(typeId),
-      clFirstName: clFirstNameFromStaffEmail(userEmail),
+      clFirstName: resolveClFirstNameForOffer({
+        token,
+        userEmail,
+        doctorId,
+        providers,
+      }),
       zoneId,
     });
     if ('error' in built) return { error: built.error };
