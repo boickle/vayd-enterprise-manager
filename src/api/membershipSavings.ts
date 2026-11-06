@@ -56,3 +56,23 @@ export async function fetchMyMembershipSavings(): Promise<ClientPortalPetSavings
   const { data } = await http.get('/membership-savings/client/mine');
   return Array.isArray(data?.pets) ? data.pets : [];
 }
+
+export type LastMembershipEmail = {
+  kind: 'membership_promotion' | 'post_appointment_membership';
+  sentAt: string;
+  openedAt: string | null;
+};
+
+/** Staff: the same savings breakdown the client sees, plus the last membership email sent to them. */
+export async function fetchClientMembershipSavings(clientId: number | string): Promise<{
+  pets: ClientPortalPetSavings[];
+  lastEmail: LastMembershipEmail | null;
+}> {
+  const { data } = await http.get(
+    `/membership-savings/client/${encodeURIComponent(String(clientId))}`
+  );
+  return {
+    pets: Array.isArray(data?.pets) ? data.pets : [],
+    lastEmail: data?.lastEmail ?? null,
+  };
+}

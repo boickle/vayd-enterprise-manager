@@ -8,6 +8,7 @@ import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import { APPOINTMENTS_PATH_PREFIX, APPOINTMENT_SEARCH_PATH } from '../appointments-nav';
 import { HOLDS_PATH } from '../holds-nav';
 import { EXIT_SURVEY_PATH } from '../tools-tabs';
+import { MEMBERSHIP_COMPARISON_PATH } from '../membership-comparison-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
@@ -68,6 +69,7 @@ function SchedulingSubmenuLinks({
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
+  const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
     <>
       {showRouting ? (
@@ -150,6 +152,19 @@ function SchedulingSubmenuLinks({
         }}
       >
         Exit Survey
+      </Link>
+      <Link
+        to={MEMBERSHIP_COMPARISON_PATH}
+        className={`schedule-app__settings-link${
+          membershipComparisonActive ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={(e) => {
+          if (blockScheduleNavLeave(e)) return;
+          onNavigate();
+        }}
+      >
+        Membership Comparison
       </Link>
     </>
   );
@@ -417,7 +432,8 @@ export default function NavbarScheduleHorizontalNav() {
           location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
           location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
           location.pathname.startsWith(HOLDS_PATH) ||
-          location.pathname.startsWith(EXIT_SURVEY_PATH)
+          location.pathname.startsWith(EXIT_SURVEY_PATH) ||
+          location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH)
         );
       case 'settings':
         return location.pathname.startsWith('/schedule/settings');
@@ -506,7 +522,8 @@ export default function NavbarScheduleHorizontalNav() {
                 location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
                 location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
                 location.pathname.startsWith(HOLDS_PATH) ||
-                location.pathname.startsWith(EXIT_SURVEY_PATH)
+                location.pathname.startsWith(EXIT_SURVEY_PATH) ||
+                location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH)
                   ? ' schedule-app__tab--active'
                   : ''
               }`}
