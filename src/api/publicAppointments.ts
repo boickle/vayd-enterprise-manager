@@ -72,6 +72,8 @@ export type AvailabilityRequest = {
   patientIds?: number[];
   /** New client is uploading records — server uses the existing-client lead time unless a pet needs pre-meds or a muzzle. */
   clientUploadedRecords?: boolean;
+  /** Tokens from record checks. The server honors clientUploadedRecords only when these cover every new pet. */
+  recordCheckTokens?: string[];
 };
 
 export type RoutingVisitPetInput = {
