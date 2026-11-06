@@ -64,7 +64,13 @@ function statusHeadline(
   }
   switch (data.status) {
     case 'accepted':
-      return `Hi, ${firstName}. You're all set!`;
+      return data.partiallyBooked
+        ? `Hi, ${firstName}. Part of this visit is booked.`
+        : `Hi, ${firstName}. You're all set!`;
+    case 'closed':
+      return 'Your care team will be in touch';
+    case 'already_booked':
+      return `Hi, ${firstName}. You're already booked.`;
     case 'expired':
       return inDeclineForm
         ? `Hi, ${firstName}. Share your preferred times.`
@@ -251,10 +257,15 @@ export default function SlotOfferConfirmPage() {
     setBusy('confirm');
     setError(null);
     try {
-      await tapSlotOffer(t);
-      setResultMessage(null);
+      const res = await tapSlotOffer(t);
       setShowDeclineForm(false);
       await load();
+      // SCH-09: these answers explain why nothing (or not everything) was booked.
+      setResultMessage(
+        res.outcome === 'closed' || res.outcome === 'already_booked' || res.outcome === 'partial'
+          ? res.message?.trim() || null
+          : null
+      );
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -366,7 +377,7 @@ export default function SlotOfferConfirmPage() {
               </p>
             ) : data.status === 'accepted' ? (
               <p className="survey-success-blurb" style={{ textAlign: 'center', lineHeight: 1.6, marginTop: 16 }}>
-                See you then!
+                {data.partiallyBooked && data.message?.trim() ? data.message.trim() : 'See you then!'}
               </p>
             ) : showUnavailableMessage ? (
               <p className="survey-success-blurb" style={{ textAlign: 'center', lineHeight: 1.6 }}>

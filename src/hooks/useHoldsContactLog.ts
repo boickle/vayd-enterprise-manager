@@ -10,8 +10,9 @@ import {
 import { buildPatientReminderOutreachIndex } from '../utils/reminderWorkingNotes';
 import { resolveHoldSubmissionId } from '../utils/holdsOpenInScheduler';
 import type { HoldHouseholdGroup } from '../utils/holdsHousehold';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export type HoldGroupContactLogMeta = {
   contextNote: string | null;

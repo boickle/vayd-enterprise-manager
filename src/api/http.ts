@@ -1,8 +1,16 @@
 // src/api/http.ts
 import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
+import { leaveImpersonation, readImpersonation } from '../auth/impersonationSession';
 
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const baseURL = apiBaseUrl;
+
+/** The API picks the practice from this host (e.g. acme.scoutpims.com) when there is no token. */
+export const PRACTICE_HOST_HEADER = 'X-Scout-Host';
+
+export function practiceHostHeaders(): Record<string, string> {
+  return typeof window === 'undefined' ? {} : { [PRACTICE_HOST_HEADER]: window.location.host };
+}
 
 // Initialize token from localStorage on module load
 // Support both old token format and new accessToken format for migration
@@ -145,6 +153,11 @@ function clearAutoLogout() {
 }
 
 async function attemptTokenRefresh(): Promise<boolean> {
+  // View-as tokens can't be refreshed; expiry returns the superadmin to their own sign-in.
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return false;
+  }
   console.log('[Token Refresh] 🔄 attemptTokenRefresh() called', new Error().stack?.split('\n')[2]?.trim());
   
   // Check if a refresh is already in progress - if so, wait for it instead of starting a new one
@@ -259,6 +272,10 @@ export function setLogoutHandler(fn: () => void) {
   logoutHandler = fn;
 }
 export function forceLogout() {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return;
+  }
   const stack = new Error().stack;
   const caller = stack?.split('\n')[2]?.trim() || 'unknown';
   const fullStack = stack?.split('\n').slice(0, 10).join('\n') || 'no stack';
@@ -302,7 +319,7 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
     const response = await axios.post(
       `${baseURL}/auth/refresh`,
       { refreshToken },
-      { withCredentials: false }
+      { withCredentials: false, headers: practiceHostHeaders() }
     );
     console.log('[Token Refresh] 🔐 Refresh response received:', {
       hasAccessToken: !!response.data?.accessToken,
@@ -384,6 +401,10 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
 
 // Refresh access token with deduplication - in-tab (single promise) and cross-tab (localStorage lock).
 async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promise<string | null> {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return null;
+  }
   const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
   console.log(`[Token Refresh] 🔄 refreshAccessToken() called from: ${caller}, shouldLogoutOnFailure: ${shouldLogoutOnFailure}`);
   console.log(`[Token Refresh] 🔄 Current state: refreshPromise=${!!refreshPromise}`);
@@ -523,14 +544,79 @@ http.interceptors.request.use((config) => {
   if (!headers.has('Authorization') && currentToken) {
     headers.set('Authorization', `Bearer ${currentToken}`);
   }
+  for (const [name, value] of Object.entries(practiceHostHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
 
   config.headers = headers as AxiosRequestHeaders;
   return config;
 });
 
+/**
+ * Offline detection. A request that never got an HTTP answer (dropped connection, no signal, timeout)
+ * is a network error; a 4xx/5xx is not. The banner shows while the browser says it is offline or the last
+ * request failed this way, and clears when the browser is back online or a request succeeds.
+ */
+export function isNetworkError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  if (axios.isCancel(e)) return false;
+  const err = e as { isAxiosError?: boolean; response?: unknown; code?: string; request?: unknown };
+  if (!err.isAxiosError || err.response) return false;
+  return err.code === 'ERR_NETWORK' || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || Boolean(err.request);
+}
+
+const browserOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false;
+let requestFailedOffline = false;
+let browserOffline = !browserOnline();
+const networkListeners = new Set<() => void>();
+const emitNetwork = () => networkListeners.forEach((fn) => fn());
+
+export function isOffline(): boolean {
+  return browserOffline || requestFailedOffline;
+}
+
+export function subscribeNetworkStatus(fn: () => void): () => void {
+  networkListeners.add(fn);
+  return () => networkListeners.delete(fn);
+}
+
+function setNetworkState(next: { browserOffline?: boolean; requestFailedOffline?: boolean }) {
+  const before = isOffline();
+  if (next.browserOffline !== undefined) browserOffline = next.browserOffline;
+  if (next.requestFailedOffline !== undefined) requestFailedOffline = next.requestFailedOffline;
+  if (before !== isOffline()) emitNetwork();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => setNetworkState({ browserOffline: true }));
+  window.addEventListener('online', () =>
+    setNetworkState({ browserOffline: false, requestFailedOffline: false })
+  );
+}
+
+/** For tests. */
+export function resetNetworkStatusForTests() {
+  browserOffline = !browserOnline();
+  requestFailedOffline = false;
+  emitNetwork();
+}
+
+export const NOT_CHARGED_OFFLINE_MESSAGE =
+  'Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns.';
+
+/** Payment errors: a dropped connection gets the plain "not charged" message; anything else is unchanged. */
+export function paymentErrorMessage(e: unknown): string {
+  return isNetworkError(e) ? NOT_CHARGED_OFFLINE_MESSAGE : apiErrorMessage(e);
+}
+
 http.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    setNetworkState({ requestFailedOffline: false });
+    return res;
+  },
   async (error: AxiosError) => {
+    if (isNetworkError(error)) setNetworkState({ requestFailedOffline: true });
+    else if (error?.response) setNetworkState({ requestFailedOffline: false });
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
     // Handle 401 Unauthorized - try to refresh token
@@ -610,4 +696,12 @@ http.interceptors.response.use(
 export function postWithToken<T = any>(path: string, data: any, tokenOverride: string) {
   const headers = new AxiosHeaders({ Authorization: `Bearer ${tokenOverride}` });
   return http.post<T>(path, data, { headers });
+}
+
+export function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (typeof message === 'string' && message.trim()) return message;
+  return e instanceof Error ? e.message : 'Request failed';
 }

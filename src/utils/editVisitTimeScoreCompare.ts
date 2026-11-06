@@ -7,6 +7,11 @@ import {
   isEditVisitPreviewUnavailableError,
   resolveEditVisitRoutingDoctorId,
 } from './editVisitPreviewApi';
+import {
+  arrivalWindowChangeLine,
+  editVisitPremedsChanged,
+  premedsWindowLine,
+} from './editVisitTypeScoreCompare';
 
 export type { EditVisitPreviewScoreCompare };
 
@@ -17,6 +22,8 @@ export async function fetchEditVisitTimeScoreCompare(args: {
   practiceDateKey: string;
   providers: readonly Provider[];
   calendarProvider?: Provider | null;
+  newNeedsPremeds?: boolean;
+  practiceTz: string;
 }): Promise<EditVisitPreviewScoreCompare> {
   const { appt, newAppointmentStartIso, newAppointmentEndIso, practiceDateKey } = args;
   const doctorPimsId = resolveEditVisitRoutingDoctorId(
@@ -59,8 +66,18 @@ export async function fetchEditVisitTimeScoreCompare(args: {
       appointmentId: apptId,
       newAppointmentStartIso,
       newAppointmentEndIso,
+      ...(typeof args.newNeedsPremeds === 'boolean' ? { newNeedsPremeds: args.newNeedsPremeds } : {}),
       useTraffic: true,
     });
+
+    const premedsChanged = editVisitPremedsChanged(appt, args.newNeedsPremeds);
+    const changeLine = premedsChanged
+      ? arrivalWindowChangeLine(preview.arrivalWindow, args.practiceTz)
+      : null;
+    const arrivalWindowAfter =
+      premedsChanged && preview.arrivalWindow?.after?.startIso && preview.arrivalWindow?.after?.endIso
+        ? preview.arrivalWindow.after
+        : null;
 
     return buildEditVisitPreviewScoreCompare({
       original: preview.original,
@@ -69,6 +86,13 @@ export async function fetchEditVisitTimeScoreCompare(args: {
       context: 'time',
       apptId,
       feedbackHandoffRaw: preview.feedbackHandoff,
+      ...(premedsChanged
+        ? {
+            windowLine: premedsWindowLine(args.newNeedsPremeds === true, changeLine),
+            windowWarningMayChange: Boolean(changeLine),
+            arrivalWindowAfter,
+          }
+        : {}),
     });
   } catch (err: unknown) {
     if (isEditVisitPreviewUnavailableError(err)) {

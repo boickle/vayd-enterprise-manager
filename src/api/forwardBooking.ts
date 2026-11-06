@@ -119,6 +119,8 @@ export type ForwardBookingEntry = {
   appointmentTypeId?: number | null;
   appointmentTypeName?: string | null;
   serviceMinutes?: number | null;
+  /** Follow-up needs pre-meds — booked visit gets the pre-meds arrival window. */
+  needsPremeds?: boolean;
   description?: string | null;
   instructions?: string | null;
   client?: ForwardBookingClientRef | null;
@@ -352,6 +354,7 @@ export type CreateForwardBookingPayload = {
   description?: string | null;
   instructions?: string | null;
   serviceMinutes?: number;
+  needsPremeds?: boolean;
   note?: string | null;
   bookingNotes?: string | null;
   /** Omit to infer `end_visit` when `sourceAppointmentId` is set, else `manual`. */
@@ -422,6 +425,7 @@ export type PatchForwardBookingBody = {
   intervalUnit?: ForwardBookingIntervalUnit;
   /** Send `null` to clear. Pending and booked rows only. */
   primaryProviderId?: number | null;
+  needsPremeds?: boolean;
 };
 
 /**

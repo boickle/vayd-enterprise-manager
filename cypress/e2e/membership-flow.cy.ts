@@ -4,7 +4,7 @@
  * Membership Purchase Flow Tests
  * 
  * Tests the complete membership signup flow including:
- * - Plan selection (Foundations, Golden, Comfort Care)
+ * - Plan selection (Foundations, Golden)
  * - Add-on selection (Puppy/Kitten; PLUS retired)
  * - Billing preference (monthly/annual)
  * - Total calculation verification
@@ -68,18 +68,7 @@ describe('Membership Purchase Flow', () => {
   /**
    * Helper to select a plan
    */
-  function selectPlan(planName: 'Foundations' | 'Golden' | 'Comfort Care') {
-    // First answer the comfort care question if needed
-    cy.get('body').then(($body) => {
-      if ($body.find('button:contains("No"), button:contains("Yes, show Comfort Care")').length > 0) {
-        if (planName === 'Comfort Care') {
-          cy.contains('button', 'Yes, show Comfort Care').click();
-        } else {
-          cy.contains('button', 'No').click();
-        }
-      }
-    });
-
+  function selectPlan(planName: 'Foundations' | 'Golden') {
     // Wait a moment for plans to appear
     cy.wait(500);
 
@@ -277,9 +266,6 @@ describe('Membership Purchase Flow', () => {
     it('should complete Foundations plan (monthly) for cat using Templeton', () => {
       navigateToMembershipSignup('Templeton');
 
-      // Answer comfort care question
-      cy.contains('button', 'No').click();
-
       // Select Foundations plan
       selectPlan('Foundations');
 
@@ -351,50 +337,6 @@ describe('Membership Purchase Flow', () => {
     });
   });
 
-  describe('Comfort Care Plan Scenarios', () => {
-    it('should complete Comfort Care plan (monthly only) using Templeton', () => {
-      navigateToMembershipSignup('Templeton');
-      
-      // Select Comfort Care
-      cy.contains('button', 'Yes, show Comfort Care').click();
-      
-      // Wait for Comfort Care plan to appear
-      cy.wait(1000);
-      
-      // Explicitly select Comfort Care plan (it may not auto-select)
-      selectPlan('Comfort Care');
-      
-      // Verify plan is selected
-      cy.contains('h3', 'Comfort Care')
-        .parents('.cp-plan-card')
-        .should('have.class', 'selected');
-      
-      // Wait for cost summary to appear and calculate
-      cy.wait(2000);
-      
-      // Wait a bit more for price calculations
-      cy.wait(1000);
-      
-      // Verify cost summary appears (skip exact price check since Comfort Care price may vary)
-      cy.contains('Cost Summary', { timeout: 5000 }).should('be.visible');
-      cy.get('[class*="cp-cost"], [class*="cost-summary"]').should('be.visible');
-      
-      acceptAgreementAndProceed();
-      
-      // Verify we're on payment page (we'll verify exact amount there if needed)
-      cy.url().should('include', '/membership-payment');
-      
-      // Wait a moment for page to load
-      cy.wait(500);
-      
-      // Verify payment page elements are present (check in body text instead of requiring visibility)
-      cy.get('body', { timeout: 5000 }).should('satisfy', ($body) => {
-        const bodyText = $body.text().toLowerCase();
-        return bodyText.includes('payment') || bodyText.includes('checkout') || bodyText.includes('credit card');
-      });
-    });
-  });
-
   describe('Add-on Scenarios', () => {
     it.skip('PLUS Add-on retired — was Foundations + PLUS (monthly) for cat using Templeton', () => {
       navigateToMembershipSignup('Templeton');
@@ -425,10 +367,6 @@ describe('Membership Purchase Flow', () => {
 
     it.skip('should complete Foundations + Puppy/Kitten (monthly) for kitten using Newey', () => {
       navigateToMembershipSignup('Newey');
-      
-      // Answer comfort care question
-      cy.contains('button', 'No').click();
-      cy.wait(500);
       
       // Answer starter question if it appears (for puppies/kittens)
       cy.get('body').then(($body) => {
@@ -531,7 +469,6 @@ describe('Membership Purchase Flow', () => {
         { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: [], expected: 69 },
         { plan: 'Golden', species: 'dog', billing: 'monthly', addons: [], expected: 99 },
         { plan: 'Golden', species: 'cat', billing: 'monthly', addons: [], expected: 89 },
-        { plan: 'Comfort Care', species: null, billing: 'monthly', addons: [], expected: 289 },
         
         // Base plans - annual
         { plan: 'Foundations', species: 'dog', billing: 'annual', addons: [], expected: 749 },
@@ -556,13 +493,7 @@ describe('Membership Purchase Flow', () => {
       
       // This is a simplified test - in practice, you'd iterate through test cases
       // For now, we'll test one representative case
-      if (testCase.plan === 'Comfort Care') {
-        cy.contains('button', 'Yes, show Comfort Care').click();
-      } else {
-        cy.contains('button', 'No').click();
-        cy.wait(500);
-        selectPlan(testCase.plan as 'Foundations' | 'Golden');
-      }
+      selectPlan(testCase.plan as 'Foundations' | 'Golden');
       
       if (testCase.addons.includes('Puppy/Kitten')) {
         cy.get('body').then(($body) => {

@@ -50,8 +50,9 @@ import {
   formatIsoInPracticeZone,
 } from '../utils/practiceTimezone';
 import { Heart } from 'lucide-react';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /* =========================================================================
    Public props
@@ -772,6 +773,7 @@ export default function DoctorDay({
             endIso: h.endIso,
             effectiveWindow: h.primary?.effectiveWindow,
             appointmentType: (h.primary as any)?.appointmentType ?? null,
+            needsPremeds: (h.primary as any)?.needsPremeds,
             practiceTz: practiceTimeZone,
           }),
           isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,

@@ -6,6 +6,7 @@ import {
   loadRoutingPatientHoverSummary,
   type RoutingPatientHoverSummary,
 } from '../utils/routingPatientHoverData';
+import type { ForwardBookingInterval } from '../utils/forwardBookingFromAppointment';
 import './BookPatientChartButton.css';
 
 type Props = {
@@ -21,6 +22,11 @@ type Props = {
   excludeAppointmentId?: string | number | null;
   className?: string;
   label?: string;
+  /** Copy a reminder due date onto the open prescription refill expiration. */
+  onApplyRefillExpiration?: (dateInput: string) => void;
+  /** Source visit for forward-book interval links in patient details. */
+  forwardBookingSourceStartIso?: string | null;
+  onApplyForwardBookingInterval?: (interval: ForwardBookingInterval) => void;
 };
 
 export function BookPatientChartButton({
@@ -34,6 +40,9 @@ export function BookPatientChartButton({
   excludeAppointmentId = null,
   className,
   label = 'Patient details',
+  onApplyRefillExpiration,
+  forwardBookingSourceStartIso = null,
+  onApplyForwardBookingInterval,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -139,6 +148,25 @@ export function BookPatientChartButton({
                     error={error}
                     showAlerts={showAlerts}
                     showHeader={false}
+                    onChanged={() => void loadSummary()}
+                    onApplyRefillExpiration={
+                      onApplyRefillExpiration
+                        ? (dateInput) => {
+                            onApplyRefillExpiration(dateInput);
+                            close();
+                          }
+                        : undefined
+                    }
+                    forwardBookingSourceStartIso={forwardBookingSourceStartIso}
+                    practiceTz={practiceTz}
+                    onApplyForwardBookingInterval={
+                      onApplyForwardBookingInterval
+                        ? (interval) => {
+                            onApplyForwardBookingInterval(interval);
+                            close();
+                          }
+                        : undefined
+                    }
                   />
                 </div>
               </div>

@@ -42,12 +42,41 @@ export async function getCurrentUser() {
   return http.get('/users');
 }
 
+export async function patchUserUiPrefs(body: {
+  clientLayout?: Record<string, unknown>;
+  patientLayout?: Record<string, unknown>;
+}) {
+  const { data } = await http.patch('/users/ui-prefs', body);
+  return data as {
+    clientLayout?: Record<string, unknown>;
+    patientLayout?: Record<string, unknown>;
+  };
+}
+
 // Update communication preferences
-export async function updateCommunicationPreferences(allowEmail?: boolean, allowText?: boolean) {
-  const body: { allowEmail?: boolean; allowText?: boolean } = {};
+export async function updateCommunicationPreferences(
+  allowEmail?: boolean,
+  allowText?: boolean,
+  extras?: { preferPhone?: boolean; doNotSendReminders?: boolean }
+) {
+  const body: {
+    allowEmail?: boolean;
+    allowText?: boolean;
+    preferPhone?: boolean;
+    doNotSendReminders?: boolean;
+  } = {};
   if (allowEmail !== undefined) body.allowEmail = allowEmail;
   if (allowText !== undefined) body.allowText = allowText;
+  if (extras?.preferPhone !== undefined) body.preferPhone = extras.preferPhone;
+  if (extras?.doNotSendReminders !== undefined) body.doNotSendReminders = extras.doNotSendReminders;
   return http.post('/users/communication-preferences', body);
+}
+
+export async function sendClientPortalAccess(
+  clientId: number
+): Promise<{ ok: boolean; invited: boolean }> {
+  const { data } = await http.post('/users/send-client-portal-access', { clientId });
+  return data;
 }
 
 /** Scout login roles managed in Admin → Users. */
@@ -67,6 +96,8 @@ export type AdminManagedUser = {
   doctorId: number | null;
   employeeName: string | null;
   doctorName: string | null;
+  /** The doctor's default person (room loader emails, mail-order approval tasks). */
+  isDoctorDefault?: boolean;
   clientId?: number | null;
   clientName?: string | null;
   isActive: boolean;
@@ -76,6 +107,7 @@ export type AdminManagedUser = {
 };
 
 export type UpdateAdminUserPayload = {
+  email?: string;
   role?: ScoutUserRole | string;
   employeeId?: number | null;
   doctorId?: number | null;
@@ -86,6 +118,7 @@ export type ListAdminUsersParams = {
   q?: string;
   role?: string;
   isActive?: boolean;
+  employeeId?: number;
 };
 
 export async function fetchAdminUsers(
@@ -95,6 +128,7 @@ export async function fetchAdminUsers(
     params: {
       q: params.q || undefined,
       role: params.role || undefined,
+      employeeId: params.employeeId,
       isActive:
         params.isActive === undefined ? undefined : params.isActive ? 'true' : 'false',
     },
@@ -119,5 +153,43 @@ export async function adminSendPasswordReset(
   userId: number,
 ): Promise<{ status: string }> {
   const { data } = await http.post(`/admin/users/${userId}/reset-password`);
+  return data;
+}
+
+/** An employee's login and who they work with (Settings → Staff → Profile). */
+export type StaffLogin = {
+  userId: number;
+  email: string | null;
+  isActive: boolean;
+  doctorId: number | null;
+  doctorName: string | null;
+  isDoctorDefault: boolean;
+};
+
+export async function getStaffLogin(practiceId: number, employeeId: number) {
+  const { data } = await http.get<StaffLogin | null>(
+    `/practice/${practiceId}/staff-logins/${employeeId}`
+  );
+  return data ?? null;
+}
+
+/** Practice manager and above. Marking someone the default clears it from the doctor's others. */
+export async function setStaffWorksWith(
+  practiceId: number,
+  employeeId: number,
+  body: { doctorId: number | null; isDoctorDefault: boolean }
+) {
+  const { data } = await http.put<StaffLogin | null>(
+    `/practice/${practiceId}/staff-logins/${employeeId}/works-with`,
+    body
+  );
+  return data ?? null;
+}
+
+/** Practice manager and above. Uses the employee's email and emails them a temporary password. */
+export async function createStaffLogin(practiceId: number, employeeId: number) {
+  const { data } = await http.post<{ message: string; login: StaffLogin | null }>(
+    `/practice/${practiceId}/staff-logins/${employeeId}`
+  );
   return data;
 }

@@ -1,0 +1,105 @@
+.mail-rx-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.mail-rx-decision__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 20px;
+}
+
+.mail-rx-decision__field--exp {
+  flex: 1 1 200px;
+  min-width: min(100%, 220px);
+}
+
+.mail-rx-decision__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.mail-rx-decision__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mail-rx-decision__hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.mail-rx-decision__seg {
+  display: inline-flex;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.mail-rx-decision__seg button {
+  padding: 6px 14px;
+  border: 0;
+  background: #fff;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mail-rx-decision__seg button + button {
+  border-left: 1px solid #99f6e4;
+}
+
+.mail-rx-decision__seg button.is-on {
+  background: #0f766e;
+  color: #fff;
+}
+
+.mail-rx-decision__refills {
+  max-width: 110px;
+}
+
+.mail-rx-decision__date {
+  max-width: 180px;
+}
+
+.mail-rx-decision__cap-note {
+  margin: 4px 0 0;
+  max-width: 280px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #64748b;
+}
+
+.mail-rx-decision__chips {
+  display: flex;
+  gap: 4px;
+}
+
+.mail-rx-decision__chip {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mail-rx-decision__chip.is-on {
+  background: #0f766e;
+  color: #fff;
+}

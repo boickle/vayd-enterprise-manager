@@ -1,0 +1,94 @@
+.record-history {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.record-history-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.record-history-link:hover {
+  text-decoration: underline;
+}
+
+.record-history-panel {
+  max-width: 560px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #334155;
+}
+
+.record-history-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.record-history-list time {
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.record-history-empty,
+.record-history-error {
+  margin: 0;
+}
+
+.record-history-error {
+  color: #b91c1c;
+}
+
+/* Staff-only: never part of a printed record. */
+@media print {
+  .record-history {
+    display: none !important;
+  }
+}
+
+/* The pet's History tab on the chart (staff only). */
+.patient-record-history {
+  display: flex;
+  width: 100%;
+  font-size: 13px;
+}
+
+.patient-record-history__note {
+  margin: 0 0 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.patient-record-history__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.patient-record-history__table th,
+.patient-record-history__table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.patient-record-history__table time {
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.patient-record-history__kind {
+  font-weight: 600;
+}

@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DateTime } from 'luxon';
-import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
-import { fetchPrimaryProviders } from '../api/employee';
-import { fetchOpenPhoneCallSummary } from '../api/openphoneCalls';
+import { fetchOpenPhonePhoneNumbers } from '../api/openphoneCalls';
 import { lineKeyForPhone } from '../utils/clientMessagesByLine';
 import { phonesMatchForQuo } from '../utils/quoContact';
 
@@ -13,9 +10,9 @@ export type OpenPhoneLineDirectoryEntry = {
 
 export type OpenPhoneLineDirectory = Map<string, OpenPhoneLineDirectoryEntry>;
 
-function providerLineLabel(firstName?: string | null, lastName?: string | null): string {
-  const name = [firstName, lastName].filter(Boolean).join(' ').trim();
-  return name ? `${name}'s line` : 'Provider line';
+function looksLikePhoneLabel(label: string, phone: string): boolean {
+  if (phonesMatchForQuo(label, phone)) return true;
+  return /^\+?\d[\d\s().-]*$/.test(label.trim());
 }
 
 function mergeDirectoryEntries(
@@ -29,67 +26,54 @@ function mergeDirectoryEntries(
   directory.set(lineKeyForPhone(trimmedPhone), { phone: trimmedPhone, label: trimmedLabel });
 }
 
-/** Reminders + provider Quo lines — fast path for message history labels. */
-async function loadOpenPhoneLineDirectoryCore(): Promise<OpenPhoneLineDirectory> {
-  const directory: OpenPhoneLineDirectory = new Map();
-
-  const [remindersFrom, providers] = await Promise.all([
-    fetchSchedulingOutreachSmsFrom().catch(() => null),
-    fetchPrimaryProviders().catch(() => []),
-  ]);
-
-  if (remindersFrom) {
-    mergeDirectoryEntries(directory, remindersFrom, 'Reminders Line');
-  }
-
-  for (const provider of providers) {
-    const phone = provider.quoLinePhone?.trim();
-    if (!phone) continue;
-    mergeDirectoryEntries(directory, phone, providerLineLabel(provider.firstName, provider.lastName));
-  }
-
-  return directory;
+function quoInboxName(phone: string, name: string | null | undefined): string {
+  const trimmed = name?.trim() ?? '';
+  if (trimmed && !looksLikePhoneLabel(trimmed, phone)) return trimmed;
+  return phone;
 }
 
-async function enrichDirectoryFromCallSummary(
-  directory: OpenPhoneLineDirectory,
-): Promise<OpenPhoneLineDirectory> {
-  const summary = await fetchOpenPhoneCallSummary({
-    from: DateTime.now().minus({ years: 1 }).toISO()!,
-    to: DateTime.now().toISO()!,
-  }).catch(() => null);
+function sortDirectoryLines(directory: OpenPhoneLineDirectory): OpenPhoneLineDirectoryEntry[] {
+  return [...directory.values()].sort((a, b) => {
+    const an = displayNameForQuoLine(a);
+    const bn = displayNameForQuoLine(b);
+    const aNamed = an !== 'Quo line';
+    const bNamed = bn !== 'Quo line';
+    if (aNamed !== bNamed) return aNamed ? -1 : 1;
+    return an.localeCompare(bn) || a.phone.localeCompare(b.phone);
+  });
+}
 
-  if (!summary?.numbers?.length) return directory;
-
-  const next = new Map(directory);
-  for (const row of summary.numbers) {
-    const phone = row.phoneNumber?.trim();
-    if (!phone) continue;
-    const key = lineKeyForPhone(phone);
-    if (next.has(key)) continue;
-    const label = row.label?.trim() || phone;
-    mergeDirectoryEntries(next, phone, label);
+/** Names come from Quo (`GET /v1/phone-numbers` name field), not a local guess list. */
+async function loadOpenPhoneLineDirectoryCore(): Promise<OpenPhoneLineDirectory> {
+  const directory: OpenPhoneLineDirectory = new Map();
+  const lines = await fetchOpenPhonePhoneNumbers().catch(() => []);
+  for (const line of lines) {
+    mergeDirectoryEntries(directory, line.phone, quoInboxName(line.phone, line.name));
   }
-  return next;
+  return directory;
 }
 
 let cachedDirectory: OpenPhoneLineDirectory | null = null;
 let loadPromise: Promise<OpenPhoneLineDirectory> | null = null;
+const directoryListeners = new Set<(directory: OpenPhoneLineDirectory) => void>();
+
+function publishDirectory(next: OpenPhoneLineDirectory): void {
+  cachedDirectory = next;
+  for (const listener of directoryListeners) listener(next);
+}
 
 async function ensureOpenPhoneLineDirectory(): Promise<OpenPhoneLineDirectory> {
-  if (cachedDirectory) return cachedDirectory;
+  if (cachedDirectory && cachedDirectory.size > 0) return cachedDirectory;
   if (loadPromise) return loadPromise;
 
-  loadPromise = (async () => {
-    const core = await loadOpenPhoneLineDirectoryCore();
-    cachedDirectory = core;
-    void enrichDirectoryFromCallSummary(core).then((enriched) => {
-      cachedDirectory = enriched;
+  loadPromise = loadOpenPhoneLineDirectoryCore()
+    .then((directory) => {
+      publishDirectory(directory);
+      return directory;
+    })
+    .finally(() => {
+      loadPromise = null;
     });
-    return core;
-  })().finally(() => {
-    loadPromise = null;
-  });
 
   return loadPromise;
 }
@@ -106,7 +90,15 @@ export function resolveLineDirectoryEntry(
   const key = lineKeyForPhone(linePhone);
   const hit = directory.get(key);
   if (hit) return hit;
+  for (const entry of directory.values()) {
+    if (phonesMatchForQuo(entry.phone, linePhone)) return entry;
+  }
   return { phone: linePhone, label: linePhone };
+}
+
+export function displayNameForQuoLine(entry: OpenPhoneLineDirectoryEntry): string {
+  if (entry.label && !looksLikePhoneLabel(entry.label, entry.phone)) return entry.label;
+  return 'Quo line';
 }
 
 export function directoryEntryMatchesPhone(
@@ -118,6 +110,7 @@ export function directoryEntryMatchesPhone(
 
 export function useOpenPhoneLineDirectory(enabled: boolean): {
   directory: OpenPhoneLineDirectory;
+  lines: OpenPhoneLineDirectoryEntry[];
 } {
   const [directory, setDirectory] = useState<OpenPhoneLineDirectory>(
     () => cachedDirectory ?? new Map(),
@@ -129,20 +122,19 @@ export function useOpenPhoneLineDirectory(enabled: boolean): {
       return;
     }
 
-    if (cachedDirectory) {
-      setDirectory(cachedDirectory);
-      return;
-    }
-
-    let cancelled = false;
+    const onChange = (map: OpenPhoneLineDirectory) => {
+      setDirectory(new Map(map));
+    };
+    directoryListeners.add(onChange);
+    if (cachedDirectory) onChange(cachedDirectory);
     void ensureOpenPhoneLineDirectory().then((map) => {
-      if (!cancelled) setDirectory(map);
+      onChange(map);
     });
 
     return () => {
-      cancelled = true;
+      directoryListeners.delete(onChange);
     };
   }, [enabled]);
 
-  return { directory };
+  return { directory, lines: sortDirectoryLines(directory) };
 }

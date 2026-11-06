@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
 import { X } from 'lucide-react';
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
@@ -12,6 +13,7 @@ import {
   PreviewPopoverClientContact,
   type PreviewPopoverClientContact as PreviewPopoverClientContactType,
 } from './PreviewPopoverClientContact';
+import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
 
 export type RoutingPreviewClientContact = PreviewPopoverClientContactType;
 
@@ -41,6 +43,11 @@ type Props = {
   confirmLabel?: string;
   onBook: () => void;
   onDismiss: () => void;
+  /** Phone: move the calendar ghost to the previous or next result without leaving the preview. */
+  onPrevious?: () => void;
+  onNext?: () => void;
+  /** Phone: hide this card and scroll the results list back into view. */
+  onShowResults?: () => void;
   /** Shown for Optimize: leave the calendar preview and return to the Optimize list. */
   onBack?: () => void;
   backLabel?: string;
@@ -103,6 +110,9 @@ export function RoutingPreviewSlotPopover({
   confirmLabel,
   onBook,
   onDismiss,
+  onPrevious,
+  onNext,
+  onShowResults,
   onBack,
   backLabel,
   onAddAlternative,
@@ -128,11 +138,16 @@ export function RoutingPreviewSlotPopover({
           : isScheduleLoader
             ? 'Schedule loader preview'
             : 'Routing preview';
-  const rangeLabel = formatPreviewRange(
-    String(opt.suggestedStartIso ?? ''),
-    preview.serviceMinutes,
-    practiceTz
-  );
+  const arrivalWindow = opt.arrivalWindow as
+    | { windowStartIso?: string; windowEndIso?: string }
+    | undefined;
+  const awStart = arrivalWindow?.windowStartIso?.trim();
+  const awEnd = arrivalWindow?.windowEndIso?.trim();
+  /** Prefer the routed effective arrival window; zero-width (Fixed Time / HOLD) or missing → visit time. */
+  const hasRealWindow = Boolean(awStart && awEnd && !arrivalWindowIsZeroWidth(awStart, awEnd));
+  const rangeLabel = hasRealWindow
+    ? formatPracticeRange(awStart!, awEnd!, practiceTz)
+    : formatPreviewRange(String(opt.suggestedStartIso ?? ''), preview.serviceMinutes, practiceTz);
   const doctorName = String(opt.doctorName ?? 'Provider').trim();
   const score = typeof opt.score === 'number' ? opt.score : null;
   const clientLabel = preview.clientDisplayLabel?.trim();
@@ -159,6 +174,16 @@ export function RoutingPreviewSlotPopover({
         : null;
   const scoreLineIsUnavailable =
     scoreLine === 'No previous routing score available for this visit.';
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)');
+    const sync = () => setNarrow(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  const showSlotNav = narrow && !isOptimize && (onPrevious || onNext || onShowResults);
+
   const primaryLabel = showOptimizeChooser
     ? 'Reschedule'
     : confirmLabel ??
@@ -207,6 +232,8 @@ export function RoutingPreviewSlotPopover({
                   <span className="scheduler-edit-preview-popover-change-k">
                     {isExplore ? 'Alternative' : 'Now'}
                   </span>
+                ) : hasRealWindow ? (
+                  <span className="scheduler-edit-preview-popover-change-k">Window</span>
                 ) : null}
                 {rangeLabel}
               </p>
@@ -248,6 +275,20 @@ export function RoutingPreviewSlotPopover({
           )}
         </div>
       </div>
+
+      {showSlotNav ? (
+        <div className="scheduler-edit-preview-popover-nav">
+          <button type="button" className="btn secondary" onClick={onPrevious} disabled={!onPrevious}>
+            Prev
+          </button>
+          <button type="button" className="btn secondary" onClick={onNext} disabled={!onNext}>
+            Next slot
+          </button>
+          <button type="button" className="btn secondary" onClick={onShowResults}>
+            Results
+          </button>
+        </div>
+      ) : null}
 
       <div className="scheduler-edit-preview-popover-actions">
         {showOptimizeChooser ? (

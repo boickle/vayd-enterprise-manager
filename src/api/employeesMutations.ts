@@ -29,6 +29,7 @@ export type EmployeeDto = Record<string, unknown> & {
   practice?: { id: number; name?: string } | null;
   isActive?: boolean;
   isDeleted?: boolean;
+  taskForwarderEmployeeId?: number | null;
 };
 
 export type UpsertEmployeesResponse = { ok: boolean; upserted: number };
@@ -52,6 +53,35 @@ export async function deleteEmployees(ids: number[]): Promise<DeleteEmployeesRes
   if (ids.length === 0) return { ok: true, deleted: 0 };
   const { data } = await http.delete<DeleteEmployeesResponse>('/employees', {
     params: { ids: ids.join(',') },
+  });
+  return data;
+}
+
+export type EmployeeSignatureResponse = { ok: boolean; employeeId: number; hasSignature: boolean };
+
+/**
+ * PUT /employees/:id/signature — a provider's signature for printed documents.
+ * Practice managers and above only (staff.employee.manage); the server logs each change.
+ */
+export async function setEmployeeSignature(
+  employeeId: number,
+  practiceId: number,
+  image: string
+): Promise<EmployeeSignatureResponse> {
+  const { data } = await http.put<EmployeeSignatureResponse>(`/employees/${employeeId}/signature`, {
+    practiceId,
+    image,
+  });
+  return data;
+}
+
+/** DELETE /employees/:id/signature — clear it (same rule and log). */
+export async function clearEmployeeSignature(
+  employeeId: number,
+  practiceId: number
+): Promise<EmployeeSignatureResponse> {
+  const { data } = await http.delete<EmployeeSignatureResponse>(`/employees/${employeeId}/signature`, {
+    params: { practiceId },
   });
   return data;
 }

@@ -14,6 +14,8 @@ import {
   formatPointsSummary,
   normalizeAppointmentTypeFromApi,
 } from '../../utils/appointmentTypeSettings';
+import SettingsPremedsWindow from './SettingsPremedsWindow';
+import SettingsClosedDates from './SettingsClosedDates';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -551,6 +553,8 @@ export default function SettingsAppointmentTypes({
 
   return (
     <>
+      <SettingsPremedsWindow practiceId={practiceId} onMessage={onMessage} />
+      <SettingsClosedDates practiceId={practiceId} onMessage={onMessage} />
       <div className="settings-appt-type-list-header">
         <div
           className="settings-appt-type-subtabs"

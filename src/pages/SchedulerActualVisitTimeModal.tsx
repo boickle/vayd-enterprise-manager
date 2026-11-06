@@ -12,15 +12,19 @@ import {
 import {
   patchForwardBookingDisposition,
   type ForwardBookingDisposition,
+  type ForwardBookingDispositionMode,
 } from '../api/forwardBookingDisposition';
-import { listPracticeBranches } from '../api/branchInventory';
+import { getEmployeeBranches, listPracticeBranches } from '../api/branchInventory';
+import { getToken } from '../api/http';
+import { resolveEmployeeIdFromToken } from '../utils/practiceIdFromToken';
+import { resolveLabsTaskBranchIds } from '../components/followUps/plannerActions';
 import { createForwardBooking, fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import type { Appointment } from '../api/roomLoader';
-import { createTask, type TaskLinkInput } from '../api/tasks';
+import type { TaskLinkInput } from '../api/tasks';
 import {
   buildCreateForwardBookingPayloadFromAppointment,
-  FORWARD_BOOKING_AMOUNT_OPTIONS,
   FORWARD_BOOKING_UNIT_OPTIONS,
+  type ForwardBookingInterval,
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
 import {
@@ -36,7 +40,8 @@ import {
   validateTaskScheduleOrder,
 } from '../utils/taskDateTime';
 import { notifyTasksChanged } from '../utils/taskOwnership';
-import { LABS_PENDING_FORWARD_BOOKING_TASK_BODY } from '../utils/forwardBookingCreateLink';
+import { createLabsPendingForwardBookingTasks } from '../components/forwardBooking/saveForwardBookingDecision';
+import { suggestLabsTaskPeople } from '../components/forwardBooking/labsTaskPeople';
 import {
   followUpSideEffectsSessionKey,
   markFollowUpSideEffectsDone,
@@ -51,8 +56,18 @@ import {
   shouldLockForwardBookingDisposition,
   type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
+import ScheduleFollowUpsButton from '../components/followUps/ScheduleFollowUpsButton';
+import ScheduleFollowUpsPlanner from '../components/followUps/ScheduleFollowUpsPlanner';
+import { plannerVisitFromAppointments } from '../components/followUps/plannerData';
+import { forwardBookingModeOption } from '../components/forwardBooking/ForwardBookingDecisionFields';
 import { SchedulerHouseholdPetRow } from '../components/SchedulerHouseholdPetRow';
 import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
+import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
+import {
+  deathWrapUpHouseholdHasWork,
+  previewDeathWrapUpForPatients,
+  type DeathWrapUpPreview,
+} from '../utils/deathWrapUp';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import {
@@ -63,6 +78,7 @@ import {
   type EuthanasiaFutureAppointmentRow,
 } from '../utils/euthanasiaFutureAppointments';
 import { patientIdFromAppointment } from '../api/pimsAppointments';
+import { markVisitCompleted } from '../api/visitWorkflow';
 import {
   enrichRoutingClientPatientsMembership,
   extractActivePatientsFromClientStaffRecord,
@@ -82,53 +98,23 @@ import './Scheduler.css';
 function isActiveForwardBookingExistsError(e: unknown): boolean {
   const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
   const m = ax?.response?.data?.message;
-  const text = Array.isArray(m) ? m.join(' ') : typeof m === 'string' ? m : ax?.message ?? '';
+  const text = Array.isArray(m) ? m.join(' ') : typeof m === 'string' ? m : (ax?.message ?? '');
   return /active forward booking already exists/i.test(text);
 }
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
 
-export type ForwardBookingMode =
-  | 'booked_at_appointment'
-  | 'already_booked'
-  | 'labs_pending'
-  | 'forward_book_fields'
-  | 'not_appropriate';
+/** The five follow-up outcomes; the prompt itself is shared with checkout and the
+ * visit wrap-up (see ForwardBookingDecisionFields). */
+export type ForwardBookingMode = ForwardBookingDispositionMode;
 
-const FORWARD_BOOKING_MODE_OPTIONS: {
-  value: ForwardBookingMode;
-  label: string;
-  hint: string;
-}[] = [
-  {
-    value: 'booked_at_appointment',
-    label: 'Booked at appointment',
-    hint: 'Follow-up was booked during this visit — no forward booking list entry.',
-  },
-  {
-    value: 'already_booked',
-    label: 'Already booked',
-    hint: 'Client already has a follow-up scheduled — no forward booking list entry.',
-  },
-  {
-    value: 'labs_pending',
-    label: 'Labs pending',
-    hint: 'Recommended: assign this to the doctor first. Once labs are reviewed and the follow-up timing is determined, the doctor can reassign the forward-booking task to the technician.',
-  },
-  {
-    value: 'forward_book_fields',
-    label: 'Forward book',
-    hint: 'Add to the forward booking list using the interval below.',
-  },
-  {
-    value: 'not_appropriate',
-    label: 'Not appropriate',
-    hint: 'Follow-up is not appropriate for this visit — no forward booking list entry.',
-  },
-];
-
-function forwardBookingModeOption(mode: ForwardBookingMode) {
-  return FORWARD_BOOKING_MODE_OPTIONS.find((o) => o.value === mode);
+function householdVisitAppointmentStartIso(
+  visit: RescheduleSameDayVisit,
+  appt: Appointment,
+  sameCalendarDayAppointments: Appointment[]
+): string {
+  const row = sameCalendarDayAppointments.find((a) => a.id === visit.appointmentId) ?? appt;
+  return row.appointmentStart;
 }
 
 function allHouseholdPatientIds(visits: RescheduleSameDayVisit[]): Set<string> {
@@ -226,33 +212,6 @@ function primaryPatientName(appt: Appointment): string | null {
   return pickStr(appt.patient?.name);
 }
 
-function primaryPatientContext(appt: Appointment): {
-  id: string;
-  name: string;
-  alerts: string | null;
-} | null {
-  const multi = (appt as { patients?: { id?: number | string; name?: string | null; alerts?: string | null }[] })
-    .patients;
-  const row =
-    Array.isArray(multi) && multi.length > 0
-      ? multi[0]
-      : appt.patient
-        ? {
-            id: appt.patient.id,
-            name: appt.patient.name,
-            alerts: appt.patient.alerts,
-          }
-        : null;
-  if (!row?.id) return null;
-  const id = String(row.id).trim();
-  if (!id) return null;
-  return {
-    id,
-    name: pickStr(row.name) ?? 'Patient',
-    alerts: pickStr(row.alerts),
-  };
-}
-
 function anchorPatientIdsForAppointment(appt: Appointment): string[] {
   const multi = (appt as { patients?: { id?: number | string }[] }).patients;
   if (Array.isArray(multi) && multi.length > 0) {
@@ -308,7 +267,7 @@ function defaultLabsPendingTaskTitle(appt: Appointment): string {
 function labsPendingTaskTitleForVisit(
   visit: RescheduleSameDayVisit,
   appt: Appointment,
-  options: { customTitle?: string; useCustomTitle: boolean },
+  options: { customTitle?: string; useCustomTitle: boolean }
 ): string {
   if (options.useCustomTitle && options.customTitle?.trim()) {
     return options.customTitle.trim();
@@ -322,7 +281,7 @@ function labsPendingTaskTitleForVisit(
 function labsPendingVisitsToTask(
   householdVisits: RescheduleSameDayVisit[],
   selectedHouseholdPatientIds: Set<string>,
-  appt: Appointment,
+  appt: Appointment
 ): RescheduleSameDayVisit[] {
   if (householdVisits.length > 1) {
     return householdVisits.filter((visit) => selectedHouseholdPatientIds.has(visit.patientId));
@@ -341,7 +300,7 @@ function labsPendingVisitsToTask(
 
 function buildLabsPendingTaskLinksForVisit(
   visit: RescheduleSameDayVisit,
-  clientId: number | null | undefined,
+  clientId: number | null | undefined
 ): TaskLinkInput[] {
   const links: TaskLinkInput[] = [];
   if (typeof clientId === 'number' && Number.isFinite(clientId)) {
@@ -378,15 +337,12 @@ function applyDefaultLabsAssignee(
   form: ForwardBookingDispositionFormState,
   appt: Appointment
 ): ForwardBookingDispositionFormState {
-  if (form.labsAssigneeEmployeeId.trim()) return form;
-  const def = defaultLabsAssigneeEmployeeId(appt);
-  return def ? { ...form, labsAssigneeEmployeeId: def } : form;
+  if (form.labsAssigneeEmployeeIds.length > 0) return form;
+  const def = Number(defaultLabsAssigneeEmployeeId(appt));
+  return Number.isFinite(def) && def > 0 ? { ...form, labsAssigneeEmployeeIds: [def] } : form;
 }
 
-function defaultStartTimeLocal(
-  existingIso: string | null | undefined,
-  practiceTz: string
-): string {
+function defaultStartTimeLocal(existingIso: string | null | undefined, practiceTz: string): string {
   if (existingIso) return toTimeLocalValue(existingIso, practiceTz);
   return DateTime.now().setZone(practiceTz).toFormat('HH:mm');
 }
@@ -463,8 +419,11 @@ export function SchedulerActualVisitTimeModal({
     () => initialForwardBookingForm.forwardUnit
   );
   const [bookingNotes, setBookingNotes] = useState(() => initialForwardBookingForm.bookingNotes);
-  const [labsAssigneeEmployeeId, setLabsAssigneeEmployeeId] = useState(
-    () => initialForwardBookingForm.labsAssigneeEmployeeId
+  const [labsAssigneeEmployeeIds, setLabsAssigneeEmployeeIds] = useState<number[]>(
+    () => initialForwardBookingForm.labsAssigneeEmployeeIds
+  );
+  const [labsWatcherEmployeeIds, setLabsWatcherEmployeeIds] = useState<number[]>(
+    () => initialForwardBookingForm.labsWatcherEmployeeIds
   );
   const [labsTaskTitle, setLabsTaskTitle] = useState(() => initialForwardBookingForm.labsTaskTitle);
   const [labsTaskStartLocal, setLabsTaskStartLocal] = useState(
@@ -476,10 +435,15 @@ export function SchedulerActualVisitTimeModal({
   const [forwardBookingProviderId, setForwardBookingProviderId] = useState(() =>
     defaultForwardBookingProviderId(appt)
   );
+  /** null = follow each source visit's own pre-meds flag. */
+  /** null = follow each source visit's own pre-meds flag. Set only by the old form. */
+  const [forwardNeedsPremedsOverride] = useState<boolean | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  /** Labs task branches: the practice's active ones and the signed-in staff member's (SCH-13-4). */
   const [branchIds, setBranchIds] = useState<number[]>([]);
-  const [forwardBookingMetaLoading, setForwardBookingMetaLoading] = useState(false);
+  const [staffBranchIds, setStaffBranchIds] = useState<number[]>([]);
+  const [, setForwardBookingMetaLoading] = useState(false);
   const [dispositionLocked, setDispositionLocked] = useState(() =>
     shouldLockForwardBookingDisposition(appt)
   );
@@ -492,36 +456,63 @@ export function SchedulerActualVisitTimeModal({
   const forwardBookingUserEditedRef = useRef(false);
   const forwardBookingListEnsuredRef = useRef(false);
   const labsPendingTaskEnsuredRef = useRef(false);
+  /** Suggested labs-task people (SCH-E), kept so a later refresh of the visit does not drop them. */
+  const suggestedLabsPeopleRef = useRef<{ assignees: number[]; watchers: number[] } | null>(null);
   const forwardBookingFormRef = useRef<ForwardBookingDispositionFormState>({
     mode: initialForwardBookingForm.mode,
     forwardAmount: initialForwardBookingForm.forwardAmount,
     forwardUnit: initialForwardBookingForm.forwardUnit,
     bookingNotes: initialForwardBookingForm.bookingNotes,
-    labsAssigneeEmployeeId: initialForwardBookingForm.labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds: initialForwardBookingForm.labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds: initialForwardBookingForm.labsWatcherEmployeeIds,
     labsTaskTitle: initialForwardBookingForm.labsTaskTitle,
     labsTaskStartLocal: initialForwardBookingForm.labsTaskStartLocal,
     labsTaskDueLocal: initialForwardBookingForm.labsTaskDueLocal,
   });
 
   const requiresForwardBooking = !isStartOnly;
+  const canApplyForwardBookingFromChart = requiresForwardBooking && !dispositionLocked;
+  const applyForwardBookingIntervalFromChart = useCallback(
+    (interval: ForwardBookingInterval) => {
+      forwardBookingUserEditedRef.current = true;
+      setForwardBookingMode('forward_book_fields');
+      setForwardAmount(String(interval.amount));
+      setForwardUnit(interval.unit);
+      if (!forwardBookingProviderId.trim()) {
+        const def = defaultForwardBookingProviderId(appt);
+        if (def) setForwardBookingProviderId(def);
+      }
+    },
+    [appt, forwardBookingProviderId]
+  );
   const skipsForwardBookingList =
     forwardBookingMode === 'booked_at_appointment' ||
     forwardBookingMode === 'already_booked' ||
     forwardBookingMode === 'labs_pending' ||
     forwardBookingMode === 'not_appropriate';
-  const showForwardBookFields = forwardBookingMode === 'forward_book_fields';
   const showLabsPendingFields = forwardBookingMode === 'labs_pending';
-  const forwardBookingFieldsDisabled = saving || !showForwardBookFields;
   const savedForwardBookingOption = useMemo(
     () => forwardBookingModeOption(forwardBookingMode),
     [forwardBookingMode]
   );
   const savedLabsAssigneeLabel = useMemo(() => {
-    const id = Number(labsAssigneeEmployeeId);
-    if (!Number.isFinite(id)) return '—';
-    const em = employees.find((e) => Number(e.id) === id);
-    return em ? formatEmployeeDisplayName(em) || em.email || '—' : '—';
-  }, [employees, labsAssigneeEmployeeId]);
+    const names = labsAssigneeEmployeeIds
+      .map((id) => {
+        const em = employees.find((e) => Number(e.id) === id);
+        return em ? formatEmployeeDisplayName(em) || em.email || null : null;
+      })
+      .filter((name): name is string => Boolean(name));
+    return names.length ? names.join(', ') : '—';
+  }, [employees, labsAssigneeEmployeeIds]);
+  const savedLabsWatcherLabel = useMemo(() => {
+    const names = labsWatcherEmployeeIds
+      .map((id) => {
+        const em = employees.find((e) => Number(e.id) === id);
+        return em ? formatEmployeeDisplayName(em) || em.email || null : null;
+      })
+      .filter((name): name is string => Boolean(name));
+    return names.length ? names.join(', ') : 'None';
+  }, [employees, labsWatcherEmployeeIds]);
   const savedForwardBookingProviderLabel = useMemo(() => {
     const id = Number(forwardBookingProviderId);
     if (!Number.isFinite(id)) return '—';
@@ -532,7 +523,6 @@ export function SchedulerActualVisitTimeModal({
     () => formatSavedForwardInterval(forwardAmount, forwardUnit),
     [forwardAmount, forwardUnit]
   );
-  const forwardBookingPatient = useMemo(() => primaryPatientContext(appt), [appt]);
   const effectiveForwardBookingSourceIds = useMemo(
     () => forwardBookingIndex?.sourceAppointmentIds ?? forwardBookingSourceAppointmentIds,
     [forwardBookingIndex, forwardBookingSourceAppointmentIds]
@@ -545,6 +535,18 @@ export function SchedulerActualVisitTimeModal({
     const visits = collectSameDayHouseholdVisits(appt, sameCalendarDayAppointments, practiceTz);
     return orderHouseholdVisitsForAnchor(visits, appt);
   }, [appt, sameCalendarDayAppointments, practiceTz]);
+  const [followUpsOpen, setFollowUpsOpen] = useState(false);
+  /** Schedule follow-ups gets the same pets this screen lists for the household today. */
+  const followUpPlannerVisit = useMemo(() => {
+    const rows = householdVisits
+      .map(
+        (v) =>
+          sameCalendarDayAppointments.find((a) => Number(a.id) === Number(v.appointmentId)) ??
+          (Number(appt.id) === Number(v.appointmentId) ? appt : null)
+      )
+      .filter((a): a is Appointment => a != null);
+    return plannerVisitFromAppointments(appt, rows.length ? rows : [appt]);
+  }, [appt, householdVisits, sameCalendarDayAppointments]);
   const householdMembershipByPatientId = useMemo(() => {
     const map = new Map<string, { isMember: boolean; membershipName: string | null }>();
     for (const visit of householdVisits) {
@@ -556,13 +558,13 @@ export function SchedulerActualVisitTimeModal({
     return map;
   }, [appt, householdVisits, sameCalendarDayAppointments]);
   const [clientHouseholdPets, setClientHouseholdPets] = useState<RoutingClientPatientRow[]>([]);
-  const [otherHouseholdPetsLoading, setOtherHouseholdPetsLoading] = useState(false);
+  const [, setOtherHouseholdPetsLoading] = useState(false);
   const isAnchorVisit = useCallback(
     (visit: RescheduleSameDayVisit) => isAnchorHouseholdVisit(visit, appt),
     [appt]
   );
-  const [selectedHouseholdPatientIds, setSelectedHouseholdPatientIds] = useState<Set<string>>(
-    () => allHouseholdPatientIds(householdVisits)
+  const [selectedHouseholdPatientIds, setSelectedHouseholdPatientIds] = useState<Set<string>>(() =>
+    allHouseholdPatientIds(householdVisits)
   );
   const [selectedVisitTimePatientIds, setSelectedVisitTimePatientIds] = useState<Set<string>>(
     () => new Set(householdVisits.map((visit) => visit.patientId))
@@ -570,6 +572,7 @@ export function SchedulerActualVisitTimeModal({
   const [euthanasiaFutureRows, setEuthanasiaFutureRows] = useState<
     EuthanasiaFutureAppointmentRow[] | null
   >(null);
+  const [euthanasiaWrapUp, setEuthanasiaWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
   const [checkingEuthanasiaFuture, setCheckingEuthanasiaFuture] = useState(false);
   const euthanasiaEndConfirmedRef = useRef(false);
   const pendingEuthanasiaEndRef = useRef<{
@@ -625,11 +628,6 @@ export function SchedulerActualVisitTimeModal({
     return map;
   }, [clientHouseholdPets]);
 
-  const otherHouseholdPets = useMemo(() => {
-    const scheduledTodayIds = new Set(householdVisits.map((visit) => visit.patientId));
-    return clientHouseholdPets.filter((row) => !scheduledTodayIds.has(String(row.id)));
-  }, [clientHouseholdPets, householdVisits]);
-
   const membershipForPatientId = useCallback(
     (patientId: string) =>
       householdMembershipByPatientId.get(patientId) ??
@@ -671,8 +669,7 @@ export function SchedulerActualVisitTimeModal({
 
   const householdVisitScheduledLabel = useCallback(
     (visit: (typeof householdVisits)[number]): string => {
-      const row =
-        sameCalendarDayAppointments.find((a) => a.id === visit.appointmentId) ?? appt;
+      const row = sameCalendarDayAppointments.find((a) => a.id === visit.appointmentId) ?? appt;
       const start = formatPracticeTime(row.appointmentStart, practiceTz);
       const end = formatPracticeTime(row.appointmentEnd, practiceTz);
       return `${start} – ${end}`;
@@ -686,7 +683,8 @@ export function SchedulerActualVisitTimeModal({
       forwardAmount,
       forwardUnit,
       bookingNotes,
-      labsAssigneeEmployeeId,
+      labsAssigneeEmployeeIds,
+      labsWatcherEmployeeIds,
       labsTaskTitle,
       labsTaskStartLocal,
       labsTaskDueLocal,
@@ -696,7 +694,8 @@ export function SchedulerActualVisitTimeModal({
     forwardAmount,
     forwardBookingMode,
     forwardUnit,
-    labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds,
     labsTaskDueLocal,
     labsTaskStartLocal,
     labsTaskTitle,
@@ -717,13 +716,39 @@ export function SchedulerActualVisitTimeModal({
       setForwardAmount(form.forwardAmount);
       setForwardUnit(form.forwardUnit);
       setBookingNotes(form.bookingNotes);
-      setLabsAssigneeEmployeeId(form.labsAssigneeEmployeeId);
+      setLabsAssigneeEmployeeIds(form.labsAssigneeEmployeeIds);
+      setLabsWatcherEmployeeIds(form.labsWatcherEmployeeIds);
       setLabsTaskTitle(form.labsTaskTitle);
       setLabsTaskStartLocal(form.labsTaskStartLocal);
       setLabsTaskDueLocal(form.labsTaskDueLocal);
     },
     []
   );
+
+  // SCH-E: with no people saved yet, the labs task starts with the visit doctor and the
+  // techs who work with them (a relief doctor alone, with the doctors watching).
+  useEffect(() => {
+    if (!requiresForwardBooking) return;
+    const saved = forwardBookingFormStateFromDisposition(
+      appt.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(appt),
+      { labsTaskTitle: '', labsTaskStartLocal: '' }
+    );
+    if (saved.labsAssigneeEmployeeIds.length > 0) return;
+    const doctorId = Number(defaultLabsAssigneeEmployeeId(appt));
+    if (!Number.isFinite(doctorId) || doctorId <= 0) return;
+    let on = true;
+    void suggestLabsTaskPeople(doctorId).then((people) => {
+      if (!on || forwardBookingUserEditedRef.current || people.assignees.length === 0) return;
+      suggestedLabsPeopleRef.current = people;
+      setLabsAssigneeEmployeeIds((cur) =>
+        cur.length === 0 || (cur.length === 1 && cur[0] === doctorId) ? people.assignees : cur
+      );
+      setLabsWatcherEmployeeIds((cur) => (cur.length === 0 ? people.watchers : cur));
+    });
+    return () => {
+      on = false;
+    };
+  }, [appt, requiresForwardBooking]);
 
   useEffect(() => {
     if (!requiresForwardBooking) return;
@@ -746,13 +771,19 @@ export function SchedulerActualVisitTimeModal({
     void (async () => {
       const fresh = await fetchAppointmentById(appt.id, { practiceId });
       if (!on || !fresh) return;
-      const form = applyDefaultLabsAssignee(
-        forwardBookingFormStateFromDisposition(
-          fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
-          { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
-        ),
-        fresh
+      const savedForm = forwardBookingFormStateFromDisposition(
+        fresh.forwardBookingDisposition ?? forwardBookingDispositionFromAppointment(fresh),
+        { labsTaskTitle: defaultLabsTaskTitle, labsTaskStartLocal: defaultLabsStartLocal }
       );
+      const suggested = suggestedLabsPeopleRef.current;
+      const form =
+        savedForm.labsAssigneeEmployeeIds.length === 0 && suggested
+          ? {
+              ...savedForm,
+              labsAssigneeEmployeeIds: suggested.assignees,
+              labsWatcherEmployeeIds: suggested.watchers,
+            }
+          : applyDefaultLabsAssignee(savedForm, fresh);
       if (!forwardBookingUserEditedRef.current) {
         applyForwardBookingForm(form);
       }
@@ -780,9 +811,7 @@ export function SchedulerActualVisitTimeModal({
       }
     }
     if (forwardBookingMode === 'forward_book_fields') {
-      if (
-        readFollowUpSideEffectsDone(followUpSideEffectsSessionKey(ids, 'forward_booking_list'))
-      ) {
+      if (readFollowUpSideEffectsDone(followUpSideEffectsSessionKey(ids, 'forward_booking_list'))) {
         forwardBookingListEnsuredRef.current = true;
       }
     }
@@ -816,7 +845,7 @@ export function SchedulerActualVisitTimeModal({
 
   const labsPendingVisitsForTask = useMemo(
     () => labsPendingVisitsToTask(householdVisits, selectedHouseholdPatientIds, appt),
-    [householdVisits, selectedHouseholdPatientIds, appt],
+    [householdVisits, selectedHouseholdPatientIds, appt]
   );
   const createsMultipleLabsPendingTasks = labsPendingVisitsForTask.length > 1;
 
@@ -827,24 +856,20 @@ export function SchedulerActualVisitTimeModal({
     if (forwardBookingMode === 'labs_pending') {
       const sideEffectsKey = followUpSideEffectsSessionKey(
         householdFollowUpAppointmentIds(),
-        'labs_pending_task',
+        'labs_pending_task'
       );
       if (labsPendingTaskEnsuredRef.current || readFollowUpSideEffectsDone(sideEffectsKey)) {
         labsPendingTaskEnsuredRef.current = true;
         return;
       }
 
-      const assigneeId = Number(labsAssigneeEmployeeId);
-      if (!Number.isFinite(assigneeId)) {
-        throw new Error('Select a staff member to assign the labs pending task.');
-      }
-      if (branchIds.length === 0) {
-        throw new Error('Could not determine practice branches for the task.');
+      if (labsAssigneeEmployeeIds.length === 0) {
+        throw new Error('Select at least one person to do the labs pending task.');
       }
       const visitsToTask = labsPendingVisitsToTask(
         householdVisits,
         selectedHouseholdPatientIds,
-        appt,
+        appt
       );
       if (visitsToTask.length === 0) {
         throw new Error('Select at least one pet for the labs pending task.');
@@ -867,11 +892,24 @@ export function SchedulerActualVisitTimeModal({
         if (!title.trim()) {
           throw new Error('Enter a task description.');
         }
-        await createTask({
+        // The visit's branch or the staff member's own; never every practice branch.
+        const taskBranchIds = await resolveLabsTaskBranchIds({
+          appointmentId: visit.appointmentId,
+          appointment:
+            sameCalendarDayAppointments.find((a) => Number(a.id) === Number(visit.appointmentId)) ??
+            (Number(appt.id) === Number(visit.appointmentId) ? appt : null),
+          practiceId,
+          staffBranchIds,
+          practiceBranchIds: branchIds,
+        });
+        if (taskBranchIds.length === 0) {
+          throw new Error('Could not determine practice branches for the task.');
+        }
+        await createLabsPendingForwardBookingTasks({
           title,
-          body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
-          branchIds,
-          assignedToEmployeeId: assigneeId,
+          branchIds: taskBranchIds,
+          assigneeEmployeeIds: labsAssigneeEmployeeIds,
+          watcherEmployeeIds: labsWatcherEmployeeIds,
           startAt,
           dueAt,
           links: buildLabsPendingTaskLinksForVisit(visit, appt.client?.id),
@@ -886,7 +924,7 @@ export function SchedulerActualVisitTimeModal({
     if (skipsForwardBookingList) return;
     const forwardListKey = followUpSideEffectsSessionKey(
       householdFollowUpAppointmentIds(),
-      'forward_booking_list',
+      'forward_booking_list'
     );
     if (forwardBookingListEnsuredRef.current || readFollowUpSideEffectsDone(forwardListKey)) {
       forwardBookingListEnsuredRef.current = true;
@@ -942,6 +980,9 @@ export function SchedulerActualVisitTimeModal({
       try {
         await createForwardBooking({
           ...payload,
+          ...(forwardNeedsPremedsOverride != null
+            ? { needsPremeds: forwardNeedsPremedsOverride }
+            : {}),
           createdVia: 'end_visit',
         });
       } catch (e: unknown) {
@@ -954,16 +995,19 @@ export function SchedulerActualVisitTimeModal({
     appt,
     bookingNotes,
     branchIds,
+    staffBranchIds,
     dispositionLocked,
     effectiveForwardBookingPatientIds,
     effectiveForwardBookingSourceIds,
     forwardBookingMode,
     forwardBookingProviderId,
     forwardInterval,
+    forwardNeedsPremedsOverride,
     householdFollowUpAppointmentIds,
     householdVisits,
     isStartOnly,
-    labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds,
     labsTaskDueLocal,
     labsTaskStartLocal,
     labsTaskTitle,
@@ -980,21 +1024,29 @@ export function SchedulerActualVisitTimeModal({
     setForwardBookingMetaLoading(true);
     void (async () => {
       try {
-        const [branchList, employeeList, providerList] = await Promise.all([
+        const me = resolveEmployeeIdFromToken(getToken());
+        const [branchList, employeeList, providerList, myBranches] = await Promise.all([
           listPracticeBranches(practiceId),
           fetchAllEmployees(),
           fetchPrimaryProviders(),
+          me != null ? getEmployeeBranches(practiceId, me).catch(() => []) : Promise.resolve([]),
         ]);
         if (!on) return;
         const activeBranchIds = (Array.isArray(branchList) ? branchList : [])
           .filter((b) => b.isActive !== false)
           .map((b) => b.id);
         setBranchIds(activeBranchIds);
+        setStaffBranchIds(
+          (Array.isArray(myBranches) ? myBranches : [])
+            .map((b) => Number(b.branchId))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        );
         setEmployees(Array.isArray(employeeList) ? employeeList : []);
         setProviders(Array.isArray(providerList) ? providerList : []);
       } catch {
         if (!on) return;
         setBranchIds([]);
+        setStaffBranchIds([]);
         setEmployees([]);
         setProviders([]);
       } finally {
@@ -1074,12 +1126,19 @@ export function SchedulerActualVisitTimeModal({
           warnings.push(
             cancelResult.cancelledIds.length > 0
               ? `Removed ${cancelResult.cancelledIds.length} future visit(s); ${cancelResult.errors.length} could not be cancelled.`
-              : `Future appointments could not be cancelled. ${cancelResult.errors[0]}`,
+              : `Future appointments could not be cancelled. ${cancelResult.errors[0]}`
           );
         }
       }
       if (args.patientIdsToInactivate.length > 0) {
-        const inactivateResult = await inactivateEuthanasiaPatients(args.patientIdsToInactivate);
+        const providerRaw =
+          Number(forwardBookingProviderId) || Number(appt.primaryProvider?.id);
+        const inactivatedByEmployeeId =
+          Number.isFinite(providerRaw) && providerRaw > 0 ? providerRaw : null;
+        const inactivateResult = await inactivateEuthanasiaPatients(
+          args.patientIdsToInactivate,
+          { inactivatedByEmployeeId },
+        );
         // Inactivation is best-effort (Scout PATCH may 404; eVet often owns status).
         // Never block End Visit / forward-booking save on these failures.
         const softOrHard = [...inactivateResult.softErrors, ...inactivateResult.errors];
@@ -1092,7 +1151,7 @@ export function SchedulerActualVisitTimeModal({
       }
       return warnings;
     },
-    [practiceId]
+    [practiceId, forwardBookingProviderId, appt.primaryProvider?.id]
   );
 
   const postBoth = useCallback(
@@ -1114,8 +1173,7 @@ export function SchedulerActualVisitTimeModal({
         const savingEnd = Boolean(opts.end);
         const followUpOnly = !savingStart && !savingEnd;
         const saveFollowUp =
-          saveOptions?.saveFollowUp ??
-          (requiresForwardBooking && (savingEnd || followUpOnly));
+          saveOptions?.saveFollowUp ?? (requiresForwardBooking && (savingEnd || followUpOnly));
 
         let updated = appt;
         if (opts.start) updated = await saveStart(opts.start);
@@ -1129,11 +1187,28 @@ export function SchedulerActualVisitTimeModal({
           await ensureFollowUpSideEffects();
         }
 
-        let sideEffectWarning: string | null = null;
-        if (euthanasiaSideEffects) {
-          const warnings = await runEuthanasiaEndSideEffects(euthanasiaSideEffects);
-          if (warnings.length > 0) sideEffectWarning = warnings.join(' ');
+        const warnings: string[] = [];
+
+        // End Visit is the real "visit completed" event, so it fires the VisitCompleted hub
+        // event (euthanasia off-session capture). Checkout no longer marks visits completed.
+        if (savingEnd && opts.end?.clear !== true) {
+          try {
+            const completed = await markVisitCompleted(appt.id);
+            const charge = completed.euthanasiaCharge;
+            if (charge?.needsManualCollection) {
+              warnings.push(
+                `Euthanasia payment needs manual collection: ${charge.message ?? 'card declined'}`
+              );
+            }
+          } catch {
+            // Never block saving visit times on downstream automation.
+          }
         }
+
+        if (euthanasiaSideEffects) {
+          warnings.push(...(await runEuthanasiaEndSideEffects(euthanasiaSideEffects)));
+        }
+        const sideEffectWarning = warnings.length > 0 ? warnings.join(' ') : null;
 
         const closeModal =
           saveOptions?.closeModal ??
@@ -1177,15 +1252,19 @@ export function SchedulerActualVisitTimeModal({
     if (!requiresForwardBooking) return true;
     if (dispositionLocked) return true;
 
+    // Checkout owns the follow-up now — it is asked while the client is still at the door,
+    // and payment will not go through until it is answered. This prompt stays as a fallback
+    // for visits that never charted, so an untouched form must not block the visit time.
+    if (!forwardBookingUserEditedRef.current) return true;
+
     if (householdVisits.length > 1 && selectedHouseholdPatientIds.size === 0) {
       setError('Select at least one pet for the follow-up choice.');
       return false;
     }
 
     if (forwardBookingMode === 'labs_pending') {
-      const assigneeId = Number(labsAssigneeEmployeeId);
-      if (!Number.isFinite(assigneeId)) {
-        setError('Select a staff member to assign the labs pending task.');
+      if (labsAssigneeEmployeeIds.length === 0) {
+        setError('Select at least one person to do the labs pending task.');
         return false;
       }
       if (branchIds.length === 0) {
@@ -1221,7 +1300,9 @@ export function SchedulerActualVisitTimeModal({
     if (skipsForwardBookingList) return true;
 
     if (!forwardInterval) {
-      setError('Select how far out to forward book (number and days, weeks, or months) before saving.');
+      setError(
+        'Select how far out to forward book (number and days, weeks, or months) before saving.'
+      );
       return false;
     }
     if (!bookingNotes.trim()) {
@@ -1277,6 +1358,19 @@ export function SchedulerActualVisitTimeModal({
           patientIdsToInactivate: euthPatients.map((p) => p.patientId),
           futureRows,
         };
+        const wrapUp = await previewDeathWrapUpForPatients({
+          patients: euthPatients.map((p) => ({
+            patientId: Number(p.patientId),
+            patientName: p.patientName,
+          })),
+          appointmentId: Number(appt.id),
+          practiceId,
+          practiceTz,
+        }).catch(() => []);
+        if (deathWrapUpHouseholdHasWork(wrapUp)) {
+          setEuthanasiaWrapUp(wrapUp);
+          return;
+        }
         if (futureRows.length > 0) {
           setEuthanasiaFutureRows(futureRows);
           return;
@@ -1293,7 +1387,7 @@ export function SchedulerActualVisitTimeModal({
                 patientIdsToInactivate: pending.patientIdsToInactivate,
                 futureRows: pending.futureRows,
               }
-            : undefined,
+            : undefined
         );
       } finally {
         setCheckingEuthanasiaFuture(false);
@@ -1347,7 +1441,10 @@ export function SchedulerActualVisitTimeModal({
         return;
       }
       if (!validateForwardBooking()) return;
-      void postBothWithEuthanasiaGuard({ end: endPayload }, { closeModal: true, saveFollowUp: true });
+      void postBothWithEuthanasiaGuard(
+        { end: endPayload },
+        { closeModal: true, saveFollowUp: true }
+      );
       return;
     }
     const startPayload = actualTimeFieldPayload(
@@ -1379,13 +1476,9 @@ export function SchedulerActualVisitTimeModal({
 
     if (savingStart && !savingEnd) {
       const followUpReady =
-        requiresForwardBooking &&
-        forwardBookingFormStateIsComplete(forwardBookingFormRef.current);
+        requiresForwardBooking && forwardBookingFormStateIsComplete(forwardBookingFormRef.current);
       if (followUpReady && !validateForwardBooking()) return;
-      void postBoth(
-        { start: startPayload! },
-        { closeModal: true, saveFollowUp: followUpReady }
-      );
+      void postBoth({ start: startPayload! }, { closeModal: true, saveFollowUp: followUpReady });
       return;
     }
 
@@ -1454,7 +1547,12 @@ export function SchedulerActualVisitTimeModal({
               {patientsLabel(appt)}
             </p>
           </div>
-          <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="scheduler-modal-close"
+            aria-label="Close"
+            onClick={onClose}
+          >
             ×
           </button>
         </div>
@@ -1479,10 +1577,13 @@ export function SchedulerActualVisitTimeModal({
                     </>
                   ) : null}
                 </p>
-                <div className="scheduler-forward-booking-household-pets" style={{ marginBottom: 14 }}>
+                <div
+                  className="scheduler-forward-booking-household-pets"
+                  style={{ marginBottom: 14 }}
+                >
                   <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-                    Apply actual start/end times to pets in this household today (same times for each
-                    selected pet):
+                    Apply actual start/end times to pets in this household today (same times for
+                    each selected pet):
                   </p>
                   <div className="scheduler-household-pet-list">
                     {householdVisits.map((visit) => (
@@ -1515,6 +1616,16 @@ export function SchedulerActualVisitTimeModal({
                             Scheduled {householdVisitScheduledLabel(visit)}
                           </span>
                         }
+                        forwardBookingSourceStartIso={householdVisitAppointmentStartIso(
+                          visit,
+                          appt,
+                          sameCalendarDayAppointments
+                        )}
+                        onApplyForwardBookingInterval={
+                          canApplyForwardBookingFromChart
+                            ? applyForwardBookingIntervalFromChart
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
@@ -1543,7 +1654,10 @@ export function SchedulerActualVisitTimeModal({
               </div>
 
               {isBoth ? (
-                <p className="settings-muted scheduler-actual-visit-times-hint" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                <p
+                  className="settings-muted scheduler-actual-visit-times-hint"
+                  style={{ gridColumn: '1 / -1', margin: 0 }}
+                >
                   Save start anytime. Follow-up is required when you save end time — you can fill
                   visit times and forward booking in any order.
                 </p>
@@ -1596,120 +1710,12 @@ export function SchedulerActualVisitTimeModal({
                 ) : null}
               </div>
 
-              {householdVisits.length > 1 ? (
-                <div className="scheduler-forward-booking-household-pets">
-                  <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-                    {showForwardBookFields
-                      ? 'Forward book for pets in this household today (same interval for each selected pet):'
-                      : 'Apply this follow-up choice to pets in this household today (same choice for each selected pet):'}
-                  </p>
-                  <div className="scheduler-household-pet-list">
-                    {householdVisits.map((visit) => {
-                      const alreadyForwardBooked = householdVisitAlreadyForwardBooked(
-                        visit,
-                        effectiveForwardBookingSourceIds,
-                        effectiveForwardBookingPatientIds
-                      );
-                      const disableForForwardBook =
-                        showForwardBookFields &&
-                        (forwardBookingFieldsDisabled || alreadyForwardBooked);
-                      return (
-                        <SchedulerHouseholdPetRow
-                          key={visit.patientId}
-                          patientId={visit.patientId}
-                          patientName={visit.patientName?.trim() || `Pet ${visit.patientId}`}
-                          practiceId={practiceId}
-                          practiceTz={practiceTz}
-                          membership={membershipForPatientId(visit.patientId)}
-                          excludeAppointmentId={visit.appointmentId}
-                          isAnchor={isAnchorVisit(visit)}
-                          checked={selectedHouseholdPatientIds.has(visit.patientId)}
-                          checkboxDisabled={saving || disableForForwardBook}
-                          rowClassName={
-                            alreadyForwardBooked && showForwardBookFields
-                              ? 'scheduler-household-pet-row--saved'
-                              : ''
-                          }
-                          onCheckedChange={(checked) => {
-                            forwardBookingUserEditedRef.current = true;
-                            setSelectedHouseholdPatientIds((prev) => {
-                              const next = new Set(prev);
-                              if (checked) next.add(visit.patientId);
-                              else next.delete(visit.patientId);
-                              return next;
-                            });
-                          }}
-                          badges={
-                            <>
-                              {isAnchorVisit(visit) ? (
-                                <span className="scheduler-household-pet-row-badge">This visit</span>
-                              ) : null}
-                              {alreadyForwardBooked && showForwardBookFields ? (
-                                <span className="scheduler-household-pet-row-badge scheduler-household-pet-row-badge--saved">
-                                  Forward booking saved
-                                </span>
-                              ) : null}
-                            </>
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : forwardBookingPatient ? (
-                <div className="scheduler-forward-booking-patient-context">
-                  <SchedulerHouseholdPetRow
-                    patientId={forwardBookingPatient.id}
-                    patientName={forwardBookingPatient.name}
-                    practiceId={practiceId}
-                    practiceTz={practiceTz}
-                    membership={membershipForPatientId(forwardBookingPatient.id)}
-                    excludeAppointmentId={appt.id}
-                    isAnchor
-                    showCheckbox={false}
-                  />
-                  {forwardBookingPatient.alerts ? (
-                    <div
-                      className="scheduler-modal-alerts-box scheduler-book-patient-alerts"
-                      role="alert"
-                    >
-                      <span className="scheduler-modal-alerts-box-label">Patient alerts</span>
-                      {forwardBookingPatient.alerts}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {otherHouseholdPetsLoading ? (
-                <p className="settings-muted scheduler-household-other-pets-hint">Loading household pets…</p>
-              ) : otherHouseholdPets.length > 0 ? (
-                <details className="scheduler-household-other-pets">
-                  <summary>
-                    Other household pets not scheduled today ({otherHouseholdPets.length})
-                  </summary>
-                  <p className="settings-muted scheduler-household-other-pets-lead">
-                    Review reminders and visit history to align follow-up timing across the household.
-                    These pets are not included in today&apos;s forward booking selection.
-                  </p>
-                  <div className="scheduler-household-pet-list">
-                    {otherHouseholdPets.map((pet) => (
-                      <SchedulerHouseholdPetRow
-                        key={`other-${pet.id}`}
-                        patientId={String(pet.id)}
-                        patientName={pet.name}
-                        practiceId={practiceId}
-                        practiceTz={practiceTz}
-                        membership={{
-                          isMember: pet.isMember === true,
-                          membershipName: pet.membershipName ?? null,
-                        }}
-                        showCheckbox={false}
-                        rowClassName="scheduler-household-pet-row--reference"
-                      />
-                    ))}
-                  </div>
-                </details>
-              ) : null}
+              {dispositionLocked ? null : (
+                <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+                  Optional here — checkout asks this while the client is still at the door. Answer
+                  it now only if this visit is not going through checkout.
+                </p>
+              )}
 
               {dispositionLocked ? (
                 <div className="scheduler-forward-booking-saved">
@@ -1732,8 +1738,12 @@ export function SchedulerActualVisitTimeModal({
                       {forwardBookingMode === 'labs_pending' ? (
                         <dl className="scheduler-forward-booking-saved-details">
                           <div>
-                            <dt>Assign task to</dt>
+                            <dt>Who does this</dt>
                             <dd>{savedLabsAssigneeLabel}</dd>
+                          </div>
+                          <div>
+                            <dt>Watchers</dt>
+                            <dd>{savedLabsWatcherLabel}</dd>
                           </div>
                           <div>
                             <dt>Task{labsPendingVisitsForTask.length > 1 ? 's' : ''}</dt>
@@ -1787,259 +1797,16 @@ export function SchedulerActualVisitTimeModal({
                   ) : null}
                 </div>
               ) : (
-              <fieldset className="scheduler-forward-booking-mode-fieldset" disabled={saving}>
-                <legend className="scheduler-forward-booking-mode-legend">How should follow-up be handled?</legend>
-                <div className="scheduler-forward-booking-mode-stack" role="radiogroup" aria-label="Forward booking option">
-                  {FORWARD_BOOKING_MODE_OPTIONS.map(({ value, label, hint }) => {
-                    const active = forwardBookingMode === value;
-                    return (
-                      <div
-                        key={value}
-                        className={[
-                          'scheduler-forward-booking-mode-option',
-                          active ? 'scheduler-forward-booking-mode-option--active' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      >
-                        <label className="scheduler-forward-booking-mode-row">
-                          <input
-                            type="radio"
-                            name="forward-booking-mode"
-                            value={value}
-                            checked={active}
-                            onChange={() => {
-                              forwardBookingUserEditedRef.current = true;
-                              setForwardBookingMode(value);
-                              setError(null);
-                              if (value === 'labs_pending' && !labsAssigneeEmployeeId.trim()) {
-                                const def = defaultLabsAssigneeEmployeeId(appt);
-                                if (def) setLabsAssigneeEmployeeId(def);
-                              }
-                              if (value === 'forward_book_fields' && !forwardBookingProviderId.trim()) {
-                                const def = defaultForwardBookingProviderId(appt);
-                                if (def) setForwardBookingProviderId(def);
-                              }
-                            }}
-                          />
-                          <span className="scheduler-forward-booking-mode-copy">
-                            <span className="scheduler-forward-booking-mode-label">{label}</span>
-                            <span className="scheduler-forward-booking-mode-hint">{hint}</span>
-                          </span>
-                        </label>
-
-                        {active && value === 'labs_pending' ? (
-                          <div className="scheduler-forward-booking-mode-panel">
-                            <label className="scheduler-edit-field">
-                              <span>Assign task to *</span>
-                              <select
-                                value={labsAssigneeEmployeeId}
-                                onChange={(e) => {
-                                  forwardBookingUserEditedRef.current = true;
-                                  setLabsAssigneeEmployeeId(e.target.value);
-                                }}
-                                disabled={saving || forwardBookingMetaLoading}
-                                aria-label="Assign labs pending task to"
-                              >
-                                <option value="">Select staff member…</option>
-                                {employees.map((em) => (
-                                  <option key={em.id} value={String(em.id)}>
-                                    {formatEmployeeDisplayName(em) || em.email}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            {createsMultipleLabsPendingTasks ? (
-                              <div className="scheduler-forward-booking-mode-hint" style={{ marginTop: 4 }}>
-                                Creates one task per selected pet (e.g. &quot;Forward book [pet name]
-                                once labs come back&quot;). Each task links to that pet&apos;s visit so
-                                staff can add forward booking individually.
-                              </div>
-                            ) : (
-                              <label className="scheduler-edit-field">
-                                <span>Task *</span>
-                                <input
-                                  type="text"
-                                  value={labsTaskTitle}
-                                  onChange={(e) => {
-                                    forwardBookingUserEditedRef.current = true;
-                                    setLabsTaskTitle(e.target.value);
-                                  }}
-                                  disabled={saving || forwardBookingMetaLoading}
-                                  placeholder="What needs to be done?"
-                                  aria-label="Labs pending task description"
-                                />
-                              </label>
-                            )}
-                            <div className="scheduler-edit-two-col" style={{ marginTop: 10 }}>
-                              <label className="scheduler-edit-field">
-                                <span>Start *</span>
-                                <input
-                                  type="datetime-local"
-                                  value={labsTaskStartLocal}
-                                  onChange={(e) => {
-                                    forwardBookingUserEditedRef.current = true;
-                                    setLabsTaskStartLocal(e.target.value);
-                                  }}
-                                  disabled={saving || forwardBookingMetaLoading}
-                                  required
-                                  aria-label="Task start date and time"
-                                />
-                              </label>
-                              <label className="scheduler-edit-field">
-                                <span>Due</span>
-                                <input
-                                  type="datetime-local"
-                                  value={labsTaskDueLocal}
-                                  onChange={(e) => {
-                                    forwardBookingUserEditedRef.current = true;
-                                    setLabsTaskDueLocal(e.target.value);
-                                  }}
-                                  disabled={saving || forwardBookingMetaLoading}
-                                  aria-label="Task due date and time"
-                                />
-                                <span className="settings-muted scheduler-forward-booking-field-hint">
-                                  Optional — leave blank for no due date.
-                                </span>
-                              </label>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {active && value === 'forward_book_fields' ? (
-                          <div className="scheduler-forward-booking-mode-panel">
-                            <div className="scheduler-edit-two-col">
-                              <label className="scheduler-edit-field">
-                                <span>Forward book *</span>
-                                <select
-                                  value={forwardAmount}
-                                  onChange={(e) => {
-                                    forwardBookingUserEditedRef.current = true;
-                                    setForwardAmount(e.target.value);
-                                  }}
-                                  disabled={forwardBookingFieldsDisabled}
-                                  required
-                                  aria-label="Forward book amount"
-                                >
-                                  <option value="">Select…</option>
-                                  {FORWARD_BOOKING_AMOUNT_OPTIONS.map((n) => (
-                                    <option key={n} value={String(n)}>
-                                      {n}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label className="scheduler-edit-field">
-                                <span>Unit *</span>
-                                <select
-                                  value={forwardUnit}
-                                  onChange={(e) => {
-                                    forwardBookingUserEditedRef.current = true;
-                                    setForwardUnit(e.target.value as ForwardBookingIntervalUnit | '');
-                                  }}
-                                  disabled={forwardBookingFieldsDisabled}
-                                  required
-                                  aria-label="Forward book unit"
-                                >
-                                  <option value="">Select…</option>
-                                  {FORWARD_BOOKING_UNIT_OPTIONS.map(({ value: unitValue, label: unitLabel }) => (
-                                    <option key={unitValue} value={unitValue}>
-                                      {unitLabel}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            </div>
-                            <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
-                              <span>Forward booking with</span>
-                              <select
-                                className="settings-input"
-                                value={forwardBookingProviderId}
-                                onChange={(e) => {
-                                  forwardBookingUserEditedRef.current = true;
-                                  setForwardBookingProviderId(e.target.value);
-                                }}
-                                disabled={forwardBookingFieldsDisabled || forwardBookingMetaLoading}
-                                aria-label="Forward booking provider"
-                                style={{ width: '100%' }}
-                              >
-                                <option value="">Select provider…</option>
-                                {providers.map((p) => (
-                                  <option key={String(p.id)} value={String(p.id)}>
-                                    {providerSelectLabel(p)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
-                              <span>Forward booking note *</span>
-                              <p
-                                className="settings-muted"
-                                style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
-                              >
-                                Required — shown on the forward booking list and prefilled when booking the
-                                follow-up visit.
-                              </p>
-                              <textarea
-                                className="settings-input"
-                                rows={2}
-                                value={bookingNotes}
-                                onChange={(e) => {
-                                  forwardBookingUserEditedRef.current = true;
-                                  setBookingNotes(e.target.value);
-                                }}
-                                disabled={forwardBookingFieldsDisabled}
-                                required
-                                placeholder="e.g. Prefers AM slots, same provider"
-                                aria-label="Forward booking note"
-                                style={{
-                                  width: '100%',
-                                  resize: 'vertical',
-                                  fontFamily: 'inherit',
-                                  fontSize: 14,
-                                }}
-                              />
-                            </label>
-                          </div>
-                        ) : null}
-
-                        {active && value === 'not_appropriate' ? (
-                          <div className="scheduler-forward-booking-mode-panel">
-                            <label className="scheduler-edit-field" style={{ display: 'block' }}>
-                              <span>Reason *</span>
-                              <p
-                                className="settings-muted"
-                                style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
-                              >
-                                Required — why is forward booking not appropriate for this visit?
-                              </p>
-                              <textarea
-                                className="settings-input"
-                                rows={3}
-                                value={bookingNotes}
-                                onChange={(e) => {
-                                  forwardBookingUserEditedRef.current = true;
-                                  setBookingNotes(e.target.value);
-                                }}
-                                disabled={saving}
-                                required
-                                placeholder="e.g. Hospice care, client declined follow-up, single euthanasia visit"
-                                aria-label="Reason forward booking is not appropriate"
-                                style={{
-                                  width: '100%',
-                                  resize: 'vertical',
-                                  fontFamily: 'inherit',
-                                  fontSize: 14,
-                                }}
-                              />
-                            </label>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </fieldset>
+                <>
+                  <ScheduleFollowUpsButton
+                    pets={followUpPlannerVisit.pets.map((p) => ({
+                      key: `${p.appointmentId}:${p.patientId}`,
+                      name: p.name,
+                      disposition: p.disposition ?? null,
+                    }))}
+                    onOpen={() => setFollowUpsOpen(true)}
+                  />
+                </>
               )}
             </section>
           ) : null}
@@ -2050,22 +1817,42 @@ export function SchedulerActualVisitTimeModal({
             Cancel
           </button>
           {existingStartIso && !isEndOnly ? (
-            <button type="button" className="btn secondary" disabled={saving} onClick={handleClearStart}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={saving}
+              onClick={handleClearStart}
+            >
               Clear start
             </button>
           ) : null}
           {existingEndIso && !isStartOnly ? (
-            <button type="button" className="btn secondary" disabled={saving} onClick={handleClearEnd}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={saving}
+              onClick={handleClearEnd}
+            >
               Clear end
             </button>
           ) : null}
           {!isEndOnly ? (
-            <button type="button" className="btn secondary" disabled={saving} onClick={handleUseNowStart}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={saving}
+              onClick={handleUseNowStart}
+            >
               Now (start)
             </button>
           ) : null}
           {!isStartOnly ? (
-            <button type="button" className="btn secondary" disabled={saving} onClick={handleUseNowEnd}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={saving}
+              onClick={handleUseNowEnd}
+            >
               Now (end)
             </button>
           ) : null}
@@ -2084,7 +1871,22 @@ export function SchedulerActualVisitTimeModal({
 
   return (
     <>
-      {createPortal(modal, document.body)}
+      {/* Steps aside while Schedule follow-ups is open, then comes back. */}
+      {followUpsOpen ? null : createPortal(modal, document.body)}
+      <ScheduleFollowUpsPlanner
+        key={followUpsOpen ? 'open' : 'closed'}
+        open={followUpsOpen}
+        visit={followUpPlannerVisit}
+        practiceId={practiceId}
+        tz={practiceTz}
+        onClose={() => setFollowUpsOpen(false)}
+        onSaved={async () => {
+          setDispositionLocked(true);
+          // Hand the calendar the row with its new follow-up choice.
+          const fresh = await fetchAppointmentById(appt.id, { practiceId }).catch(() => null);
+          onSaved(fresh ?? appt, { closeModal: false });
+        }}
+      />
       <EuthanasiaFutureAppointmentsModal
         open={Boolean(euthanasiaFutureRows?.length)}
         mode="end_visit"
@@ -2107,6 +1909,35 @@ export function SchedulerActualVisitTimeModal({
           void postBothWithEuthanasiaGuard(pending.postOpts, pending.saveOptions);
         }}
       />
+      {euthanasiaWrapUp ? (
+        <DeathWrapUpModal
+          previews={euthanasiaWrapUp}
+          kind="inactivate"
+          title={euthanasiaWrapUp.length > 1 ? 'Ending visit for these patients' : 'Ending this visit'}
+          lead={
+            euthanasiaWrapUp.length > 1
+              ? 'Accept will cancel the items below for every pet, then mark them inactive.'
+              : `Accept will cancel the items below for ${euthanasiaWrapUp[0]?.patientName ?? 'this patient'}, then mark them inactive.`
+          }
+          acceptLabel="Accept and end visit"
+          reasonRequired={false}
+          practiceId={practiceId}
+          onClose={() => {
+            if (saving) return;
+            setEuthanasiaWrapUp(null);
+            pendingEuthanasiaEndRef.current = null;
+            euthanasiaEndConfirmedRef.current = false;
+          }}
+          onAccepted={() => {
+            const pending = pendingEuthanasiaEndRef.current;
+            setEuthanasiaWrapUp(null);
+            if (!pending) return;
+            pending.futureRows = [];
+            euthanasiaEndConfirmedRef.current = true;
+            void postBothWithEuthanasiaGuard(pending.postOpts, pending.saveOptions);
+          }}
+        />
+      ) : null}
     </>
   );
 }

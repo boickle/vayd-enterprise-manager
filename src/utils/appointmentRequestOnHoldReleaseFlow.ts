@@ -15,8 +15,9 @@ import {
   writeSchedulerFocusSession,
   writeSchedulerFocusReturnSession,
 } from './schedulerFocusAppointment';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export type BeginOnHoldReleaseFlowResult =
   | { kind: 'scheduler_edit' }

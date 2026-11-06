@@ -1,0 +1,75 @@
+/* Checkout screen — the bill is built on the SOAP page, collected here. */
+.soap-checkout-page {
+  padding: 18px 22px 40px;
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.soap-checkout-page__head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.soap-checkout-page__head h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 750;
+  color: #0f172a;
+}
+
+.soap-checkout-page__head .soap-hint {
+  margin: 0;
+}
+
+/* Follow-up sits beside the bill so it is answered before payment, not after. */
+.soap-checkout-page__body {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .soap-checkout-page__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.soap-checkout-page__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.soap-checkout-page__pane > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+}
+
+/* Takes the tech from the working bill to this screen. */
+.soap-checkout-goto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soap-border);
+}
+
+.soap-checkout-goto .soap-hint {
+  margin: 0;
+}

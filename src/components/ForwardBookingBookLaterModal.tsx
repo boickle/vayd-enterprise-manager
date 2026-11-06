@@ -10,8 +10,9 @@ import {
   forwardBookingTodayYmd,
 } from '../utils/forwardBookingBookLater';
 import '../pages/Scheduler.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type Props = {
   entry: ForwardBookingEntry;

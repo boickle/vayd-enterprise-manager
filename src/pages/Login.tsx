@@ -35,6 +35,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       const res = await login(email, password); // { token, user, resetRequired, resetCode }
+      if (res.redirecting) return;
 
       if (res?.resetRequired) {
         if (res.resetCode) {

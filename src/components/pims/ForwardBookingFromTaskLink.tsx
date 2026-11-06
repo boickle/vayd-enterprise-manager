@@ -22,7 +22,7 @@ export function ForwardBookingFromTaskLink({
         returnTo: taskId != null ? buildTaskForwardBookingReturnPath(taskId) : undefined,
       })}
     >
-      Add forward booking
+      Schedule follow-ups
     </Link>
   );
 }

@@ -1,0 +1,142 @@
+.mail-ship-picker {
+  margin: 12px 0 4px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.mail-ship-picker legend {
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.mail-ship-picker label.mail-ship-picker__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+}
+
+.mail-ship-picker label.mail-ship-picker__option.is-on {
+  border-color: var(--accent, #10b981);
+  background: #ecfdf5;
+}
+
+.mail-ship-picker label.mail-ship-picker__option input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  flex: 0 0 16px;
+}
+
+.mail-ship-picker__option > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mail-ship-picker__line {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  color: #4b5563;
+}
+
+.mail-ship-picker__new {
+  margin: 0 0 6px;
+}
+
+.mail-ship-picker__manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mail-ship-picker__row {
+  display: flex;
+  gap: 6px;
+}
+
+.mail-ship-picker .mail-ship-picker__input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.mail-ship-picker .mail-ship-picker__city {
+  flex: 1 1 auto;
+}
+
+.mail-ship-picker .mail-ship-picker__state {
+  flex: 0 0 56px;
+}
+
+.mail-ship-picker .mail-ship-picker__zip {
+  flex: 0 0 96px;
+}
+
+.mail-ship-picker__link {
+  align-self: flex-start;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f766e;
+  cursor: pointer;
+}
+
+.mail-ship-picker__link:hover {
+  text-decoration: underline;
+}
+
+.mail-ship-picker label.mail-ship-picker__save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+}
+
+.mail-ship-picker__save input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.mail-ship-picker__hint,
+.mail-ship-picker__error {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.mail-ship-picker__error {
+  margin-top: 6px;
+  color: #b91c1c;
+}

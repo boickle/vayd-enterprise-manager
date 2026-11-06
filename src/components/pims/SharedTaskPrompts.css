@@ -1,0 +1,93 @@
+/* Close / reopen prompts for shared tasks (SCH-E). Sits above TaskRemoveModal. */
+.shared-task-prompt__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 16px;
+  z-index: 90;
+  overflow-y: auto;
+}
+
+.shared-task-prompt {
+  background: #fff;
+  border-radius: 12px;
+  max-width: 440px;
+  width: 100%;
+  padding: 20px 22px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.shared-task-prompt h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.shared-task-prompt p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #475569;
+}
+
+.shared-task-prompt__error {
+  color: #b91c1c !important;
+}
+
+.shared-task-prompt__people {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.shared-task-prompt__people label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shared-task-prompt select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+
+.shared-task-prompt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.shared-task-prompt__actions button {
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.shared-task-prompt__actions button.is-primary {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+
+.shared-task-prompt__actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

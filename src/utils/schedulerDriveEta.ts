@@ -25,6 +25,7 @@ import {
   arrivalWindowFromScheduledStart,
   effectiveWindowForScheduledStart,
 } from './appointmentArrivalWindow';
+import { windowSourceForVisit } from './premedsWindow';
 import {
   applyEditTimePreviewToDoctorDayAppts,
   type EditVisitTimePreview,
@@ -177,7 +178,7 @@ function buildDoctorDaySyntheticFromRoutingPreview(
   } else {
     const ew = effectiveWindowForScheduledStart(
       start.toISO()!,
-      previewAppointmentType ?? undefined,
+      windowSourceForVisit(previewAppointmentType ?? undefined, preview.needsPremeds),
       practiceTz,
       { appointmentEndIso: end.toISO()! }
     );
@@ -770,6 +771,7 @@ async function fetchEtaForOneDay(
         endIso: h.endIso,
         effectiveWindow: h.effectiveWindow ?? (h.primary as any)?.effectiveWindow,
         appointmentType: (h.primary as any)?.appointmentType ?? null,
+        needsPremeds: (h.primary as any)?.needsPremeds,
         practiceTz: day.timezone,
       }),
     })),

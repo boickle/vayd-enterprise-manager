@@ -52,17 +52,41 @@ function formatArrivalWindowRange(
   return `${start.toFormat('ccc t')} – ${end.toFormat('ccc t')}`;
 }
 
+/** "Arrival window: 1:00 PM–3:00 PM → 1:30 PM–2:30 PM" when the API windows differ. */
+export function arrivalWindowChangeLine(
+  arrivalWindow: TypeChangePreviewResponse['arrivalWindow'] | undefined,
+  practiceTz: string
+): string | null {
+  const beforeLabel = formatArrivalWindowRange(arrivalWindow?.before, practiceTz);
+  const afterLabel = formatArrivalWindowRange(arrivalWindow?.after, practiceTz);
+  if (beforeLabel && afterLabel && beforeLabel !== afterLabel) {
+    return `Arrival window: ${beforeLabel} → ${afterLabel}`;
+  }
+  return null;
+}
+
+export function editVisitPremedsChanged(
+  appt: Pick<Appointment, 'needsPremeds'>,
+  newNeedsPremeds: boolean | undefined
+): boolean {
+  return typeof newNeedsPremeds === 'boolean' && newNeedsPremeds !== (appt.needsPremeds === true);
+}
+
+/** Window line when the edit toggles pre-meds (unchanged = the type window was already tighter). */
+export function premedsWindowLine(premedsOn: boolean, changeLine: string | null): string {
+  const prefix = premedsOn ? 'Pre-meds added' : 'Pre-meds removed';
+  if (changeLine) return `${prefix} — ${changeLine.replace(/^Arrival window/, 'arrival window')}`;
+  return `${prefix} — arrival window unchanged (the visit type window is already at least as tight)`;
+}
+
 function windowLineFromPreview(
   preview: TypeChangePreviewResponse,
   originalType: AppointmentType | undefined,
   newType: AppointmentType | undefined,
   practiceTz: string
 ): string | null {
-  const beforeLabel = formatArrivalWindowRange(preview.arrivalWindow?.before, practiceTz);
-  const afterLabel = formatArrivalWindowRange(preview.arrivalWindow?.after, practiceTz);
-  if (beforeLabel && afterLabel && beforeLabel !== afterLabel) {
-    return `Arrival window: ${beforeLabel} → ${afterLabel}`;
-  }
+  const changeLine = arrivalWindowChangeLine(preview.arrivalWindow, practiceTz);
+  if (changeLine) return changeLine;
   const originalWindow = arrivalWindowLabel(originalType);
   const newWindow = arrivalWindowLabel(newType);
   if (originalWindow && newWindow && originalWindow !== newWindow) {
@@ -79,6 +103,7 @@ export async function fetchEditVisitTypeScoreCompare(args: {
   providers: readonly Provider[];
   appointmentTypes: readonly AppointmentType[];
   calendarProvider?: Provider | null;
+  newNeedsPremeds?: boolean;
 }): Promise<EditVisitTypeScoreCompare> {
   const { appt, newAppointmentTypeId, practiceDateKey, practiceTz } = args;
   const doctorPimsId = resolveEditVisitRoutingDoctorId(
@@ -122,6 +147,7 @@ export async function fetchEditVisitTypeScoreCompare(args: {
       date: practiceDateKey,
       appointmentId: apptId,
       newAppointmentTypeId,
+      ...(typeof args.newNeedsPremeds === 'boolean' ? { newNeedsPremeds: args.newNeedsPremeds } : {}),
       useTraffic: true,
     });
 
@@ -130,10 +156,15 @@ export async function fetchEditVisitTypeScoreCompare(args: {
         ? preview.arrivalWindow.after
         : null;
 
-    const windowLine = windowLineFromPreview(preview, originalType, newType, practiceTz);
+    const baseWindowLine = windowLineFromPreview(preview, originalType, newType, practiceTz);
+    const premedsChanged = editVisitPremedsChanged(appt, args.newNeedsPremeds);
+    const windowLine = premedsChanged
+      ? premedsWindowLine(args.newNeedsPremeds === true, baseWindowLine)
+      : baseWindowLine;
     const windowWarningMayChange = Boolean(
-      windowLine &&
-        (isFixedTimeTypeName(newType?.name || newType?.prettyName || '') ||
+      baseWindowLine &&
+        (premedsChanged ||
+          isFixedTimeTypeName(newType?.name || newType?.prettyName || '') ||
           isFixedTimeTypeName(originalType?.name || originalType?.prettyName || ''))
     );
 

@@ -19,6 +19,8 @@ export async function uploadAppointmentRequestRecord(input: {
   formPetId: string;
   petName: string;
   patientId?: number;
+  outsideHospitalId?: number;
+  hospitalName?: string;
 }): Promise<ClientRecordUpload> {
   const body = new FormData();
   body.append('file', input.file);
@@ -27,6 +29,12 @@ export async function uploadAppointmentRequestRecord(input: {
   body.append('petName', input.petName);
   if (input.patientId != null && Number.isFinite(input.patientId)) {
     body.append('patientId', String(input.patientId));
+  }
+  if (input.outsideHospitalId != null && Number.isFinite(input.outsideHospitalId)) {
+    body.append('outsideHospitalId', String(input.outsideHospitalId));
+  }
+  if (input.hospitalName?.trim()) {
+    body.append('hospitalName', input.hospitalName.trim());
   }
   const { data } = await http.post<ClientRecordUpload>(
     '/public/appointments/record-uploads',

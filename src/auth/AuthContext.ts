@@ -14,6 +14,7 @@ export type LoginResult = {
   } | null;
   resetRequired: boolean;
   resetCode?: string | null;
+  redirecting?: boolean;
 };
 
 export type AuthContextType = {

@@ -1,0 +1,140 @@
+.estimate-settle {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.estimate-settle-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.estimate-settle-head span {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.estimate-settle-head strong {
+  font-size: 19px;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.estimate-settle-status {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.estimate-settle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.estimate-settle-actions .soap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.estimate-settle-lines {
+  margin-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 8px;
+}
+
+.estimate-settle-hint {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: #475569;
+}
+
+.estimate-settle-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 13px;
+}
+
+
+.estimate-settle-line-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #0f172a;
+}
+
+.estimate-settle-line-name em {
+  font-style: normal;
+  color: #64748b;
+}
+
+.estimate-settle-line-amount {
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+
+
+
+
+
+
+
+
+
+.estimate-settle-notice {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #334155;
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+
+.estimate-settle-decline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+}
+
+.estimate-settle-decline p {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12.5px;
+  color: #7f1d1d;
+}
+
+.estimate-settle-bubble {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #1e3a8a;
+}
+
+.estimate-settle-bubble p {
+  margin: 0;
+}
+
+.estimate-settle-bubble p + p {
+  margin-top: 4px;
+}

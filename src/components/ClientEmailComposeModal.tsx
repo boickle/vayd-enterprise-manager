@@ -1,23 +1,43 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Paperclip, X } from 'lucide-react';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import EmailRecipientInput, { type EmailRecipientChoice } from './EmailRecipientInput';
 import {
   fetchGmailMailboxes,
   fetchGmailSendAsAlias,
   gmailErrorMessage,
+  mailboxDisplayLabel,
+  type GmailComposeAttachment,
+  type GmailMailboxStatus,
   type GmailSendAsAlias,
 } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
 import {
-  buildComposeSendBodies,
+  defaultSharedMailbox,
+  NO_SHARED_GMAIL_MESSAGE,
+  sharedConnectedMailboxes,
+} from '../utils/practiceGmailMailboxes';
+import {
+  composeBodiesFromUserContent,
   defaultFromAlias,
   extractEmail,
   formatFromAlias,
+  isEmailBodyEmpty,
   loadSendAsAliases,
+  plainTextFromHtml,
   signatureHtmlForFromAlias,
   submitCompose,
 } from './gmail/gmailCompose';
+import { sanitizeCommunicationHtml } from '../utils/sanitizeCommunicationHtml';
+import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
+import MessageTemplateHtmlEditor from './messageTemplates/MessageTemplateHtmlEditor';
+import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
+import { wrapBrandedClientEmailHtml } from '../utils/brandedClientEmailHtml';
+
+export type EmailRegardingPatient = { id: number; name: string };
+export type { EmailRecipientChoice };
 
 type Props = {
   open: boolean;
@@ -25,6 +45,44 @@ type Props = {
   clientLabel: string;
   initialSubject: string;
   initialBodyText: string;
+  /** HTML body for the template editor (overrides initialBodyText when set). */
+  initialBodyHtml?: string;
+  /** Wrap the message in the standard client email shell (logo + layout) before send. */
+  brandedShellOnSend?: boolean;
+  /** When set, skip the client inbox lookup and use this To line instead. */
+  initialTo?: string;
+  recipientChoices?: EmailRecipientChoice[];
+  mergeValues?: MergeValues;
+  title?: string;
+  initialAttachments?: GmailComposeAttachment[];
+  regardingPatients?: EmailRegardingPatient[];
+  regardingPatientId?: number | null;
+  onRegardingPatientIdChange?: (id: number | null) => void;
+  regardingPatientIds?: number[];
+  onRegardingPatientIdsChange?: (ids: number[]) => void;
+  /** Invoice/receipt-style logging: client comms by default, EMR only if checked. */
+  patientEmrLogging?: 'default' | 'opt-in';
+  includeInPatientEmr?: boolean;
+  onIncludeInPatientEmrChange?: (next: boolean) => void;
+  /** Optional: offer to log this send on the client record. */
+  saveToClientCommunications?: boolean;
+  onSaveToClientCommunicationsChange?: (next: boolean) => void;
+  /** Staff-only note (e.g. internal reject reason) shown above the client message. */
+  staffOnlyNote?: string;
+  onStaffOnlyNoteChange?: (next: string) => void;
+  staffOnlyNoteLabel?: string;
+  staffOnlyNoteRequired?: boolean;
+  /** Runs after validation and before Gmail send (e.g. refund + cancel order). */
+  onBeforeSend?: () => Promise<void>;
+  /** Replaces the default subtitle under the title when set. */
+  headerDescription?: string;
+  onAfterSend?: (sent: {
+    subject: string;
+    bodyText: string;
+    bodyHtml?: string;
+    to: string;
+    from: string;
+  }) => Promise<void> | void;
   onClose: () => void;
   onOpenEmailHistory?: () => void;
 };
@@ -35,6 +93,30 @@ export function ClientEmailComposeModal({
   clientLabel,
   initialSubject,
   initialBodyText,
+  initialBodyHtml,
+  brandedShellOnSend = false,
+  initialTo,
+  recipientChoices,
+  mergeValues,
+  title = 'Email client',
+  initialAttachments,
+  regardingPatients,
+  regardingPatientId,
+  onRegardingPatientIdChange,
+  regardingPatientIds,
+  onRegardingPatientIdsChange,
+  patientEmrLogging = 'default',
+  includeInPatientEmr = false,
+  onIncludeInPatientEmrChange,
+  saveToClientCommunications = false,
+  onSaveToClientCommunicationsChange,
+  staffOnlyNote,
+  onStaffOnlyNoteChange,
+  staffOnlyNoteLabel = 'Internal reason (staff only)',
+  staffOnlyNoteRequired = false,
+  onBeforeSend,
+  headerDescription,
+  onAfterSend,
   onClose,
   onOpenEmailHistory,
 }: Props) {
@@ -44,6 +126,7 @@ export function ClientEmailComposeModal({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [mailbox, setMailbox] = useState<string | null>(null);
+  const [sharedInboxes, setSharedInboxes] = useState<GmailMailboxStatus[]>([]);
   const [from, setFrom] = useState('');
   const [fromOptions, setFromOptions] = useState<string[]>([]);
   const [sendAsAliases, setSendAsAliases] = useState<GmailSendAsAlias[]>([]);
@@ -51,14 +134,55 @@ export function ClientEmailComposeModal({
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [bodyText, setBodyText] = useState('');
+  const [attachments, setAttachments] = useState<GmailComposeAttachment[]>([]);
+  const [recipientKey, setRecipientKey] = useState<string | null>(null);
+  const picked = recipientChoices?.find((c) => c.key === recipientKey) ?? null;
+  const recipient =
+    picked?.to.trim() && to.toLowerCase().includes(picked.to.trim().toLowerCase()) ? picked : null;
+
+  const chooseRecipient = (next: EmailRecipientChoice) => {
+    const prevBody = picked?.bodyText ?? initialBodyText;
+    setRecipientKey(next.key);
+    // Keep anything staff already typed; only swap the stock message.
+    if (next.bodyText != null && bodyText === prevBody) setBodyText(next.bodyText);
+  };
+
+  async function applySharedMailbox(sendMailbox: string, cancelled = false) {
+    const aliases = await loadSendAsAliases(sendMailbox);
+    if (cancelled) return;
+    const fromVal = defaultFromAlias(aliases, sendMailbox);
+    setMailbox(sendMailbox);
+    setSendAsAliases(aliases);
+    setFromOptions(aliases.map((a) => formatFromAlias(a)));
+    setFrom(fromVal);
+    setSignatureHtml(signatureHtmlForFromAlias(aliases, fromVal));
+
+    const sendAsEmail = extractEmail(fromVal);
+    if (!signatureHtmlForFromAlias(aliases, fromVal) && sendAsEmail) {
+      void fetchGmailSendAsAlias(sendMailbox, sendAsEmail)
+        .then((detail) => {
+          if (cancelled || !detail.signature?.trim()) return;
+          setSendAsAliases((prev) =>
+            prev.map((a) =>
+              a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase() ? { ...a, ...detail } : a,
+            ),
+          );
+          setSignatureHtml(detail.signature.trim());
+        })
+        .catch(() => {
+          /* signature optional */
+        });
+    }
+  }
 
   useEffect(() => {
-    if (!open || clientId == null) {
+    if (!open) {
       setLoading(false);
       setSending(false);
       setLoadError(null);
       setSendError(null);
       setMailbox(null);
+      setSharedInboxes([]);
       setFrom('');
       setFromOptions([]);
       setSendAsAliases([]);
@@ -66,6 +190,13 @@ export function ClientEmailComposeModal({
       setTo('');
       setSubject('');
       setBodyText('');
+      setAttachments([]);
+      return;
+    }
+
+    if (clientId == null && !initialTo?.trim()) {
+      setLoadError('No recipient email address.');
+      setLoading(false);
       return;
     }
 
@@ -75,63 +206,41 @@ export function ClientEmailComposeModal({
     setSendError(null);
     setSignatureHtml('');
     setSubject(initialSubject);
-    setBodyText(initialBodyText);
+    setBodyText(initialBodyHtml?.trim() || initialBodyText);
+    setAttachments(initialAttachments ?? []);
+    setRecipientKey(recipientChoices?.[0]?.key ?? null);
 
     void (async () => {
       try {
         if (!gmailAllowed) {
           throw new Error('Gmail access is not available for your account.');
         }
-        const [clientRaw, mailboxesRes] = await Promise.all([
-          fetchClientByIdStaff(clientId),
-          fetchGmailMailboxes(),
-        ]);
+        const mailboxesRes = await fetchGmailMailboxes();
         if (cancelled) return;
 
-        const emails = clientEmailsFromStaffPayload(clientRaw);
-        if (emails.length === 0) {
-          throw new Error('No client email address on file.');
+        if (clientId != null) {
+          const clientRaw = await fetchClientByIdStaff(clientId);
+          if (cancelled) return;
+          if (initialTo != null) {
+            setTo(initialTo);
+          } else {
+            const emails = clientEmailsFromStaffPayload(clientRaw);
+            if (emails.length === 0) {
+              throw new Error('No client email address on file.');
+            }
+            setTo(emails.join(', '));
+          }
+        } else {
+          setTo(initialTo!.trim());
         }
-        setTo(emails.join(', '));
 
-        const connected = (mailboxesRes.mailboxes ?? []).filter((mb) => mb.connected);
-        const sendMailbox =
-          connected.find((mb) => mb.email.toLowerCase() === 'info@vetatyourdoor.com')?.email ??
-          connected[0]?.email ??
-          null;
+        const shared = sharedConnectedMailboxes(mailboxesRes.mailboxes);
+        const sendMailbox = defaultSharedMailbox(shared)?.email ?? null;
         if (!sendMailbox) {
-          throw new Error(
-            'No Gmail mailboxes are connected. Open Scout Email — shared inboxes connect automatically when configured; personal mailboxes still need OAuth once.',
-          );
+          throw new Error(NO_SHARED_GMAIL_MESSAGE);
         }
-
-        const aliases = await loadSendAsAliases(sendMailbox);
-        if (cancelled) return;
-        const fromVal = defaultFromAlias(aliases, sendMailbox);
-        setMailbox(sendMailbox);
-        setSendAsAliases(aliases);
-        setFromOptions(aliases.map((a) => formatFromAlias(a)));
-        setFrom(fromVal);
-        setSignatureHtml(signatureHtmlForFromAlias(aliases, fromVal));
-
-        const sendAsEmail = extractEmail(fromVal);
-        if (!signatureHtmlForFromAlias(aliases, fromVal) && sendAsEmail) {
-          void fetchGmailSendAsAlias(sendMailbox, sendAsEmail)
-            .then((detail) => {
-              if (cancelled || !detail.signature?.trim()) return;
-              setSendAsAliases((prev) =>
-                prev.map((a) =>
-                  a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase()
-                    ? { ...a, ...detail }
-                    : a,
-                ),
-              );
-              setSignatureHtml(detail.signature.trim());
-            })
-            .catch(() => {
-              /* signature optional */
-            });
-        }
+        setSharedInboxes(shared);
+        await applySharedMailbox(sendMailbox, cancelled);
       } catch (e: unknown) {
         if (!cancelled) setLoadError(gmailErrorMessage(e));
       } finally {
@@ -142,7 +251,17 @@ export function ClientEmailComposeModal({
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, initialSubject, initialBodyText, gmailAllowed]);
+  }, [
+    open,
+    clientId,
+    initialSubject,
+    initialBodyText,
+    initialBodyHtml,
+    initialTo,
+    gmailAllowed,
+    initialAttachments,
+    recipientChoices,
+  ]);
 
   const handleFromChange = (nextFrom: string) => {
     setFrom(nextFrom);
@@ -165,21 +284,47 @@ export function ClientEmailComposeModal({
       });
   };
 
+  const emrPetsReady =
+    patientEmrLogging !== 'opt-in' ||
+    !includeInPatientEmr ||
+    (regardingPatientIds ?? []).length > 0;
+
   const canSend =
-    Boolean(mailbox && from.trim() && to.trim() && subject.trim() && bodyText.trim()) &&
+    Boolean(mailbox && from.trim() && to.trim() && subject.trim() && !isEmailBodyEmpty(bodyText)) &&
+    emrPetsReady &&
     !sending &&
     !loading;
 
   const handleSend = async () => {
     if (!mailbox || !canSend) return;
+    if (staffOnlyNoteRequired && !staffOnlyNote?.trim()) {
+      setSendError('Add an internal reason for staff.');
+      return;
+    }
     setSending(true);
     setSendError(null);
     try {
-      const { bodyText: text, bodyHtml } = buildComposeSendBodies({
-        userText: bodyText,
-        signatureHtml,
-        quotedSuffix: '',
-      });
+      await onBeforeSend?.();
+      const { bodyText: text, bodyHtml } = brandedShellOnSend
+        ? (() => {
+            const inner = sanitizeCommunicationHtml(bodyText.trim());
+            const sig = signatureHtml.trim();
+            let html = wrapBrandedClientEmailHtml(inner);
+            if (sig) {
+              html = html.replace(
+                '</body>',
+                `<div style="margin-top:24px">${sig}</div></body>`,
+              );
+            }
+            const plain = [plainTextFromHtml(inner), sig ? plainTextFromHtml(sig) : '']
+              .filter(Boolean)
+              .join('\n\n');
+            return { bodyText: plain, bodyHtml: html };
+          })()
+        : composeBodiesFromUserContent({
+            userContent: bodyText,
+            signatureHtml,
+          });
       await submitCompose({
         mailbox,
         from,
@@ -188,6 +333,14 @@ export function ClientEmailComposeModal({
         subject: subject.trim(),
         bodyText: text,
         bodyHtml: bodyHtml || undefined,
+        attachments,
+      });
+      await onAfterSend?.({
+        subject: subject.trim(),
+        bodyText: text,
+        bodyHtml: bodyHtml || undefined,
+        to,
+        from,
       });
       onClose();
     } catch (e: unknown) {
@@ -241,14 +394,15 @@ export function ClientEmailComposeModal({
         >
           <div>
             <h3 id="client-email-compose-title" style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
-              Email client
+              {title}
             </h3>
             <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
-              Review and edit the email before sending to {clientLabel}.
+              {headerDescription ??
+                `Review and edit the email before sending to ${recipient?.label ?? (recipientChoices?.length && to.trim() ? to.trim() : clientLabel)}.`}
             </p>
-            {mailbox ? (
+            {mailbox && sharedInboxes.length === 1 ? (
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
-                From {mailbox}
+                Through {mailboxDisplayLabel(sharedInboxes[0])} · {mailbox}
               </p>
             ) : null}
           </div>
@@ -286,6 +440,23 @@ export function ClientEmailComposeModal({
           </p>
         ) : null}
 
+        {onStaffOnlyNoteChange ? (
+          <label style={{ display: 'block', marginBottom: 14 }}>
+            <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+              {staffOnlyNoteLabel}
+            </span>
+            <input
+              type="text"
+              className="settings-input"
+              style={{ width: '100%', boxSizing: 'border-box' }}
+              value={staffOnlyNote ?? ''}
+              disabled={sending}
+              onChange={(e) => onStaffOnlyNoteChange(e.target.value)}
+              placeholder="Why this order is being rejected"
+            />
+          </label>
+        ) : null}
+
         {showSpinner ? (
           <p className="settings-muted" style={{ margin: '0 0 16px' }}>
             Loading email…
@@ -294,20 +465,77 @@ export function ClientEmailComposeModal({
 
         {!showSpinner && !loadError ? (
           <>
+            <MessageTemplatePicker
+              channel="email"
+              mergeValues={mergeValues ?? mergeValuesFromNames({ clientFullName: clientLabel })}
+              disabled={sending}
+              currentSubject={subject}
+              currentBody={bodyText}
+              onApply={({ subject: nextSubject, body }) => {
+                if (nextSubject.trim()) setSubject(nextSubject);
+                setBodyText(body);
+              }}
+            />
             <label style={{ display: 'block', marginBottom: 14 }}>
               <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>To</span>
-              <input
-                type="email"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                disabled={sending}
-                className="settings-input"
-                style={{ width: '100%', boxSizing: 'border-box' }}
-              />
+              {recipientChoices?.length ? (
+                <EmailRecipientInput
+                  value={to}
+                  onChange={setTo}
+                  onPick={chooseRecipient}
+                  choices={recipientChoices}
+                  disabled={sending}
+                  placeholder="Type an email, or a hospital name to search"
+                />
+              ) : (
+                <input
+                  type="email"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  disabled={sending}
+                  className="settings-input"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              )}
+              {recipientChoices?.length ? (
+                <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#6b7280' }}>
+                  Start typing a hospital name to send to another practice.
+                </span>
+              ) : null}
             </label>
 
+            {sharedInboxes.length > 1 ? (
+              <label style={{ display: 'block', marginBottom: 14 }}>
+                <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+                  Inbox
+                </span>
+                <select
+                  value={mailbox ?? ''}
+                  disabled={sending}
+                  className="settings-input"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (!next || next === mailbox) return;
+                    setSendError(null);
+                    void applySharedMailbox(next).catch((err: unknown) => {
+                      setSendError(gmailErrorMessage(err));
+                    });
+                  }}
+                >
+                  {sharedInboxes.map((mb) => (
+                    <option key={mb.email} value={mb.email}>
+                      {mailboxDisplayLabel(mb)} · {mb.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             <label style={{ display: 'block', marginBottom: 14 }}>
-              <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>From</span>
+              <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+                From
+              </span>
               {fromOptions.length > 0 ? (
                 <select
                   value={from}
@@ -346,26 +574,127 @@ export function ClientEmailComposeModal({
               />
             </label>
 
+            {patientEmrLogging === 'opt-in' ? (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 14 }}>
+                  <input
+                    type="checkbox"
+                    checked={includeInPatientEmr}
+                    disabled={sending}
+                    onChange={(e) => onIncludeInPatientEmrChange?.(e.target.checked)}
+                    style={{ marginTop: 3 }}
+                  />
+                  <span>
+                    <strong>Include in patient EMR</strong>
+                    <span style={{ display: 'block', color: '#6b7280', fontSize: 13, marginTop: 2 }}>
+                      Saved to client communications. Check this only if this belongs on a medical
+                      record.
+                    </span>
+                  </span>
+                </label>
+                {includeInPatientEmr && regardingPatients && regardingPatients.length > 0 ? (
+                  <fieldset
+                    style={{
+                      marginTop: 10,
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                    }}
+                  >
+                    <legend style={{ fontSize: 14, fontWeight: 600, padding: '0 4px' }}>
+                      Put on these patient charts
+                    </legend>
+                    <p style={{ margin: '0 0 8px', color: '#6b7280', fontSize: 13 }}>
+                      Choose every pet this invoice or receipt belongs on. One household visit can
+                      include more than one.
+                    </p>
+                    {regardingPatients.map((p) => {
+                      const checked = (regardingPatientIds ?? []).includes(p.id);
+                      return (
+                        <label
+                          key={p.id}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 14 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={sending}
+                            onChange={() => {
+                              const cur = regardingPatientIds ?? [];
+                              onRegardingPatientIdsChange?.(
+                                checked ? cur.filter((id) => id !== p.id) : [...cur, p.id],
+                              );
+                            }}
+                          />
+                          {p.name}
+                        </label>
+                      );
+                    })}
+                    {(regardingPatientIds ?? []).length === 0 ? (
+                      <p style={{ margin: '4px 0 0', color: '#b45309', fontSize: 13 }}>
+                        Select at least one pet.
+                      </p>
+                    ) : null}
+                  </fieldset>
+                ) : null}
+              </div>
+            ) : regardingPatients && regardingPatients.length > 0 ? (
+              <label style={{ display: 'block', marginBottom: 14 }}>
+                <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+                  This is about
+                </span>
+                <select
+                  className="settings-input"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                  value={regardingPatientId ?? ''}
+                  disabled={sending}
+                  onChange={(e) =>
+                    onRegardingPatientIdChange?.(e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">Household / clerical (client record)</option>
+                  {regardingPatients.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} (patient chart)
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            {onSaveToClientCommunicationsChange ? (
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  marginBottom: 14,
+                  fontSize: 14,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={saveToClientCommunications}
+                  disabled={sending}
+                  onChange={(e) => onSaveToClientCommunicationsChange(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <strong>Add to client communications</strong>
+                  <span style={{ display: 'block', color: '#6b7280', fontSize: 13, marginTop: 2 }}>
+                    Saves a copy on the client record. Leave unchecked to keep it on this task only.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+
             <label style={{ display: 'block', marginBottom: 20 }}>
               <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Message</span>
-              <textarea
+              <MessageTemplateHtmlEditor
                 value={bodyText}
-                onChange={(e) => setBodyText(e.target.value)}
                 disabled={sending}
-                rows={10}
-                style={{
-                  width: '100%',
-                  padding: 12,
-                  background: '#f9fafb',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: signatureHtml ? '8px 8px 0 0' : 8,
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  boxSizing: 'border-box',
-                }}
                 placeholder="Enter your message…"
+                onChange={setBodyText}
               />
               {signatureHtml ? (
                 <div
@@ -381,6 +710,75 @@ export function ClientEmailComposeModal({
                 />
               ) : null}
             </label>
+            <div style={{ marginBottom: 20 }}>
+              <span style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+                Attachments
+              </span>
+              {attachments.length ? (
+                <ul style={{ margin: '0 0 8px', padding: 0, listStyle: 'none' }}>
+                  {attachments.map((file, idx) => (
+                    <li
+                      key={`${file.filename}-${idx}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 4 }}
+                    >
+                      <Paperclip size={14} />
+                      <span>{file.filename}</span>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        disabled={sending}
+                        aria-label={`Remove ${file.filename}`}
+                        onClick={() => setAttachments((cur) => cur.filter((_, i) => i !== idx))}
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ margin: '0 0 8px', color: '#6b7280', fontSize: 13 }}>None yet.</p>
+              )}
+              <label className="btn secondary" style={{ display: 'inline-flex', cursor: sending ? 'default' : 'pointer' }}>
+                Add attachment
+                <input
+                  type="file"
+                  multiple
+                  disabled={sending}
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    e.target.value = '';
+                    void Promise.all(
+                      files.map(
+                        (file) =>
+                          new Promise<GmailComposeAttachment>((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const result = String(reader.result || '');
+                              const contentBase64 = result.split(',')[1] || '';
+                              if (!contentBase64) {
+                                reject(new Error(`Could not read ${file.name}`));
+                                return;
+                              }
+                              resolve({
+                                filename: file.name,
+                                mimeType: file.type || 'application/octet-stream',
+                                contentBase64,
+                              });
+                            };
+                            reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+                            reader.readAsDataURL(file);
+                          }),
+                      ),
+                    )
+                      .then((added) => setAttachments((cur) => [...cur, ...added]))
+                      .catch((err: unknown) =>
+                        setSendError(err instanceof Error ? err.message : 'Could not add attachment.'),
+                      );
+                  }}
+                />
+              </label>
+            </div>
           </>
         ) : null}
 

@@ -38,6 +38,49 @@
   min-width: min(320px, 38%);
 }
 
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__calendar {
+  min-width: 0;
+}
+
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__routing,
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__splitter {
+  display: none !important;
+}
+
+.schedule-routing-workspace__expand {
+  flex: 0 0 40px;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  align-self: stretch;
+  margin: 0;
+  padding: 12px 6px;
+  border: none;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+}
+
+.schedule-routing-workspace__expand:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.schedule-routing-workspace__expand-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .schedule-routing-workspace__splitter {
   flex: 0 0 7px;
   margin: 0 -3px;
@@ -87,6 +130,40 @@
 }
 
 .schedule-routing-workspace__splitter:focus-visible {
+  outline: none;
+}
+
+/* The collapse tab sits on the divider itself, so the grip pill is replaced by it. */
+.schedule-routing-workspace__splitter::after {
+  display: none;
+}
+
+.schedule-routing-workspace__collapse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.schedule-routing-workspace__collapse:hover,
+.schedule-routing-workspace__collapse:focus-visible {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25);
   outline: none;
 }
 
@@ -149,7 +226,9 @@
   }
 
   .schedule-routing-workspace__routing-inner {
+    flex: none;
     height: auto;
+    min-height: auto;
     overflow: visible;
     display: block;
   }

@@ -76,6 +76,7 @@ type Props = {
   onClose: () => void;
   date: string;
   employeeId: string;
+  practiceId: number;
   practiceTz: string;
   /** Cached drive-day from scheduler when available. */
   predictedDayData?: DayData | null;
@@ -1019,6 +1020,7 @@ export function SchedulerReconcileModal({
   onClose,
   date,
   employeeId,
+  practiceId,
   practiceTz,
   predictedDayData,
   appointments,
@@ -1073,6 +1075,7 @@ export function SchedulerReconcileModal({
         ]);
         if (cancelled) return;
         setWorkday(workdayRow);
+
         let predictedRow: DayData | null = null;
         if (predictedDayData) {
           predictedRow = predictedDayData;
@@ -1102,7 +1105,7 @@ export function SchedulerReconcileModal({
     return () => {
       cancelled = true;
     };
-  }, [open, date, employeeId, predictedDayData]);
+  }, [open, date, employeeId, practiceId, predictedDayData]);
 
   const predictedTz = practiceTimeZoneOrDefault(predicted?.timezone ?? practiceTz);
 
@@ -1275,6 +1278,7 @@ export function SchedulerReconcileModal({
       });
       setWorkday(updated);
       onWorkdaySaved?.(updated);
+
       setSaveSuccess('Day times saved.');
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };

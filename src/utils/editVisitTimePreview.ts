@@ -2,6 +2,7 @@ import { DateTime } from 'luxon';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { DoctorDayAppt } from '../api/appointments';
 import { effectiveWindowForScheduledStart } from './appointmentArrivalWindow';
+import { windowSourceForVisit } from './premedsWindow';
 import {
   fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
   shouldShowEtaWindowWarning,
@@ -26,7 +27,17 @@ export type EditVisitTimePreview = {
   originalAppointmentEnd?: string;
   /** Booked type name before type-change preview. */
   originalAppointmentTypeName?: string;
+  /** Draft "Needs pre-meds" (unsaved) — narrows the arrival window in the preview + score. */
+  needsPremeds?: boolean;
+  /** Saved pre-meds flag before this preview. */
+  originalNeedsPremeds?: boolean;
 };
+
+/** True when the preview toggles pre-meds vs the saved visit. */
+export function editVisitPreviewChangesPremeds(preview: EditVisitTimePreview | null | undefined): boolean {
+  if (!preview || typeof preview.needsPremeds !== 'boolean') return false;
+  return preview.needsPremeds !== (preview.originalNeedsPremeds === true);
+}
 
 export function isFixedTimeTypeName(name: string): boolean {
   const lower = name.trim().toLowerCase();
@@ -43,12 +54,14 @@ export function effectiveWindowForTypePreview(
   if (arrivalWindowAfter?.startIso && arrivalWindowAfter?.endIso) {
     return arrivalWindowAfter;
   }
+  const baseType =
+    draftType ??
+    (preview.appointmentTypeName
+      ? { name: preview.appointmentTypeName, prettyName: preview.appointmentTypeName }
+      : undefined);
   return effectiveWindowForScheduledStart(
     preview.appointmentStart,
-    draftType ??
-      (preview.appointmentTypeName
-        ? { name: preview.appointmentTypeName, prettyName: preview.appointmentTypeName }
-        : undefined),
+    windowSourceForVisit(baseType, preview.needsPremeds),
     practiceTz,
     { appointmentEndIso: preview.appointmentEnd }
   );
@@ -108,6 +121,8 @@ export function buildEditVisitTimePreview(
     originalAppointmentStart?: string;
     originalAppointmentEnd?: string;
     originalAppointmentTypeName?: string;
+    needsPremeds?: boolean;
+    originalNeedsPremeds?: boolean;
   }
 ): EditVisitTimePreview | null {
   const practiceDateKey = editVisitTimePreviewPracticeDateKey(startUtc, practiceTz);
@@ -130,6 +145,10 @@ export function buildEditVisitTimePreview(
       : {}),
     ...(opts?.originalAppointmentTypeName?.trim()
       ? { originalAppointmentTypeName: opts.originalAppointmentTypeName.trim() }
+      : {}),
+    ...(typeof opts?.needsPremeds === 'boolean' ? { needsPremeds: opts.needsPremeds } : {}),
+    ...(typeof opts?.originalNeedsPremeds === 'boolean'
+      ? { originalNeedsPremeds: opts.originalNeedsPremeds }
       : {}),
   };
 }
@@ -200,7 +219,9 @@ export function applyEditTimePreviewToDoctorDayAppts(
       (typeName ? { name: typeName } : undefined);
     const ew = effectiveWindowForScheduledStart(
       preview.appointmentStart,
-      typeForWindow,
+      typeof preview.needsPremeds === 'boolean'
+        ? windowSourceForVisit(typeForWindow, preview.needsPremeds)
+        : typeForWindow,
       practiceTz,
       { appointmentEndIso: preview.appointmentEnd }
     );

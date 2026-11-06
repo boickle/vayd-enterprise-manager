@@ -1,0 +1,36 @@
+.vayd-store__card-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+.vayd-store__card-panel-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.vayd-store__card-panel-row select {
+  padding: 4px 6px;
+  min-width: 220px;
+}
+.vayd-store__card-panel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.vayd-store__card-panel-muted {
+  color: #6b7280;
+  font-size: 13px;
+}
+.vayd-store__card-panel-error {
+  color: #b42318;
+  font-size: 13px;
+}
+.vayd-store__card-panel-ok {
+  color: #05603a;
+  font-size: 13px;
+}

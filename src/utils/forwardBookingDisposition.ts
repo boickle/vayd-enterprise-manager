@@ -36,6 +36,25 @@ function pickPositiveInt(v: unknown): number | null {
   return Math.trunc(n);
 }
 
+export function uniqueEmployeeIds(value: unknown): number[] {
+  const list = Array.isArray(value) ? value : value == null || value === '' ? [] : [value];
+  const out: number[] = [];
+  for (const item of list) {
+    const n = pickPositiveInt(item);
+    if (n != null && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export function labsPendingAssigneeIds(
+  labs: ForwardBookingDisposition['labsPendingTask'] | null | undefined
+): number[] {
+  if (!labs) return [];
+  const fromList = uniqueEmployeeIds(labs.assignedToEmployeeIds);
+  if (fromList.length) return fromList;
+  return uniqueEmployeeIds(labs.assignedToEmployeeId);
+}
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -58,8 +77,16 @@ export function forwardBookingDispositionFromAppointment(
   let labsPendingTask: ForwardBookingDisposition['labsPendingTask'] = null;
   if (labsRaw && typeof labsRaw === 'object') {
     const l = labsRaw as Record<string, unknown>;
-    labsPendingTask = {
+    const assignedToEmployeeIds = labsPendingAssigneeIds({
       assignedToEmployeeId: pickPositiveInt(l.assignedToEmployeeId ?? l.assigneeEmployeeId),
+      assignedToEmployeeIds: uniqueEmployeeIds(l.assignedToEmployeeIds ?? l.assigneeEmployeeIds),
+    });
+    labsPendingTask = {
+      assignedToEmployeeId: assignedToEmployeeIds[0] ?? null,
+      assignedToEmployeeIds,
+      watcherEmployeeIds: uniqueEmployeeIds(l.watcherEmployeeIds).filter(
+        (id) => !assignedToEmployeeIds.includes(id)
+      ),
       title: pickStr(l.title),
       startAt: pickStr(l.startAt ?? l.startLocal),
       dueAt: pickStr(l.dueAt ?? l.dueLocal),
@@ -80,10 +107,13 @@ export type ForwardBookingDispositionFormState = {
   forwardAmount: string;
   forwardUnit: ForwardBookingIntervalUnit | '';
   bookingNotes: string;
-  labsAssigneeEmployeeId: string;
+  labsAssigneeEmployeeIds: number[];
+  labsWatcherEmployeeIds: number[];
   labsTaskTitle: string;
   labsTaskStartLocal: string;
   labsTaskDueLocal: string;
+  /** Forward booking queue row needs pre-meds (not stored on the disposition). */
+  needsPremeds?: boolean;
 };
 
 export function forwardBookingFormStateFromDisposition(
@@ -99,7 +129,8 @@ export function forwardBookingFormStateFromDisposition(
       forwardAmount: '',
       forwardUnit: '',
       bookingNotes: '',
-      labsAssigneeEmployeeId: '',
+      labsAssigneeEmployeeIds: [],
+      labsWatcherEmployeeIds: [],
       labsTaskTitle: defaults.labsTaskTitle,
       labsTaskStartLocal: defaults.labsTaskStartLocal,
       labsTaskDueLocal: '',
@@ -113,8 +144,8 @@ export function forwardBookingFormStateFromDisposition(
       disposition.intervalAmount != null ? String(disposition.intervalAmount) : '',
     forwardUnit: disposition.intervalUnit ?? '',
     bookingNotes: disposition.bookingNotes ?? '',
-    labsAssigneeEmployeeId:
-      labs?.assignedToEmployeeId != null ? String(labs.assignedToEmployeeId) : '',
+    labsAssigneeEmployeeIds: labsPendingAssigneeIds(labs),
+    labsWatcherEmployeeIds: uniqueEmployeeIds(labs?.watcherEmployeeIds),
     labsTaskTitle: labs?.title?.trim() || defaults.labsTaskTitle,
     labsTaskStartLocal: labs?.startAt
       ? (toDatetimeLocalValue(labs.startAt) ?? defaults.labsTaskStartLocal)
@@ -142,11 +173,16 @@ export function buildForwardBookingDispositionPayload(
   }
 
   if (state.mode === 'labs_pending') {
-    const assigneeId = Number(state.labsAssigneeEmployeeId);
+    const assigneeIds = uniqueEmployeeIds(state.labsAssigneeEmployeeIds);
+    const watcherIds = uniqueEmployeeIds(state.labsWatcherEmployeeIds).filter(
+      (id) => !assigneeIds.includes(id)
+    );
     const startAt = fromDatetimeLocalValue(state.labsTaskStartLocal);
     const dueAt = fromDatetimeLocalValue(state.labsTaskDueLocal);
     payload.labsPendingTask = {
-      assignedToEmployeeId: Number.isFinite(assigneeId) ? assigneeId : null,
+      assignedToEmployeeId: assigneeIds[0] ?? null,
+      assignedToEmployeeIds: assigneeIds,
+      watcherEmployeeIds: watcherIds,
       title: state.labsTaskTitle.trim() || null,
       startAt: startAt ?? null,
       dueAt: dueAt ?? null,
@@ -157,6 +193,12 @@ export function buildForwardBookingDispositionPayload(
 }
 
 /** True when all required fields for the chosen mode are present. */
+/** "Mei", "Mei & Stachio", "Mei, Stachio & Bo". */
+export function joinPetNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+}
+
 export function forwardBookingDispositionIsComplete(
   disposition: ForwardBookingDisposition | null | undefined
 ): boolean {
@@ -177,10 +219,8 @@ export function forwardBookingDispositionIsComplete(
       );
     case 'labs_pending': {
       const l = disposition.labsPendingTask;
-      const assigneeId = l?.assignedToEmployeeId;
       return (
-        assigneeId != null &&
-        Number(assigneeId) > 0 &&
+        labsPendingAssigneeIds(l).some((id) => id > 0) &&
         Boolean(l?.title?.trim()) &&
         Boolean(l?.startAt?.trim())
       );

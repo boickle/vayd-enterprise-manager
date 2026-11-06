@@ -1,13 +1,14 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
   getRoomLoader,
   searchItems,
   submitReminderFeedback,
+  listReminderMappings,
   checkItemPricing,
   saveRoomLoaderForm,
   type RoomLoader,
@@ -19,6 +20,7 @@ import {
   type Client,
   type ReminderWithPrice,
   type SearchableItem,
+  type ReminderItemMapping,
 } from '../api/roomLoader';
 import { http } from '../api/http';
 import { Heart } from 'lucide-react';
@@ -26,11 +28,30 @@ import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
-import { evetPatientLink, evetClientLink } from '../utils/evet';
+import { defaultPreMedsAsk, petHasPremedsAlert } from './roomLoader/roomLoaderPremeds';
+import RoomLoaderChartPanel, {
+  autoOpenChartPetId,
+  CHART_SIDE_BY_SIDE_QUERY,
+  PetChartNameLink,
+} from './roomLoader/RoomLoaderChartPanel';
+import { sexNeuterLabel } from '../utils/patientSexNeuter';
+import { clientHref, patientHref } from '../utils/recentRecordsStore';
+import { appAlert } from '../utils/appDialog';
 import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
 } from '../utils/roomLoaderSharps';
+import {
+  EmailNotSentWarning,
+  emailNotSentReasonFromSend,
+  InactivePetNotice,
+  isInactiveCheckInPet,
+  recipientsForPayload,
+  secondEmailOnFile,
+  SendRecipientChoice,
+  type EmailNotSentReason,
+  type SendRecipients,
+} from './roomLoader/roomLoaderSendNotices';
 import './RoomLoader.css';
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
@@ -44,6 +65,72 @@ function normalizeStaffVaccineCheckboxes(
     lyme: v?.lyme ?? true,
     bordatella: v?.bordatella ?? true,
   };
+}
+
+function reminderHasCatalogMatch(
+  reminderWithPrice: ReminderWithPrice,
+  correction?: { selectedItem?: SearchableItem | null } | null
+): boolean {
+  return !!(reminderWithPrice.matchedItem?.name || correction?.selectedItem);
+}
+
+function searchableItemFromReminder(reminderWithPrice: ReminderWithPrice): SearchableItem | null {
+  const matched = reminderWithPrice.matchedItem;
+  if (!matched?.name) return null;
+  const itemType = (reminderWithPrice.itemType || 'inventory').toLowerCase() as
+    | 'inventory'
+    | 'lab'
+    | 'procedure';
+  const price =
+    reminderWithPrice.price != null
+      ? Number(reminderWithPrice.price)
+      : matched.price != null
+        ? Number(matched.price)
+        : 0;
+  const base = { id: matched.id, name: matched.name, code: matched.code ?? undefined };
+  const item: SearchableItem = {
+    itemType,
+    name: matched.name,
+    code: matched.code,
+    price: Number.isFinite(price) ? price : 0,
+  };
+  if (itemType === 'lab') item.lab = base;
+  else if (itemType === 'procedure') (item as { procedure?: typeof base }).procedure = base;
+  else item.inventoryItem = base;
+  return item;
+}
+
+function pickLearnedMapping(mappings: ReminderItemMapping[]): ReminderItemMapping | null {
+  return (
+    mappings.find((m) => m.isActive !== false && (m.correctCount ?? 0) > 0) ?? null
+  );
+}
+
+function searchableFromLearnedMapping(
+  mapping: ReminderItemMapping,
+  found: SearchableItem | undefined,
+  fallbackName: string
+): SearchableItem {
+  if (found) return found;
+  const base = { id: mapping.itemId, name: fallbackName };
+  const item: SearchableItem = {
+    itemType: mapping.itemType,
+    name: fallbackName,
+    price: 0,
+  };
+  if (mapping.itemType === 'lab') item.lab = base;
+  else if (mapping.itemType === 'procedure') item.procedure = base;
+  else item.inventoryItem = base;
+  return item;
+}
+
+function searchResultMatchesMapping(
+  item: SearchableItem,
+  mapping: ReminderItemMapping
+): boolean {
+  if (mapping.itemType === 'lab') return item.lab?.id === mapping.itemId;
+  if (mapping.itemType === 'procedure') return item.procedure?.id === mapping.itemId;
+  return item.inventoryItem?.id === mapping.itemId;
 }
 
 function roomLoaderReminderTriggersSharpsDisposal(
@@ -387,6 +474,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [selectedRoomLoader, setSelectedRoomLoader] = useState<RoomLoader | null>(null);
   const [selectedRoomLoaderId, setSelectedRoomLoaderId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  /** Pet whose chart is docked beside the details modal (null = panel closed). */
+  const [chartPetId, setChartPetId] = useState<string | null>(null);
+  /** Room Loader whose chart panel staff closed, so it isn't reopened automatically. */
+  const [chartDismissedFor, setChartDismissedFor] = useState<number | null>(null);
   const [filters, setFilters] = useState<RoomLoaderSearchParams>({});
   /** When true, pass appointmentFrom / appointmentTo to the list API; when false, request matches pre-filter API (no date params). */
   const [useAppointmentDateFilter, setUseAppointmentDateFilter] = useState(false);
@@ -418,8 +509,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [reconcileRoomLoaderId, setReconcileRoomLoaderId] = useState<number | null>(null);
   /** True when Update (save without email) request is in progress. */
   const [updatingToClient, setUpdatingToClient] = useState(false);
-  /** Send-to-client confirmation modal: email vs SMS when re-sending (timesSent >= 1) */
+  /** Send-to-client confirmation modal: email vs SMS, offered on every send including the first. */
+  const [emailNotSent, setEmailNotSent] = useState<EmailNotSentReason | null>(null);
   const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
+  const [confirmRecipients, setConfirmRecipients] = useState<SendRecipients>('primary');
 
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
   const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
@@ -538,6 +631,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               practiceId: selectedRoomLoader.practice.id,
               limit: 50,
               code: query,
+              appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)
+                ?.id,
             });
             // Check again before setting results
             if (searchQuery[petId] === query) {
@@ -567,6 +662,70 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     };
   }, [searchQuery, selectedRoomLoader]);
 
+
+  async function applyLearnedReminderMatches(data: RoomLoader) {
+    const practiceId = data.practice?.id;
+    const reminders = data.reminders ?? [];
+    if (!practiceId || reminders.length === 0) return;
+
+    const alreadyConfirmed = new Set<number>();
+    const corrections: Record<string, { searchQuery: string; results: SearchableItem[]; loading: boolean; selectedItem: SearchableItem | null; patientId?: number; scopeChosen?: boolean }> = {};
+
+    for (const reminderWithPrice of reminders) {
+      const reminderId = reminderWithPrice.reminder?.id;
+      const text = reminderWithPrice.reminder?.description?.trim();
+      if (!reminderId || !text) continue;
+      if (reminderContains(reminderWithPrice, 'visit', 'consult')) continue;
+
+      const hasMatch = reminderHasCatalogMatch(reminderWithPrice, null);
+      if (hasMatch) {
+        if ((reminderWithPrice.confidence ?? 0) >= 0.95) {
+          alreadyConfirmed.add(reminderId);
+        }
+        continue;
+      }
+
+      try {
+        const mappings = await listReminderMappings(text, practiceId);
+        const mapping = pickLearnedMapping(mappings);
+        if (!mapping) continue;
+        const results = await searchItems({
+          q: text,
+          practiceId,
+          limit: 50,
+          code: text,
+        });
+        const found = results.find((item) => searchResultMatchesMapping(item, mapping));
+        corrections[`reminder-${reminderId}`] = {
+          searchQuery: '',
+          results: [],
+          loading: false,
+          selectedItem: searchableFromLearnedMapping(mapping, found, text),
+          scopeChosen: true,
+        };
+        alreadyConfirmed.add(reminderId);
+      } catch (err) {
+        console.error('Could not apply learned reminder match:', err);
+      }
+    }
+
+    if (Object.keys(corrections).length) {
+      setReminderCorrections((prev) => {
+        const next = { ...prev };
+        for (const [key, value] of Object.entries(corrections)) {
+          if (!next[key]?.selectedItem) next[key] = value;
+        }
+        return next;
+      });
+    }
+    if (alreadyConfirmed.size) {
+      setConfirmedMatchReminders((prev) => {
+        const next = new Set(prev);
+        alreadyConfirmed.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+  }
 
   async function loadRoomLoaderDetails(id: number) {
     try {
@@ -751,7 +910,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               answers[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
-                preMedsAsk: sp.questions.preMedsAsk ?? false,
+                preMedsAsk: defaultPreMedsAsk(sp.questions.preMedsAsk, petHasPremedsAlert(patientId, data)),
               };
             }
           });
@@ -824,7 +983,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               answersFromSent[patientId] = {
                 mobility: sp.questions.mobility ?? null,
                 labWork: sp.questions.labWork ?? null,
-                preMedsAsk: sp.questions.preMedsAsk ?? false,
+                preMedsAsk: defaultPreMedsAsk(sp.questions.preMedsAsk, petHasPremedsAlert(patientId, data)),
               };
             }
             if (sp.vaccines) {
@@ -878,12 +1037,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
               initialReasons[patientId] = '';
             }
             if (initialAnswers[patientId] == null) {
-              initialAnswers[patientId] = { mobility: null, labWork: null, preMedsAsk: false };
+              initialAnswers[patientId] = {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petHasPremedsAlert(patientId, data),
+              };
             }
           });
           (data?.patients || []).forEach((p: any) => {
             if (p?.id != null && initialAnswers[p.id] == null) {
-              initialAnswers[p.id] = { mobility: null, labWork: null, preMedsAsk: false };
+              initialAnswers[p.id] = {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petHasPremedsAlert(p.id, data),
+              };
             }
             if (p?.id != null && initialReasons[p.id] == null) {
               initialReasons[p.id] = '';
@@ -979,6 +1146,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           });
         }
       }
+
+      await applyLearnedReminderMatches(data);
     } catch (err: any) {
       setError(err?.message || 'Failed to load room loader details');
       console.error('Error loading room loader details:', err);
@@ -1215,6 +1384,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
   function handleCloseModal() {
     setIsModalOpen(false);
+    setChartPetId(null);
+    setChartDismissedFor(null);
     setSelectedRoomLoaderId(null);
     setSelectedRoomLoader(null);
     setPetAnswers({});
@@ -1258,7 +1429,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       URL.revokeObjectURL(objectUrl);
     } catch (err: any) {
       console.error('Download PDF error:', err);
-      alert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
+      void appAlert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
     } finally {
       setDownloadingPdfRoomLoaderId(null);
     }
@@ -1356,23 +1527,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
    */
   function getTotalPreDiscountForQuantity(item: SearchableItem | any, quantity: number): number {
     const q = Math.max(0, Number(quantity) || 0);
-    const preDiscount1 = getPreDiscountForOneUnit(item);
-    if (item?.tieredPricing?.hasTieredPricing) {
-      const tieredUnit = getTieredPrice(item.tieredPricing, q, preDiscount1);
-      return tieredUnit * q;
-    }
+    const unit = (base: number) =>
+      item?.tieredPricing?.hasTieredPricing ? getTieredPrice(item.tieredPricing, q, base) : base;
     const t = ((item?.itemType ?? '') as string).toLowerCase();
     if (t === 'lab') {
-      const p = Number(item?.lab?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.lab?.price ?? item?.price ?? 0));
       return p * q;
     }
     if (t === 'procedure') {
-      const p = Number(item?.procedure?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.procedure?.price ?? item?.price ?? 0));
       const sf = Number(item?.procedure?.serviceFee ?? 0);
       return p * q + sf;
     }
     if (t === 'inventory') {
-      const p = Number(item?.inventoryItem?.price ?? item?.price ?? 0);
+      const p = unit(Number(item?.inventoryItem?.price ?? item?.price ?? 0));
       const sf = Number(item?.inventoryItem?.serviceFee ?? item?.serviceFee ?? 0);
       const minP = item?.inventoryItem?.minimumPrice != null ? Number(item.inventoryItem.minimumPrice) : (item?.minimumPrice != null ? Number(item.minimumPrice) : 0);
       // Total = price*qty + serviceFee (once). Only increase above minimum when that sum exceeds minimumPrice.
@@ -1428,7 +1596,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     const originalFromApi = Number(item?.originalPrice ?? item?.wellnessPlanPricing?.originalPrice ?? preDiscount1);
     const discountRatio = originalFromApi > 0 ? adjustedFromApi / originalFromApi : 1;
 
-    const totalFinal = totalPreDiscount * discountRatio;
+    const perUnit = item?.perUnitPrice;
+    const totalFinal =
+      perUnit != null && Number.isFinite(Number(perUnit))
+        ? Math.min(totalPreDiscount, Math.max(0, Number(perUnit)) * q)
+        : totalPreDiscount * discountRatio;
     const totalOriginal = totalPreDiscount;
     const unitFinal = q > 0 ? totalFinal / q : adjustedFromApi;
 
@@ -1441,34 +1613,19 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       return basePrice;
     }
 
-    // Find the price break that matches the quantity
+    // Active break with the largest low quantity at or below qty: a gap keeps the break below it,
+    // past the last range is the top break, below the first break is the base price.
     const qty = Math.floor(quantity);
+    let best: any = null;
+    let bestLow = -Infinity;
     for (const priceBreak of tieredPricing.priceBreaks) {
       if (!priceBreak.isActive) continue;
-      
       const lowQty = parseInt(priceBreak.lowQuantity, 10);
-      const highQty = parseInt(priceBreak.highQuantity, 10);
-      
-      if (qty >= lowQty && qty <= highQty) {
-        return Number(priceBreak.price);
-      }
+      if (lowQty > qty || lowQty <= bestLow) continue;
+      best = priceBreak;
+      bestLow = lowQty;
     }
-
-    // No tier matched: use base price when quantity is below the minimum tier, otherwise highest tier for quantities above the max
-    const activeBreaks = tieredPricing.priceBreaks.filter((pb: any) => pb.isActive);
-    if (activeBreaks.length > 0) {
-      const minLow = Math.min(...activeBreaks.map((pb: any) => parseInt(pb.lowQuantity, 10)));
-      if (qty < minLow) {
-        return basePrice;
-      }
-      // Quantity is above the max tier; use the highest tier's price
-      const highestTier = activeBreaks.reduce((max: any, pb: any) => {
-        const maxHighQ = parseInt(max.highQuantity, 10);
-        const pbHigh = parseInt(pb.highQuantity, 10);
-        return pbHigh > maxHighQ ? pb : max;
-      });
-      return Number(highestTier.price);
-    }
+    if (best) return Number(best.price);
 
     return basePrice;
   }
@@ -1486,6 +1643,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         practiceId: selectedRoomLoader.practice.id,
         limit: 50,
         code: query,
+        appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)?.id,
       });
       setSearchResults((prev) => ({ ...prev, [petId]: results }));
     } catch (err: any) {
@@ -1551,6 +1709,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         species: speciesLabel,
         itemType: item.itemType,
         item: itemPayload,
+        appointmentId: selectedRoomLoader.appointments?.find((a) => a.patient?.id === petId)?.id,
       });
 
       // Update the item with the adjusted price and wellness plan info
@@ -1567,6 +1726,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             ...updatedItems[itemIndex],
             price: pricingResponse.adjustedPrice,
             originalPrice: pricingResponse.originalPrice,
+            perUnitPrice: pricingResponse.perUnitPrice ?? null,
             wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
             discountPricing: pricingResponse.discountPricing,
             tieredPricing: pricingResponse.tieredPricing,
@@ -1738,15 +1898,50 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           },
         }));
       }
-      // Refetch room loader so the card shows latest discount/membership pricing for the corrected item
+      // Refetch room loader so the card shows latest discount/membership pricing for the corrected item.
+      // Mapping is stored for later loads; this visit's reminder often comes back still unmatched,
+      // so keep the chosen catalog item on the row we already have.
       if (selectedRoomLoaderId != null) {
         const data = await getRoomLoader(selectedRoomLoaderId);
-        setSelectedRoomLoader(data);
+        if (correctItem) {
+          const patchedId =
+            correctItem.inventoryItem?.id ||
+            correctItem.lab?.id ||
+            (correctItem as { procedure?: { id?: number } }).procedure?.id;
+          const patchedType = correctItem.inventoryItem?.id
+            ? 'inventory'
+            : correctItem.lab?.id
+              ? 'lab'
+              : 'procedure';
+          setSelectedRoomLoader({
+            ...data,
+            reminders: (data.reminders ?? []).map((r) =>
+              r.reminder?.id === reminderId
+                ? {
+                    ...r,
+                    matchedItem: {
+                      id: patchedId ?? r.matchedItem?.id,
+                      name: correctItem.name,
+                      code: correctItem.code,
+                      price:
+                        correctItem.price != null ? String(correctItem.price) : r.matchedItem?.price,
+                    },
+                    itemType: patchedType,
+                    price:
+                      correctItem.price != null ? Number(correctItem.price) : r.price,
+                    confidence: 1,
+                  }
+                : r
+            ),
+          });
+        } else {
+          setSelectedRoomLoader(data);
+        }
       }
     } catch (err: any) {
       console.error('Error submitting reminder feedback:', err);
       setReminderFeedback((prev) => ({ ...prev, [key]: null }));
-      alert('Failed to submit feedback. Please try again.');
+      void appAlert('Failed to submit feedback. Please try again.');
     }
   }
 
@@ -1909,7 +2104,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   function packageDataForClient(): any {
     if (!selectedRoomLoader) return null;
 
-    const patientData = petsWithAppointments.map((item) => {
+    const patientData = sendablePets.map((item) => {
       const { patient, appointments, reminders, client } = item;
       const firstAppt = appointments[0];
       
@@ -2114,7 +2309,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
     const errors: Record<number, { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean }> = {};
     let hasErrors = false;
-    petsWithAppointments.forEach((item) => {
+    sendablePets.forEach((item) => {
       const pid = item.patient.id;
       const patientErrors: { reason?: boolean; mobility?: boolean; labWork?: boolean; arrivalWindow?: boolean } = {};
       if (!(appointmentReasons[pid] || '').trim()) {
@@ -2152,14 +2347,14 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     }
 
     const reminderErrorIds = new Set<number>();
-    petsWithAppointments.forEach((item) => {
+    sendablePets.forEach((item) => {
       (item.reminders || []).forEach((reminderWithPrice) => {
         const reminderId = reminderWithPrice.reminder.id;
         if (!reminderId || removedReminders.has(reminderId)) return;
         const correction = reminderCorrections[`reminder-${reminderId}`];
-        const hasMatch = !!(reminderWithPrice.matchedItem?.name || correction?.selectedItem);
+        const hasMatch = reminderHasCatalogMatch(reminderWithPrice, correction);
         const isVisitOrConsult = reminderContains(reminderWithPrice, 'visit', 'consult');
-        const isConfirmed = confirmedMatchReminders.has(reminderId);
+        const isConfirmed = hasMatch && confirmedMatchReminders.has(reminderId);
         if (isVisitOrConsult) {
         } else if (!hasMatch || !isConfirmed) {
           reminderErrorIds.add(reminderId);
@@ -2281,15 +2476,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
-    const timesSent = selectedRoomLoader.timesSentToClient ?? 0;
-    const canEmail = !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
-    const canSms = petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1));
-
-    if (timesSent >= 1) {
-      if (!canEmail && !canSms) return;
-    } else {
-      if (petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) return;
-    }
+    // Every send (including the first) can go by email or SMS, so only block when neither is reachable.
+    if (!canSendByEmail && !canSendBySms) return;
 
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
@@ -2298,9 +2486,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
     if (!runSendHardValidation()) return;
     setSendWarningReasons(buildSendWarnings());
-    if (timesSent >= 1) {
-      setConfirmSendChannel(canEmail ? 'email' : 'sms');
-    }
+    setConfirmSendChannel(canSendByEmail ? 'email' : 'sms');
     setConfirmAction('send');
   }
 
@@ -2358,9 +2544,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         const reminderId = reminderWithPrice.reminder.id;
         if (!reminderId || removedReminders.has(reminderId)) return;
         const correction = reminderCorrections[`reminder-${reminderId}`];
-        const hasMatch = !!(reminderWithPrice.matchedItem?.name || correction?.selectedItem);
+        const hasMatch = reminderHasCatalogMatch(reminderWithPrice, correction);
         const isVisitOrConsult = reminderContains(reminderWithPrice, 'visit', 'consult');
-        const isConfirmed = confirmedMatchReminders.has(reminderId);
+        const isConfirmed = hasMatch && confirmedMatchReminders.has(reminderId);
         if (!isVisitOrConsult && (!hasMatch || !isConfirmed)) {
           reminderErrorIds.add(reminderId);
         }
@@ -2426,7 +2612,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
   async function executeSendToClient(
     skipEmail = false,
-    options?: { sendViaSms?: boolean; smsMessage?: string }
+    options?: { sendViaSms?: boolean; smsMessage?: string; recipients?: SendRecipients }
   ) {
     if (!selectedRoomLoader) return;
     setSendValidationErrors({});
@@ -2443,22 +2629,31 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     try {
       const payload = packageDataForClient();
       if (!payload) {
-        alert('Error: Unable to package data. Please try again.');
+        void appAlert('Error: Unable to package data. Please try again.');
         return;
       }
       if (skipEmail) payload.skipEmail = true;
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
-      await http.post('/room-loader/send-to-client', payload);
+      if (options?.recipients && !options?.sendViaSms) payload.recipients = options.recipients;
+      const sendRes = await http.post('/room-loader/send-to-client', payload);
       notifyRoomLoaderSentStatusChanged();
       if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
+      // RL-14: the API answers emailSent:false (with a reason) when no email went out
+      const sendData = sendRes?.data;
+      const notSentReason = emailNotSentReasonFromSend(sendData, { skipEmail, sendViaSms: options?.sendViaSms });
+      if (notSentReason) {
+        setEmailNotSent(notSentReason);
+        return;
+      }
+      setEmailNotSent(null);
       handleCloseModal();
     } catch (error: any) {
       console.error('Error sending to client:', error);
-      alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
+      void appAlert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
     } finally {
       setSendingToClient(false);
       setUpdatingToClient(false);
@@ -2516,7 +2711,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       handleCloseModal();
     } catch (error: any) {
       console.error('Error saving form:', error);
-      alert(`Failed to save form: ${error?.message || 'Please try again.'}`);
+      void appAlert(`Failed to save form: ${error?.message || 'Please try again.'}`);
     } finally {
       setSavingForm(false);
     }
@@ -2735,6 +2930,21 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     }));
   }, [selectedRoomLoader]);
 
+  // Owner request Oct 31, 2026: the first pet's chart opens beside the details on its own (wide
+  // screens, where it sits next to the form rather than over it). Closing it keeps it closed for
+  // this Room Loader; opening another Room Loader opens the chart again.
+  useEffect(() => {
+    const autoPetId = autoOpenChartPetId({
+      modalOpen: isModalOpen,
+      roomLoaderId: selectedRoomLoader?.id ?? null,
+      petIds: petsWithAppointments.map((it) => it.patient.id),
+      chartPetId,
+      dismissedForRoomLoaderId: chartDismissedFor,
+      wideScreen: typeof window !== 'undefined' && window.matchMedia?.(CHART_SIDE_BY_SIDE_QUERY).matches === true,
+    });
+    if (autoPetId) setChartPetId(autoPetId);
+  }, [isModalOpen, selectedRoomLoader?.id, petsWithAppointments, chartPetId, chartDismissedFor]);
+
   const hasClientWithNoEmail = useMemo(
     () => petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
     [petsWithAppointments]
@@ -2745,21 +2955,32 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     [petsWithAppointments]
   );
 
-  const canSendFollowUpEmail = useMemo(
+  // RL-07: inactive pets / cancelled visits are shown on screen but left out of the send
+  const sendablePets = useMemo(
+    () => petsWithAppointments.filter((item) => !isInactiveCheckInPet(item)),
+    [petsWithAppointments]
+  );
+
+  const canSendByEmail = useMemo(
     () => !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
     [petsWithAppointments]
   );
-  const canSendFollowUpSms = useMemo(
+  const clientSecondEmail = useMemo(
+    () => secondEmailOnFile(petsWithAppointments.find((item) => item.client)?.client),
+    [petsWithAppointments]
+  );
+  useEffect(() => {
+    if (confirmAction === 'send') setConfirmRecipients('primary');
+  }, [confirmAction]);
+  const canSendBySms = useMemo(
     () => petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1)),
     [petsWithAppointments]
   );
 
   const sendToClientBlockedNoDestination = useMemo(() => {
     if (!selectedRoomLoader) return true;
-    const ts = selectedRoomLoader.timesSentToClient ?? 0;
-    if (ts >= 1) return !canSendFollowUpEmail && !canSendFollowUpSms;
-    return !canSendFollowUpEmail;
-  }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
+    return !canSendByEmail && !canSendBySms;
+  }, [selectedRoomLoader, canSendByEmail, canSendBySms]);
 
   const selectedSameDayClientLink = useMemo(
     () => computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders),
@@ -3227,7 +3448,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (
         <div
-          className="room-loader-modal-overlay"
+          className={`room-loader-modal-overlay${chartPetId ? ' room-loader-modal-overlay--with-chart' : ''}`}
           role="dialog"
           aria-modal="true"
           onClick={handleCloseModal}
@@ -3350,7 +3571,12 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           ) : (
             petsWithAppointments.map((item, petIndex) => {
               const { patient, appointments, client, clientHasMembership, clientMembershipPlanName } = item;
-              const petAnswersForPet = petAnswers[patient.id] || { mobility: null, labWork: null, preMedsAsk: false };
+              const petPremedsAlert = petHasPremedsAlert(patient.id, { patients: [patient], appointments });
+              const petAnswersForPet = petAnswers[patient.id] || {
+                mobility: null,
+                labWork: null,
+                preMedsAsk: petPremedsAlert,
+              };
               const firstAppt = appointments[0];
               
               // Use patient data from appointment if available and more complete
@@ -3369,6 +3595,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   borderRadius: '8px',
                 }}
               >
+                {isInactiveCheckInPet(item) && (
+                  <InactivePetNotice petName={displayPatient.name || 'This pet'} />
+                )}
                 <div
                   style={{
                     marginBottom: '25px',
@@ -3378,15 +3607,12 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                 >
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
                     Pet {petIndex + 1}:{' '}
-                    {displayPatient.pimsId ? (
-                      <a
-                        href={evetPatientLink(displayPatient.pimsId)}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
-                      >
-                        {displayPatient.name || 'Unknown Pet'}
-                      </a>
+                    {displayPatient.id ? (
+                      <PetChartNameLink
+                        petId={String(displayPatient.id)}
+                        name={displayPatient.name || 'Unknown Pet'}
+                        onOpen={setChartPetId}
+                      />
                     ) : (
                       displayPatient.name || 'Unknown Pet'
                     )}
@@ -3411,7 +3637,10 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                           // If date parsing fails, skip age
                         }
                       }
-                      if (displayPatient.sex) details.push(displayPatient.sex);
+                      {
+                        const sexLabel = sexNeuterLabel(displayPatient.sex, (displayPatient as { neuterStatus?: string }).neuterStatus);
+                        if (sexLabel) details.push(sexLabel);
+                      }
                       if (displayPatient.breed) details.push(displayPatient.breed);
                       if (displayPatient.weight) details.push(`${displayPatient.weight} lbs`);
                       if (details.length > 0) {
@@ -3460,15 +3689,13 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     {client ? (
                       <div>
                         <strong>
-                          {client.pimsId ? (
-                            <a
-                              href={evetClientLink(String(client.pimsId))}
-                              target="_blank"
-                              rel="noreferrer"
+                          {client.id ? (
+                            <Link
+                              to={clientHref(client.id)}
                               style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
                             >
                               {client.firstName} {client.lastName}
-                            </a>
+                            </Link>
                           ) : (
                             <span>{client.firstName} {client.lastName}</span>
                           )}
@@ -3696,8 +3923,18 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     )}
                   </div>
 
-                  {/* Pre-examination meds refill question */}
-                  <div style={{ marginTop: '20px' }}>
+                  {/* Pre-examination meds refill question (purple like the chart's pre-meds alert when it's set) */}
+                  <div
+                    className={
+                      petPremedsAlert
+                        ? 'room-loader-premeds-ask room-loader-premeds-ask--alert'
+                        : 'room-loader-premeds-ask'
+                    }
+                    data-testid="room-loader-premeds-ask"
+                  >
+                    {petPremedsAlert ? (
+                      <div className="room-loader-premeds-ask__tag">Pre-meds alert on chart</div>
+                    ) : null}
                     <label style={{ display: 'block', marginBottom: '10px', fontWeight: 500, color: '#333', fontSize: '16px' }}>
                       Should we ask this client if they need refills of pre-examination medications?
                     </label>
@@ -3749,8 +3986,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                           const feedbackStatus = reminderFeedback[feedbackKey];
                           const correction = reminderCorrections[feedbackKey];
                           const hasMatchedItem = reminderWithPrice.matchedItem?.name;
-                          const hasMatch = !!hasMatchedItem || !!correction?.selectedItem;
-                          const isConfirmed = confirmedMatchReminders.has(reminderId);
+                          const hasMatch = reminderHasCatalogMatch(reminderWithPrice, correction);
+                          const isConfirmed = hasMatch && confirmedMatchReminders.has(reminderId);
                           const showReminderValidationError = reminderValidationErrorIds.has(reminderId);
 
                           return (
@@ -3955,6 +4192,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                             {reminderWithPrice.discountPricing.discountPercentage.toFixed(1)}% discount
                                           </span>
                                         )}
+                                        {reminderWithPrice.discountPricing.clientDiscounts?.staffItemDiscount && (
+                                          <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                            {reminderWithPrice.discountPricing.clientDiscounts.staffItemDiscount.label || 'Staff'} Discount
+                                          </span>
+                                        )}
                                         {reminderWithPrice.discountPricing.clientDiscounts?.clientStatusDiscount && (
                                           <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
                                             {reminderWithPrice.discountPricing.clientDiscounts.clientStatusDiscount.clientStatusName || 'Client Status'} Discount
@@ -4130,7 +4372,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                             {/* Validation error when reminder not confirmed / no match */}
                             {showReminderValidationError && (
                               <p style={{ margin: '10px 0 0', fontSize: '13px', color: '#dc3545' }}>
-                                {hasMatch ? 'Click Confirm match or remove this reminder to continue.' : 'Match an item and confirm, or remove this reminder to continue.'}
+                                {hasMatch
+                                  ? 'Click Confirm match or remove this reminder to continue.'
+                                  : 'This reminder has no catalog item yet. Search and pick one, or remove the reminder.'}
                               </p>
                             )}
 
@@ -4181,6 +4425,17 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                 </button>
                                 <button
                                   onClick={() => {
+                                    const pinned = searchableItemFromReminder(reminderWithPrice);
+                                    if (pinned) {
+                                      setReminderCorrections((prev) => ({
+                                        ...prev,
+                                        [feedbackKey]: {
+                                          ...prev[feedbackKey],
+                                          selectedItem: pinned,
+                                          scopeChosen: true,
+                                        },
+                                      }));
+                                    }
                                     setConfirmedMatchReminders((prev) => new Set(prev).add(reminderId));
                                     setReminderValidationErrorIds((prev) => {
                                       const next = new Set(prev);
@@ -4275,7 +4530,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                           });
                                         } catch (err: any) {
                                           console.error('Error submitting match:', err);
-                                          alert(err?.message || 'Failed to submit match. Please try again.');
+                                          void appAlert(err?.message || 'Failed to submit match. Please try again.');
                                         }
                                       }}
                                       style={{
@@ -4764,6 +5019,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                           {item.discountPricing.discountPercentage.toFixed(1)}% discount
                                         </span>
                                       )}
+                                      {item.discountPricing.clientDiscounts?.staffItemDiscount && (
+                                        <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
+                                          {item.discountPricing.clientDiscounts.staffItemDiscount.label || 'Staff'} Discount
+                                        </span>
+                                      )}
                                       {item.discountPricing.clientDiscounts?.clientStatusDiscount && (
                                         <span style={{ display: 'block', fontSize: '12px', marginTop: '4px', color: '#1b5e20' }}>
                                           {item.discountPricing.clientDiscounts.clientStatusDiscount.clientStatusName || 'Client Status'} Discount
@@ -5156,9 +5416,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   : formSubmittedByClient
                     ? 'Submitted by client'
                     : sendToClientBlockedNoDestination
-                      ? (selectedRoomLoader.timesSentToClient ?? 0) >= 1
-                        ? 'Send to Client (add email or phone)'
-                        : 'Send to Client (add client email first)'
+                      ? 'Send to Client (add email or phone)'
                       : selectedRoomLoader.sentStatus === 'not_sent'
                         ? 'Send to Client'
                         : 'Re-send to Client'}
@@ -5167,6 +5425,41 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             </div>
           )}
             </div>
+          </div>
+          {chartPetId && (
+            <RoomLoaderChartPanel
+              pets={petsWithAppointments.map((it) => ({
+                id: String(it.patient.id),
+                name: it.patient.name || '',
+                species: (it.patient as { species?: string | null }).species,
+              }))}
+              activePetId={chartPetId}
+              onSelectPet={setChartPetId}
+              onClose={() => {
+                setChartPetId(null);
+                setChartDismissedFor(selectedRoomLoader?.id ?? null);
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {emailNotSent && (
+        <div className="room-loader-modal-overlay" style={{ zIndex: 10001 }}>
+          <div style={{ background: '#fff', padding: 20, borderRadius: 8, maxWidth: 480, margin: 'auto' }}>
+        <EmailNotSentWarning
+          reason={emailNotSent}
+          canSendBySms={canSendBySms}
+          sending={sendingToClient}
+          onSendBySms={() => {
+            setEmailNotSent(null);
+            void executeSendToClient(false, { sendViaSms: true });
+          }}
+          onDismiss={() => {
+            setEmailNotSent(null);
+            handleCloseModal();
+          }}
+        />
           </div>
         </div>
       )}
@@ -5229,7 +5522,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   ? 'Are you sure you want to update the form data without sending an email to the client?'
                   : 'Are you sure you want to save this form for later?'}
             </p>
-            {confirmAction === 'send' && selectedRoomLoader && (selectedRoomLoader.timesSentToClient ?? 0) >= 1 && (
+            {confirmAction === 'send' && selectedRoomLoader && (
               <div style={{ marginBottom: '20px' }}>
                 <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Send via</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' }}>
@@ -5238,38 +5531,51 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      cursor: canSendFollowUpEmail ? 'pointer' : 'not-allowed',
-                      color: canSendFollowUpEmail ? '#333' : '#999',
+                      cursor: canSendByEmail ? 'pointer' : 'not-allowed',
+                      color: canSendByEmail ? '#333' : '#999',
                     }}
                   >
                     <input
                       type="radio"
                       name="confirmSendChannel"
                       checked={confirmSendChannel === 'email'}
-                      disabled={!canSendFollowUpEmail}
+                      disabled={!canSendByEmail}
                       onChange={() => setConfirmSendChannel('email')}
                     />
-                    Email
+                    Email {!canSendByEmail && '(no email on file)'}
                   </label>
                   <label
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      cursor: canSendFollowUpSms ? 'pointer' : 'not-allowed',
-                      color: canSendFollowUpSms ? '#333' : '#999',
+                      cursor: canSendBySms ? 'pointer' : 'not-allowed',
+                      color: canSendBySms ? '#333' : '#999',
                     }}
                   >
                     <input
                       type="radio"
                       name="confirmSendChannel"
                       checked={confirmSendChannel === 'sms'}
-                      disabled={!canSendFollowUpSms}
+                      disabled={!canSendBySms}
                       onChange={() => setConfirmSendChannel('sms')}
                     />
-                    SMS {!canSendFollowUpSms && '(no phone on file)'}
+                    SMS {!canSendBySms && '(no phone on file)'}
                   </label>
                 </div>
+                {confirmSendChannel === 'email' && canSendByEmail && (
+                  <SendRecipientChoice
+                    primaryEmail={petsWithAppointments.find((item) => item.client)?.client?.email}
+                    secondEmail={clientSecondEmail}
+                    value={confirmRecipients}
+                    onChange={setConfirmRecipients}
+                  />
+                )}
+                {!canSendByEmail && !canSendBySms && (
+                  <div style={{ fontSize: '13px', color: '#b02a37' }}>
+                    This client has no email address and no mobile number on file, so the form cannot be sent.
+                  </div>
+                )}
               </div>
             )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
@@ -5295,22 +5601,18 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                 type="button"
                 onClick={() => {
                   if (confirmAction === 'send') {
-                    const ts = selectedRoomLoader?.timesSentToClient ?? 0;
-                    if (ts >= 1) {
-                      if (confirmSendChannel === 'email' && petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) {
-                        alert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
-                        return;
-                      }
-                      if (confirmSendChannel === 'sms' && !petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1))) {
-                        alert('Add a client phone number to send by SMS, or choose email.');
-                        return;
-                      }
-                      void executeSendToClient(false, {
-                        sendViaSms: confirmSendChannel === 'sms',
-                      });
-                    } else {
-                      executeSendToClient();
+                    if (confirmSendChannel === 'email' && !canSendByEmail) {
+                      void appAlert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
+                      return;
                     }
+                    if (confirmSendChannel === 'sms' && !canSendBySms) {
+                      void appAlert('Add a client phone number to send by SMS, or choose email.');
+                      return;
+                    }
+                    void executeSendToClient(false, {
+                      sendViaSms: confirmSendChannel === 'sms',
+                      recipients: confirmSendChannel === 'email' ? recipientsForPayload(clientSecondEmail, confirmRecipients) : undefined,
+                    });
                   } else if (confirmAction === 'update') {
                     executeSendToClient(true);
                   } else {

@@ -32,6 +32,12 @@ import {
   overwriteGmailTemplate,
   type GmailTemplate,
 } from './gmailTemplates';
+import { appConfirm, appPrompt } from '../../utils/appDialog';
+import MessageTemplatePicker from '../messageTemplates/MessageTemplatePicker';
+import {
+  looksLikeHtmlFragment,
+  sanitizeCommunicationHtml,
+} from '../../utils/sanitizeCommunicationHtml';
 
 const DRAFT_AUTOSAVE_MS = 1500;
 const COMPOSE_USER_SELECTOR = '[data-compose-user]';
@@ -425,24 +431,47 @@ export default function GmailComposePanel({
   );
 
   const handleSaveNewTemplate = useCallback(() => {
-    const name = window.prompt('Save as new template — name:');
-    if (name == null) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setTemplates(createGmailTemplate({ name: trimmed, subject, body: userTextOnly }));
+    void (async () => {
+      const name = await appPrompt({
+        title: 'Save template',
+        message: 'Name this template.',
+        placeholder: 'Template name',
+        confirmLabel: 'Save',
+      });
+      if (name == null) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setTemplates(createGmailTemplate({ name: trimmed, subject, body: userTextOnly }));
+    })();
   }, [subject, userTextOnly]);
 
   const handleOverwriteTemplate = useCallback(
     (template: GmailTemplate) => {
-      if (!window.confirm(`Overwrite template “${template.name}” with the current message?`)) return;
-      setTemplates(overwriteGmailTemplate(template.id, { subject, body: userTextOnly }));
+      void (async () => {
+        const ok = await appConfirm({
+          title: 'Overwrite template?',
+          message: `Overwrite template “${template.name}” with the current message?`,
+          confirmLabel: 'Overwrite',
+          danger: true,
+        });
+        if (!ok) return;
+        setTemplates(overwriteGmailTemplate(template.id, { subject, body: userTextOnly }));
+      })();
     },
     [subject, userTextOnly],
   );
 
   const handleDeleteTemplate = useCallback((template: GmailTemplate) => {
-    if (!window.confirm(`Delete template “${template.name}”?`)) return;
-    setTemplates(deleteGmailTemplate(template.id));
+    void (async () => {
+      const ok = await appConfirm({
+        title: 'Delete template?',
+        message: `Delete template “${template.name}”?`,
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      setTemplates(deleteGmailTemplate(template.id));
+    })();
   }, []);
 
   const handleDiscard = async () => {
@@ -610,6 +639,30 @@ export default function GmailComposePanel({
           />
         </div>
       ) : null}
+
+      <MessageTemplatePicker
+        channel="email"
+        disabled={busy}
+        currentSubject={subject}
+        currentBody={userTextOnly}
+        onApply={({ subject: nextSubject, body }) => {
+          if (nextSubject.trim() && (context.mode === 'new' || context.mode === 'forward' || !subject.trim())) {
+            setSubject(nextSubject);
+          }
+          if (!body) return;
+          const root = editorRef.current;
+          if (!root) return;
+          root.focus();
+          const userEl = root.querySelector(COMPOSE_USER_SELECTOR);
+          if (userEl instanceof HTMLElement) userEl.focus();
+          if (looksLikeHtmlFragment(body)) {
+            document.execCommand('insertHTML', false, sanitizeCommunicationHtml(body));
+          } else {
+            document.execCommand('insertText', false, body);
+          }
+          syncEditorFromDom();
+        }}
+      />
 
       {context.mode === 'new' || context.mode === 'forward' ? (
         <div className="gmail-compose-panel__row">

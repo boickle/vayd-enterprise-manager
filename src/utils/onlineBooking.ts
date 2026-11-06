@@ -211,8 +211,13 @@ export function isSlotNoLongerAvailableError(
 
 export type AppointmentFormSubmitSuccessKind =
   | 'online_confirmed'
+  /** Booked for a new pet with handling needs; held until the team reviews records. */
   | 'online_held_pending_handling'
-  | 'request_received';
+  | 'request_received'
+  /** D2: the picked time was taken at submit; nothing was booked and the team will call. */
+  | 'slot_taken'
+  /** Some pets were booked; the team will call about the rest. */
+  | 'online_partial';
 
 /** Classify public form POST success message from the API. */
 export function appointmentFormSubmitSuccessKindFromMessage(
@@ -226,4 +231,36 @@ export function appointmentFormSubmitSuccessKindFromMessage(
     return 'online_confirmed';
   }
   return 'request_received';
+}
+
+/**
+ * Classify the public form POST response. Prefers the API's `bookingOutcome`; older APIs only
+ * send a message.
+ */
+export function appointmentFormSubmitSuccessKindFromResponse(
+  response: { message?: string | string[]; bookingOutcome?: string } | null | undefined
+): AppointmentFormSubmitSuccessKind {
+  // A visit held for handling review is booked, but the client sees the "held" screen.
+  if (
+    response?.bookingOutcome !== 'slot_taken' &&
+    appointmentFormSubmitSuccessKindFromMessage(extractApiResponseMessage(response?.message)) ===
+      'online_held_pending_handling'
+  ) {
+    return 'online_held_pending_handling';
+  }
+  switch (response?.bookingOutcome) {
+    case 'slot_taken':
+      return 'slot_taken';
+    case 'partial':
+      return 'online_partial';
+    case 'booked':
+      return 'online_confirmed';
+    case 'not_booked':
+    case 'request':
+      return 'request_received';
+    default:
+      return appointmentFormSubmitSuccessKindFromMessage(
+        extractApiResponseMessage(response?.message)
+      );
+  }
 }

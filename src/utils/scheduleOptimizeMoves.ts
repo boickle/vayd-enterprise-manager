@@ -14,6 +14,7 @@ import {
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
 import { pointsPerDriveHour } from './pointsPerDriveHour';
+import { windowSourceForVisit } from './premedsWindow';
 import {
   aggregateRoomLoaderPreApptStatus,
   roomLoaderPreApptDisplayColor,
@@ -168,6 +169,15 @@ function householdTypeName(h: WeekHousehold): string {
 }
 
 function householdAppointmentTypeForWindow(
+  h: WeekHousehold,
+  catalog: AppointmentTypeCatalog | undefined
+): AppointmentTypeWindowSource | undefined {
+  const base = householdBaseAppointmentTypeForWindow(h, catalog);
+  const needsPremeds = (h.primary as { needsPremeds?: boolean }).needsPremeds === true;
+  return windowSourceForVisit(base, needsPremeds);
+}
+
+function householdBaseAppointmentTypeForWindow(
   h: WeekHousehold,
   catalog: AppointmentTypeCatalog | undefined
 ): AppointmentTypeWindowSource | undefined {

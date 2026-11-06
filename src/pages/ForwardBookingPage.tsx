@@ -22,15 +22,19 @@ import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
 import { ForwardBookingBookLaterModal } from '../components/ForwardBookingBookLaterModal';
-import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import ScheduleFollowUpsForTask from '../components/followUps/ScheduleFollowUpsForTask';
+import ScheduleFollowUpsLauncher from '../components/followUps/ScheduleFollowUpsLauncher';
 import { EditForwardBookingModal } from '../components/EditForwardBookingModal';
 import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
+  FORWARD_BOOKING_CREATED_EVENT,
   FORWARD_BOOKING_CREATE_NEW_PARAM,
   FORWARD_BOOKING_CREATE_PATIENT_PARAM,
   FORWARD_BOOKING_CREATE_RETURN_TO_PARAM,
   sanitizeForwardBookingReturnTo,
+  taskIdFromForwardBookingReturnPath,
+  withForwardBookingTaskAddedFlag,
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
 import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
@@ -163,8 +167,9 @@ import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { buildSchedulerFocusAppointmentUrl, writeSchedulerFocusSession } from '../utils/schedulerFocusAppointment';
 import { DateTime } from 'luxon';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type StatusFilter = ForwardBookingListTab;
 
@@ -863,6 +868,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       notifySchedulingToolsNavCountsRefresh();
     }
   }, [practiceTz, isOnHoldView, includeHistory]);
+
+  useEffect(() => {
+    const onCreated = () => void load({ silent: true });
+    window.addEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+    return () => window.removeEventListener(FORWARD_BOOKING_CREATED_EVENT, onCreated);
+  }, [load]);
 
   const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed' | 'onHold') => {
     setExitingRows((prev) => new Map(prev).set(entryId, kind));
@@ -2407,6 +2418,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                             showAlerts
                           />
                         ) : null}
+                        {entry.needsPremeds ? (
+                          <span className="premeds-pill" title="Book with the pre-meds arrival window">
+                            Pre-meds
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                     <div
@@ -2769,18 +2785,40 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         </div>
       ) : null}
 
-      {createOpen ? (
-        <CreateForwardBookingModal
-          practiceId={PRACTICE_ID}
-          prefill={createPrefill}
-          onClose={() => finishCreateForwardBooking(createReturnTo)}
-          onCreated={(entry) => {
-            const returnPath = createReturnTo;
-            finishCreateForwardBooking(returnPath);
-            if (returnPath) return;
+      {createOpen && !createPrefill ? (
+        // Plain "new forward booking" (header + Forward Book): same Schedule follow-ups
+        // window as checkout, Start/End Visit and the left nav.
+        <ScheduleFollowUpsLauncher
+          onClose={() => finishCreateForwardBooking(null)}
+          onSaved={() => {
             setStatusFilter('pending');
-            setHighlightEntryId(entry.id);
-            highlightScrollSig.current = `${entry.id}-${Date.now()}`;
+            void load();
+          }}
+        />
+      ) : null}
+
+      {/* From a labs-pending task: the same planner, with that pet needing a plan;
+          Done closes the task. */}
+      {createOpen && createPrefill ? (
+        <ScheduleFollowUpsForTask
+          patientId={createPrefill.patientId}
+          appointmentId={createPrefill.appointmentId}
+          taskId={taskIdFromForwardBookingReturnPath(createReturnTo)}
+          onClose={() => finishCreateForwardBooking(createReturnTo)}
+          onDone={({ taskClosed }) => {
+            const returnPath = createReturnTo;
+            setCreateOpen(false);
+            setCreatePrefill(null);
+            setCreateReturnTo(null);
+            if (returnPath) {
+              navigate(
+                taskClosed && taskIdFromForwardBookingReturnPath(returnPath) != null
+                  ? withForwardBookingTaskAddedFlag(returnPath)
+                  : returnPath
+              );
+              return;
+            }
+            setStatusFilter('pending');
             void load();
           }}
         />

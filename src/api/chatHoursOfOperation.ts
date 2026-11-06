@@ -10,6 +10,7 @@ import {
   serializeChatHoursOfOperation,
   type ChatHoursOfOperation,
 } from '../utils/chatHours';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export const CHAT_HOURS_OF_OPERATION_KEY = 'chat.hoursOfOperation';
 
@@ -59,7 +60,7 @@ export async function fetchPublicChatHoursOfOperation(
 export async function fetchClientChatHoursOfOperation(
   practiceId?: number,
 ): Promise<ChatHoursOfOperation> {
-  const pid = practiceId ?? (Number(import.meta.env.VITE_PRACTICE_ID) || 1);
+  const pid = practiceId ?? (currentPracticeId());
 
   try {
     return await fetchPublicChatHoursOfOperation(pid);

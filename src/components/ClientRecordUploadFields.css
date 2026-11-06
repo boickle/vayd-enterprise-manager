@@ -5,6 +5,17 @@
   border-top: 1px solid #d1d5db;
 }
 
+.client-record-upload--combined {
+  margin-top: 14px;
+  margin-bottom: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.client-record-upload__hint--combined {
+  margin-top: 0;
+}
+
 .client-record-upload__label {
   display: block;
   margin-bottom: 6px;
@@ -59,6 +70,56 @@
   font-size: 13px;
   color: #6b7280;
   font-weight: 400;
+}
+
+.client-record-upload__practices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.client-record-upload__practice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.client-record-upload__practice-name {
+  font-weight: 600;
+  color: #111827;
+  font-size: 14px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.client-record-upload__practice-choices {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.client-record-upload__practice-choice {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.client-record-upload__practice-choice--selected {
+  border-color: #10b981;
+  background: #f0fdf4;
+  color: #047857;
 }
 
 .client-record-upload__files {

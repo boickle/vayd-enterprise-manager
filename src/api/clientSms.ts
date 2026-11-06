@@ -3,6 +3,8 @@ import { http } from './http';
 export type SendClientSmsPayload = {
   message: string;
   overrideNonProd?: boolean;
+  /** Client phone1 or phone2. When omitted, API uses phone1 then phone2. */
+  to?: string;
   /** Send from this line (e.g. practice `phone1`). When omitted, API picks receptionist or default. */
   from?: string;
   /** Send from the visit assignee provider's Quo/OpenPhone line (`quoLinePhone`). */
@@ -13,6 +15,9 @@ export type SendClientSmsPayload = {
   markInboxDone?: boolean;
   /** Label for delivery-failure alerts (e.g. care_outreach, forward_booking). */
   source?: string;
+  practiceId?: number;
+  patientIds?: number[];
+  typeLabel?: string;
 };
 
 export type StaffSmsDeliveryFailure = {

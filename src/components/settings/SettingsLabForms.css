@@ -1,0 +1,289 @@
+.lab-forms__intro {
+  margin: 0 0 12px;
+  max-width: 72ch;
+}
+
+.lab-forms__toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.lab-forms__split {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.lab-forms__list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 620px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.lab-forms__group-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.lab-forms__row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #e4efe9;
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.lab-forms__row:hover {
+  border-color: #bcd9cf;
+}
+.lab-forms__row.is-active {
+  border-color: #0f766e;
+  background: #f2faf7;
+}
+.lab-forms__row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #103b2e;
+}
+.lab-forms__row-meta {
+  font-size: 11px;
+  color: #6b7280;
+}
+.lab-forms__badge {
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.lab-forms__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.lab-forms__empty-editor {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.lab-forms__field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.lab-forms__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.lab-forms__field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+.lab-forms__field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  align-self: end;
+  padding-bottom: 8px;
+}
+.lab-forms__field--check > span {
+  font-weight: 500;
+}
+
+.lab-forms__section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #103b2e;
+}
+
+.lab-forms__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e4efe9;
+  border-radius: 12px;
+  background: #fbfdfc;
+}
+.lab-forms__rows-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lab-forms__element {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #e8efec;
+  border-radius: 10px;
+  background: #fff;
+}
+.lab-forms__element-main {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.lab-forms__element-main .settings-input:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lab-forms__element-main .settings-input:last-child {
+  flex: 0 0 110px;
+}
+.lab-forms__element-range {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.lab-forms__element-range .settings-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.lab-forms__element-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.lab-forms__element-actions .btn-link {
+  padding: 4px 6px;
+}
+.lab-forms__element-actions .btn-link:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.lab-forms__danger {
+  color: #b91c1c;
+}
+
+.lab-forms__assign {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e4efe9;
+  border-radius: 12px;
+}
+.lab-forms__assign-hint {
+  margin: 0;
+}
+
+.lab-forms__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lab-forms__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px 3px 10px;
+  border-radius: 999px;
+  background: #e6f4ee;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+}
+.lab-forms__chip button {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.lab-forms__chip button:hover {
+  background: rgba(15, 118, 110, 0.18);
+}
+
+.lab-forms__hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #e4efe9;
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.lab-forms__hits li + li {
+  border-top: 1px solid #f0f5f3;
+}
+.lab-forms__hits button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.lab-forms__hits button:hover:not(:disabled) {
+  background: #f2faf7;
+}
+.lab-forms__hits button:disabled {
+  cursor: default;
+  color: #9ca3af;
+}
+.lab-forms__hits em {
+  font-style: normal;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.lab-forms__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lab-forms__actions .lab-forms__danger {
+  margin-right: auto;
+}
+
+@media (max-width: 900px) {
+  .lab-forms__split {
+    grid-template-columns: 1fr;
+  }
+  .lab-forms__list-wrap {
+    max-height: 280px;
+  }
+  .lab-forms__field-row {
+    grid-template-columns: 1fr;
+  }
+}

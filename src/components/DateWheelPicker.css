@@ -1,0 +1,208 @@
+.date-wheel {
+  width: 300px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
+  padding: 10px 12px 12px;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.date-wheel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.date-wheel__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+.date-wheel__preview {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.date-wheel__labels {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  gap: 4px;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  text-align: center;
+}
+.date-wheel__cols {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  gap: 4px;
+  height: 180px; /* 5 rows × 36px */
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+/* Fade top/bottom rows. Overlays, not a mask — Safari drops touch input under mask-image. */
+.date-wheel__cols::before,
+.date-wheel__cols::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 60px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.date-wheel__cols::before {
+  top: 0;
+  background: linear-gradient(to bottom, #fff 0%, rgba(255, 255, 255, 0.85) 40%, rgba(255, 255, 255, 0) 100%);
+}
+
+.date-wheel__cols::after {
+  bottom: 0;
+  background: linear-gradient(to top, #fff 0%, rgba(255, 255, 255, 0.85) 40%, rgba(255, 255, 255, 0) 100%);
+}
+
+.date-wheel__highlight {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 72px; /* 2 rows */
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(17, 163, 106, 0.1);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.date-wheel__col {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none; /* we handle the drag; don't let the page scroll */
+  -webkit-user-select: none;
+  user-select: none;
+  outline: none;
+}
+
+.date-wheel__col:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(17, 163, 106, 0.45);
+  border-radius: 8px;
+}
+
+.date-wheel__col.is-dragging {
+  cursor: grabbing;
+}
+
+.date-wheel__track {
+  will-change: transform;
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.date-wheel__col.is-dragging .date-wheel__track {
+  transition: none;
+}
+
+.date-wheel__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 36px;
+  font-size: 16px;
+  color: #64748b;
+  pointer-events: none; /* the column handles all input */
+}
+
+.date-wheel__item.is-on {
+  color: #0f172a;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.date-wheel__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.date-wheel__btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.date-wheel__btn--primary {
+  background: #0d7a50;
+  color: #fff;
+}
+
+.date-wheel__btn--primary:active {
+  background: #0a6240;
+}
+
+.date-wheel__btn--ghost {
+  background: transparent;
+  color: #64748b;
+}
+
+/* Rendered on document.body so page scroll and overflow can't cover it. */
+.date-wheel-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+}
+
+.date-wheel-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.date-wheel-anchor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  width: min(340px, calc(100vw - 24px));
+}
+
+.date-wheel {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .date-wheel-anchor {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    transform: none;
+    width: auto;
+    padding: 0 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+}

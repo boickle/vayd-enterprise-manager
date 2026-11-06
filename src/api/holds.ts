@@ -3,6 +3,7 @@ import { http } from './http';
 import {
   fetchEmployeeRoles,
   fetchEmployeesByRole,
+  type Employee,
   type EmployeeRole,
 } from './appointmentSettings';
 
@@ -113,23 +114,23 @@ export type ClientLiaisonOption = {
   lastName: string | null;
 };
 
-/** Match the EVet "Receptionist" (Client Liaison) role by name, roleValue, then fuzzy. */
-function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
-  const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
-  const byName = roles.find((r) => norm(r.name) === 'receptionist');
-  if (byName) return byName.id;
-  const byValue = roles.find((r) => norm(r.roleValue) === 'receptionist');
-  if (byValue) return byValue.id;
-  const fuzzy = roles.find((r) => norm(r.name).includes('receptionist'));
-  return fuzzy?.id ?? null;
+export const CLIENT_LIAISON_ROLE_SLUGS = ['client_liaison', 'lead_client_liaison'];
+
+/** Everyone holding a Client Liaison or Lead Client Liaison role, once each. */
+export async function fetchClientLiaisonEmployees(): Promise<Employee[]> {
+  const roles: EmployeeRole[] = await fetchEmployeeRoles();
+  const ids = roles
+    .filter((r) => r.slug != null && CLIENT_LIAISON_ROLE_SLUGS.includes(r.slug))
+    .map((r) => r.id);
+  const lists = await Promise.all(ids.map((id) => fetchEmployeesByRole(id)));
+  const byId = new Map<number, Employee>();
+  for (const emp of lists.flat()) byId.set(emp.id, emp);
+  return [...byId.values()];
 }
 
-/** Client Liaisons (Receptionists) for the "Assign to…" dropdown. */
+/** Client Liaisons for the "Assign to…" dropdown. */
 export async function fetchClientLiaisons(): Promise<ClientLiaisonOption[]> {
-  const roles = await fetchEmployeeRoles();
-  const roleId = findReceptionistRoleId(roles);
-  if (roleId == null) return [];
-  const emps = await fetchEmployeesByRole(roleId);
+  const emps = await fetchClientLiaisonEmployees();
   return emps
     .map((e) => ({
       id: e.id,

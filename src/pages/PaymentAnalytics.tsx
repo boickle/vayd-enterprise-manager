@@ -131,7 +131,7 @@ export default function PaymentsAnalyticsPage() {
   /** Single-day analytics when the selected revenue day is outside the chart range. */
   const [revenueDayOverride, setRevenueDayOverride] = useState<PaymentPoint | null>(null);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const [unauthorized, setUnauthorized] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartLineVisible, setChartLineVisible] =
     useState<Record<ChartLineKey, boolean>>(defaultChartLineVisibility);
@@ -166,7 +166,7 @@ export default function PaymentsAnalyticsPage() {
   // Fetch selected-range series (for chart + header totals)
   useEffect(() => {
     let alive = true;
-    setUnauthorized(false);
+    setLoadError(null);
     setLoading(true);
     (async () => {
       try {
@@ -179,7 +179,15 @@ export default function PaymentsAnalyticsPage() {
       } catch (err) {
         if (!alive) return;
         console.error('Payments analytics request failed:', err);
-        setUnauthorized(true);
+        const status = (err as { response?: { status?: number; data?: { message?: string } } })
+          ?.response?.status;
+        const message = (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message;
+        setLoadError(
+          status === 401 || status === 403
+            ? 'Unauthorized'
+            : message || 'Payments could not be loaded.',
+        );
         setSeries([]);
       } finally {
         if (alive) setLoading(false);
@@ -453,11 +461,11 @@ export default function PaymentsAnalyticsPage() {
   const topMonths = leaderboards?.topMonths ?? rangeLeaderboards.topMonths;
   const topYears = leaderboards?.topYears ?? rangeLeaderboards.topYears;
 
-  if (unauthorized) {
+  if (loadError) {
     return (
       <LocalizationProvider dateAdapter={AdapterDayjs}>
         <Box p={3}>
-          <Alert severity="error">Unauthorized</Alert>
+          <Alert severity="error">{loadError}</Alert>
         </Box>
       </LocalizationProvider>
     );

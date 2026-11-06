@@ -99,8 +99,9 @@ import {
   type HoldsBoardReturnExitKind,
 } from '../utils/holdsBoardReturnSession';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TZ as string | undefined)?.trim() ||
   'America/New_York';
@@ -1568,6 +1569,7 @@ export default function HoldsPage() {
       {smsGroup ? (
         <ClientSmsComposeModal
           open
+          clientId={smsGroup.anchor.client?.id}
           clientLabel={clientName(smsGroup.anchor.client)}
           message={smsMessage}
           onMessageChange={setSmsMessage}
