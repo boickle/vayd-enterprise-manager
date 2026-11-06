@@ -25,6 +25,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'appointments',
   'holds',
   'exit-survey',
+  'membership-comparison',
   'marketing',
 ];
 

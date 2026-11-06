@@ -36,6 +36,7 @@ import {
 } from './appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
+import MembershipComparisonPage from './pages/MembershipComparisonPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
@@ -605,6 +606,7 @@ export default function App() {
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
+                    <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />
