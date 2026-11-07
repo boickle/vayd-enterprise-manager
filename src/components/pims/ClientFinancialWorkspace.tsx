@@ -232,6 +232,7 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
 import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
@@ -1171,16 +1172,6 @@ function chooseOpenInvoice(
   );
 }
 
-function isFinancialPetActive(pet: FinancialPet): boolean {
-  if (pet.isActive === false) return false;
-  const status = (pet.statusName ?? '').toLowerCase();
-  return !/euthan|deceas|died|passed|inactive/.test(status);
-}
-
-function sortPetsForCharge(pets: FinancialPet[]): FinancialPet[] {
-  return [...pets].sort((a, b) => a.name.localeCompare(b.name));
-}
-
 function defaultChargePatientId(
   pets: FinancialPet[],
   preferred?: number | null,
@@ -1190,18 +1181,6 @@ function defaultChargePatientId(
     if (hit && isFinancialPetActive(hit)) return preferred;
   }
   return pets.find(isFinancialPetActive)?.id ?? null;
-}
-
-/** Active pets unless Use inactive is on. A line already on an inactive pet keeps that pet. */
-function petsForChargeSelect(
-  pets: FinancialPet[],
-  includeInactive: boolean,
-  keepId?: number | null,
-): FinancialPet[] {
-  const rows = includeInactive
-    ? pets
-    : pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
-  return sortPetsForCharge(rows);
 }
 
 function emptyDraftInvoice(opts: {
@@ -8721,7 +8700,7 @@ export default function ClientFinancialWorkspace({
           estimateId={estimateEditorId}
           clientId={clientId}
           clientName={clientName}
-          pets={allPets}
+          pets={estimatePetChoices(pets, [initialPatientId ?? linePatientId].filter((id): id is number => id != null))}
           patientId={initialPatientId ?? linePatientId}
           onClose={() => setEstimateEditorId(null)}
           onSaved={() => {
