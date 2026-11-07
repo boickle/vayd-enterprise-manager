@@ -100,6 +100,7 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import FindEstimatePanel from '../estimates/FindEstimatePanel';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
@@ -2452,6 +2453,18 @@ export default function VisitCheckoutPanel({
             if (encounterId && onOrdersChange) {
               void listOrders(encounterId).then(onOrdersChange).catch(() => undefined);
             }
+            setSiblingRefreshTick((n) => n + 1);
+            onInvoiceShouldRefresh?.();
+          }}
+        />
+      ) : null}
+
+      {invoice && invoice.status === 'open' && canEditLines && !disabled && (clientId ?? invoice.clientId) ? (
+        <FindEstimatePanel
+          clientId={Number(clientId ?? invoice.clientId)}
+          invoiceId={invoice.id}
+          onConverted={(id) => {
+            void getInvoice(id).then(onInvoiceChange).catch(() => undefined);
             setSiblingRefreshTick((n) => n + 1);
             onInvoiceShouldRefresh?.();
           }}

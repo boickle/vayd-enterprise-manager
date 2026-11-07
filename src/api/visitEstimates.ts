@@ -120,10 +120,12 @@ export async function getEstimateForAppointment(
 
 export async function listClientEstimates(
   clientId: number,
-  opts?: { includeClosed?: boolean }
+  opts?: { includeClosed?: boolean; billable?: boolean }
 ): Promise<VisitEstimate[]> {
   const query = new URLSearchParams({ practiceId: String(practiceId()) });
   if (opts?.includeClosed) query.set('includeClosed', '1');
+  // Find estimate: only live estimates not past their expiry date.
+  if (opts?.billable) query.set('billable', '1');
   const { data } = await http.get<VisitEstimate[]>(
     `/visit-estimates/client/${clientId}?${query.toString()}`
   );
@@ -221,14 +223,38 @@ export async function deleteVisitEstimate(estimateId: string): Promise<void> {
   await http.delete(`/visit-estimates/${estimateId}?practiceId=${practiceId()}`);
 }
 
-/** Turn the quote into the real bill. Returns the invoice. */
+/**
+ * Turn the quote into the real bill. Returns the invoice. `appointmentId`: the visit picked at
+ * Convert (an estimate made on the ledger has none). `invoiceId`: the open bill Find estimate was
+ * used from. A second convert gets the same bill back.
+ */
 export async function convertEstimateToInvoice(
-  estimateId: string
+  estimateId: string,
+  target?: { appointmentId?: number; invoiceId?: string }
 ): Promise<{ id: string; total: number; status: string }> {
   const { data } = await http.post(`/visit-estimates/${estimateId}/convert`, {
     practiceId: practiceId(),
+    ...(target?.appointmentId != null ? { appointmentId: target.appointmentId } : {}),
+    ...(target?.invoiceId ? { invoiceId: target.invoiceId } : {}),
   });
   return data;
+}
+
+/** A visit an estimate can be billed on: the client's visit today or an upcoming one. */
+export type EstimateVisitChoice = {
+  appointmentId: number;
+  start: string | null;
+  patientId: number | null;
+  patientName: string | null;
+  providerName: string | null;
+  appointmentTypeName: string | null;
+};
+
+export async function fetchEstimateVisitChoices(estimateId: string): Promise<EstimateVisitChoice[]> {
+  const { data } = await http.get<EstimateVisitChoice[]>(
+    `/visit-estimates/${estimateId}/visit-choices?practiceId=${practiceId()}`
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 /**

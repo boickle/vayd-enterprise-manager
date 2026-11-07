@@ -65,6 +65,7 @@ import {
   type VisitEstimate,
 } from '../../api/visitEstimates';
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
+import FindEstimatePanel from '../estimates/FindEstimatePanel';
 import { useCan } from '../../permissions/PermissionContext';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
 import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
@@ -6036,6 +6037,23 @@ export default function ClientFinancialWorkspace({
                   </button>
                 </div>
               </div>
+              {canEdit &&
+              !returning &&
+              !hasUnsavedEdits &&
+              !isUnsavedInvoice(selected) &&
+              (selected.clientId ?? clientId) ? (
+                <FindEstimatePanel
+                  clientId={Number(selected.clientId ?? clientId)}
+                  invoiceId={selected.id}
+                  disabled={busy}
+                  onConverted={(id) => {
+                    setError(null);
+                    void getInvoice(id).then(setSelected).catch(() => undefined);
+                    void refreshList(id);
+                    void refreshEstimates();
+                  }}
+                />
+              ) : null}
               {selected.isDeleted || selected.status === 'void' ? (
                 <p className="client-fin__muted">
                   {selected.isDeleted
