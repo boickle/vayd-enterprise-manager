@@ -152,6 +152,7 @@ const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'integrations', label: 'Integrations' },
   { id: 'automatic-tasks', label: 'Automatic Tasks' },
   { id: 'room-loader', label: 'Room Loader' },
+  { id: 'lab-forms', label: 'In-House Lab Forms' },
 ];
 
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -190,6 +191,8 @@ const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'client-statuses', label: 'Client Discounts' },
   { id: 'memberships', label: 'Memberships' },
   { id: 'production-incentive', label: 'Production Incentive' },
+  // Id kept from when this lived under Inventory, so ?tab= links still work.
+  { id: 'inventory-sales-tax', label: 'Sales Tax' },
 ];
 
 const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -201,11 +204,9 @@ const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
 ];
 
 const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
-  { id: 'lab-forms', label: 'In-house lab forms' },
   { id: 'inventory-online-store', label: 'Online store' },
   { id: 'inventory-refills', label: 'Refills' },
   { id: 'inventory-mail-shipping', label: 'Mail shipping' },
-  { id: 'inventory-sales-tax', label: 'Sales tax' },
   { id: 'inventory-waste', label: 'Waste / disposal' },
   { id: 'inventory-count-alerts', label: 'Count alerts' },
 ];
@@ -515,7 +516,7 @@ export default function Settings() {
   const [excludeProductionWhenRefilling, setExcludeProductionWhenRefilling] = useState(true);
   const [refillProductionSaving, setRefillProductionSaving] = useState(false);
 
-  // Inventory tab — practice sales-tax levels (catalog item picker)
+  // Finance → Sales Tax — practice sales-tax levels (catalog item picker)
   const [taxSettingsDraft, setTaxSettingsDraft] = useState<PracticeTaxSettings | null>(null);
   const [taxSettingsLoading, setTaxSettingsLoading] = useState(false);
   const [taxSettingsSaving, setTaxSettingsSaving] = useState(false);
@@ -637,7 +638,7 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
-  // Load practice sales-tax settings when that Inventory section is active
+  // Load practice sales-tax settings when the Finance → Sales Tax section is active
   useEffect(() => {
     if (!isAdmin || activeTab !== 'inventory-sales-tax') return;
     let cancelled = false;
