@@ -851,6 +851,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             page: 1,
             limit: 200,
             includeAbandoned: true,
+            // Without this the API sends placeholder counts and the banner always read
+            // "0 of N requests converted" (training review B8, Nov 7, 2026).
+            includeConversions: true,
           }),
         ]);
         const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -895,6 +898,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         fetchAllAppointmentRequestSubmissions({
           practiceId: PRACTICE_ID,
           includeAbandoned: true,
+          includeConversions: true,
         }),
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
       ]);

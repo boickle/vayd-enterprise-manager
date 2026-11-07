@@ -9,6 +9,8 @@ export type AppDialogOptions = {
   itemName?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Confirm only: a third button between Cancel and Confirm (see appConfirmChoice). */
+  altLabel?: string;
   danger?: boolean;
   defaultValue?: string;
   placeholder?: string;
@@ -71,6 +73,14 @@ function nativeFallback(req: AppDialogRequest): AppDialogResult {
     if (req.requireReason && !note.trim()) return null;
     return { recordOnChart: false, note };
   }
+  if (req.altLabel) {
+    if (
+      window.confirm(`${req.message}\n\nOK = ${req.confirmLabel ?? 'OK'}. Cancel = more choices.`)
+    ) {
+      return true;
+    }
+    return window.confirm(`${req.altLabel}?`) ? APP_DIALOG_ALT_RESULT : false;
+  }
   const list = req.listItems?.length ? `\n\n${req.listItems.map((l) => `• ${l}`).join('\n')}` : '';
   return window.confirm(`${req.message}${list}`);
 }
@@ -82,6 +92,21 @@ async function run(req: AppDialogRequest): Promise<AppDialogResult> {
 
 export function appConfirm(input: string | AppDialogOptions): Promise<boolean> {
   return run({ kind: 'confirm', ...asOptions(input) }).then((v) => v === true);
+}
+
+/** What the dialog host returns when the alt button is clicked. */
+export const APP_DIALOG_ALT_RESULT = '__app_dialog_alt__';
+
+/**
+ * Three-way confirm: Confirm, the alt button, or Cancel (also Escape).
+ * Needs `altLabel`. E.g. Save / Don't save / Keep editing.
+ */
+export function appConfirmChoice(
+  input: AppDialogOptions & { altLabel: string }
+): Promise<'confirm' | 'alt' | 'cancel'> {
+  return run({ kind: 'confirm', ...input }).then((v) =>
+    v === true ? 'confirm' : v === APP_DIALOG_ALT_RESULT ? 'alt' : 'cancel'
+  );
 }
 
 export function appAlert(input: string | AppDialogOptions): Promise<void> {

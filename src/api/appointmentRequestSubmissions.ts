@@ -261,7 +261,13 @@ export async function fetchRemainingAppointmentRequestSubmissionPages(
 
   let page = 2;
   for (;;) {
-    const res = await fetchAppointmentRequestSubmissionsPage({ ...params, page, limit });
+    // Counts come with page 1 only; later pages don't recompute them.
+    const res = await fetchAppointmentRequestSubmissionsPage({
+      ...params,
+      includeConversions: false,
+      page,
+      limit,
+    });
     const batch = res.items ?? [];
     out.push(...batch);
     if (out.length >= total || batch.length === 0) break;

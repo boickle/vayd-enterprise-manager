@@ -49,6 +49,9 @@ export async function createScoutChartNote(body: {
   body?: string;
   /** ISO datetime the documented event happened, for notes written after the fact. */
   noteDate?: string | null;
+  /** 'previous_records': summary of a received outside record; staff beyond vets and
+   *  licensed techs may enter it (owner, Nov 7, 2026). */
+  kind?: 'previous_records';
 }): Promise<ScoutChartNote> {
   const { data } = await http.post<ScoutChartNote>('/scout-chart/notes', {
     practiceId: PRACTICE_ID,
@@ -56,6 +59,7 @@ export async function createScoutChartNote(body: {
     clientId: body.clientId ?? undefined,
     body: body.body ?? '',
     ...(body.noteDate ? { noteDate: body.noteDate } : {}),
+    ...(body.kind ? { kind: body.kind } : {}),
   });
   return data;
 }
