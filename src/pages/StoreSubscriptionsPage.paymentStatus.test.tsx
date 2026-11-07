@@ -37,6 +37,7 @@ async function renderPage() {
     row(1, {}),
     row(2, { paymentStatus: 'failing' }),
     row(3, { active: false, paymentStatus: 'ended' }),
+    row(4, { paymentStatus: 'cancel_pending' }),
   ]);
   render(
     <MemoryRouter>
@@ -63,5 +64,11 @@ describe('StoreSubscriptionsPage payment status (OS-10)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
     await waitFor(() => expect(screen.getByText('Item 1')).toBeTruthy());
     expect(screen.getByText('Item 3')).toBeTruthy();
+  });
+
+  it('OS-A2: shows "Cancel pending: Stripe not confirmed" on a cancel_pending row only', async () => {
+    await renderPage();
+    expect(screen.getAllByText('Cancel pending: Stripe not confirmed')).toHaveLength(1);
+    expect(screen.getAllByText('Payment failing')).toHaveLength(1);
   });
 });

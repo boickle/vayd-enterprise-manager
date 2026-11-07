@@ -403,6 +403,9 @@ export default function StoreSubscriptionsPage() {
                   {row.paymentStatus === 'failing' ? (
                     <span className="mail-queue__badge is-stop">Payment failing</span>
                   ) : null}
+                  {row.paymentStatus === 'cancel_pending' ? (
+                    <span className="mail-queue__badge is-stop">Cancel pending: Stripe not confirmed</span>
+                  ) : null}
                   {row.active ? (
                     <>
                       <button
