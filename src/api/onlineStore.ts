@@ -1620,18 +1620,32 @@ export async function publicStoreCartActivity(
   await http.post(`/public/store/cart-activity`, { practiceId, ...body });
 }
 
+/** Guest coupon preview. The server ignores any client or member claim; a once-per-customer coupon needs the email. */
 export async function publicPreviewCoupon(
   practiceId: number,
   code: string,
   subtotal: number,
-  opts?: { clientId?: number | null; member?: boolean }
+  opts?: { email?: string | null }
 ) {
-  const { data } = await http.post<{
-    code: string;
-    name: string;
-    discount: number;
-    freeShipping: boolean;
-  }>(`/public/store/coupon`, { practiceId, code, subtotal, ...opts });
+  const { data } = await http.post<StoreCouponPreview>(`/public/store/coupon`, {
+    practiceId,
+    code,
+    subtotal,
+    ...opts,
+  });
+  return data;
+}
+
+export type StoreCouponPreview = {
+  code: string;
+  name: string;
+  discount: number;
+  freeShipping: boolean;
+};
+
+/** Logged-in coupon preview: the household and member status come from the login. */
+export async function clientPreviewCoupon(code: string, subtotal: number) {
+  const { data } = await http.post<StoreCouponPreview>(`/store/checkout/coupon`, { code, subtotal });
   return data;
 }
 

@@ -10,6 +10,7 @@ import {
   storeApiError,
   storeAttemptMayRetry,
   publicPreviewCoupon,
+  clientPreviewCoupon,
   publicStoreFulfillment,
   publicStoreProducts,
   publicStoreTax,
@@ -468,8 +469,9 @@ export default function StoreCartPage() {
   }, [loggedIn, clientId]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  // D1 (updated Nov 7, 2026): guests buy gift cards only; every store item needs the portal login.
-  const needsLogin = lines.length > 0 && !loggedIn;
+  // OS-A16 (owner, Nov 7, 2026): a guest buys one-time, non-prescription, no-pet items with a new card.
+  // Prescription, pet and auto-ship items keep the login prompt.
+  const needsLogin = lines.length > 0 && !loggedIn && lines.some((line) => lineNeedsPet(line));
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -919,9 +921,15 @@ export default function StoreCartPage() {
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
 
-      {lines.length && loggedIn ? (
+      {lines.length && (loggedIn || !needsLogin) ? (
         <div className="vayd-store__cart-grid">
           <section>
+            {!loggedIn ? (
+              <p className="vayd-store__note vayd-store__guest-note">
+                Checking out as a guest with a new card. Prescription and auto-ship items need your client
+                portal login: <Link to="/login">log in</Link> to order those.
+              </p>
+            ) : null}
             <h2>Fulfillment</h2>
             <div className="vayd-store__chips">
               {allAutoship && autoshipOption ? (
@@ -1275,10 +1283,9 @@ export default function StoreCartPage() {
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    void publicPreviewCoupon(practiceId, coupon, subtotal, {
-                      clientId,
-                      member: hasMemberPricing,
-                    })
+                    void (loggedIn
+                      ? clientPreviewCoupon(coupon, subtotal)
+                      : publicPreviewCoupon(practiceId, coupon, subtotal, { email: ship.email }))
                       .then((p) => {
                         setCouponOff(p.discount);
                         setCouponFreeShip(Boolean(p.freeShipping));
@@ -1399,6 +1406,7 @@ export default function StoreCartPage() {
                   postal: ship.postal,
                 }}
                 onClose={cards.length ? () => setEnterNewCard(false) : undefined}
+                canSaveCard={loggedIn}
               />
             )}
             {petsMissing ? (
@@ -1459,7 +1467,8 @@ export default function StoreCartPage() {
                     payOutstanding,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
-                    saveCard,
+                    // OS-A16: a guest's card is never saved.
+                    saveCard: loggedIn && saveCard,
                     updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,
