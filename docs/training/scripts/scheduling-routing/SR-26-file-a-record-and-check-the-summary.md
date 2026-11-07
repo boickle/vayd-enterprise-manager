@@ -1,6 +1,6 @@
 # SR-26. File a received record and check the summary
 
-- **Audience:** CLs file and start the review. Doctors and techs check the summary and reminders.
+- **Audience:** CLs file the record and start the review. A vet or licensed tech checks it and enters it (the summary note is a signed medical record).
 - **Length:** 2 to 3 minutes.
 - **Watch first:** SR-25.
 - **The one thing to remember:** Scout drafts the summary and the reminders, but nothing goes in the medical record until a person checks them against the document and clicks Enter.
@@ -26,7 +26,9 @@
 | 11 | Reminders | Change the date to 04/02/2026 | "Fix it here." | — |
 | 12 | Click **Review Summary First**, then the **Summary** tab | Point at "Add this summary to the medical record. Goes on the Timeline as 'Previous Medical Records'. Edit as needed." | "Read the summary. Edit anything that's wrong." | — |
 | 13 | Summary | Point at the behavior caution (snapped once at an ear exam) | "Make sure warnings like this one made it in. The doctor needs it before the visit." | — |
-| 14 | Review | Click **Enter Reminders & Summary in Record** | "Then enter them in the record." | — |
+| 14 | Review (signed in as Dr. Lane) | Click **Enter Reminders & Summary in Record** | "Then enter them in the record." | — |
+| 15 | **Enter in medical record?** | Point at "This adds the Previous Medical Records summary note, 6 reminders to Biscuit's chart. Reminders show under Upcoming and on the client portal." and click **Enter Reminders & Summary in Record** | "Scout says exactly what it will add, including that the family sees the reminders in their portal. Confirm." | — |
+| 16 | Biscuit's chart | Point at the six reminders under Upcoming and the Previous Medical Records note | "They're on Biscuit's chart now." | — |
 
 ## What else you can do here
 
@@ -47,8 +49,11 @@
 ## Notes from the check in the app (Nov 7, 2026)
 
 - **Checked as a CL** on the training stack with the fictional record: filing, **Review & summarize**, and the review window with 6 reminders and the summary.
-- **Not walked:** **Enter Reminders & Summary in Record**, and **Close out**.
-- **The reminders take a few seconds to appear.** The tab first shows "No reminders were found in these records" and then 6. Wait before pointing.
+- **Entered end to end as Dr. Lane (Nov 7):** the summary note was created and finalized, 6 reminders were added to Biscuit's chart (Dental cleaning, DHPP 1 yr, Leptospirosis 1 yr, Heartworm test, Bordetella intranasal 1 yr, Rabies 3 yr) and the records request was updated.
+- **A CL or unlicensed tech can't enter the summary.** Finalizing the note needs a vet or licensed tech ("assertCanSignRecord … medical_note"), so the step stops with a 403 and nothing else is entered. Record this video with Dr. Lane for steps 14 to 16, or as a CL with **Summary** unticked (**Enter Reminders Only**; not tried). See the review, Q15.
+- **The reminders sometimes don't come back (B10).** For the same record, the summary returned 9 to 11 reminders on some runs and none on others ("No reminders were found in these records"). If that happens while recording, **Save names & summarize again**.
+- **The dental date varies between runs** (04/02/2025 or 04/30/2025); it always needs fixing. That's the point of step 10.
+- **Not walked:** **Close out**.
 - **The document preview** on the left of the review window was blank on the test stack. Use **Open in a new tab**, or check the preview on the recording stack.
 - **Where things go on the test stack:**
   - **The file** goes to the dev bucket `vayd-chart-documents-local-deirdre`, not production.
