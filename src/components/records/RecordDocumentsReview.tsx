@@ -563,6 +563,7 @@ export default function RecordDocumentsReview({
         patientId: pid,
         clientId: Number.isFinite(cid) && cid > 0 ? cid : null,
         body,
+        kind: 'previous_records',
       });
       const finalized = await finalizeScoutChartNote(draft.id);
       noteResultRef.current = {

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   Archive,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   History,
   Package,
   Plus,
@@ -22,7 +23,7 @@ import {
   type MembershipAuditEntry,
 } from '../../api/memberships';
 import { apiErrorMessage } from '../../api/http';
-import { appAlert, appConfirm } from '../../utils/appDialog';
+import { appAlert, appConfirm, appConfirmChoice } from '../../utils/appDialog';
 import BundleGroupEditor, {
   bundleGroupDraftsFrom,
   bundleGroupDraftsProblem,
@@ -96,6 +97,11 @@ function dateTime(iso: string | null): string {
   });
 }
 
+/** Compare-only fingerprint of the editor, so we can tell whether anything changed. */
+function editorSnapshot(draft: Draft, groups: BundleGroupDraft[]): string {
+  return JSON.stringify({ draft, groups: bundleGroupDraftsToInput(groups) });
+}
+
 function itemCount(bundle: Bundle): number {
   return bundle.groups.reduce((sum, g) => sum + g.items.length, 0);
 }
@@ -112,6 +118,11 @@ type Props = {
   onFocusBundleConsumed?: () => void;
   /** Prefill the bundles search box. */
   initialQuery?: string;
+  /**
+   * Filled in with a check the parent awaits before switching away from Bundles. Resolves
+   * false when the user chose to keep editing an unsaved bundle.
+   */
+  leaveGuardRef?: MutableRefObject<(() => Promise<boolean>) | null>;
 };
 
 export default function CatalogBundles({
@@ -119,6 +130,7 @@ export default function CatalogBundles({
   focusBundleId = null,
   onFocusBundleConsumed,
   initialQuery = '',
+  leaveGuardRef,
 }: Props) {
   const canManage = useCan('catalog.bundle.manage');
   const [bundles, setBundles] = useState<Bundle[]>([]);
@@ -129,8 +141,12 @@ export default function CatalogBundles({
 
   const [editing, setEditing] = useState<Bundle | null>(null);
   const [creating, setCreating] = useState(false);
+  /** Name of the bundle being copied, while the editor holds an unsaved duplicate. */
+  const [copiedFrom, setCopiedFrom] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [groups, setGroups] = useState<BundleGroupDraft[]>([]);
+  /** Editor state as last opened or saved; null means nothing saved yet (an unsaved copy). */
+  const [baseline, setBaseline] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -177,22 +193,61 @@ export default function CatalogBundles({
   function startCreate() {
     setEditing(null);
     setCreating(true);
+    setCopiedFrom(null);
+    const startGroups = [emptyBundleGroup('all')];
     setDraft(EMPTY_DRAFT);
-    setGroups([emptyBundleGroup('all')]);
+    setGroups(startGroups);
+    setBaseline(editorSnapshot(EMPTY_DRAFT, startGroups));
     setAudit([]);
     setAuditOpen(false);
     setFormError(null);
   }
 
+  /** Open the New bundle editor prefilled from an existing bundle. Nothing saves until Create. */
+  async function duplicateBundle(row: Bundle) {
+    try {
+      const full = await getBundle(row.id);
+      setEditing(null);
+      setCreating(true);
+      setCopiedFrom(full.name);
+      setDraft({
+        ...draftFrom(full),
+        name: `Copy of ${full.name}`,
+        // Codes identify a bundle, so the copy starts without one.
+        code: '',
+      });
+      // Strip saved ids so the create call makes new groups and lines instead of pointing at
+      // the original bundle's rows.
+      setGroups(
+        bundleGroupDraftsFrom(full).map((g) => ({
+          ...g,
+          id: undefined,
+          items: g.items.map((i) => ({ ...i, id: undefined })),
+        }))
+      );
+      // A copy is new and unsaved even before any edits, so leaving it always asks.
+      setBaseline(null);
+      setAudit([]);
+      setAuditOpen(false);
+      setFormError(null);
+    } catch (e) {
+      await appAlert({ title: 'Could not duplicate bundle', message: apiErrorMessage(e) });
+    }
+  }
+
   async function openBundle(row: Bundle) {
     setCreating(false);
+    setCopiedFrom(null);
     setFormError(null);
     setAuditOpen(false);
     try {
       const full = await getBundle(row.id);
+      const openedDraft = draftFrom(full);
+      const openedGroups = bundleGroupDraftsFrom(full);
       setEditing(full);
-      setDraft(draftFrom(full));
-      setGroups(bundleGroupDraftsFrom(full));
+      setDraft(openedDraft);
+      setGroups(openedGroups);
+      setBaseline(editorSnapshot(openedDraft, openedGroups));
       setAudit(await getBundleAudit(full.id).catch(() => []));
     } catch (e) {
       await appAlert({ title: 'Could not open bundle', message: apiErrorMessage(e) });
@@ -220,8 +275,10 @@ export default function CatalogBundles({
   function closeEditor() {
     setEditing(null);
     setCreating(false);
+    setCopiedFrom(null);
     setGroups([]);
     setDraft(EMPTY_DRAFT);
+    setBaseline(null);
     setFormError(null);
   }
 
@@ -237,15 +294,16 @@ export default function CatalogBundles({
     };
   }
 
-  async function save() {
+  /** Resolves true once the bundle is saved. */
+  async function save(): Promise<boolean> {
     if (!draft.name.trim()) {
       setFormError('Give the bundle a name.');
-      return;
+      return false;
     }
     const groupProblem = bundleGroupDraftsProblem(groups);
     if (groupProblem) {
       setFormError(groupProblem);
-      return;
+      return false;
     }
     setSaving(true);
     setFormError(null);
@@ -259,24 +317,83 @@ export default function CatalogBundles({
         flash(`Created ${created.name}`);
         closeEditor();
         await reload();
-        return;
+        return true;
       }
-      if (!editing) return;
+      if (!editing) return false;
       const saved = await updateBundle(editing.id, fieldsFromDraft(), {
         groups: bundleGroupDraftsToInput(groups),
       });
       flash(`Saved ${saved.name}`);
+      const savedDraft = draftFrom(saved);
+      const savedGroups = bundleGroupDraftsFrom(saved);
       setEditing(saved);
-      setDraft(draftFrom(saved));
-      setGroups(bundleGroupDraftsFrom(saved));
+      setDraft(savedDraft);
+      setGroups(savedGroups);
+      setBaseline(editorSnapshot(savedDraft, savedGroups));
       setAudit(await getBundleAudit(saved.id).catch(() => []));
       await reload();
+      return true;
     } catch (e) {
       setFormError(apiErrorMessage(e));
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  const editorOpen = creating || editing != null;
+  const dirty =
+    editorOpen && canManage && (baseline === null || editorSnapshot(draft, groups) !== baseline);
+
+  /**
+   * Before leaving the editor: if there are unsaved changes, ask Save / Don't save / Keep
+   * editing. Resolves true when it's fine to leave (saved, discarded, or nothing changed).
+   */
+  async function confirmLeave(): Promise<boolean> {
+    if (!dirty || saving) return !saving;
+    const name = draft.name.trim() || 'this bundle';
+    const choice = await appConfirmChoice({
+      title: 'Save your changes?',
+      message: creating
+        ? `${name} hasn’t been created yet. Save it before you leave?`
+        : `You changed ${name} and haven’t saved. Save before you leave?`,
+      confirmLabel: creating ? 'Create bundle' : 'Save',
+      altLabel: 'Don’t save',
+      cancelLabel: 'Keep editing',
+    });
+    if (choice === 'cancel') return false;
+    if (choice === 'alt') return true;
+    return save();
+  }
+
+  async function leaveEditor() {
+    if (await confirmLeave()) closeEditor();
+  }
+
+  async function duplicateFromEditor(bundle: Bundle) {
+    if (await confirmLeave()) await duplicateBundle(bundle);
+  }
+
+  // Let Catalog ask before switching tabs away from an unsaved bundle.
+  const confirmLeaveRef = useRef(confirmLeave);
+  confirmLeaveRef.current = confirmLeave;
+  useEffect(() => {
+    if (!leaveGuardRef) return;
+    leaveGuardRef.current = () => confirmLeaveRef.current();
+    return () => {
+      leaveGuardRef.current = null;
+    };
+  }, [leaveGuardRef]);
+
+  // Closing or reloading the browser tab gets the browser's own "leave site?" warning.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   async function archive(bundle: Bundle) {
     const ok = await appConfirm({
@@ -299,17 +416,32 @@ export default function CatalogBundles({
 
   /* ------------------------------------------------------------------ editor */
 
-  if (creating || editing) {
-    const title = creating ? 'New bundle' : `Edit ${editing?.name ?? 'bundle'}`;
+  if (editorOpen) {
+    const title = creating
+      ? copiedFrom
+        ? `New bundle (copy of ${copiedFrom})`
+        : 'New bundle'
+      : `Edit ${editing?.name ?? 'bundle'}`;
     return (
       <div className="cbn">
         <div className="cbn__editor-head">
-          <button type="button" className="cbn__back" onClick={closeEditor}>
+          <button type="button" className="cbn__back" onClick={() => void leaveEditor()}>
             <ChevronLeft size={15} aria-hidden />
             All bundles
           </button>
           <h3 className="cbn__title">{title}</h3>
           <div className="cbn__editor-actions">
+            {editing && canManage ? (
+              <button
+                type="button"
+                className="cbn-btn cbn-btn--quiet"
+                disabled={saving}
+                onClick={() => void duplicateFromEditor(editing)}
+              >
+                <Copy size={14} aria-hidden />
+                Duplicate
+              </button>
+            ) : null}
             {editing && canManage ? (
               <button
                 type="button"
@@ -371,8 +503,8 @@ export default function CatalogBundles({
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
               />
               <span className="cbn-field__hint">
-                What the client pays once for the whole bundle. Leave at $0 or blank to charge
-                each item at its bundle price.
+                What the client pays once for the whole bundle. Leave at $0 or blank to charge each
+                item at its bundle price.
               </span>
             </label>
             <label className="cbn-field">
@@ -475,7 +607,7 @@ export default function CatalogBundles({
             type="button"
             className="cbn-btn cbn-btn--quiet"
             disabled={saving}
-            onClick={closeEditor}
+            onClick={() => void leaveEditor()}
           >
             Cancel
           </button>
@@ -626,6 +758,15 @@ export default function CatalogBundles({
                       >
                         Edit
                       </button>
+                      {canManage ? (
+                        <button
+                          type="button"
+                          className="cbn-btn cbn-btn--quiet"
+                          onClick={() => void duplicateBundle(bundle)}
+                        >
+                          Duplicate
+                        </button>
+                      ) : null}
                       {!bundle.isArchived && canManage ? (
                         <button
                           type="button"
