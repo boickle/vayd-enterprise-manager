@@ -611,6 +611,9 @@ export function CheckoutInvoiceRxFields({
             acuity: acuity as 'acute' | 'chronic',
             refillExpiration:
               refillCount > 0 ? toRxDatePayload(refillExpiration) ?? null : null,
+            // A line with no SOAP order (e.g. a new script from a refill's "New directions") is
+            // approved here too, not only saved.
+            ...(opts?.approve ? { rxApproved: true } : {}),
           }),
         );
         setSavedFlash(true);

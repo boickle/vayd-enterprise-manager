@@ -104,6 +104,12 @@ export type ReminderSettings = {
    */
   'appointmentBookings.goalsByDayOfWeek'?: string;
   /**
+   * Practice appointment bookings goals for the week (Sunday–Saturday),
+   * calendar month, and calendar quarter (JSON string).
+   * Shape: { weekly, monthly, quarterly }.
+   */
+  'appointmentBookings.periodGoals'?: string;
+  /**
    * Max routing scores for client-offered slots (JSON string).
    * Shape: { defaults: { sameDay, nextDay, withinWeek, later }, memberBonus, byAppointmentTypeId }.
    * See `routingOfferableScoreConfig.ts`.

@@ -16,10 +16,11 @@ export type EmailCampaignSkipReason =
   | 'email_opted_out'
   | 'recently_emailed'
   | 'duplicate_email'
+  | 'manually_excluded'
   | 'campaign_canceled';
 
 export type EmailCampaignAudience = {
-  mode: 'segment' | 'specific';
+  mode: 'segment' | 'specific' | 'list';
   membership: 'any' | 'members' | 'non_members';
   species: string[];
   lastVisit: { mode: 'any' | 'within' | 'not_within'; months: number };
@@ -30,6 +31,14 @@ export type EmailCampaignAudience = {
   clientIds: number[];
   excludeClientIds: number[];
   excludeEmailedWithinDays: number | null;
+  /** People added by name and email. Missing on campaigns saved before this existed. */
+  externalContacts?: ExternalContact[];
+};
+
+export type ExternalContact = {
+  firstName: string;
+  lastName: string;
+  email: string;
 };
 
 export type EmailCampaignGoal = {
@@ -128,7 +137,7 @@ export type AudienceSummary = {
   eligible: number;
   excluded: Partial<Record<EmailCampaignSkipReason, number>>;
   sample: Array<{
-    clientId: number;
+    clientId: number | null;
     firstName: string | null;
     lastName: string | null;
     email: string | null;
@@ -177,7 +186,7 @@ export type CampaignReport = {
     fromOpeners: number;
     fromNonOpeners: number;
     rows: Array<{
-      clientId: number;
+      clientId: number | null;
       name: string;
       email: string | null;
       convertedAt: string;
@@ -190,7 +199,7 @@ export type CampaignReport = {
 
 export type CampaignRecipient = {
   id: number;
-  clientId: number;
+  clientId: number | null;
   name: string;
   email: string | null;
   status: 'pending' | 'sending' | 'sent' | 'skipped' | 'failed';
@@ -327,7 +336,8 @@ export const SKIP_REASON_LABELS: Record<EmailCampaignSkipReason | 'unknown', str
   unsubscribed_or_bounced: 'Unsubscribed or bounced',
   email_opted_out: 'Opted out of email',
   recently_emailed: 'Emailed recently',
-  duplicate_email: 'Shares an email with another client',
+  duplicate_email: 'Shares an email with someone else in this send',
+  manually_excluded: 'On the do-not-send list',
   campaign_canceled: 'Campaign canceled before sending',
   unknown: 'Other',
 };

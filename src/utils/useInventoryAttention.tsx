@@ -61,7 +61,7 @@ export function useInventoryAttention(enabled = true) {
 
   const flaggedCounts = data?.flaggedCounts ?? 0;
   const costReviews = data?.costReviews ?? 0;
-  const shrinkAlert = Boolean(data?.shrink.alert);
+  const shrinkAlert = Boolean(data?.shrink?.alert);
   return {
     data,
     flaggedCounts,
