@@ -62,3 +62,9 @@ Checked on build-doctor-flow 5a13205 with API 221ea76a, in Stripe test mode, as 
 - **Prices come from the estimate.** The estimate's prices are copied as they are; use **Reprice** afterwards if a member price should apply.
 - **Demo setup:** the world has no estimates, so the spec makes the estimate through the API (Dental cleaning and Dental X-rays are in `cypress/training/setup/invoicing-demo.sql`) and then marks it Sent.
 - **Ready to record.**
+
+## Pass 1 changes (Nov 7, 2026)
+
+- Part 1 is recorded as written, but the list shows two open estimates (Juniper's dental one and Maple's), newest first. The video opens the first and doesn't quote estimate numbers (they climb with each take).
+- Part 2 converts Maple's estimate (priced at her member prices, with the strikethrough list price), not Juniper's. **Which visit is this for?** lists two visits, Juniper's today and Maple's tomorrow, so the video picks Maple's. The "selected when it's the only one" case is not shown.
+- Added two lines: "Open the estimate" (a click on the Estimates row) before **Convert to invoice**, and a separate click on **Convert to this visit**.

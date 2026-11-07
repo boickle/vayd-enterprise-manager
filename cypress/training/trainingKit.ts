@@ -140,7 +140,19 @@ function ripple(doc: Document, x: number, y: number) {
 function center(get: () => Cypress.Chainable<JQuery<HTMLElement>>) {
   get().then(($el) => $el[0].scrollIntoView({ block: 'center', behavior: 'smooth' }));
   cy.wait(450, { log: false });
+  settle(get);
   return get();
+}
+
+/** A long smooth scroll can still be moving after 450 ms: wait until the element stops moving (up to ~1 s more). */
+function settle(get: () => Cypress.Chainable<JQuery<HTMLElement>>, tries = 0) {
+  get().then(($el) => {
+    const top = $el[0].getBoundingClientRect().top;
+    cy.wait(120, { log: false });
+    get().then(($again) => {
+      if (Math.abs($again[0].getBoundingClientRect().top - top) > 1 && tries < 8) settle(get, tries + 1);
+    });
+  });
 }
 
 function moveTo(doc: Document, r: DOMRect, highlightMs: number) {

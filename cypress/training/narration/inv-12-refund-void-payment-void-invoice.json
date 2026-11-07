@@ -1,0 +1,18 @@
+[
+ {"id":"inv12-01","text":"Three buttons sound alike but do very different things. Picking the wrong one leaves money taken with nothing given back."},
+ {"id":"inv12-02","text":"Here are the payments on this bill."},
+ {"id":"inv12-03","text":"Refund gives money back. Void fixes a mistake. And refund before you void a bill."},
+ {"id":"inv12-04","text":"Click Refund next to the card payment."},
+ {"id":"inv12-05","text":"Refund sends money back to the card through Stripe."},
+ {"id":"inv12-06","text":"Partial is fine. A reason is optional here, but it's a good habit."},
+ {"id":"inv12-07","text":"We won't refund now. Click Cancel."},
+ {"id":"inv12-08","text":"Now click Void next to the cash payment."},
+ {"id":"inv12-09","text":"Void is for a payment recorded by mistake, like cash typed on the wrong bill. It needs a reason."},
+ {"id":"inv12-10","text":"We'll leave it for now. Click Cancel."},
+ {"id":"inv12-11","text":"Now try to void the whole bill. Click Void invoice."},
+ {"id":"inv12-12","text":"Type a reason."},
+ {"id":"inv12-13","text":"Then click Void."},
+ {"id":"inv12-14","text":"Scout won't void a bill that's paid by card. Refund first."},
+ {"id":"inv12-15","text":"A voided bill shows its items as voided on the pet's chart. Reopen it to bill them again."},
+ {"id":"inv12-16","text":"The most common mistakes are voiding a paid bill instead of refunding, and using refund to fix a payment that was recorded wrong. Remember: refund to give money back, void a payment to fix a recording mistake, and refund before you void a bill."}
+]

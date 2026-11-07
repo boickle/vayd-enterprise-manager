@@ -21,12 +21,13 @@ export function resetInvoicingWorld() {
   resetSeededHouseholdsInDb();
   const clients = `${w.households.A.clientId},${w.households.B.clientId}`;
   sql(`UPDATE visit_invoices SET "isDeleted"=true WHERE "clientId" IN (${clients}) AND "isDeleted"=false AND COALESCE("staffAudit"->>'seed','') <> 'inv-16-day'`);
+  sql(`UPDATE visit_estimates SET "isDeleted"=true WHERE "clientId" IN (${clients})`);
   // INV-03 to INV-05 use their own Stripe emails; put the demo ones back so other screens show them.
   sql(`UPDATE clients SET email='maria.rivera@example.com' WHERE id=${w.households.A.clientId}`);
   sql(`UPDATE clients SET email='tom.chen@example.com' WHERE id=${w.households.B.clientId}`);
   // Estimate emails that earlier takes recorded on the client's history.
-  sql(`DELETE FROM client_communication_logs WHERE "communicationMessageLogId" IN (SELECT id FROM communication_message_logs WHERE "communicationTypeLabel"='Estimate email')`);
-  sql(`DELETE FROM communication_message_logs WHERE "communicationTypeLabel"='Estimate email'`);
+  sql(`DELETE FROM client_communication_logs WHERE "communicationMessageLogId" IN (SELECT id FROM communication_message_logs WHERE "communicationTypeLabel" IN ('Estimate email','Receipt email','Invoice email','Ledger email'))`);
+  sql(`DELETE FROM communication_message_logs WHERE "communicationTypeLabel" IN ('Estimate email','Receipt email','Invoice email','Ledger email')`);
   sql(`UPDATE scout_chart_notes SET "isDeleted"=true WHERE "clientId" IN (${clients}) AND "isDeleted"=false AND body ILIKE '%Your estimate from%'`);
   // INV-01 leaves a charted decline on Maple; other videos start without it.
   sql(`DELETE FROM treatment_items WHERE "pimsType"='inv-train-decline'`);

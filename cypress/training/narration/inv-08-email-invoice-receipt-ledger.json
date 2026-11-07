@@ -1,0 +1,14 @@
+[
+ {"id":"inv08-01","text":"Families ask for receipts for insurance, reimbursement and their own records. It takes one click."},
+ {"id":"inv08-02","text":"Open the bill on Maria's ledger."},
+ {"id":"inv08-03","text":"One button sends an invoice before payment, and a receipt after."},
+ {"id":"inv08-04","text":"This bill is paid, so the button says Email receipt."},
+ {"id":"inv08-05","text":"Click it."},
+ {"id":"inv08-06","text":"Check the address and the message."},
+ {"id":"inv08-07","text":"Send it."},
+ {"id":"inv08-08","text":"Now open an unpaid bill."},
+ {"id":"inv08-09","text":"On an unpaid bill, the same button says Email invoice."},
+ {"id":"inv08-10","text":"For a statement of the whole household, use Email Ledger."},
+ {"id":"inv08-11","text":"Print gives a paper copy."},
+ {"id":"inv08-12","text":"The most common mistakes are sending to an old email address, and sending an invoice when they wanted a receipt. Pay first, then send. Remember: the same button sends an invoice before payment and a receipt after."}
+]

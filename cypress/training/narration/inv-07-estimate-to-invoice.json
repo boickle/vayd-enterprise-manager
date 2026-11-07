@@ -1,0 +1,20 @@
+[
+ {"id":"inv07-01","text":"The family approved these prices. Carrying the estimate onto the bill keeps them exactly as approved, and saves typing it all again."},
+ {"id":"inv07-02","text":"Juniper's dental estimate was approved. Her bill has the exam on it so far."},
+ {"id":"inv07-03","text":"Don't type the lines again. Find the estimate."},
+ {"id":"inv07-04","text":"Click Find estimate."},
+ {"id":"inv07-05","text":"Scout lists this family's open estimates, newest first. Declined, converted and expired ones don't show."},
+ {"id":"inv07-06","text":"Open it to check what's inside."},
+ {"id":"inv07-07","text":"Every pet, every line, at the prices the family approved."},
+ {"id":"inv07-08","text":"Click Convert."},
+ {"id":"inv07-09","text":"Convert adds the whole estimate to this bill."},
+ {"id":"inv07-10","text":"If something wasn't done, remove that line. Add anything that came up during the procedure."},
+ {"id":"inv07-11","text":"You can also start from the estimate. It's on the client's Estimates list."},
+ {"id":"inv07-12","text":"Open the estimate."},
+ {"id":"inv07-13","text":"Click Convert to invoice."},
+ {"id":"inv07-14","text":"An estimate made on the ledger isn't tied to a visit yet, so Scout asks which one. It lists the family's visits today and coming up."},
+ {"id":"inv07-15","text":"Pick Maple's visit."},
+ {"id":"inv07-16","text":"Then click Convert to this visit."},
+ {"id":"inv07-17","text":"The bill is open on that visit, and the estimate shows Converted."},
+ {"id":"inv07-18","text":"The most common mistake is retyping the estimate on the bill. Remember: carry the estimate onto the bill with Find estimate, so you don't re-enter the lines."}
+]

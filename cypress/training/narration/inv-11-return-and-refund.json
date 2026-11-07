@@ -1,0 +1,23 @@
+[
+ {"id":"inv11-01","text":"When a family returns food or medication, the money should go back the way it came: to the card first, then to their account for the credit part."},
+ {"id":"inv11-02","text":"Open the paid bill. Maria paid it with her card and some account credit."},
+ {"id":"inv11-03","text":"Return the items, and Scout works out where the money goes."},
+ {"id":"inv11-04","text":"Click Return items."},
+ {"id":"inv11-05","text":"Scout shows how the bill was paid, and how much the card can still take."},
+ {"id":"inv11-06","text":"Type 1 to return one bag."},
+ {"id":"inv11-07","text":"It goes back on the shelf, and the amount fits on the card, so it all goes back to the card."},
+ {"id":"inv11-08","text":"Click refund."},
+ {"id":"inv11-09","text":"Scout asks once more."},
+ {"id":"inv11-10","text":"Confirm."},
+ {"id":"inv11-11","text":"The bill stays paid. The return is its own line."},
+ {"id":"inv11-12","text":"Now the other bag. Click Return items again."},
+ {"id":"inv11-13","text":"Scout only offers what's left to return, and the card has only a little left."},
+ {"id":"inv11-14","text":"Type 1 for the second bag."},
+ {"id":"inv11-15","text":"That's more than the card has left, so the rest goes back as account credit."},
+ {"id":"inv11-16","text":"Click refund."},
+ {"id":"inv11-17","text":"Read the split."},
+ {"id":"inv11-18","text":"Then confirm."},
+ {"id":"inv11-19","text":"Both payments show as refunded, not voided, and Maria has her credit back."},
+ {"id":"inv11-20","text":"If the family would rather keep it all as credit, use Keep as account credit instead."},
+ {"id":"inv11-21","text":"The most common mistakes are refunding the whole amount to the card when part was paid with credit, and doing a plain refund when items came back. Use Return items, so stock and the chart are right. Remember: return the items, and Scout works out the split."}
+]

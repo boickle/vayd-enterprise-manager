@@ -63,3 +63,8 @@ Checked on build-doctor-flow 5a13205 with API 221ea76a, in Stripe test mode.
 - **Which roles see what** is in the table above, from each login's own view.
 - **Wording:** the button is **Void**; the window is titled **Void payment**. The script says "Void" for the click.
 - **Ready to record.**
+
+## Pass 1 changes (Nov 7, 2026)
+
+- Recorded as written, with the bill made as $20 cash first, then $55 on the card on file.
+- Step 9 is three clicks in the video: **Void invoice**, type the reason, **Void**.

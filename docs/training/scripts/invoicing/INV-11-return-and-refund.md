@@ -64,3 +64,8 @@ Checked on build-doctor-flow 5a13205 with API 221ea76a, in Stripe test mode, as 
 - **Permissions changed:** per the owner's Nov 6 decision, every role except observer can return items, so the old "Bug: no permission check" note no longer applies. A CL, technician and doctor each saw **Return items** and **Refund** on a paid invoice.
 - **Demo data:** `cypress/training/setup/invoicing-demo.sql` adds the lot DIET-2611 and makes the prescription diet untaxed, so $60 a bag totals $120. The paid invoice is made through the API: a $50 account credit, an account-credit payment, then the test Visa.
 - **Ready to record.**
+
+## Pass 1 changes (Nov 7, 2026)
+
+- Recorded as written. The staff-only box on the original invoice now reads "Staff only · voided and refunded payments (2)" (the wording bug is fixed); it stays closed.
+- The voice doesn't quote dollar amounts on the first two returns; the screen shows them.

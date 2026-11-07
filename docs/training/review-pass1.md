@@ -53,3 +53,56 @@ Setup notes that apply to all six:
 - **Questions:** the test stack has no Gmail. I stub the Info inbox and the send inside the browser (the window is the real one; nothing is emailed). With the stub, the estimate stays **Draft**. The client History box does not show the new "Estimate email" line until the page is reloaded (it is recorded; not shown live). Do you want the final take on a stack with a real shared inbox so the status can show Sent? Also the estimate number reads #2 or higher after earlier takes; the script says #1.
 - **Needs your OK:** the browser stub for the final take, or a stack with a real inbox (sending only to deirdre@vetatyourdoor.com).
 - **Possible app bugs:** estimates still ignore the member discount (known; Juniper has no plan so the video avoids it). Not re-tested on Maple.
+
+# Batch B: INV-07 to INV-12
+
+Same stack and setup as batch A. Dry runs are in `~/.vayd-training-inv/dry/`. Two things changed in shared code and apply to every video: `trainingKit.ts` now waits until a long smooth scroll has stopped before it outlines or clicks (an Email Ledger outline landed on the wrong box on INV-08 without it, +about 0.1 s per tap), and `invKit.ts`'s reset also clears estimates and the Receipt, Invoice and Ledger email history lines left by earlier takes.
+
+## INV-07. Turn an estimate into the invoice
+- **Dry run:** clean. 1 min 21 s (free voice). 7 clicks, all within 2 s of their lines. `~/.vayd-training-inv/dry/inv-07.mp4`
+- **Script changes:** added a Pass 1 section. The list under Find estimate shows two estimates (Juniper's dental one and Maple's), newest first; the video opens the first. Part 2 converts Maple's estimate, and **Which visit is this for?** lists two visits (Juniper's today, Maple's tomorrow), so the video picks Maple's. Estimate numbers aren't spoken (they climb with every take).
+- **Verified:** Find estimate, expand, Convert, the "Added … to this bill" note, the visit picker, and the Converted status all work. Maple's estimate lines show the member price with the list price struck through ($162.00, $22.50).
+- **Questions:** the script's "selected when it's the only one" case isn't shown because the family has two visits. Do you want the single-visit case instead?
+- **Needs your OK:** none.
+- **Possible app bugs:** none. Frame sheet checked; `~/.vayd-training-inv/inv-07-estimate-to-invoice/frames`.
+
+## INV-08. Email an invoice, receipt or household ledger
+- **Dry run:** clean apart from one click 0.1 s past the 2 s limit (the Send email click, line 7, +2.1 s). 51 s. 4 clicks. `~/.vayd-training-inv/dry/inv-08.mp4`
+- **Script changes:** the paid bill is the demo's $25 card bill, the unpaid one a $25 nail trim. The video clicks the unpaid bill's row, which the table didn't list. Sending is stubbed in the browser (no Gmail on the test stack): the window is the real one and nothing is emailed.
+- **Questions:** the Email receipt button sits at the bottom of the invoice pane, so the page scrolls down to it and the ledger list scrolls out of view. Fine, or do you want the video to open on a shorter invoice?
+- **Needs your OK:** the browser stub, or a stack with a real inbox, for the final take.
+- **Possible app bugs:** none. After the send, the Receipt email line shows under the client's History right away (unlike the estimate email in INV-06).
+
+## INV-09. What the client sees in the portal
+- **Dry run:** clean. 1 min 1 s. 4 clicks in sync. `~/.vayd-training-inv/dry/inv-09.mp4`
+- **Script changes:** the bill is Juniper's $25 nail trim. Maria already has a saved Visa on the shared Stripe test account, so the pay form shows **Card on file** first; the video points at it, clicks **Use a different card**, then shows Name on card, Card number and the save-my-card box. Added a **Done** click for the invoice window.
+- **Questions:** none.
+- **Needs your OK:** none.
+- **Possible app bugs:** the pay form is mostly empty space. Under **Have a gift card?** there is a tall blank block, and the card box is tall. Cosmetic. Frame: `~/.vayd-training-inv/inv-09-what-the-client-sees/frames`.
+
+## INV-10. Open balances, including old eVet invoices
+- **Dry run:** clean. 53 s. 1 click. `~/.vayd-training-inv/dry/inv-10.mp4`
+- **Script changes:** Tom's Scout bill is a $75 Office exam, so the ledger reads $155.00 and the pay-link line "Sends $155.00 for 2 unpaid invoices"; the voice quotes no totals. Updated the role note.
+- **Verified:** as a client liaison, the eVet invoice shows **Edit in Scout** and **Email invoice**, and no **Void** (the fix works).
+- **Questions:** it is short on action (one click). Want the video to also show **Edit in Scout** being clicked? It would take over the invoice, so I left it out.
+- **Needs your OK:** none.
+- **Possible app bugs:** none.
+
+## INV-11. Return items and refund
+- **Dry run:** clean. 1 min 32 s. 7 clicks in sync. `~/.vayd-training-inv/dry/inv-11.mp4`
+- **Script changes:** none to the steps. The voice avoids dollar amounts the screen shows.
+- **Verified:** the original bill stays Paid and Due $0.00 after both returns; the card gets $60 then $10, and $50 goes back as account credit (CREDIT $50.00 at the top). The staff-only box now reads "Staff only · voided and refunded payments (2)" (the wording bug is fixed); the box stays closed. After the first return the quantity box reads "≤ 1" and "$10.00 can still go back to the card".
+- **Questions:** none.
+- **Needs your OK:** none.
+- **Possible app bugs:** none new.
+
+## INV-12. Refund, void a payment, void an invoice
+- **Dry run:** clean. 1 min 14 s. 6 clicks in sync. `~/.vayd-training-inv/dry/inv-12.mp4`
+- **Script changes:** none to the steps; step 9 is three clicks (Void invoice, type the reason, Void). Pass 1 section added.
+- **Verified:** Refund payment window (Amount, Reason, Full for this invoice, Process refund), Void payment window, and the card-paid refusal "This bill was paid by card ($55.00 still taken). Refund the card payment first, then void the invoice." The message appears at the top of the invoice pane; the refusal text isn't inside the dialog.
+- **Questions:** the video is the same height as the others but lives mostly on the Payments block, which sits low in the pane, so the page scrolls to it. Fine?
+- **Needs your OK:** none.
+- **Possible app bugs:** none. Not shown: the doctor, technician and CL views in the table (walked on Nov 7).
+
+## Run notes
+- One INV-12 run stalled about 25 minutes while another session's memory use pushed free memory to 40% (level 2); I stopped only my own run, waited for level 1 and 76% free, and it then ran normally.

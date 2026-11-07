@@ -47,3 +47,8 @@ Checked on build-doctor-flow 5a13205 with API 221ea76a, as a CL.
 - **Possible bug: Void on an eVet invoice** isn't tied to the void permission: the button shows for every role (the code only hides **Edit in Scout** and **Return items** by permission). I didn't press it.
 - **Demo data:** `invoicing-demo.sql` now adds the eVet invoice #48213 with its line (the first check had none). The $60 Scout bill is made in the spec.
 - **Ready to record.**
+
+## Pass 1 changes (Nov 7, 2026)
+
+- The Scout bill is Biscuit's $75 Office exam, so the ledger reads $155.00 (not $140.00) and the pay-link line reads "Sends $155.00 for 2 unpaid invoices". The voice doesn't quote totals.
+- **Void on an eVet invoice is fixed:** as a client liaison, only **Edit in Scout** shows; no **Void**. Update "What other roles see" and remove the old note.

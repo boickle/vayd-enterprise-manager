@@ -43,3 +43,9 @@
 - **Not run:** the payment itself.
 - **Gift cards in the portal:** the code says gift cards pay only Scout invoices, not eVet ones.
 - **Status (Nov 7):** ready to record. The ledger's pay-link line now nets off account credit (INV-13), but this video's family has none.
+
+## Pass 1 changes (Nov 7, 2026)
+
+- The open bill is a $25 nail trim for Juniper (not $22.50 for Maple), so the numbers on screen are $25.00.
+- Maria already has a saved Visa in the shared Stripe test account, so the pay form first shows **Card on file** (Visa 4242) and **Use a different card**. The video points at the saved card, clicks **Use a different card**, then shows **Name on card**, **Card number** and the save-my-card box.
+- Added "Done closes it" as its own click after the invoice window.

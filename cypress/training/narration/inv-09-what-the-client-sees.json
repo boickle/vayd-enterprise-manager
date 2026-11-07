@@ -1,0 +1,58 @@
+[
+ {
+  "id": "inv09-01",
+  "text": "When a family calls about a bill, it helps to know exactly what they're looking at."
+ },
+ {
+  "id": "inv09-02",
+  "text": "This is Maria's portal. Her balance is near the top."
+ },
+ {
+  "id": "inv09-03",
+  "text": "The portal shows what they owe right now."
+ },
+ {
+  "id": "inv09-04",
+  "text": "Pay now opens the payment form."
+ },
+ {
+  "id": "inv09-05",
+  "text": "She can open the bill."
+ },
+ {
+  "id": "inv09-06",
+  "text": "Same line, same total as our ledger."
+ },
+ {
+  "id": "inv09-07",
+  "text": "Done closes it."
+ },
+ {
+  "id": "inv09-08",
+  "text": "She can use a gift card here too."
+ },
+ {
+  "id": "inv09-09",
+  "text": "A card she saved with us is offered here."
+ },
+ {
+  "id": "inv09-09b",
+  "text": "Or she can use a different card."
+ },
+ {
+  "id": "inv09-09c",
+  "text": "She types her card, and can choose to save it."
+ },
+ {
+  "id": "inv09-10",
+  "text": "Then she pays the exact balance."
+ },
+ {
+  "id": "inv09-11",
+  "text": "When a family has credit instead, the portal says You have a credit, and offers to use it in the store."
+ },
+ {
+  "id": "inv09-12",
+  "text": "The most common mistakes are telling a family to look for an old receipt in the portal, when it only shows what's open, and a portal that shows nothing because the email on their record is different from their login. Remember: the portal shows what the family owes right now. For past receipts, email one from the ledger."
+ }
+]
