@@ -17,6 +17,11 @@
   - **B4:** fixed by B1.
   - **Start / End Visit:** the wording now says every visit needs a follow-up plan, best done at checkout.
   - **Default view:** already as asked (Day on phones, Week everywhere else).
+- **Third round (owner, Nov 7 evening):**
+  - **Q4 done (vayd-api `8d52dda6`, pushed):** every employee without an eVet ID gets a Scout one (`scout-<id>`), on save and by migration 1793000977000. Checked on the stack: a doctor whose eVet ID was cleared got routing results and online times again.
+  - **Q15 done (vayd-api `6a1e8e91`, pushed):** CLs, techs, doctors, practice managers and admins can enter a received record (new permission `record.outside_records.enter`, migration 1793000976000).
+  - **Frontend half of Q15:** the records review tags its summary note `previous_records`. It ended up inside another session's commit `6a4ede2` ("Bundles: …") because both of us committed in the shared checkout at the same moment. It goes out when that session pushes.
+  - **Optional items (On My Way wording, request confirmation, Care outreach, closed-day targets):** owner says leave as they are.
 - **Committed and merged:** all three code fixes are on `build-doctor-flow` and merged into `training/videos` (`44da890`). Not pushed.
 
 
@@ -51,7 +56,7 @@ Screenshots and text captures: `/private/tmp/claude-501/-Users-deirdrefrey-Docum
 | Q12 | Who should manage closed days, staff hours and zones, visit types and roles on screen? **Settings** shows its full page only to admin logins (`isAdmin` in `pages/Settings.tsx`). A practice manager without an admin login sees only "Settings: Memberships", although the permission list gives managers `staff_schedule.manage`, `appointment_type.manage` and `schedule_override.manage`. | SR-18, SR-19, SR-04 (roles) | Show each Settings section to anyone with its permission. Until then, give practice managers admin logins. |
 | Q13 | The sample record for SR-26. Please send one that's anonymized or made up, renamed to a Rivera or Chen pet, typed (not scanned), with vaccines and due dates. On the test stack its text goes to OpenAI for the summary, and the file may go to the dev storage bucket. | SR-26 | Made-up record, "Maplewood Animal Hospital", Biscuit Chen. |
 | Q14 | Should the training stack scripts (`cypress/training/stack/*`) take a database name, ports, Redis database and work folder, so two training sessions can run at once? Today they're fixed, and a second session would wipe the first one's database. I used a scratchpad copy. | All | Yes. A small change to training files on `training/videos`; I'd do it once you approve. |
-| Q15 | Who enters a received record into the chart? Finalizing the summary note needs a vet or licensed tech, so a CL (or unlicensed tech) gets a 403 at **Enter Reminders & Summary in Record** and nothing is entered. | SR-26 | CLs file and start the review; a vet or licensed tech enters it. Optionally let CLs enter reminders only. |
+| Q15 — DONE | Who enters a received record into the chart? Finalizing the summary note needs a vet or licensed tech, so a CL (or unlicensed tech) gets a 403 at **Enter Reminders & Summary in Record** and nothing is entered. | SR-26 | CLs file and start the review; a vet or licensed tech enters it. Optionally let CLs enter reminders only. |
 
 ## 2. Possible bugs
 
