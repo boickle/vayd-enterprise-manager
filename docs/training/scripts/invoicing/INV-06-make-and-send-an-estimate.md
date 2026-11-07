@@ -46,3 +46,6 @@
 - **Sending email:** this needs the Info or Field shared inbox. Without one, the window says "No shared practice inbox is available. You need access to Info or Field to email clients from Scout." The test stack has no Gmail access, so sending and the email itself weren't checked. Record this on a stack where the demo login has the inbox.
 - **Bug: estimates ignore the member discount.** Juniper is on a plan with 10% off items it doesn't cover. The estimate charged the full $450 and $180, while the same items on her bill are 10% off. Until it's fixed, use a pet with no plan, or don't show the plan.
 - **Possible bug:** **Charge to** also lists Pepper, an inactive pet.
+- **Still open (checked Nov 7): estimates ignore the member discount.** A $180 Dental X-rays estimate for Maple (on the plan) shows $180.00, while her bill gets the member price. Use Juniper (no plan) for the recording, as the script does.
+- **Pepper** appears in **Charge to** because the demo makes her active; that is demo data, not the old inactive-pet bug (fixed in f1b504f).
+- **Status (Nov 7):** ready to record, on a stack where the demo login has the Info or Field inbox for the email steps.

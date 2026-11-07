@@ -18,7 +18,7 @@
 | 3 | Ledger | Point at the row "#48213 · eVet · Open · $80.00 · Due $80.00" | "This one came from eVet." | — |
 | 4 | Ledger | Click the eVet row | "Open it to see what it was for." | — |
 | 5 | eVet invoice | Point at **Edit in Scout** | "To work on it in Scout, use Edit in Scout. Then take payment like any bill." | — |
-| 6 | Ledger | Point at **Text pay link**: "Sends $140.00 for 2 unpaid invoices" | "Or send one pay link for everything, eVet included." | — |
+| 6 | Ledger | Point at **Text pay link**: "Sends $140.00 for 2 unpaid invoices" | "Or send one pay link for everything, eVet included." | The Chens have no account credit, so the line shows the full $140.00 |
 | 7 | Voice-over | — | "Gift cards only pay Scout bills, not eVet ones." | — |
 | 8 | Voice-over | — | "Very old balances: talk to billing. Writing a balance off is a billing decision, not a button." | — |
 
@@ -29,16 +29,21 @@
 
 ## What other roles see
 
-- **Intended:** taking over or editing an eVet invoice is for managers and billing, and lead CLs on their own.
-- **Today:** a plain CL also sees **Edit in Scout** and **Void** on an eVet invoice (see the notes).
+- **Edit in Scout** and **Return items** follow the owner's Nov 6 decision: every role except observers can take over an eVet invoice, so a plain CL sees **Edit in Scout**.
+- **Void** shows on an eVet invoice to every role (see the notes).
+- If the family has account credit, the pay-link line adds "(… account credit comes off first)" and asks for less; if the credit covers everything, the pay-link buttons are replaced by "Use Account credit on the bill instead of a pay link." (INV-13).
 
 ## Closing
 
 "The most common mistakes: telling a family their old eVet balance is gone, and using a gift card on an eVet bill. Remember: eVet balances came across. Collect them in Scout like any open invoice."
 
-## Notes from the check in the app (Nov 6, 2026)
+## Notes from the check in the app (Nov 7, 2026)
 
-- **Checked as a CL:** steps 1 to 6. The eVet invoice offered **Email invoice**, **Edit in Scout** and **Void**.
+Checked on build-doctor-flow 5a13205 with API 221ea76a, as a CL.
+
+- **Steps 1 to 6 match the screen.** With a $60 Scout bill and the old eVet invoice, the ledger read **BALANCE DUE** with the row "Jun 10, 2025 · #48213 · eVet · Open · $80.00 · Due $80.00" and "Sends $140.00 for 2 unpaid invoices". Opening the row shows "eVet invoice #48213", **Email invoice**, "Imported from eVet. The first edit, return, or void is handled in Scout from then on — eVet will not overwrite it.", the line "Annual wellness exam, 1, $80.00", **Edit in Scout** and **Void**.
 - **Pay links take over eVet invoices:** sending a pay link takes over every unpaid eVet invoice into Scout first (in the app's code).
-- **Permission not checked:** `invoice.legacy.adopt` isn't checked in the app or the API.
-- **Demo data:** the eVet invoice was seeded with no line items. A real recording should give it lines so step 4 shows what it was for.
+- **Pay links and credit:** the pay-link line now takes the family's account credit off first. See INV-13. It doesn't change this video, because the Chens have no credit.
+- **Possible bug: Void on an eVet invoice** isn't tied to the void permission: the button shows for every role (the code only hides **Edit in Scout** and **Return items** by permission). I didn't press it.
+- **Demo data:** `invoicing-demo.sql` now adds the eVet invoice #48213 with its line (the first check had none). The $60 Scout bill is made in the spec.
+- **Ready to record.**

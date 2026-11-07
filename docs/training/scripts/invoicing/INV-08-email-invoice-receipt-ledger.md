@@ -41,3 +41,4 @@
 - **Checked:** steps 1 to 5, 7, 8 and 9.
 - **Not checked: sending.** Without a shared inbox the window says "No shared practice inbox is available. You need access to Info or Field to email clients from Scout." and **Send email** is disabled. The test stack has no Gmail, so the sent email wasn't captured. Record on a stack where the demo login has the inbox.
 - **Totals:** the email is built in the app from the same saved invoice fields the screen shows (subtotal, tax, total and paid). The portal's invoice view showed the same totals as the ledger (INV-09).
+- **Status (Nov 7):** ready to record, on a stack where the demo login has the Info or Field inbox (sending wasn't checked on the test stack).

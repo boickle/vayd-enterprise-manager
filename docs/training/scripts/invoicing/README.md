@@ -40,6 +40,29 @@ These videos are new. They build on these EMR videos, which are already recorded
 | [INV-16](INV-16-end-of-day.md) | End of day: today's payments, and the bank deposit | Managers, billing, field staff with checks | Must |
 | [INV-17](INV-17-common-money-mistakes.md) | The most common money mistakes | All | Nice |
 
-**Status after the check in the app (Nov 6, 2026):** every script was walked or checked against the app on build-doctor-flow (including the unpushed Wave 7 change). Each script ends with "Notes from the check in the app" listing what was confirmed, what wasn't, and any bugs.
-- **Don't record yet:** INV-07 (on hold, no way to attach an estimate to a visit) and INV-11 (the return balance bug).
-- **Steps not yet seen on screen:** INV-12 (the Void payment step), INV-15 and INV-16 (the deposit steps and the analytics window) still have steps to dry-run.
+**Status (Nov 7, 2026):** checked in the app on build-doctor-flow (frontend 5a13205, API 221ea76a) in Stripe test mode. Each script ends with "Notes from the check in the app" listing what was confirmed and any bugs.
+
+| Script | Status |
+|---|---|
+| INV-01 | Ready to record. Do the Accept and earlier-decline checks in the dry run (Accept bug fixed Nov 6; not re-walked). |
+| INV-02, INV-03, INV-14 | Ready to record. |
+| INV-04 | Ready to record. Step 16 re-walked: wait for Card on file before choosing Cash. |
+| INV-05 | Ready to record. Confirm in the dry run that the decline message clears after a good card (fixed Nov 6; not re-walked). |
+| INV-06 | Ready to record. Use Juniper (no plan): estimates still ignore the member discount (app bug). Email steps need the Info or Field inbox. |
+| INV-07 | Ready to record (rewritten around Find estimate and "Which visit is this for?"; every step walked). |
+| INV-08 | Ready to record on a stack where the demo login has the Info or Field inbox. |
+| INV-09, INV-10, INV-17 | Ready to record. |
+| INV-11 | Ready to record (return-balance bug fixed; every step walked). |
+| INV-12 | Ready to record (Void payment dialog and role views walked). |
+| INV-13 | Ready to record, reloading the ledger after Add credit (app bug: the pay-link line is stale until reload). |
+| INV-15 | Ready to record (manager's pencil, the discount window and the promotion walked). The Credits & Discounts report is admin-only, so it's not shown. |
+| INV-16 | **Deposit steps ready; the "Today's payments" lists are not.** The deposit steps (Create deposit, slip, Recent deposits) were walked on a fresh seed. The **All payments** and **View payments** windows fail for a practice manager and list only old eVet payments, so the script no longer opens them (app bug, to fix on build-doctor-flow). |
+
+**App bugs found Nov 7 (not fixed here; fixes go on build-doctor-flow):**
+- Analytics, Payments: **All payments** and **View payments** call an admin-only endpoint that reads only old eVet payments (INV-16).
+- Ledger: the pay-link line doesn't refresh after **Add credit** (INV-13).
+- Ledger: an invoice's collapsed staff-only box still says "voided payments" and "voided by" for payments that were refunded in full (INV-11).
+- Estimates still ignore the member discount (INV-06).
+- eVet invoice **Void** shows for every role (INV-10).
+
+**Demo data:** `cypress/training/setup/invoicing-demo.sql` (apply it to the test database after `demo-names.sh`, safe to run twice) adds the catalog items (DHPP vaccine, Dental chews, Prescription diet with lot DIET-2611, Nail trim, Dental cleaning, Dental X-rays, Biohazard disposal), Maple's plan, the Cash and Check payment types, the Operating account bank, today's Chen cash ($40) and check #1042 ($35) and Rivera card ($25) payments, Tom Chen's employer promotion, and his old eVet invoice #48213. Everything else (bills, estimates, credit, visits) is made by each video's spec.

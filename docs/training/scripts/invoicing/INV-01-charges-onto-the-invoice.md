@@ -48,5 +48,6 @@
 ## Notes from the check in the app (Nov 6, 2026)
 
 - **Earlier declines** only show for a decline dated before today, and only once the visit has an invoice. Step 13 needs seeded data.
-- **Bug: Accept as a tech or CL.** If a pre-visit item's price differs from today's member price, **Accept** charges it, but the price update is refused: "You do not have permission to: Change a price on the invoice". The line stays at the old price. Seed pre-visit items at the member price until this is fixed.
+- **Bug: Accept as a tech or CL (fixed Nov 6, API 1d97356f).** Accepting a pre-visit item at the automatic member price no longer needs the price-change permission, and a member discount is no longer applied twice. I did not re-walk it on Nov 7: check it in the dry run. Seeding pre-visit items at the member price is still the safe setup.
 - **Branch list:** the Branch dropdown on the test stack lists many test branches. Before recording, set the visit's branch so the list isn't shown.
+- **Status (Nov 7):** ready to record; do the step 13 and Accept checks above in the dry run.

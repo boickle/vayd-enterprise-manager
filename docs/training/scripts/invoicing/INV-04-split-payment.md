@@ -28,12 +28,12 @@
 | 13 | Checkout | Click **Card on file** | "The card takes only what's left: $82." | Maria's saved card (INV-03) |
 | 14 | Checkout | Point at "Charged the card on file." and **Paid** $162.00 | "Three payments, one bill, all paid." | — |
 | 15 | Clients, Maria Rivera, Ledger | Point at the invoice row: "Gift Card, Account credit, Visa •••• 4242" | "The ledger shows all three." | — |
-| 16 | Ledger, an open invoice | Open **Method**, choose **Cash**, and point at **Amount** | "To take part of a bill in cash or by check, use the ledger. Pick the method and type the amount. Card payments always take the whole balance." | A second open Rivera bill |
+| 16 | Ledger, an open invoice | Wait for **Card on file** to appear in **Method**, choose **Cash**, and point at **Amount** and **Cash received** | "To take part of a bill in cash or by check, use the ledger. Pick the method and type the amount. Card payments always take the whole balance." | A second open Rivera bill |
 
 ## What else you can do here
 
 - **Cash** and **Check** (EMR V5).
-- Pay links for the rest (EMR V15).
+- Pay links for the rest (EMR V15). A pay link asks only for what is left after the family's account credit (INV-13).
 
 ## What other roles see
 
@@ -44,10 +44,13 @@
 
 "The most common mistakes: charging the full bill to the card when the family has credit, and forgetting a gift card they brought. Remember: apply the gift card and credit first. The card takes only what's left."
 
-## Notes from the check in the app (Nov 6, 2026)
+## Notes from the check in the app (Nov 7, 2026; steps first checked Nov 6)
 
+- **Pay-link change (Nov 6) checked:** it doesn't change any step here. The checkout takes credit with **Account credit**, as in step 9. Only the ledger's pay-link line changed (INV-13).
 - **Checked:** steps 1 to 15 were run in Stripe test mode. The payments came out as $50 gift card, $30 account credit and $82 card.
-- **Step 16:** the ledger's **Method** list reads "Card on file · Visa •••• 4242 · exp 12/34", "Card over the phone (virtual terminal)", Cash, Check, CareCredit, Other, Gift card and Account credit.
-  - With a card chosen, it shows "Charges Visa •••• 4242 · exp 12/34 for $60.00." and **Charge card on file**.
-  - The **Amount** field is for Cash, Check and the other methods. **Confirm the cash form in the dry run:** in my run the screen didn't switch to Cash when I picked it (see the report).
+- **Step 16 checked on screen:** the ledger's **Method** list reads "Card on file · Visa •••• 4242 · exp 11/27", "Card over the phone (virtual terminal)", Cash, Check, Gift card and Account credit.
+  - Cash and Check come from the practice's payment types, which the demo seed now has (`invoicing-demo.sql`). With no payment types set up, the list would also offer CareCredit and Other instead.
+  - Choosing **Cash** shows **Amount**, **Cash received** and **Record Cash**. (Choosing a card shows "Charges Visa •••• 4242 · exp 11/27 for $60.00." and **Charge card on file**.)
+  - **Timing:** the saved card loads a moment after the ledger opens. If Cash is picked before **Card on file** has appeared in the list, the screen flips back to the card. The recording waits for it. A small rough edge in the app; reported.
 - **Gift card code:** staff can see a gift card's code only through Gift cards, then reveal (managers and billing). The demo needs the code ready.
+- **Ready to record.**

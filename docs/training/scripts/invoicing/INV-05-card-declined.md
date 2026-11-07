@@ -46,5 +46,6 @@
   - Saved card declined: "Your card was declined."
   - Typed card declined (4000 0000 0000 0002): "That card could not be used — check the number and try again"
   - Good card: paid.
-- **Bug: the decline message stays after the bill is paid.** After the good card goes through, the red "Your card was declined." stays on screen above "Card charged over the phone — invoice marked paid." Until it's fixed, cut between steps 10 and 11 so the video doesn't show both, or reload the page.
+- **Bug: the decline message stays after the bill is paid (fixed Nov 6, frontend f4dbbe5).** A successful payment now clears the earlier "Your card was declined." I did not re-walk it on Nov 7 (it needs the consent-stamped declining card): check it in the dry run. If the red text is still there, cut between steps 10 and 11 or reload.
 - **Setup:** the declining saved card has to be stored on the client with consent (`stripeCustomerId`, `savedPaymentMethodId`, and a `cardOnFileConsentAgreementVersion` of '2026-10-07'). Without the consent, Scout refuses with the re-consent message instead.
+- **Status (Nov 7):** ready to record; confirm the decline message clears in the dry run.

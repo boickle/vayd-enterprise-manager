@@ -19,8 +19,9 @@
 | 4 | Checkout | Point at a line with **Member 10%** | "Three: charging a member full price. Look for covered and Member 10%, or Reprice." | — |
 | 5 | Checkout | Point at **Gift card** and **Account credit** | "Four: charging the card when the family has credit or a gift card. Apply those first." | — |
 | 6 | Checkout | Point at "Owner agreed to keep this card on file" in Card over phone, or the consent box above the payment buttons | "Five: saving a card without asking." | — |
-| 7 | Left menu | Point at **Create deposit** | "Six: checks left in the car. Deposit cash and checks the same day." | — |
+| 7 | Left menu | Point at **Create deposit** | "Six: checks left in the car. Deposit cash and checks the same day." | Signed in as Robin Hale (manager): a plain CL has no **Create deposit** in the menu |
 | 8 | Voice-over | — | "Seven: voiding a paid bill. Scout stops you. Refund the card payment first." | — |
+| 9 | Voice-over | — | "Eight: a plain refund when items came back. Use Return items, so stock and the chart are right, and the money goes back card first, then credit." | — |
 
 ## What else you can do here
 
@@ -34,7 +35,9 @@
 
 "Remember: charge once, check the invoice, and refund before you void."
 
-## Notes from the check in the app (Nov 6, 2026)
+## Notes from the check in the app (Nov 6, 2026; updated Nov 7)
 
 - **Labels:** every label used here was seen in the checks for INV-03, 04, 05 and 14, and in V15.
-- **Returns:** the return mistake ("use Return items when items come back") was left out until the return balance bug in INV-11 is fixed.
+- **Returns:** the return mistake (step 9) is back in now that the return-balance bug is fixed (INV-11, Nov 7).
+- **Create deposit** is hidden from a plain CL (checked Nov 7, INV-16), so step 7 is recorded as the manager.
+- **Ready to record.**

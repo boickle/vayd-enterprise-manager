@@ -42,3 +42,4 @@
 - **Checked:** steps 1 to 9 as a CL. A "Staff audit · 1" line appears on the bill afterwards.
 - **From the code only:** "Priced by hand — kept" and "Every line is already at today's price." weren't seen on screen.
 - **Not checked:** Reprice on a paid invoice.
+- **Status (Nov 7):** ready to record. None of the Nov 6 to 7 commits changes this screen; not re-walked on Nov 7.

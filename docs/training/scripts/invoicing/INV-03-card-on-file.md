@@ -47,3 +47,4 @@
 - **No saved card:** on a household with no card, Card on file is greyed out with "No card saved on file".
 - **Not checked:** the "This household said no to keeping a card on file last time…" reminder, because it needs a recorded refusal.
 - **Demo email on the shared Stripe test account:** saved cards are found in Stripe by the client's email. Use the Riveras' own demo email, but don't save a declining card to it, because other training videos use the same Stripe test account.
+- **Status (Nov 7):** ready to record. None of the Nov 6 to 7 commits changes these screens; not re-walked on Nov 7.

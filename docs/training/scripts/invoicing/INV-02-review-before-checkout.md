@@ -43,3 +43,4 @@
 - **"Membership covered" totals row:** this row only appears after a Reprice. Covered lines added normally are $0 and don't make it appear, so it was taken out of this video. It's shown in INV-14.
 - **Tax:** shown only as the **Sales tax** total, at 5.5% on the demo stack.
 - **Totals:** checked on screen and in the database.
+- **Status (Nov 7):** ready to record. None of the Nov 6 to 7 commits changes these screens; not re-walked on Nov 7.

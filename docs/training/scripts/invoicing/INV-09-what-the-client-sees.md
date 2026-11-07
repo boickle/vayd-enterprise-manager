@@ -42,3 +42,4 @@
 - **Email must match:** when the email on the client record didn't match the login, no balance card showed at all.
 - **Not run:** the payment itself.
 - **Gift cards in the portal:** the code says gift cards pay only Scout invoices, not eVet ones.
+- **Status (Nov 7):** ready to record. The ledger's pay-link line now nets off account credit (INV-13), but this video's family has none.
