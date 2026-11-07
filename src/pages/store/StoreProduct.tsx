@@ -60,6 +60,8 @@ export default function StoreProduct() {
   const { practiceId, ready } = useStorePracticeId();
   const { loggedIn, pets } = useStoreMemberPricing();
   const [patientId, setPatientId] = useState<number | null>(null);
+  const [petMissing, setPetMissing] = useState(false);
+  const petSectionRef = useRef<HTMLDivElement | null>(null);
   const [item, setItem] = useState<StoreListing | null>(null);
   const [catalog, setCatalog] = useState<StoreListing[]>([]);
   const [qty, setQty] = useState(1);
@@ -359,7 +361,7 @@ export default function StoreProduct() {
         )}
 
         {asksForPet ? (
-          <div className="vayd-store__option">
+          <div className="vayd-store__option" ref={petSectionRef}>
             <div className="vayd-store__option-label">Pet</div>
             {petChoices.length ? (
               <div className="vayd-store__chips">
@@ -372,7 +374,10 @@ export default function StoreProduct() {
                       key={row.id}
                       type="button"
                       className={`vayd-store__chip${patientId === row.id ? ' is-on' : ''}`}
-                      onClick={() => setPatientId(row.id)}
+                      onClick={() => {
+                        setPatientId(row.id);
+                        setPetMissing(false);
+                      }}
                     >
                       {chipDetail ? `${row.pet.name} (${chipDetail})` : row.pet.name}
                     </button>
@@ -387,7 +392,13 @@ export default function StoreProduct() {
                 {petWeightLabel ? `Last weight ${petWeightLabel}` : 'No weight on file yet.'}
               </p>
             ) : petChoices.length > 1 ? (
-              <p className="vayd-store__autoship-note">Choose the pet this is for. You can change it at checkout.</p>
+              petMissing ? (
+                <p className="vayd-store__pet-missing" role="alert">
+                  Choose which pet this is for.
+                </p>
+              ) : (
+                <p className="vayd-store__autoship-note">Choose the pet this is for. You can change it at checkout.</p>
+              )
             ) : null}
           </div>
         ) : !loggedIn && (item.variants || []).length > 1 ? (
@@ -573,14 +584,15 @@ export default function StoreProduct() {
           <button
             type="button"
             className="primary"
-            disabled={
-              !selected?.inventoryItemId ||
-              !orderable ||
-              (asksForPet && petChoices.length > 0 && patientId == null)
-            }
+            disabled={!selected?.inventoryItemId || !orderable}
             onClick={() => {
               if (!selected?.inventoryItemId || !orderable) return;
-              if (asksForPet && petChoices.length > 0 && patientId == null) return;
+              if (asksForPet && petChoices.length > 0 && patientId == null) {
+                // Say why instead of greying the button out: point the shopper at Pet.
+                setPetMissing(true);
+                petSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+              }
               addToStoreCart({
                 inventoryItemId: selected.inventoryItemId,
                 name: selected.name,
