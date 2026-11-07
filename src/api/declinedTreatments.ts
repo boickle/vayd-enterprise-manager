@@ -7,6 +7,11 @@ export function isOffRecordDeclineNote(note?: string | null): boolean {
   return (note ?? '').includes(OFF_RECORD_DECLINE_MARKER);
 }
 
+/** A decline note as staff should read it: without the server's trailing "[staff:NNNN]" stamp. */
+export function declineNoteForDisplay(note?: string | null): string {
+  return (note ?? '').replace(/\s*\[staff:\d+\]\s*$/, '').trim();
+}
+
 export function offRecordDeclineNote(reason?: string | null): string {
   const extra = reason?.trim();
   return extra ? `${OFF_RECORD_DECLINE_MARKER}: ${extra}` : OFF_RECORD_DECLINE_MARKER;

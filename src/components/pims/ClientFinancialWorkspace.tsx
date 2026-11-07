@@ -68,6 +68,7 @@ import {
   type VisitEstimate,
 } from '../../api/visitEstimates';
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
+import FindEstimatePanel from '../estimates/FindEstimatePanel';
 import { useCan } from '../../permissions/PermissionContext';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
 import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
@@ -236,6 +237,8 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
+import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
@@ -1176,16 +1179,6 @@ function chooseOpenInvoice(
   );
 }
 
-function isFinancialPetActive(pet: FinancialPet): boolean {
-  if (pet.isActive === false) return false;
-  const status = (pet.statusName ?? '').toLowerCase();
-  return !/euthan|deceas|died|passed|inactive/.test(status);
-}
-
-function sortPetsForCharge(pets: FinancialPet[]): FinancialPet[] {
-  return [...pets].sort((a, b) => a.name.localeCompare(b.name));
-}
-
 function defaultChargePatientId(
   pets: FinancialPet[],
   preferred?: number | null,
@@ -1195,18 +1188,6 @@ function defaultChargePatientId(
     if (hit && isFinancialPetActive(hit)) return preferred;
   }
   return pets.find(isFinancialPetActive)?.id ?? null;
-}
-
-/** Active pets unless Use inactive is on. A line already on an inactive pet keeps that pet. */
-function petsForChargeSelect(
-  pets: FinancialPet[],
-  includeInactive: boolean,
-  keepId?: number | null,
-): FinancialPet[] {
-  const rows = includeInactive
-    ? pets
-    : pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
-  return sortPetsForCharge(rows);
 }
 
 function emptyDraftInvoice(opts: {
@@ -6102,6 +6083,23 @@ export default function ClientFinancialWorkspace({
                   </button>
                 </div>
               </div>
+              {canEdit &&
+              !returning &&
+              !hasUnsavedEdits &&
+              !isUnsavedInvoice(selected) &&
+              (selected.clientId ?? clientId) ? (
+                <FindEstimatePanel
+                  clientId={Number(selected.clientId ?? clientId)}
+                  invoiceId={selected.id}
+                  disabled={busy}
+                  onConverted={(id) => {
+                    setError(null);
+                    void getInvoice(id).then(setSelected).catch(() => undefined);
+                    void refreshList(id);
+                    void refreshEstimates();
+                  }}
+                />
+              ) : null}
               {selected.isDeleted || selected.status === 'void' ? (
                 <p className="client-fin__muted">
                   {selected.isDeleted
@@ -8268,7 +8266,8 @@ export default function ClientFinancialWorkspace({
                             resetTenderMethod();
                             void refreshList(next.id);
                             const left = Math.round((card.balance - applied) * 100) / 100;
-                            setNote(
+                            showPaymentSuccess(
+                              { setError, setNote },
                               `Took ${money(applied)} from gift card ••••${card.last4}. ${money(left)} left on the card.`,
                             );
                           }}
@@ -8287,7 +8286,7 @@ export default function ClientFinancialWorkspace({
                             setSelected(next);
                             resetTenderMethod();
                             void refreshList(next.id);
-                            setNote(`Used ${money(applied)} of account credit. ${money(left)} credit left.`);
+                            showPaymentSuccess({ setError, setNote }, `Used ${money(applied)} of account credit. ${money(left)} credit left.`);
                           }}
                         />
                       </div>
@@ -8769,7 +8768,7 @@ export default function ClientFinancialWorkspace({
           estimateId={estimateEditorId}
           clientId={clientId}
           clientName={clientName}
-          pets={allPets}
+          pets={estimatePetChoices(pets, [initialPatientId ?? linePatientId].filter((id): id is number => id != null))}
           patientId={initialPatientId ?? linePatientId}
           onClose={() => setEstimateEditorId(null)}
           onSaved={() => {
@@ -8823,7 +8822,7 @@ export default function ClientFinancialWorkspace({
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
-            setNote('Card charged over the phone.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone.');
           }}
         />
       ) : null}

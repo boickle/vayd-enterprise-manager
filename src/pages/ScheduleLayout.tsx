@@ -21,7 +21,6 @@ import {
   ShoppingCart,
   Calculator,
   UserPlus,
-  Banknote,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import ScheduleFollowUpsLauncher from '../components/followUps/ScheduleFollowUpsLauncher';
@@ -50,6 +49,7 @@ import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment'
 import { appAlert } from '../utils/appDialog';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
+import DepositQuickLink from '../components/DepositQuickLink';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
@@ -367,21 +367,9 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">+ Forward Booking</span>
             </button>
+            <DepositQuickLink collapsed={railCollapsedEffective} />
             {canAccessScheduleAnalytics ? (
               <>
-                <NavLink
-                  to="/schedule/deposits"
-                  end
-                  className={({ isActive }) =>
-                    `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
-                  }
-                  title={railCollapsedEffective ? 'Create deposit' : undefined}
-                >
-                  <span className="schedule-app__quick-link-icon" aria-hidden>
-                    <Banknote size={18} strokeWidth={1.75} />
-                  </span>
-                  <span className="schedule-app__quick-link-label">Create deposit</span>
-                </NavLink>
                 <NavLink
                   to="/schedule/analytics"
                   className={({ isActive }) =>
