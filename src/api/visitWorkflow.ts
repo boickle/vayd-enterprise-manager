@@ -1162,7 +1162,8 @@ export async function listPatientPrescriptions(
 /** Mark a prescription as no longer taking (or clear that mark). */
 export async function updatePatientPrescription(
   id: number,
-  body: { discontinued?: boolean }
+  /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
+  body: { discontinued?: boolean; refill?: number; patientId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,
@@ -1446,6 +1447,8 @@ export async function refundVisitTender(
     amount?: number | null;
     reason?: string;
     refundedByEmployeeId?: number | null;
+    /** They'll pay another way: keep the refunded amount owed. Default: the bill comes down. */
+    keepBalanceDue?: boolean;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(

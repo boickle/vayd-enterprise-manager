@@ -349,7 +349,7 @@ Goal: get Biscuit's ear medication written, approved and labelled. **Everyone ex
 |---|---|---|---|
 | 1 | In **Checkout**, add **Mometamax otic 15 g** | The line opens by itself and says **Approve the sig** | "The line opens by itself, and says Approve the sig. Checkout waits until it's approved." |
 | 2 | Read **Directions (sig)**, add to them, click **Save sig** | The item's default directions; then "Entered by Avery Lane" | "The directions start from the item's default. Read them, and fit them to this pet." |
-| 3 | Type **# Refills** (0 if none), pick **Acute or chronic**, check **Discard after**, click **Save Rx** | Refill expiration appears only when refills are above 0 | "Discard after is filled in for you. Change it if the medication expires sooner." |
+| 3 | Type **# Refills** (0 if none), pick **Acute or chronic**, check **Discard after**. Then **Approve** saves them with the script (two clicks: **Save sig**, **Approve**; owner, Nov 6, 2026. Save Rx only shows for staff who can't approve) | Refill expiration appears only when refills are above 0 | "Discard after is filled in for you. Change it if the medication expires sooner." |
 | 4 | Click **Approve** | The line closes with a check mark; Checkout says "Everything is recorded" | "It means the script is checked, and ready to dispense." |
 | 5 | Open the line again, click **Send label to DYMO** | **Print prescription label**: practice letterhead, pet and owner, the doctor and license, then **Print on DYMO** | "Review it first." |
 | 6 | Click **History** on the line | "Directions entered by Avery Lane (vet) for Dr. Avery Lane: …" and "Approved for dispensing by … Rx #…" | "It's for staff only, and never printed." |
@@ -361,7 +361,7 @@ Goal: get Biscuit's ear medication written, approved and labelled. **Everyone ex
 **Closing line:** "Two mistakes to avoid: typing directions and walking away without saving, and approving without reading them. Check the directions, save, then approve."
 
 **Common mistakes**
-- **Typing directions and walking away.** Press **Save sig** / **Save Rx** before you leave the line.
+- **Typing directions and walking away.** Press **Save sig**, then **Approve**, before you leave the line.
 - **Saving without Acute or chronic.** "Choose acute or chronic for this prescription."
 - **Refills past a year.** "Refill expiration cannot be more than 1 year from today."
 
@@ -379,10 +379,11 @@ Goal: price the visit, get consent, and get a card on file before the family's h
 
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
+| 0 | (Nov 6 video) The estimate is usually built when the visit is booked. If it's empty: search **Euthanasia Group**, pick the euthanasia for the pet, **Next**, the aftercare, **Next**, the same-day fee only if same-day, **Add** | The package's three steps | "Type Euthanasia Group in the search, and pick the package. It walks you through the choices." |
 | 1 | On the Scheduler, right-click Clementine's visit, **Visit Prep**, **Send Euthanasia Consent** | **Estimate for Clementine**: "The consent form quotes one total and asks for a card against it. Nothing is charged until after the visit." | "We always price the visit first, because the consent form shows the family one total." |
 | 2 | Check the lines, **Weight**, and **Aftercare the family will confirm** | The estimate, with any aftercare warnings | "Make sure the aftercare matches what the family asked for. The form asks them to confirm it." |
 | 3 | Family can use the form: click **Email consent**, **Text consent**, or **Have them sign here** | Toast "Consent sent to …. Link copied." | "Most families sign the online form. They choose their items, sign, and enter a card." |
-| 4 | Show the family's view: the **Card authorization** paragraph | "About 24 hours before the visit (or right away, if the visit is sooner), we'll place a hold … A hold is not a charge. If the visit is rescheduled, we'll move the hold to the new date. If it's cancelled, we'll release it." | "This is what the family reads. We hold, we don't charge, and we charge the final amount on the day." |
+| 4 | Show the family's view (step 1 of 4 of the form) **[recorded Nov 6: the Card authorization paragraph is on step 4, which needs a Google-matched address, so the video shows step 1 and says the hold wording as voice-over]** | "About 24 hours before the visit (or right away, if the visit is sooner), we'll place a hold … A hold is not a charge. If the visit is rescheduled, we'll move the hold to the new date. If it's cancelled, we'll release it." | "This is what the family reads. We hold, we don't charge, and we charge the final amount on the day." |
 | 5 | Family can't use the form: click **Take card by phone** | **Take card over the phone**: "With the client on the line, tell them their card will not be charged until the day of service…" | "If the family can't manage the form, take the card over the phone. Read them that sentence first." |
 | 6 | Type the Stripe test card **4242 4242 4242 4242**, any future date, any CVC and ZIP, click **Authorize $…** | The estimate now has a card | "In the demo we use Stripe's test card. With a real family, type their card while they read it out." |
 | 7 | Close and reopen the menu | It now says **Re-send Euthanasia Consent**, later **View Euthanasia Consent** | "The menu tells you where things stand: sent, or signed." |
@@ -415,7 +416,7 @@ Goal: make sure consent is on file before checkout, then collect the approved am
 | 6 | Point at the difference line | "An additional $… will be charged to the same card when you click the button." or "$… less than authorized — the rest of the hold is released." | "If the final bill is a bit different, it says so here. The family agreed to that on the form." |
 | 7 | Click **Run Payment from Authorization** | The invoice is paid | "Nothing is charged until you click this. One click, once." |
 | 8 | Family decides not to go ahead: **Family declined**, then **Yes, the family declined** | "Estimate declined. The card hold was released and nothing was charged. The signed consent is marked withdrawn. Cancel the visit if it will not go ahead." | "If the family changes their mind at the door, that is okay. This releases the hold and charges nothing. Then cancel the visit." |
-| 9 | Open the old consent link after checkout | "This visit has already been checked out. Please contact the practice." | "Once checkout is done, the form can't be signed any more. That's why consent comes first." |
+| 9 | Open the old consent link after checkout | "This visit has already been checked out. Please contact the practice." (After printed or oral consent the link says "This consent form has already been submitted." instead; the Nov 6 video shows that one.) | "Once checkout is done, the form can't be signed any more. That's why consent comes first." |
 
 **Doctors:** "Check the consent badge before you start. If it says needed, record printed or oral consent first."
 
@@ -442,13 +443,14 @@ Goal: fill Maple's refill from her eVet script and reprint her rabies certificat
 |---|---|---|---|
 | 1 | Open Maple's recheck (Maria Rivera). In **Checkout**, click **Refills** | **Refills for Maple**: "Rx #971204 · Carprofen 75 mg caplets · 2 refills left · Prescribed … by Avery Lane", the sig, **Use this refill**; Apoquel with "No refills left" | "Every prescription on file is listed, including the ones that came over from eVet." |
 | 2 | Point at Apoquel | No refills left | "That one needs a new script from the doctor, so it isn't a refill." |
-| 3 | Click **Use this refill** on Carprofen, then open the line | A **Refill** tag and "No production"; "Refill of Rx #971204 · Prescribed by Avery Lane · 1 refill left after this · through …", "Directions are locked to the prescription." | "The directions are locked, so nobody can change them." |
+| 3 | Click **Use this refill** on Carprofen, then open the line | A **Refill** tag and "No production"; "Refill of Rx #971204 · Prescribed by Avery Lane · 1 refill left after this · through …", the **Directions** (read-only), "Directions are locked to the prescription." | "The doctor's directions are right here, and they're locked, so nobody can change them on a refill." |
+| 3b | New directions needed: click **New directions…**, then **Stop refills and write a new script** | "A refill can't change the directions. To change them, stop Rx #971204: its 2 refills left go to 0…"; the line becomes a new script for the visit's doctor (production), with the item's catalog directions and **Approve the sig** | "This stops the old prescription. Its refills go to zero. This line becomes a new script for the visit's doctor, and the doctor gets the production." (Owner decision Nov 6, 2026. Doctors and techs only: `rx.sig.draft`.) |
 | 4 | Click **View details** next to Maple's name | Her medical record; the **By date** timeline lists the eVet Carprofen, Apoquel and **Rabies 3yr Vaccine** rows | "Here's her rabies dose from eVet, with the vet who gave it." |
 | 5 | **Print document**, then the **Rabies certificate** card | "Only for a rabies vaccine we administered. Signed by the veterinarian who gave it…", **Veterinarian: Avery Lane · NC-VET-00417**, the tag and lot | "It's signed by the vet who gave the dose, and shows their license number." |
 
 **Liaisons:** "Refills are the one script you can add yourself, because you're only copying directions a vet already wrote."
 
-**Closing line:** "Two mistakes to avoid: typing new directions instead of using the refill, and changing the vet on a certificate. Use the refill, and let the dose decide the vet."
+**Closing line:** "Two mistakes to avoid: changing directions on a refill, and changing the vet on a certificate. For new directions, stop the old script and write a new one, and let the dose decide the vet."
 
 **Not shown (check before adding back):** **Undo refill** and **Check refills** didn't appear on the SOAP checkout line in this build. The refill panel only shows Undo when the line can be edited there.
 
@@ -467,9 +469,9 @@ Goal: write up a tech visit and sign it. **Licensed techs and doctors. Unlicense
 | Step | What to click | What's on screen | What I say |
 |---|---|---|---|
 | 1 | Signed in as **Jordan Pike** (licensed tech). Scheduler, right-click Maple's nail trim, **On Visit Day**, **Start Encounter**, **Medical note** | "Maple · Maria Rivera · Medical note · Visit #…" | "Pick Medical note, not SOAP." |
-| 2 | Type in **History**, click **Plan**, type the plan | "Why they are here…" / "What was given today and what happens next…" | "A medical note has two parts." |
+| 2 | Type in **History**, click **Plan**, type the plan as one line per item ("- Nail trim, no bleeding." / "- Discussed a nail grinder for home.") | "Why they are here…" / "What was given today and what happens next…" | "A medical note has two parts." |
 | 3 | Point at **Start AI scribe** and **Write up visit** | | "You can also record the room, and Write up visit drafts both parts for you." |
-| 4 | Click **Checkout prep**, then **Client email** | The charges; a subject and message | "Client email is for a short note to the family, if they'd like one." |
+| 4 | Click **Checkout prep**: match "Nail trim" to its charge; point at **Declined / Add Callback / Add Reminder** and the trash icon on the grinder row. Optional: rows can be trashed or skipped; nothing has to be cleared before wrap-up. Then **Client email** | One row per plan line (and per AI scribe item); a subject and message | "Checkout prep isn't where you check out. It catches each line of your plan, and anything the AI scribe heard, so you charge for what you did, cover what you talked about, and add any callback. You can trash or skip a row; it's a double check, not a step you must finish." Then: "Client email is for a short note to the family." |
 | 5 | Click **Switch to SOAP**, then **Cancel** | "Switch this medical note to a SOAP?" | "What you wrote moves into the SOAP. It works until the note is signed." |
 | 6 | Click **Wrap up** | The note is signed; back on the schedule | "It signs and locks the note." |
 | 7 | Biscuit's note, opened by a tech who isn't licensed | **Wrap up** is grey: "Only a licensed veterinarian or licensed technician can sign this record." | "Write it up, and ask a licensed tech or the doctor to sign it the same day." |
@@ -511,6 +513,7 @@ Goal: keep charting when the connection drops, and never double charge. **Everyo
 |---|---|---|---|
 | 1 | Biscuit's SOAP; the signal drops | A brown banner across the top: "Offline — not saved. Your changes are kept on this page and will save when the connection returns." | "This brown banner comes up." |
 | 2 | Keep typing in Subjective | "Not saved yet — your text is kept here and will save when the connection returns." | "Your text is kept right here." |
+| 2b | Still offline: click **Objective**, then **Subjective** | The text is still there | "Moving between tabs doesn't lose anything, even with no signal." (Checked Nov 6, 2026: cypress/e2e/emr-soap-offline-tab-switch.cy.ts.) |
 | 3 | The signal comes back | The banner goes away and the text saves by itself | "Nothing to retype. Just stay on the page until it's saved." |
 | 4 | Click **Checkout**; the signal drops; click **Card on file** | "Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns." | "If the card was charged after all, it will show here when the connection returns." |
 | 5 | The signal comes back | The invoice is still **OPEN** | "If it's still open, like this one, try once more. If it says paid, you're done." |
@@ -522,7 +525,7 @@ Goal: keep charting when the connection drops, and never double charge. **Everyo
 - **Running the card again and again.** Check the invoice first.
 - **Moving to another device.** Unsaved text lives on the device you typed it on.
 
-**Left out until fixed:** "Restored unsaved chart text from this device" after a reload. Today the SOAP page writes to the note as it loads (POST /soap-encounters twice, then two PATCHes of the history), which makes the local copy look older than the server's, so the page throws it away.
+**Left out (fixed Nov 6 in 74ae048, not yet in the video):** "Restored unsaved chart text from this device" after a reload. Today the SOAP page writes to the note as it loads (POST /soap-encounters twice, then two PATCHes of the history), which makes the local copy look older than the server's, so the page throws it away.
 
 **Demo data needed** (made by the V14 spec)
 - Biscuit's ear recheck with an Office exam charge, and a test card reference on the invoice so **Card on file** is offered. The video drops the signal by blocking API requests in the browser; nothing reaches Stripe.
@@ -540,10 +543,12 @@ Goal: collect a balance by link, give money back the right way, and fix a paid b
 | 3 | Click **Email pay link** too | The same link | "If you send it by text and email, it's the same link for the same balance, so the family can't pay twice." |
 | 4 | Show an overpayment | A Billing task: "$… overpaid by Gus Okafor: now account credit" | "If a family ever pays more than they owe, the extra stays on their account as credit. Billing gets a task to keep it or refund it with the family." |
 | 5 | Open a paid invoice. Under **Payments**, click **Refund** | **Refund payment**, **Amount (partial or full)**, a reason ("e.g. Client request") | "To give money back on a card, refund the payment. Partial is fine." |
-| 6 | Click **Process refund** | "Refunded $… via Stripe." | "It goes back to the same card through Stripe." |
+| 6 | Click **Process refund** | "Refunded $… via Stripe."; a **Refund: <reason>** line (−$…) on the bill, still Paid, nothing due | "It goes back to the same card, and the bill comes down by the same amount, so the family doesn't owe it again." (Nov 6, 2026. Check "They'll pay this another way" only when re-charging a different card.) |
 | 7 | Show **Void invoice** on a card-paid invoice (manager login) | "This bill was paid by card ($… still taken). Refund the card payment first, then void the invoice." | "A paid bill can't just be voided. That would leave the money taken and give the family nothing back. Refund first." |
 | 8 | Items came back instead: **Return items** | **Return & refund?**, "Return the selected items and refund $… to the client's card via Stripe?" | "If the family returned something, use Return items. After a return, the invoice shows 'This invoice has returns. Make a correction instead.'" |
 | 9 | Something was missed: **New invoice** | A new open invoice | "Forgot to charge for something on a paid bill? Add a new invoice. Don't reopen or void the old one." |
+
+**Recorded Nov 6, 2026 (Tom Chen and Biscuit):** text pay link, $20 partial refund, Return items and New invoice pointed at, the manager's void refused. Not shown: the overpayment task and a real return. The take found a bug (a partly refunded card bill could be voided with the rest still taken), fixed in the API the same day.
 
 **Who can do what:** "Anyone on a visit can send pay links and refund card payments. Voiding an invoice is only for lead client liaisons, billing and managers. If you need one voided, ask them."
 

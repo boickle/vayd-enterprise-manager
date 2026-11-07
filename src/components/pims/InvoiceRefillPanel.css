@@ -173,3 +173,32 @@
   color: #6b7280;
   font-size: 12px;
 }
+
+.inv-refill__directions {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+}
+
+.inv-refill__directions-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.inv-refill__directions-text {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #374151;
+  white-space: pre-wrap;
+  cursor: not-allowed;
+}
+
+.inv-refill__summary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

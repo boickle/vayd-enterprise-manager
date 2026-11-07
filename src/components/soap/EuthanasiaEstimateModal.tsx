@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CreditCard, ExternalLink, Mail, MessageSquare, X } from 'lucide-react';
+import { CheckCircle2, CreditCard, ExternalLink, Mail, MessageSquare, X } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
 import {
   getEuthanasiaConsentStatus,
@@ -13,6 +13,7 @@ import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
 import {
   ensureEstimateForAppointment,
   estimateHasCard,
+  hasLiveAuthorization,
   markEstimateSent,
   type VisitEstimate,
 } from '../../api/visitEstimates';
@@ -48,6 +49,8 @@ type Props = {
   isResend?: boolean;
   onClose: () => void;
   onSent?: (result: { sentTo: string; formUrl: string }) => void;
+  /** A card was taken by phone (the visit's $ badge changes). */
+  onCardSaved?: () => void;
 };
 
 const money = (n: number) =>
@@ -104,6 +107,7 @@ export default function EuthanasiaEstimateModal({
   isResend,
   onClose,
   onSent,
+  onCardSaved,
 }: Props) {
   const [estimate, setEstimate] = useState<VisitEstimate | null>(null);
   const [loading, setLoading] = useState(true);
@@ -336,6 +340,40 @@ export default function EuthanasiaEstimateModal({
           charged until after the visit.
         </p>
 
+        {!loading && estimate ? (
+          <div
+            className={`euth-estimate-card${estimateHasCard(estimate) ? ' is-on-file' : ''}`}
+            role="status"
+            data-testid="euth-estimate-card-status"
+          >
+            {hasLiveAuthorization(estimate) ? (
+              <>
+                <CheckCircle2 size={20} aria-hidden />
+                <div>
+                  <strong>Card on file · {money(Number(estimate.authorizedAmount) || total)} held</strong>
+                  <span>Nothing is charged until the visit.</span>
+                </div>
+              </>
+            ) : estimateHasCard(estimate) ? (
+              <>
+                <CheckCircle2 size={20} aria-hidden />
+                <div>
+                  <strong>Card on file</strong>
+                  <span>Scout holds about {money(total)} on it the day before the visit.</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <CreditCard size={20} aria-hidden />
+                <div>
+                  <strong>No card on file yet</strong>
+                  <span>The family adds one on the consent form, or take it by phone.</span>
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
+
         {!loading && weightChange ? <ConsentWeightAlert change={weightChange} /> : null}
 
         {!loading && membershipCancels.length > 0 ? (
@@ -558,7 +596,15 @@ export default function EuthanasiaEstimateModal({
             clientName={clientName}
             clientEmail={clientEmail}
             onClose={() => setCardModalOpen(false)}
-            onSaved={setEstimate}
+            onSaved={(next) => {
+              setEstimate(next);
+              setSentNote(
+                hasLiveAuthorization(next)
+                  ? `Card authorized: ${money(Number(next.authorizedAmount) || 0)} is held. Nothing is charged until the visit.`
+                  : 'Card saved.'
+              );
+              onCardSaved?.();
+            }}
           />
         )}
       </div>

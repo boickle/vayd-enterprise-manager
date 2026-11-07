@@ -1598,6 +1598,12 @@ export default function ClientFinancialWorkspace({
   /** Invoices already loaded with lines, tenders, and catalog detail. */
   const hydratedInvoiceIds = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
+  // The invoice pane is long, and its error sits at the top: bring it on screen when it appears, so a
+  // refusal (e.g. "Refund the card payment first" after Void invoice at the bottom) isn't missed.
+  const paneErrorRef = useRef<HTMLParagraphElement | null>(null);
+  useEffect(() => {
+    if (error) paneErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [error]);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [repricing, setRepricing] = useState(false);
@@ -1645,6 +1651,8 @@ export default function ClientFinancialWorkspace({
     scope: 'this' | 'all';
     peers: VisitRefundPeer[];
     peersLoading: boolean;
+    /** They'll pay this another way (wrong card): the refunded amount stays owed. */
+    keepBalanceDue: boolean;
   }>(null);
   const refundPanelRef = useRef<HTMLDivElement | null>(null);
   const [editing, setEditing] = useState(false);
@@ -4768,6 +4776,7 @@ export default function ClientFinancialWorkspace({
       amount: maxAmount.toFixed(2),
       reason: '',
       scope: 'this',
+      keepBalanceDue: false,
       peers: [
         {
           invoiceId: selected.id,
@@ -4849,6 +4858,7 @@ export default function ClientFinancialWorkspace({
           amount,
           reason,
           refundedByEmployeeId: cashierEmployeeId,
+          keepBalanceDue: refundDraft.keepBalanceDue,
         });
         totalRefunded += amount;
       }
@@ -5533,7 +5543,7 @@ export default function ClientFinancialWorkspace({
         {hasDetail ? (
         <section className="client-fin__pane">
           {error ? (
-            <p className="client-fin__err" role="alert">
+            <p ref={paneErrorRef} className="client-fin__err" role="alert">
               {error}
             </p>
           ) : null}
@@ -7332,6 +7342,7 @@ export default function ClientFinancialWorkspace({
                                   <RefillSummary
                                     invoiceId={selected.id}
                                     lineId={line.id}
+                                    instructions={line.instructions}
                                     canEdit={canEdit}
                                     disabled={busy}
                                     onReleased={(next) => afterRefillChange(line, next)}
@@ -7965,6 +7976,23 @@ export default function ClientFinancialWorkspace({
                                   )
                                 }
                               />
+                            </label>
+                            <p className="client-fin__muted" data-testid="refund-lowers-bill">
+                              {refundDraft.keepBalanceDue
+                                ? 'The bill stays the same, so the refunded amount is owed again.'
+                                : 'The bill comes down by the refund, so the client won’t owe it again.'}
+                            </p>
+                            <label className="client-fin__check">
+                              <input
+                                type="checkbox"
+                                checked={refundDraft.keepBalanceDue}
+                                onChange={(e) =>
+                                  setRefundDraft((cur) =>
+                                    cur ? { ...cur, keepBalanceDue: e.target.checked } : cur
+                                  )
+                                }
+                              />{' '}
+                              They’ll pay this another way (wrong card): keep it owed
                             </label>
                             <div className="client-fin__actions">
                               {refundDraft.scope === 'this' ? (

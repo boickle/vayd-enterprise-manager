@@ -515,6 +515,17 @@ export function CheckoutInvoiceRxFields({
   );
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  /**
+   * What was approved (owner, Nov 6, 2026): an approved script can still be changed until checkout,
+   * but a change is never saved quietly. It shows "Approve changes", which saves and re-approves it
+   * (logged on the History). After checkout the line is locked.
+   */
+  const snapshotNow = () => JSON.stringify([instructions.trim(), refills, acuity, refillExpiration, discardAfter]);
+  const approvedSnapshot = useRef<string | null>(null);
+  if (scriptApproved && approvedSnapshot.current == null) approvedSnapshot.current = snapshotNow();
+  if (!scriptApproved) approvedSnapshot.current = null;
+  const changedSinceApproval =
+    scriptApproved && approvedSnapshot.current != null && approvedSnapshot.current !== snapshotNow();
   const canWriteRx = Boolean(encounterId && orderId);
   const mailDoctorApproves = mailed && mailOrderWaitsForQueueApproval(mailOrder);
 
@@ -571,6 +582,7 @@ export function CheckoutInvoiceRxFields({
   const canApprove = useCan('rx.invoice.approve');
   const needsSigSave =
     !disabled &&
+    !scriptApproved &&
     (instructions.trim() !== (line.instructions ?? '').trim() ||
       !line.instructionsEnteredByEmployeeId);
 
@@ -658,6 +670,7 @@ export function CheckoutInvoiceRxFields({
   };
 
   const persistSig = async (force = false) => {
+    if (scriptApproved) return; // saved with "Approve changes"
     const next = instructions.trim();
     const saved = (line.instructions ?? '').trim();
     if (!force && next === saved && line.instructionsEnteredByEmployeeId) return;
@@ -676,7 +689,7 @@ export function CheckoutInvoiceRxFields({
   };
 
   const persistExtrasIfReady = async () => {
-    if (!canWriteRx || missingBeforeSave()) return;
+    if (scriptApproved || !canWriteRx || missingBeforeSave()) return;
     await persistRx();
   };
 
@@ -712,10 +725,38 @@ export function CheckoutInvoiceRxFields({
       >
         Approve
       </button>
+    ) : scriptApproved && changedSinceApproval && !disabled ? (
+      canApprove && !mailDoctorApproves ? (
+        <span className="client-fin__reapprove">
+          <span className="client-fin__entered">Changed after approval</span>
+          <button
+            type="button"
+            className="client-fin__btn client-fin__btn-approve"
+            disabled={saving}
+            title="Save the changes and approve the script again"
+            onClick={() => {
+              void (async () => {
+                const ok = await persistRx({ approve: true });
+                if (ok) {
+                  approvedSnapshot.current = snapshotNow();
+                  onApproved();
+                }
+              })();
+            }}
+          >
+            Approve changes
+          </button>
+        </span>
+      ) : (
+        <span className="client-fin__entered client-fin__needs-approver">
+          Changed after approval: a doctor or technician must approve the changes
+        </span>
+      )
     ) : scriptApproved ? (
       <span className="client-fin__entered">
         Approved
         {approvedByName ? ` by ${approvedByName}` : ''}
+        {!disabled ? ' · change anything above to edit it' : ''}
       </span>
     ) : null;
 
@@ -913,18 +954,21 @@ export function CheckoutInvoiceRxFields({
         )}
         {!disabled ? (
           <div className="client-fin__rx-save-row">
-            <button
-              type="button"
-              className="client-fin__btn client-fin__btn-save-rx"
-              disabled={saving || Boolean(missingBeforeSave())}
-              title={missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'}
-              onClick={() => {
-                // Stay open after Save Rx so Approve is right there.
-                void persistRx();
-              }}
-            >
-              {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
-            </button>
+            {/* Owner, Nov 6, 2026: two clicks, not three. Approve saves the refills, expiration and
+                acute/chronic with the script, so Save Rx is only for staff who can't approve here. */}
+            {!scriptApproved && (!canApprove || mailDoctorApproves) ? (
+              <button
+                type="button"
+                className="client-fin__btn client-fin__btn-save-rx"
+                disabled={saving || Boolean(missingBeforeSave())}
+                title={missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'}
+                onClick={() => {
+                  void persistRx();
+                }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
+              </button>
+            ) : null}
             {missingBeforeSave() && canWriteRx ? (
               <span className="client-fin__rx-incomplete">{missingBeforeSave()}</span>
             ) : null}
@@ -3163,6 +3207,7 @@ export default function VisitCheckoutPanel({
                           <RefillSummary
                             invoiceId={invoice.id}
                             lineId={l.id}
+                            instructions={l.instructions}
                             canEdit={false}
                             disabled={disabled || busy != null}
                             onReleased={onInvoiceChange}
