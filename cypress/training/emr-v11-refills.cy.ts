@@ -53,6 +53,20 @@ describe('Training: EMR V11 refills', () => {
     cy.contains('.soap-invoice-line', 'Office exam', { timeout: 30000 }).should('exist');
     cy.wait(1500);
 
+    // Dr. Lane's signature for the rabies certificate: drawn in the browser, uploaded as the manager.
+    cy.window().then((win) => {
+      const canvas = win.document.createElement('canvas');
+      canvas.width = 520;
+      canvas.height = 140;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#1e3a8a';
+      ctx.font = "64px 'Snell Roundhand', 'Brush Script MT', cursive";
+      ctx.fillText('Avery Lane', 24, 92);
+      schedulingApi('manager', 'PUT', `/employees/${w.doctors.A}/signature`, {
+        practiceId: pid,
+        image: canvas.toDataURL('image/png'),
+      });
+    });
     const refillLine = () => cy.contains('.soap-invoice-line', 'Carprofen', { timeout: 30000 });
     startClock();
     line('v11-01');
@@ -61,12 +75,12 @@ describe('Training: EMR V11 refills', () => {
       cy.contains('.inv-refill__row', 'Carprofen', { timeout: 30000 }).should('exist');
     });
     line('v11-03', () => {
-      pointAt(() => cy.contains('.inv-refill__row', 'Carprofen').find('.inv-refill__meta'), 2500);
-      pointAt(() => cy.contains('.inv-refill__row', 'Carprofen').find('.inv-refill__sig'), 2500);
+      pointAt(() => cy.contains('.inv-refill__row', 'Rx #971204').find('.inv-refill__meta'), 2500);
+      pointAt(() => cy.contains('.inv-refill__row', 'Rx #971204').find('.inv-refill__sig'), 2500);
     });
     line('v11-04', () => pointAt(() => cy.contains('.inv-refill__row', 'Apoquel'), 3500));
     line('v11-05', () => {
-      tap(() => cy.contains('.inv-refill__row', 'Carprofen').contains('button', 'Use this refill'));
+      tap(() => cy.contains('.inv-refill__row', 'Rx #971204').contains('button', 'Use this refill'));
       cy.get('.inv-refill__list').should('not.exist');
       refillLine().should('exist');
     });
@@ -93,15 +107,32 @@ describe('Training: EMR V11 refills', () => {
       cy.contains('[role="dialog"] h3', 'New directions?').should('not.exist');
       cy.contains('.client-fin__sig-label', 'Directions (sig)', { timeout: 30000 }).should('exist');
     });
-    line('v11-09d', () => {
-      pointAt(() => cy.contains('label.client-fin__sig', 'Directions (sig)').find('textarea'), 3500);
-      pointAt(() => refillLine().find('select').first(), 2000);
+    const rxForm = () => cy.get('.soap-checkout-invoice-rx-match').first();
+    line('v11-09d', () => pointAt(() => rxForm().find('.client-fin__sig textarea'), 5000));
+    line('v11-09e', () => {
+      rxForm().find('.client-fin__refill-input').clear();
+      typeSlowly(() => rxForm().find('.client-fin__refill-input'), '0');
+    });
+    line('v11-09f', () => choose(() => rxForm().find('select[aria-label="Acute or chronic prescription"]'), 'acute'));
+    line('v11-09g', () => {
+      tap(() => cy.get('button.client-fin__btn-approve').first());
+      cy.contains('.soap-invoice-line', 'Carprofen').find('.soap-invoice-line-expand').should('exist');
+      cy.contains('.soap-invoice-line', 'Approve the sig').should('not.exist');
     });
     line('v11-10', () => {
       tap(() => cy.contains('a, button', /^View details$/).first());
       cy.contains('Rabies', { timeout: 60000 }).should('exist');
     });
-    line('v11-11', () => pointAt(() => cy.contains('tr', /Rabies/).first(), 3500));
+    // The row on screen (the page behind the medical record has its own, hidden copy).
+    const onScreenRow = () =>
+      cy.get('tr:contains("Rabies 3yr Vaccine")').filter((_, el) => {
+        const r = el.getBoundingClientRect();
+        return r.height > 0 && r.top >= 0 && r.bottom <= el.ownerDocument.defaultView!.innerHeight;
+      }).first();
+    line('v11-11', () => {
+      cy.get('tr:contains("Rabies 3yr Vaccine")').last().scrollIntoView({ block: 'center' } as never);
+      pointAt(onScreenRow, 3500);
+    });
     line('v11-12', () => {
       tap(() => cy.contains('button', 'Print document').first());
     });
@@ -109,7 +140,11 @@ describe('Training: EMR V11 refills', () => {
       tap(() => cy.contains('Rabies certificate').first());
       cy.wait(2500);
     });
-    line('v11-14', () => pointAt(() => cy.get('select').filter(':contains("NC-VET-00417")').first(), 4000));
+    line('v11-14', () => {
+      cy.contains('Signature on file', { timeout: 30000 }).should('exist');
+      pointAt(() => cy.contains('.chart-print-doc__fact', /^License/), 3500);
+    });
+    line('v11-14b', () => pointAt(() => cy.contains('Signature on file').parent().find('img'), 2500));
     line('v11-15');
     line('v11-16');
     finish();

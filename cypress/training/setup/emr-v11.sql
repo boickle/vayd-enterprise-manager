@@ -11,6 +11,8 @@ DELETE FROM treatment_items WHERE "pimsId" LIKE 'training-v11%'
 DELETE FROM treatments WHERE "pimsId" LIKE 'training-v11%';
 DELETE FROM medical_records WHERE "pimsId" LIKE 'training-v11%';
 DELETE FROM inventory_items WHERE "pimsId" LIKE 'training-v11%';
+-- Scripts an earlier take wrote for Maple (New directions makes one).
+UPDATE prescriptions SET "isDeleted"=true WHERE "patientId"=:pet AND coalesce("pimsId",'') NOT LIKE 'training-v11%';
 -- Refills and refill lines from an earlier take.
 UPDATE visit_invoice_lines SET "isDeleted"=true WHERE "patientId"=:pet AND "refillOfPrescriptionId" IS NOT NULL;
 

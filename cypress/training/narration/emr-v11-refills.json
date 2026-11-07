@@ -1,22 +1,98 @@
 [
-  {"id": "v11-01", "text": "When a pet needs more of a medication a doctor already prescribed, fill it as a refill. It copies the doctor's directions exactly, and keeps the count of refills right."},
-  {"id": "v11-02", "text": "Maple is here for a recheck, and her family wants more Carprofen. In Checkout, click Refills."},
-  {"id": "v11-03", "text": "Every prescription on file is listed, including the ones that came over from eVet. Each shows the refills left, who prescribed it, and the directions."},
-  {"id": "v11-04", "text": "Apoquel has no refills left. That one needs a new script from the doctor, so it isn't a refill."},
-  {"id": "v11-05", "text": "Carprofen has two left. Click Use this refill."},
-  {"id": "v11-06", "text": "Open the line to see it."},
-  {"id": "v11-07", "text": "It's a refill of that prescription, with who prescribed it and what's left."},
-  {"id": "v11-07b", "text": "The doctor's directions are right here, and they're locked, so nobody can change them on a refill."},
-  {"id": "v11-08", "text": "Say the doctor wants Maple on different directions today. Don't edit the refill. Click New directions."},
-  {"id": "v11-09", "text": "This stops the old prescription. Its refills go to zero, so nobody fills it again with the old directions."},
-  {"id": "v11-09b", "text": "This line becomes a new script for the visit's doctor, and the doctor gets the production."},
-  {"id": "v11-09c", "text": "Click Stop refills and write a new script."},
-  {"id": "v11-09d", "text": "The new script starts with Carprofen's usual directions from the catalog. The doctor checks them, sets the refills, and approves it like any new script."},
-  {"id": "v11-10", "text": "Her vaccines from eVet are on her chart too. Click View details."},
-  {"id": "v11-11", "text": "Here's her rabies dose from eVet, with the vet who gave it."},
-  {"id": "v11-12", "text": "To reprint the rabies certificate, click Print document,"},
-  {"id": "v11-13", "text": "then Rabies certificate."},
-  {"id": "v11-14", "text": "It's signed by the vet who gave the dose, and shows their license number."},
-  {"id": "v11-15", "text": "Client liaisons: refills are the one script you can add yourself, because you're only copying directions a vet already wrote. New directions is for the doctor or a tech."},
-  {"id": "v11-16", "text": "Two mistakes to avoid: changing directions on a refill, and changing the vet on a certificate. For new directions, stop the old script and write a new one, and let the dose decide the vet."}
+ {
+  "id": "v11-01",
+  "text": "When a pet needs more of a medication a doctor already prescribed, fill it as a refill. It copies the doctor's directions exactly, and keeps the count of refills right."
+ },
+ {
+  "id": "v11-02",
+  "text": "Maple is here for a recheck, and her family wants more Carprofen. In Checkout, click Refills."
+ },
+ {
+  "id": "v11-03",
+  "text": "Every prescription on file is listed, including the ones that came over from eVet. Each shows the refills left, who prescribed it, and the directions."
+ },
+ {
+  "id": "v11-04",
+  "text": "Apoquel has no refills left. That one needs a new script from the doctor, so it isn't a refill."
+ },
+ {
+  "id": "v11-05",
+  "text": "Carprofen has two left. Click Use this refill."
+ },
+ {
+  "id": "v11-06",
+  "text": "Open the line to see it."
+ },
+ {
+  "id": "v11-07",
+  "text": "It's a refill of that prescription, with who prescribed it and what's left."
+ },
+ {
+  "id": "v11-07b",
+  "text": "The doctor's directions are right here, and they're locked, so nobody can change them on a refill."
+ },
+ {
+  "id": "v11-08",
+  "text": "Say the doctor wants Maple on different directions today. Don't edit the refill. Click New directions."
+ },
+ {
+  "id": "v11-09",
+  "text": "This stops the old prescription. Its refills go to zero, so nobody fills it again with the old directions."
+ },
+ {
+  "id": "v11-09b",
+  "text": "This line becomes a new script for the visit's doctor, and the doctor gets the production."
+ },
+ {
+  "id": "v11-09c",
+  "text": "Click Stop refills and write a new script."
+ },
+ {
+  "id": "v11-09d",
+  "text": "The new script starts with Carprofen's usual directions from the catalog. The doctor checks them,"
+ },
+ {
+  "id": "v11-09e",
+  "text": "sets the refills, zero here,"
+ },
+ {
+  "id": "v11-09f",
+  "text": "picks acute or chronic,"
+ },
+ {
+  "id": "v11-09g",
+  "text": "and clicks Approve. The doctor gets the production for this new script."
+ },
+ {
+  "id": "v11-10",
+  "text": "Her vaccines from eVet are on her chart too. Click View details."
+ },
+ {
+  "id": "v11-11",
+  "text": "Here's her rabies dose from eVet, with the vet who gave it."
+ },
+ {
+  "id": "v11-12",
+  "text": "To reprint the rabies certificate, click Print document,"
+ },
+ {
+  "id": "v11-13",
+  "text": "then Rabies certificate."
+ },
+ {
+  "id": "v11-14",
+  "text": "It shows the vet who gave the dose, with their license number,"
+ },
+ {
+  "id": "v11-14b",
+  "text": "and their signature."
+ },
+ {
+  "id": "v11-15",
+  "text": "Client liaisons: refills are the one script you can add yourself, because you're only copying directions a vet already wrote. New directions is for the doctor or a tech."
+ },
+ {
+  "id": "v11-16",
+  "text": "Two mistakes to avoid: changing directions on a refill, and changing the vet on a certificate. For new directions, stop the old script and write a new one, and let the dose decide the vet."
+ }
 ]
