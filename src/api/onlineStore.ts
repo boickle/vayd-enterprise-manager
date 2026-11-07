@@ -1745,6 +1745,8 @@ export type StoreCheckoutResult = Omit<MailOrder, 'id'> & {
   id: number | null;
   kind?: 'gift_cards';
   giftCards?: PurchasedGiftCard[];
+  /** OS-A6: items whose auto-ship Stripe could not set up; the order was still placed. */
+  autoshipNotSetUp?: string[];
 };
 
 export type StoreCheckoutBody = {
