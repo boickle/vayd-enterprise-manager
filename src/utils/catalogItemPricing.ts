@@ -304,6 +304,18 @@ export function pricingItemFromSearchAndCheck(
   };
 }
 
+/**
+ * A search hit as a pricing item. The hit's `price` is the pre-discount price; what this pet and
+ * client pay (member or client discount) is its `adjustedPrice`, so line math must start from that.
+ */
+export function pricingItemFromSearchHit(item: SearchableItem): CatalogPricingItem {
+  return {
+    ...item,
+    price: item.adjustedPrice ?? item.price,
+    originalPrice: item.originalPrice ?? item.wellnessPlanPricing?.originalPrice ?? item.price,
+  };
+}
+
 export function pricingItemFromCheckResponse(
   pricing: CheckItemPricingResponse
 ): CatalogPricingItem {
