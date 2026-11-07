@@ -21,7 +21,12 @@ export type ReturnLotOption = {
 };
 
 /** From GET /visit-invoices/:id/return-options, per line, lots in the order they were drawn. */
-export type ReturnOptionsLine = { isControlled: boolean; lots: ReturnLotOption[] };
+export type ReturnOptionsLine = {
+  isControlled: boolean;
+  lots: ReturnLotOption[];
+  /** Wave 8A: how many of this line already came back on earlier returns. */
+  returnedQty?: number;
+};
 
 /** Staff's entries for one line. Anything missing falls back to the pre-fill / default. */
 export type ReturnStockDetail = {

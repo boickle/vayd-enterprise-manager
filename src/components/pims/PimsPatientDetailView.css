@@ -3201,3 +3201,29 @@
   opacity: 0.75;
   white-space: nowrap;
 }
+
+/* Refills on a chart prescription: count, stop, new directions (Nov 6, 2026). */
+.rx-refill-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.rx-refill-controls__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.rx-refill-controls__count input {
+  width: 64px;
+  padding: 4px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+.rx-refill-controls__note {
+  font-size: 12px;
+  color: #6b7280;
+}

@@ -14,6 +14,8 @@ type Props = {
   onWritingChange: (writing: boolean) => void;
   /** Scroll this section into view when the composer opens (SOAP page only). */
   scrollIntoViewOnWrite?: boolean;
+  /** Called after an addendum saves, so a parent list (the EMR row) can update its count. */
+  onAdded?: (addendum: SoapAddendum) => void;
 };
 
 function formatWhen(iso: string): string {
@@ -37,6 +39,7 @@ export default function SoapAddendaSection({
   writing,
   onWritingChange,
   scrollIntoViewOnWrite = false,
+  onAdded,
 }: Props) {
   const [addenda, setAddenda] = useState<SoapAddendum[]>([]);
   const [draft, setDraft] = useState('');
@@ -87,6 +90,7 @@ export default function SoapAddendaSection({
     try {
       const saved = await createSoapAddendum(encounterId, body);
       setAddenda((prev) => [...prev, saved]);
+      onAdded?.(saved);
       setDraft('');
       onWritingChange(false);
     } catch (e) {

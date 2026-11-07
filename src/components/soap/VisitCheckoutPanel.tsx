@@ -55,11 +55,13 @@ import {
   getInvoiceVaccinations,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
+import { showPaymentSuccess } from './checkoutSuccessNote';
 import { HiddenButChargedTag } from '../pims/HiddenButChargedTag';
 import { appConfirm, appDeclineHow, appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
   formatDeclinedDate,
+  declineNoteForDisplay,
   isOffRecordDeclineNote,
   offRecordDeclineNote,
   type DeclinedTreatmentItem,
@@ -98,6 +100,7 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import FindEstimatePanel from '../estimates/FindEstimatePanel';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
@@ -515,6 +518,17 @@ export function CheckoutInvoiceRxFields({
   );
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  /**
+   * What was approved (owner, Nov 6, 2026): an approved script can still be changed until checkout,
+   * but a change is never saved quietly. It shows "Approve changes", which saves and re-approves it
+   * (logged on the History). After checkout the line is locked.
+   */
+  const snapshotNow = () => JSON.stringify([instructions.trim(), refills, acuity, refillExpiration, discardAfter]);
+  const approvedSnapshot = useRef<string | null>(null);
+  if (scriptApproved && approvedSnapshot.current == null) approvedSnapshot.current = snapshotNow();
+  if (!scriptApproved) approvedSnapshot.current = null;
+  const changedSinceApproval =
+    scriptApproved && approvedSnapshot.current != null && approvedSnapshot.current !== snapshotNow();
   const canWriteRx = Boolean(encounterId && orderId);
   const mailDoctorApproves = mailed && mailOrderWaitsForQueueApproval(mailOrder);
 
@@ -571,6 +585,7 @@ export function CheckoutInvoiceRxFields({
   const canApprove = useCan('rx.invoice.approve');
   const needsSigSave =
     !disabled &&
+    !scriptApproved &&
     (instructions.trim() !== (line.instructions ?? '').trim() ||
       !line.instructionsEnteredByEmployeeId);
 
@@ -599,6 +614,9 @@ export function CheckoutInvoiceRxFields({
             acuity: acuity as 'acute' | 'chronic',
             refillExpiration:
               refillCount > 0 ? toRxDatePayload(refillExpiration) ?? null : null,
+            // A line with no SOAP order (e.g. a new script from a refill's "New directions") is
+            // approved here too, not only saved.
+            ...(opts?.approve ? { rxApproved: true } : {}),
           }),
         );
         setSavedFlash(true);
@@ -658,6 +676,7 @@ export function CheckoutInvoiceRxFields({
   };
 
   const persistSig = async (force = false) => {
+    if (scriptApproved) return; // saved with "Approve changes"
     const next = instructions.trim();
     const saved = (line.instructions ?? '').trim();
     if (!force && next === saved && line.instructionsEnteredByEmployeeId) return;
@@ -676,7 +695,7 @@ export function CheckoutInvoiceRxFields({
   };
 
   const persistExtrasIfReady = async () => {
-    if (!canWriteRx || missingBeforeSave()) return;
+    if (scriptApproved || !canWriteRx || missingBeforeSave()) return;
     await persistRx();
   };
 
@@ -712,10 +731,38 @@ export function CheckoutInvoiceRxFields({
       >
         Approve
       </button>
+    ) : scriptApproved && changedSinceApproval && !disabled ? (
+      canApprove && !mailDoctorApproves ? (
+        <span className="client-fin__reapprove">
+          <span className="client-fin__entered">Changed after approval</span>
+          <button
+            type="button"
+            className="client-fin__btn client-fin__btn-approve"
+            disabled={saving}
+            title="Save the changes and approve the script again"
+            onClick={() => {
+              void (async () => {
+                const ok = await persistRx({ approve: true });
+                if (ok) {
+                  approvedSnapshot.current = snapshotNow();
+                  onApproved();
+                }
+              })();
+            }}
+          >
+            Approve changes
+          </button>
+        </span>
+      ) : (
+        <span className="client-fin__entered client-fin__needs-approver">
+          Changed after approval: a doctor or technician must approve the changes
+        </span>
+      )
     ) : scriptApproved ? (
       <span className="client-fin__entered">
         Approved
         {approvedByName ? ` by ${approvedByName}` : ''}
+        {!disabled ? ' · change anything above to edit it' : ''}
       </span>
     ) : null;
 
@@ -913,18 +960,21 @@ export function CheckoutInvoiceRxFields({
         )}
         {!disabled ? (
           <div className="client-fin__rx-save-row">
-            <button
-              type="button"
-              className="client-fin__btn client-fin__btn-save-rx"
-              disabled={saving || Boolean(missingBeforeSave())}
-              title={missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'}
-              onClick={() => {
-                // Stay open after Save Rx so Approve is right there.
-                void persistRx();
-              }}
-            >
-              {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
-            </button>
+            {/* Owner, Nov 6, 2026: two clicks, not three. Approve saves the refills, expiration and
+                acute/chronic with the script, so Save Rx is only for staff who can't approve here. */}
+            {!scriptApproved && (!canApprove || mailDoctorApproves) ? (
+              <button
+                type="button"
+                className="client-fin__btn client-fin__btn-save-rx"
+                disabled={saving || Boolean(missingBeforeSave())}
+                title={missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'}
+                onClick={() => {
+                  void persistRx();
+                }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
+              </button>
+            ) : null}
             {missingBeforeSave() && canWriteRx ? (
               <span className="client-fin__rx-incomplete">{missingBeforeSave()}</span>
             ) : null}
@@ -1678,7 +1728,7 @@ export default function VisitCheckoutPanel({
       onInvoicePaid: (payload) => {
         if (payload.invoiceId !== invoiceId) return;
         setActiveCheckoutId(null);
-        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
         onInvoiceChange({
           ...invoice,
           status: 'paid',
@@ -1900,7 +1950,7 @@ export default function VisitCheckoutPanel({
         const { invoice: fresh } = await syncTerminalCheckout(invoiceId);
         if (stopped || fresh.status !== 'paid') return;
         setActiveCheckoutId(null);
-        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
         onInvoiceChange(fresh);
       } catch {
         /* keep polling; a transient failure should not end the wait */
@@ -2049,7 +2099,7 @@ export default function VisitCheckoutPanel({
         if (!/already paid/i.test(apiErrorMessage(e))) throw e;
         setActiveCheckoutId(null);
         onInvoiceChange(await getInvoice(invoice.id));
-        setNote('This invoice was already paid on Scout Terminal.');
+        showPaymentSuccess({ setError, setNote }, 'This invoice was already paid on Scout Terminal.');
       }
     });
 
@@ -2412,6 +2462,18 @@ export default function VisitCheckoutPanel({
         />
       ) : null}
 
+      {invoice && invoice.status === 'open' && canEditLines && !disabled && (clientId ?? invoice.clientId) ? (
+        <FindEstimatePanel
+          clientId={Number(clientId ?? invoice.clientId)}
+          invoiceId={invoice.id}
+          onConverted={(id) => {
+            void getInvoice(id).then(onInvoiceChange).catch(() => undefined);
+            setSiblingRefreshTick((n) => n + 1);
+            onInvoiceShouldRefresh?.();
+          }}
+        />
+      ) : null}
+
       {!multiPetRoster && encounterId && onOrdersChange && !disabled ? (
         <div className="soap-checkout-add-block">
           {renderAddCharge(patientId ?? null)}
@@ -2529,7 +2591,7 @@ export default function VisitCheckoutPanel({
                         )}
                       </div>
                       {o.state === 'declined' && o.note?.trim() ? (
-                        <div className="soap-invoice-previsit-reason">{o.note.trim()}</div>
+                        <div className="soap-invoice-previsit-reason">{declineNoteForDisplay(o.note)}</div>
                       ) : null}
                       <PrevisitCheckinPriceNote note={o.note} state={o.state} />
                     </div>
@@ -2726,7 +2788,7 @@ export default function VisitCheckoutPanel({
                           )}
                         </div>
                         {o.state === 'declined' && o.note?.trim() ? (
-                          <div className="soap-invoice-previsit-reason">{o.note.trim()}</div>
+                          <div className="soap-invoice-previsit-reason">{declineNoteForDisplay(o.note)}</div>
                         ) : null}
                         <PrevisitCheckinPriceNote note={o.note} state={o.state} />
                       </div>
@@ -3163,6 +3225,7 @@ export default function VisitCheckoutPanel({
                           <RefillSummary
                             invoiceId={invoice.id}
                             lineId={l.id}
+                            instructions={l.instructions}
                             canEdit={false}
                             disabled={disabled || busy != null}
                             onReleased={onInvoiceChange}
@@ -3965,7 +4028,7 @@ export default function VisitCheckoutPanel({
               onApplied={(next, applied, left) => {
                 onInvoiceChange(next);
                 setAccountCreditOpen(false);
-                setNote(`Used $${applied.toFixed(2)} of account credit. $${left.toFixed(2)} credit left.`);
+                showPaymentSuccess({ setError, setNote }, `Used $${applied.toFixed(2)} of account credit. $${left.toFixed(2)} credit left.`);
               }}
             />
           ) : null}
@@ -3979,7 +4042,8 @@ export default function VisitCheckoutPanel({
                 onInvoiceChange(next);
                 setGiftCardOpen(false);
                 const left = Math.round((card.balance - applied) * 100) / 100;
-                setNote(
+                showPaymentSuccess(
+                  { setError, setNote },
                   `Took $${applied.toFixed(2)} from gift card ••••${card.last4}. $${left.toFixed(2)} left on the card.`,
                 );
               }}
@@ -4059,7 +4123,7 @@ export default function VisitCheckoutPanel({
           onPaid={(next) => {
             setPhoneCardOpen(false);
             onInvoiceChange(next);
-            setNote('Card charged over the phone — invoice marked paid.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone — invoice marked paid.');
           }}
         />
       ) : null}

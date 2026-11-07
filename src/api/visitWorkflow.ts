@@ -50,6 +50,8 @@ export type SoapEncounter = {
   completedAt: string | null;
   created: string;
   updated: string;
+  /** Only on patient-chart lists (`patientId` query): the signed SOAP's addenda, oldest first. */
+  addenda?: SoapAddendum[];
 };
 
 export type PatientProblem = {
@@ -1160,7 +1162,8 @@ export async function listPatientPrescriptions(
 /** Mark a prescription as no longer taking (or clear that mark). */
 export async function updatePatientPrescription(
   id: number,
-  body: { discontinued?: boolean }
+  /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
+  body: { discontinued?: boolean; refill?: number; patientId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,
@@ -1444,6 +1447,8 @@ export async function refundVisitTender(
     amount?: number | null;
     reason?: string;
     refundedByEmployeeId?: number | null;
+    /** They'll pay another way: keep the refunded amount owed. Default: the bill comes down. */
+    keepBalanceDue?: boolean;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1486,6 +1491,8 @@ export async function getVisitReturnOptions(invoiceId: string): Promise<{
         branchLocationId: number | null;
         standing: number;
       }[];
+      /** Wave 8A: how many of this line already came back on earlier returns. */
+      returnedQty?: number;
     }
   >;
 }> {
@@ -1588,7 +1595,10 @@ export async function applyInvoiceReprice(
 
 export type ClientPayLink = {
   url: string;
+  /** Wave 8A: what the link asks for, net of the family's account credit. */
   amount: number;
+  /** Wave 8A: account credit left off the link; applied to the bills when they pay. */
+  accountCreditApplied?: number;
   invoiceIds: string[];
   invoiceLabels: string[];
 };
@@ -1986,6 +1996,21 @@ export async function releaseInvoiceLineRefill(
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/release-refill`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/**
+ * New directions instead of a refill: the old script's refills go to 0 and the line becomes a
+ * new, unapproved script under the visit's doctor, starting from the item's default directions.
+ */
+export async function rewriteInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/rewrite-refill`,
     { practiceId: pid() }
   );
   return data;

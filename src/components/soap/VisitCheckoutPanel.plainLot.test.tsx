@@ -44,7 +44,7 @@ describe('checkout lot picker for plain lot-tracked items', () => {
   });
 });
 
-describe('Rx drawer stays open after Save Rx', () => {
+describe('Rx drawer: Save sig and Approve', () => {
   const rxLine = {
     id: 'rx1',
     description: 'Carprofen',
@@ -77,15 +77,19 @@ describe('Rx drawer stays open after Save Rx', () => {
       />,
     );
 
-  it('Save Rx does not collapse and Approve stays visible', async () => {
-    update.mockResolvedValue({ id: 'inv-1' });
-    const collapse = vi.fn();
-    const onSaved = vi.fn();
-    renderRx({ onSavedAndCollapse: collapse, onSaved });
-    fireEvent.click(screen.getByRole('button', { name: /Save Rx/ }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalled());
-    expect(collapse).not.toHaveBeenCalled();
+  it('an approver gets two buttons, Save sig and Approve, and no Save Rx', () => {
+    renderRx({});
+    expect(screen.queryByRole('button', { name: /Save Rx/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
+  });
+
+  it('an approved script can still change: a change shows Approve changes, never a quiet save', () => {
+    renderRx({ scriptApproved: true, approvedByName: 'A. Lane' });
+    expect(screen.queryByRole('button', { name: 'Approve changes' })).toBeNull();
+    expect(screen.getByText(/Approved by A\. Lane/)).toBeTruthy();
+    fireEvent.change(screen.getByDisplayValue('1 tab PO q12h'), { target: { value: '1 tab PO q24h' } });
+    expect(screen.getByRole('button', { name: 'Approve changes' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save sig' })).toBeNull();
   });
 
   it('after Approve the drawer closes only when nothing else is needed', () => {
