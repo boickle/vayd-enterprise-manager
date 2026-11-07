@@ -1,5 +1,8 @@
 import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
 import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefundSplit';
+import { clampReturnQty, returnQtyProblem, returnableQty } from '../../utils/returnLimits';
+import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
+import { payLinkPreview, payLinkPreviewText } from '../../utils/payLinkPreview';
 import { useWitnessOptions } from '../inventory/WasteDetailFields';
 import {
   chosenReturnLots,
@@ -65,6 +68,7 @@ import {
   type VisitEstimate,
 } from '../../api/visitEstimates';
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
+import FindEstimatePanel from '../estimates/FindEstimatePanel';
 import { useCan } from '../../permissions/PermissionContext';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
 import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
@@ -80,6 +84,7 @@ import {
   deleteOrder,
   adoptEvetInvoice,
   createClientPayLink,
+  fetchAvailableAccountCredit,
   cancelTerminalCheckout,
   chargeSavedCard,
   formatInvoiceLineEntered,
@@ -232,6 +237,8 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
+import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
@@ -756,11 +763,14 @@ function evetCreditUsedNote(inv: NormalizedInvoice): string | null {
 }
 
 function voidedPaymentNote(
-  items: { label: string; amount: number }[],
+  items: { label: string; amount: number; refunded?: boolean }[],
 ): string | null {
   if (!items.length) return null;
   return `(${items
-    .map((item) => `voided ${item.label} payment - ${money(item.amount)}`)
+    .map(
+      (item) =>
+        `${item.refunded ? 'refunded' : 'voided'} ${item.label} payment - ${money(item.amount)}`,
+    )
     .join('; ')})`;
 }
 
@@ -831,11 +841,13 @@ function returnRefundSplit(invoice: VisitInvoice | null, amount: number) {
 /** Estimate return total (line + proportional tax) for the return qty draft. */
 function estimateReturnRefund(
   lines: VisitInvoiceLine[],
-  qtyByLine: Record<string, string>
+  qtyByLine: Record<string, string>,
+  /** Wave 8A: what can still come back per line (sold minus earlier returns). */
+  options?: Record<string, { returnedQty?: number } | undefined>
 ): number {
   let total = 0;
   for (const line of lines) {
-    const qty = Number(qtyByLine[line.id] || 0);
+    const qty = clampReturnQty(qtyByLine[line.id], returnableQty(line, options?.[line.id]));
     if (!(qty > 0)) continue;
     const unit = Number(line.unitPrice) || 0;
     const origQty = Math.abs(Number(line.qty) || 0);
@@ -1170,16 +1182,6 @@ function chooseOpenInvoice(
   );
 }
 
-function isFinancialPetActive(pet: FinancialPet): boolean {
-  if (pet.isActive === false) return false;
-  const status = (pet.statusName ?? '').toLowerCase();
-  return !/euthan|deceas|died|passed|inactive/.test(status);
-}
-
-function sortPetsForCharge(pets: FinancialPet[]): FinancialPet[] {
-  return [...pets].sort((a, b) => a.name.localeCompare(b.name));
-}
-
 function defaultChargePatientId(
   pets: FinancialPet[],
   preferred?: number | null,
@@ -1189,18 +1191,6 @@ function defaultChargePatientId(
     if (hit && isFinancialPetActive(hit)) return preferred;
   }
   return pets.find(isFinancialPetActive)?.id ?? null;
-}
-
-/** Active pets unless Use inactive is on. A line already on an inactive pet keeps that pet. */
-function petsForChargeSelect(
-  pets: FinancialPet[],
-  includeInactive: boolean,
-  keepId?: number | null,
-): FinancialPet[] {
-  const rows = includeInactive
-    ? pets
-    : pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
-  return sortPetsForCharge(rows);
 }
 
 function emptyDraftInvoice(opts: {
@@ -1883,6 +1873,11 @@ export default function ClientFinancialWorkspace({
     [paymentTypes],
   );
   const canChangePrice = useCan('invoice.price.change');
+  // Wave 8A (owner decision Nov 6, 2026): every role except observer.
+  const mayReturn = useCanOrAdminLogin('invoice.return');
+  const mayAdoptEvet = useCanOrAdminLogin('invoice.legacy.adopt');
+  const maySendPayLink = useCanOrAdminLogin('paylink.send');
+  const mayCreateEstimate = useCanOrAdminLogin('estimate.create');
   const [providerChangeLine, setProviderChangeLine] = useState<VisitInvoiceLine | null>(null);
   const [paymentEditTender, setPaymentEditTender] = useState<VisitInvoiceTender | null>(null);
   const [correctionBusy, setCorrectionBusy] = useState(false);
@@ -2799,6 +2794,11 @@ export default function ClientFinancialWorkspace({
             .map((tender) => ({
               label: tenderPayLabel(tender),
               amount: Number(tender.amount) || 0,
+              // A payment given back in full (a return or a refund) is closed the same way as a
+              // void; say "refunded" so staff don't think it was a recording mistake.
+              refunded:
+                Number(tender.refundedAmount) > 0.009 &&
+                Number(tender.refundedAmount) >= (Number(tender.amount) || 0) - 0.009,
             })),
         ),
         total: Number(inv.total) || 0,
@@ -2952,6 +2952,26 @@ export default function ClientFinancialWorkspace({
     [scoutInvoices]
   );
   const unpaidTotal = unpaidScout.reduce((s, inv) => s + dueOf(inv), 0) + unpaidEvet.reduce((s, inv) => s + inv.due, 0);
+  // Wave 8A: a pay link asks for what is owed less the family's spendable account credit.
+  const [payLinkCredit, setPayLinkCredit] = useState(0);
+  useEffect(() => {
+    if (clientId == null || unpaidTotal <= 0.009) {
+      setPayLinkCredit(0);
+      return;
+    }
+    let cancelled = false;
+    void fetchAvailableAccountCredit(Number(clientId))
+      .then((c) => {
+        if (!cancelled) setPayLinkCredit(Number(c.total) || 0);
+      })
+      .catch(() => {
+        if (!cancelled) setPayLinkCredit(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, unpaidTotal]);
+  const payLinkNet = payLinkPreview(unpaidTotal, payLinkCredit).amount;
 
   // If Scout had nothing open on load, open the newest unpaid eVet invoice once it arrives.
   useEffect(() => {
@@ -3594,6 +3614,7 @@ export default function ClientFinancialWorkspace({
       !needsLocalFill ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canReturn =
+    mayReturn &&
     selected &&
     !invoiceGone &&
     (selected.status === 'paid' || selected.status === 'finalized') &&
@@ -5147,6 +5168,14 @@ export default function ClientFinancialWorkspace({
         const line = lines.find((l) => l.id === item.lineId);
         return !(line && unshippedMailForLine(line));
       });
+    // Wave 8A: never more back than is left on a line after earlier returns.
+    for (const item of items) {
+      const line = lines.find((l) => l.id === item.lineId);
+      const problem = line
+        ? returnQtyProblem(line.description, item.qty, line, returnOptions[line.id])
+        : null;
+      if (problem) stockProblems.unshift(problem);
+    }
     if (stockProblems.length) {
       setError(stockProblems[0]);
       return;
@@ -5155,7 +5184,7 @@ export default function ClientFinancialWorkspace({
       setError('Enter a quantity to return on at least one line.');
       return;
     }
-    const estimated = estimateReturnRefund(lines, returnQty);
+    const estimated = estimateReturnRefund(lines, returnQty, returnOptions);
     const split = returnRefundSplit(selected, estimated);
     if (refundViaStripe) {
       if (split.over) {
@@ -5280,7 +5309,11 @@ export default function ClientFinancialWorkspace({
             >
               Email Ledger
             </button>
-            {unpaidTotal > 0.009 ? (
+            {unpaidTotal > 0.009 && maySendPayLink && payLinkNet <= 0.009 ? (
+              <div className="client-fin__muted">
+                {payLinkPreviewText(unpaidTotal, payLinkCredit, unpaidScout.length + unpaidEvet.length, money)}
+              </div>
+            ) : unpaidTotal > 0.009 && maySendPayLink ? (
               <>
                 <button
                   type="button"
@@ -5299,9 +5332,7 @@ export default function ClientFinancialWorkspace({
                   Text pay link
                 </button>
                 <div className="client-fin__muted">
-                  {unpaidScout.length + unpaidEvet.length > 1
-                    ? `Sends ${money(unpaidTotal)} for ${unpaidScout.length + unpaidEvet.length} unpaid invoices`
-                    : `Sends ${money(unpaidTotal)} for the unpaid invoice`}
+                  {payLinkPreviewText(unpaidTotal, payLinkCredit, unpaidScout.length + unpaidEvet.length, money)}
                 </div>
               </>
             ) : (
@@ -5439,6 +5470,7 @@ export default function ClientFinancialWorkspace({
           <div className="client-fin__estimates">
             <div className="client-fin__pane-head">
               <h2>Estimates</h2>
+              {mayCreateEstimate ? (
               <button
                 type="button"
                 className="client-fin__btn"
@@ -5464,6 +5496,7 @@ export default function ClientFinancialWorkspace({
               >
                 New estimate
               </button>
+              ) : null}
             </div>
             {estimates.length === 0 ? (
               <p className="client-fin__muted">No estimates yet. Quotes live here, not on the ledger.</p>
@@ -5854,11 +5887,13 @@ export default function ClientFinancialWorkspace({
                 );
               })()}
               <div className="client-fin__actions">
-                <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeOverEvet('edit')}>
-                  Edit in Scout
-                </button>
+                {mayAdoptEvet ? (
+                  <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeOverEvet('edit')}>
+                    Edit in Scout
+                  </button>
+                ) : null}
                 {/* Nothing to return on a bill nobody paid: remove the charge (Edit) or void it. */}
-                {(Number(evetSelected.paid) || 0) > 0.009 ? (
+                {mayAdoptEvet && mayReturn && (Number(evetSelected.paid) || 0) > 0.009 ? (
                   <button
                     type="button"
                     className="client-fin__btn-ghost"
@@ -6056,6 +6091,23 @@ export default function ClientFinancialWorkspace({
                   </button>
                 </div>
               </div>
+              {canEdit &&
+              !returning &&
+              !hasUnsavedEdits &&
+              !isUnsavedInvoice(selected) &&
+              (selected.clientId ?? clientId) ? (
+                <FindEstimatePanel
+                  clientId={Number(selected.clientId ?? clientId)}
+                  invoiceId={selected.id}
+                  disabled={busy}
+                  onConverted={(id) => {
+                    setError(null);
+                    void getInvoice(id).then(setSelected).catch(() => undefined);
+                    void refreshList(id);
+                    void refreshEstimates();
+                  }}
+                />
+              ) : null}
               {selected.isDeleted || selected.status === 'void' ? (
                 <p className="client-fin__muted">
                   {selected.isDeleted
@@ -6911,6 +6963,10 @@ export default function ClientFinancialWorkspace({
                                 Not shipped yet — use Request cancellation
                               </span>
                             </td>
+                          ) : returning && canReturn && returnableQty(line, returnOptions[line.id]) <= 0 ? (
+                            <td>
+                              <span className="client-fin__muted">All returned</span>
+                            </td>
                           ) : returning && canReturn ? (
                             <td>
                               <input
@@ -6918,7 +6974,7 @@ export default function ClientFinancialWorkspace({
                                 onChange={(e) =>
                                   setReturnQty((prev) => ({ ...prev, [line.id]: e.target.value }))
                                 }
-                                placeholder={`≤ ${Math.abs(Number(line.qty) || 0)}`}
+                                placeholder={`≤ ${returnableQty(line, returnOptions[line.id])}`}
                               />
                               {line.catalogItemType === 'inventory' && Number(returnQty[line.id] || 0) > 0 ? (
                                 <ReturnLineStockFields
@@ -8218,7 +8274,8 @@ export default function ClientFinancialWorkspace({
                             resetTenderMethod();
                             void refreshList(next.id);
                             const left = Math.round((card.balance - applied) * 100) / 100;
-                            setNote(
+                            showPaymentSuccess(
+                              { setError, setNote },
                               `Took ${money(applied)} from gift card ••••${card.last4}. ${money(left)} left on the card.`,
                             );
                           }}
@@ -8237,7 +8294,7 @@ export default function ClientFinancialWorkspace({
                             setSelected(next);
                             resetTenderMethod();
                             void refreshList(next.id);
-                            setNote(`Used ${money(applied)} of account credit. ${money(left)} credit left.`);
+                            showPaymentSuccess({ setError, setNote }, `Used ${money(applied)} of account credit. ${money(left)} credit left.`);
                           }}
                         />
                       </div>
@@ -8463,7 +8520,7 @@ export default function ClientFinancialWorkspace({
               {canReturn && returning ? (
                 <div className="client-fin__actions client-fin__actions--stack">
                   {(() => {
-                    const estimated = estimateReturnRefund(lines, returnQty);
+                    const estimated = estimateReturnRefund(lines, returnQty, returnOptions);
                     const cardAvail = invoiceCardRefundable(selected);
                     const cardTenders = (selected.tenders ?? []).filter(tenderCanStripeRefund);
                     const creditTenders = invoiceCreditTenders(selected);
@@ -8719,7 +8776,7 @@ export default function ClientFinancialWorkspace({
           estimateId={estimateEditorId}
           clientId={clientId}
           clientName={clientName}
-          pets={allPets}
+          pets={estimatePetChoices(pets, [initialPatientId ?? linePatientId].filter((id): id is number => id != null))}
           patientId={initialPatientId ?? linePatientId}
           onClose={() => setEstimateEditorId(null)}
           onSaved={() => {
@@ -8773,7 +8830,7 @@ export default function ClientFinancialWorkspace({
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
-            setNote('Card charged over the phone.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone.');
           }}
         />
       ) : null}

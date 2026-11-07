@@ -4,6 +4,7 @@ import {
   getCatalogLinePrice,
   getTieredUnitPrice,
   getTotalPreDiscountForQuantity,
+  pricingItemFromCheckResponse,
 } from './catalogItemPricing';
 
 const cents = (n: number) => Math.round(n * 100) / 100;
@@ -165,5 +166,26 @@ describe('quantity price break lookup (CAT-A2)', () => {
     expect(getTieredUnitPrice(tiered, 5, 6)).toBe(5);
     expect(getTieredUnitPrice(tiered, 9, 6)).toBe(3);
     expect(getTieredUnitPrice(tiered, 50, 6)).toBe(3);
+  });
+});
+
+describe('W8A-5: accepting a pre-visit item priced by catalog id only', () => {
+  // The check-item reply when the request sent only { procedure: { id } }: the item carries the
+  // catalog price at item.price, and adjustedPrice is already the member price.
+  const reply = {
+    item: { itemType: 'procedure', procedure: { id: 7 }, price: 25 },
+    adjustedPrice: 22.5,
+    originalPrice: 25,
+    wellnessPlanPricing: { hasCoverage: false, priceAdjustedByMembership: true, isWithinLimit: true },
+  } as unknown as Parameters<typeof pricingItemFromCheckResponse>[0];
+
+  it('a $25 item at 10% member discount is $22.50, not discounted twice ($20.25)', () => {
+    const item = pricingItemFromCheckResponse(reply);
+    expect(getCatalogLinePrice(item, 1).unitFinal).toBeCloseTo(22.5, 2);
+  });
+
+  it('qty 2 is $45.00', () => {
+    const item = pricingItemFromCheckResponse(reply);
+    expect(getCatalogLinePrice(item, 2).totalFinal).toBeCloseTo(45, 2);
   });
 });

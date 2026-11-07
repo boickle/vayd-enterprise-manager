@@ -307,6 +307,26 @@ export function pricingItemFromSearchAndCheck(
 export function pricingItemFromCheckResponse(
   pricing: CheckItemPricingResponse
 ): CatalogPricingItem {
+  // Wave 8A (bug 4): a request by catalog id only ({ procedure: { id } }) gets its item back with
+  // no price of its own; the catalog price is at item.price. Without it the line math fell back to
+  // `price` (the already-discounted adjustedPrice) and applied the member ratio again: a $25 item
+  // at 10% off came out at $20.25 instead of $22.50.
+  const raw = pricing.item as CheckItemPricingResponse['item'] & {
+    serviceFee?: number;
+    minimumPrice?: number;
+  };
+  const withCatalogPrice = <T,>(sub: T): T => {
+    if (!sub || typeof sub !== 'object') return sub;
+    const o = sub as Record<string, unknown>;
+    if (o.price != null && Number.isFinite(Number(o.price))) return sub;
+    if (raw.price == null || !Number.isFinite(Number(raw.price))) return sub;
+    return {
+      ...o,
+      price: Number(raw.price),
+      ...(o.serviceFee == null && raw.serviceFee != null ? { serviceFee: raw.serviceFee } : {}),
+      ...(o.minimumPrice == null && raw.minimumPrice != null ? { minimumPrice: raw.minimumPrice } : {}),
+    } as T;
+  };
   return {
     itemType: pricing.item.itemType,
     price: pricing.adjustedPrice,
@@ -315,9 +335,9 @@ export function pricingItemFromCheckResponse(
     wellnessPlanPricing: pricing.wellnessPlanPricing,
     discountPricing: pricing.discountPricing,
     tieredPricing: pricing.tieredPricing,
-    lab: pricing.item.lab,
-    procedure: pricing.item.procedure,
-    inventoryItem: pricing.item.inventoryItem,
+    lab: withCatalogPrice(pricing.item.lab),
+    procedure: withCatalogPrice(pricing.item.procedure),
+    inventoryItem: withCatalogPrice(pricing.item.inventoryItem),
   };
 }
 

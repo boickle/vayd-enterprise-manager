@@ -5,9 +5,12 @@ import { apiErrorMessage } from '../../api/http';
 import {
   convertEstimateToInvoice,
   createVisitEstimate,
+  fetchEstimateVisitChoices,
   getVisitEstimate,
+  type EstimateVisitChoice,
   type VisitEstimate,
 } from '../../api/visitEstimates';
+import { formatVisitChoice } from './estimateFormat';
 import EstimateWorkspace, { type EstimatePet } from './EstimateWorkspace';
 import '../soap/EuthanasiaEstimateModal.css';
 
@@ -43,6 +46,9 @@ export default function EstimateEditorModal({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [converting, setConverting] = useState(false);
+  /** Option A: an estimate with no visit asks which visit at Convert. null = not asked yet. */
+  const [visitChoices, setVisitChoices] = useState<EstimateVisitChoice[] | null>(null);
+  const [pickedVisitId, setPickedVisitId] = useState<number | null>(null);
   const defaultPetId = patientId ?? pets[0]?.id ?? null;
 
   useEffect(() => {
@@ -94,9 +100,7 @@ export default function EstimateEditorModal({
           ? 'Add at least one charge first.'
           : Number(estimate.total) <= 0
             ? 'Add a charge with a total before converting.'
-            : estimate.appointmentId == null
-              ? 'This estimate is not attached to a visit yet.'
-              : '';
+            : '';
 
   const convert = async () => {
     if (!estimate) return;
@@ -106,10 +110,26 @@ export default function EstimateEditorModal({
       return;
     }
     if (!canConvert) return;
-    setConverting(true);
     setError(null);
+    if (estimate.appointmentId == null && visitChoices == null) {
+      // Made on the ledger, so no visit yet: ask which one (the visit today or an upcoming one).
+      setConverting(true);
+      try {
+        const choices = await fetchEstimateVisitChoices(estimate.id);
+        setVisitChoices(choices);
+        setPickedVisitId(choices.length === 1 ? choices[0].appointmentId : null);
+      } catch (e) {
+        setError(apiErrorMessage(e));
+      } finally {
+        setConverting(false);
+      }
+      return;
+    }
+    const target = estimate.appointmentId == null && pickedVisitId != null ? { appointmentId: pickedVisitId } : undefined;
+    if (estimate.appointmentId == null && !target) return;
+    setConverting(true);
     try {
-      const invoice = await convertEstimateToInvoice(estimate.id);
+      const invoice = await convertEstimateToInvoice(estimate.id, target);
       onConverted?.(invoice.id);
       onClose();
     } catch (e) {
@@ -118,6 +138,8 @@ export default function EstimateEditorModal({
       setConverting(false);
     }
   };
+
+  const askingVisit = Boolean(estimate && estimate.appointmentId == null && visitChoices != null);
 
   return createPortal(
     <div className="scheduler-modal-backdrop" onClick={close}>
@@ -153,6 +175,28 @@ export default function EstimateEditorModal({
             allowEmail
           />
         ) : null}
+        {askingVisit && visitChoices ? (
+          <fieldset className="estimate-visit-pick" data-testid="estimate-visit-pick">
+            <legend>Which visit is this for?</legend>
+            {visitChoices.length === 0 ? (
+              <p className="euth-estimate-hint">
+                No visit today or coming up for this family. Book the visit first, then convert.
+              </p>
+            ) : (
+              visitChoices.map((v) => (
+                <label key={v.appointmentId} className="estimate-visit-pick__row">
+                  <input
+                    type="radio"
+                    name="estimate-visit"
+                    checked={pickedVisitId === v.appointmentId}
+                    onChange={() => setPickedVisitId(v.appointmentId)}
+                  />
+                  <span>{formatVisitChoice(v)}</span>
+                </label>
+              ))
+            )}
+          </fieldset>
+        ) : null}
         {error && <div className="soap-error">{error}</div>}
         {convertHint && !alreadyConverted ? (
           <p className="euth-estimate-hint">{convertHint}</p>
@@ -164,7 +208,11 @@ export default function EstimateEditorModal({
           <button
             type="button"
             className="soap-btn"
-            disabled={converting || (!alreadyConverted && !canConvert)}
+            disabled={
+              converting ||
+              (!alreadyConverted && !canConvert) ||
+              (askingVisit && pickedVisitId == null)
+            }
             title={convertHint}
             onClick={() => void convert()}
           >
@@ -172,7 +220,9 @@ export default function EstimateEditorModal({
               ? 'Converting…'
               : alreadyConverted
                 ? 'Open invoice'
-                : 'Convert to invoice'}
+                : askingVisit
+                  ? 'Convert to this visit'
+                  : 'Convert to invoice'}
           </button>
         </div>
       </div>

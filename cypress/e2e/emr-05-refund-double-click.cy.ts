@@ -5,7 +5,8 @@ import { cleanEmrWorld, emrApi, seedEmrWorld, type EmrWorld } from '../support/e
 /**
  * EMR-05-6: a double-clicked refund refunds once. Staff refunds 100 of a 150 card payment on a paid
  * bill and double-clicks "Process refund": one refund line on screen, 100 refunded, and the ledger
- * took the Stripe refund off once.
+ * took the Stripe refund off once. Since Nov 6, 2026 (owner decision) a refund is recorded on the payment and
+ * lowers the bill with a "Refund" line, so the bill stays paid and nothing is owed again.
  *
  *   EMR_DB=vayd_api_test CYPRESS_EMR_DB=vayd_api_test EMR_STRIPE=test npx cypress run --spec cypress/e2e/emr-05-refund-double-click.cy.ts
  *
@@ -41,7 +42,7 @@ type Tender = { id: string; method: string; amount: string | number; refundedAmo
 function invoice(world: EmrWorld) {
   return emrApi(world, 'GET', `/visit-invoices/${world.visit.invoiceId}?practiceId=${world.practiceId}`).then((res) => {
     expect(res.status).to.eq(200);
-    return res.body as { status: string; total: string | number; amountPaid: string | number; tenders?: Tender[] };
+    return res.body as { status: string; total: string | number; amountPaid: string | number; tenders?: Tender[]; lines?: Array<{ description: string; amount: string | number; isDeleted?: boolean }> };
   });
 }
 
@@ -69,7 +70,7 @@ describe('EMR-05-6: a double-clicked refund is applied once', () => {
     cleanEmrWorld();
   });
 
-  it('one refund line, 100 refunded, the bill owes 100 again', () => {
+  it('one refund line, 100 refunded once, the bill stays paid (lowered by the refund)', () => {
     // A card payment of 150 on the bill: it is now paid.
     emrApi(world, 'POST', `/visit-payments/${world.visit.invoiceId}/charge-saved-card`, { practiceId: world.practiceId }).then((res) => {
       expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
@@ -94,14 +95,18 @@ describe('EMR-05-6: a double-clicked refund is applied once', () => {
     cy.get('.client-fin__paid-line').filter(':contains("Refunded $100.00")').should('have.length', 1);
     cy.contains(/Refunded \$200\.00/).should('not.exist');
 
-    // Recorded: the card payment has 100 refunded once, and the bill owes 100.
+    // Recorded: the card payment has 100 refunded once. The bill came down by the 100 (one "Refund" line,
+    // taken once, not twice) and stays paid: 50 paid on a 50 bill, nothing owed.
     invoice(world).then((inv) => {
       const cards = (inv.tenders ?? []).filter((t) => t.stripePaymentIntentId);
       expect(cards).to.have.length(1);
       expect(Number(cards[0].refundedAmount)).to.eq(100);
       expect(cards[0].voidedAt ?? null).to.eq(null);
       expect(Number(inv.amountPaid)).to.eq(50);
-      expect(inv.status).not.to.eq('paid');
+      expect(Number(inv.total)).to.eq(50);
+      expect(inv.status).to.eq('paid');
+      const refundLines = (inv.lines ?? []).filter((l) => !l.isDeleted && l.description.startsWith('Refund: '));
+      expect(refundLines.reduce((sum, l) => sum + Number(l.amount), 0)).to.eq(-100);
     });
     emrSql(
       `SELECT coalesce(array_length("stripeRefundIds", 1), 0) FROM visit_invoice_tenders WHERE "invoiceId" = '${world.visit.invoiceId}' AND method = 'card'`,

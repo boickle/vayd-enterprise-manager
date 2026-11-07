@@ -154,6 +154,12 @@ vi.mock('./plannerData', async (orig) => ({
   ...(await orig<typeof import('./plannerData')>()),
   loadFollowUpPlannerData: vi.fn(async () => fixture),
 }));
+// The labs task looks up who to assign (Nov 4). Unmocked, the real request fails, the token
+// refresh finds no refresh token and signs the test out, so later tests lose the staff name.
+vi.mock('../../api/tasks', async (orig) => ({
+  ...(await orig<typeof import('../../api/tasks')>()),
+  fetchLabsTaskPeople: vi.fn(async () => ({ relief: false, assigneeEmployeeIds: [], watcherEmployeeIds: [] })),
+}));
 vi.mock('./visitImpact', async (orig) => ({
   ...(await orig<typeof import('./visitImpact')>()),
   loadAddPetImpact: vi.fn(async () => ({

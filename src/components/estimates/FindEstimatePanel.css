@@ -1,0 +1,14 @@
+.find-estimate { margin: 8px 0; }
+.find-estimate__toggle { display: inline-flex; align-items: center; gap: 6px; }
+.find-estimate__list { margin-top: 8px; border: 1px solid var(--border, #d9dee5); border-radius: 8px; background: #fff; }
+.find-estimate__row + .find-estimate__row { border-top: 1px solid var(--border, #e6e9ee); }
+.find-estimate__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
+.find-estimate__expand { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; color: inherit; }
+.find-estimate__total { font-variant-numeric: tabular-nums; font-weight: 600; }
+.find-estimate__body { padding: 0 10px 10px 30px; }
+.find-estimate__lines { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+.find-estimate__lines td { padding: 3px 6px 3px 0; vertical-align: top; }
+.find-estimate__num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.find-estimate__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.find-estimate__muted { color: var(--muted, #6b7280); font-size: 0.9em; margin: 6px 10px; }
+.find-estimate__actions .find-estimate__muted { margin: 0; }

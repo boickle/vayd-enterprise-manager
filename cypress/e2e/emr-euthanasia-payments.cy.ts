@@ -115,8 +115,21 @@ function invoiceForAppointment(world: EmrWorld, appointmentId: number) {
 
 describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bill', () => {
   let world: EmrWorld;
-  before(() => seedEmrWorld().then((w) => (world = w)));
-  after(() => cleanEmrWorld());
+  let secondWitnessId: number;
+  before(() =>
+    seedEmrWorld().then((w) => {
+      world = w;
+      // Nov 6, 2026: no checkout before consent is on file. A second staff member to hear oral consent (invented).
+      emrSql(
+        `INSERT INTO employees ("firstName","lastName",email,"isProvider","practiceId","pimsId","pimsType","isActive","isDeleted")
+         VALUES ('Tamsin','Reedly','${w.tag}+witness@vayd.test',false,${w.practiceId},'${w.tag}-witness','EMRTEST',true,false) RETURNING id`,
+      ).then((id) => (secondWitnessId = Number(id)));
+    }),
+  );
+  after(() => {
+    if (secondWitnessId) emrSql(`DELETE FROM employees WHERE id = ${secondWitnessId}`);
+    cleanEmrWorld();
+  });
 
   it('consent hold, doctor charts, End Visit, settle: one charge, no duplicate lines', () => {
     const { appointmentId, patientId, estimateId, estimateTotal } = world.euthanasia;
@@ -126,6 +139,17 @@ describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bi
     emrApi(world, 'POST', `/visit-estimates/${estimateId}/authorize`, { practiceId: world.practiceId }).then((res) => {
       expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
       expect(Number(res.body.authorizedAmount)).to.eq(estimateTotal);
+    });
+
+    // Consent must be on file before checkout (owner decision Nov 6, 2026): oral consent heard by two staff,
+    // the same call the "Gave oral consent" button makes (the signed form is covered by the EMR-03 specs).
+    emrApi(world, 'POST', '/consent/euthanasia/witness', {
+      appointmentId,
+      patientId,
+      method: 'oral',
+      witnessEmployeeIds: [world.staff.employeeId, secondWitnessId],
+    }).then((res) => {
+      expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300);
     });
 
     // The doctor opens and charts the SOAP (a note; the quoted items are the bill).
@@ -146,10 +170,11 @@ describe('EMR-02-5: euthanasia visit start to finish, one charge equal to the bi
     signIn(world, checkoutPath(appointmentId, patientId, world.client.id));
     cy.contains('Estimate given to the family', { timeout: 40000 }).should('be.visible');
     noPrepayButtons();
-    // Nov 3, 2026: no per-item Accept / Decline. No consent form was signed here, so the bubble has no date.
+    // Nov 3, 2026: no per-item Accept / Decline. The bubble names the day the oral consent was recorded (today).
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
     cy.get('[data-testid="estimate-authorization-bubble"]', { timeout: 20000 }).should(
       'have.text',
-      `This owner approved $${estimateTotal.toFixed(2)} — it will be charged when you click "Run Payment from Authorization".`,
+      `This owner approved $${estimateTotal.toFixed(2)} on ${today} — it will be charged when you click "Run Payment from Authorization".`,
     );
     cy.contains('button', 'Run Payment from Authorization').should('not.be.disabled').click();
     cy.contains('Estimate given to the family', { timeout: 30000 }).should('not.exist');
