@@ -1824,6 +1824,8 @@ export type StoreAutoship = {
   paused: boolean;
   pausedUntil?: string | null;
   stripeSubscriptionId: string | null;
+  /** OS-10: null = normal; 'failing' = card declined, Stripe retrying; 'ended' = Stripe gave up (active=false). */
+  paymentStatus?: 'failing' | 'ended' | null;
 };
 
 export type StoreMemberDiscount = {

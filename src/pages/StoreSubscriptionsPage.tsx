@@ -36,6 +36,11 @@ function subStatus(row: StoreStaffSubscription): 'active' | 'paused' | 'cancelle
   return 'active';
 }
 
+/** OS-10: rows whose card is failing, or whose auto-ship Stripe ended after the card kept failing. */
+export function subPaymentProblem(row: StoreStaffSubscription): boolean {
+  return row.paymentStatus === 'failing' || row.paymentStatus === 'ended';
+}
+
 function itemPrice(item: StoreItemRow | undefined): number {
   return Number(item?.onlineStorePrice ?? 0) || 0;
 }
@@ -96,7 +101,7 @@ export default function StoreSubscriptionsPage() {
   const practiceId = practiceIdFromToken(token);
   const [rows, setRows] = useState<StoreStaffSubscription[]>([]);
   const [storeItems, setStoreItems] = useState<StoreItemRow[]>([]);
-  const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'all'>('active');
+  const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'payment' | 'all'>('active');
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -128,7 +133,9 @@ export default function StoreSubscriptionsPage() {
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((row) => {
-      if (filter !== 'all' && subStatus(row) !== filter) return false;
+      if (filter === 'payment') {
+        if (!subPaymentProblem(row)) return false;
+      } else if (filter !== 'all' && subStatus(row) !== filter) return false;
       if (!needle) return true;
       const hay = [row.itemName, row.customerName, row.customerEmail, row.patientName, row.stripeSubscriptionId]
         .filter(Boolean)
@@ -275,6 +282,7 @@ export default function StoreSubscriptionsPage() {
           ['active', 'Active'],
           ['paused', 'Paused'],
           ['cancelled', 'Cancelled'],
+          ['payment', 'Payment problems'],
           ['all', 'All'],
         ] as const).map(([key, label]) => (
           <button
@@ -388,8 +396,13 @@ export default function StoreSubscriptionsPage() {
                         ? row.pausedUntil
                           ? `Paused until ${formatPauseUntil(row.pausedUntil)}`
                           : 'Paused'
-                        : 'Cancelled'}
+                        : row.paymentStatus === 'ended'
+                          ? 'Ended: card failed'
+                          : 'Cancelled'}
                   </span>
+                  {row.paymentStatus === 'failing' ? (
+                    <span className="mail-queue__badge is-stop">Payment failing</span>
+                  ) : null}
                   {row.active ? (
                     <>
                       <button
