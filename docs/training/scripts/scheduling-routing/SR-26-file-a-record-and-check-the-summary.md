@@ -51,7 +51,7 @@
 - **Checked as a CL** on the training stack with the fictional record: filing, **Review & summarize**, and the review window with 6 reminders and the summary.
 - **Entered end to end as Dr. Lane (Nov 7):** the summary note was created and finalized, 6 reminders were added to Biscuit's chart (Dental cleaning, DHPP 1 yr, Leptospirosis 1 yr, Heartworm test, Bordetella intranasal 1 yr, Rabies 3 yr) and the records request was updated.
 - **Who can enter:** owner decision Nov 7, 2026: CLs, techs, doctors, practice managers and admins (vayd-api `6a1e8e91`). Before that, only a vet or licensed tech could. Re-check as Casey once frontend `6a4ede2` is pushed and merged into `training/videos`.
-- **The reminders sometimes don't come back (B10).** For the same record, the summary returned 9 to 11 reminders on some runs and none on others ("No reminders were found in these records"). If that happens while recording, **Save names & summarize again**.
+- **Reminders reliability (B10) fixed Nov 7 (vayd-api `882ed47f`):** records summaries now run at medium effort, and 10 of 10 test runs returned the full reminders. A summary takes about 10 seconds; wait for it in the video.
 - **The dental date varies between runs** (04/02/2025 or 04/30/2025); it always needs fixing. That's the point of step 10.
 - **Not walked:** **Close out**.
 - **The document preview** on the left of the review window was blank on the test stack. Use **Open in a new tab**, or check the preview on the recording stack.
