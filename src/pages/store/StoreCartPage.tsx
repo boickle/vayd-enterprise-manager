@@ -10,6 +10,7 @@ import {
   storeApiError,
   storeAttemptMayRetry,
   publicPreviewCoupon,
+  clientPreviewCoupon,
   publicStoreFulfillment,
   publicStoreProducts,
   publicStoreTax,
@@ -1275,10 +1276,9 @@ export default function StoreCartPage() {
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    void publicPreviewCoupon(practiceId, coupon, subtotal, {
-                      clientId,
-                      member: hasMemberPricing,
-                    })
+                    void (loggedIn
+                      ? clientPreviewCoupon(coupon, subtotal)
+                      : publicPreviewCoupon(practiceId, coupon, subtotal, { email: ship.email }))
                       .then((p) => {
                         setCouponOff(p.discount);
                         setCouponFreeShip(Boolean(p.freeShipping));
