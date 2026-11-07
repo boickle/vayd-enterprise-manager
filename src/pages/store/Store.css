@@ -604,6 +604,12 @@
   width: auto;
   max-width: 120px;
 }
+.vayd-store__pet-missing {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b42318;
+}
 .vayd-store__autoship-note {
   margin: 8px 0 0;
   font-size: 13px;

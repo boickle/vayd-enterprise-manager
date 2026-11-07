@@ -1433,6 +1433,34 @@
   color: #0f172a;
 }
 
+.store-item-card__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.store-item-card__name-input {
+  min-width: 280px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.store-item-card__rename {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f766e;
+  background: transparent;
+  border: 1px solid #cfe3dc;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.store-item-card__rename:hover:not(:disabled) {
+  background: #eef7f3;
+}
+
 .store-item-card__subtitle {
   display: flex;
   align-items: center;

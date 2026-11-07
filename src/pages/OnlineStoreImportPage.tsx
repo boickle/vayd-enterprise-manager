@@ -81,6 +81,83 @@ function isMemorialCategory(value: string | null | undefined): boolean {
  * Chips for the categories a product is in, plus a dropdown to add another.
  * onChange gets the full list; `added` is set when a category was just added.
  */
+/** Store product name with an inline rename. Only the shop name changes; Scout items keep theirs. */
+function StoreListingName({
+  name,
+  disabled,
+  onSave,
+}: {
+  name: string;
+  disabled?: boolean;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(name);
+  }, [name, editing]);
+  const trimmed = draft.trim();
+  const cancel = () => {
+    setEditing(false);
+    setDraft(name);
+  };
+  const save = async () => {
+    if (!trimmed || trimmed === name) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(trimmed);
+      setEditing(false);
+    } catch {
+      // The page shows the error; keep the box open so the name is not lost.
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (!editing) {
+    return (
+      <div className="store-item-card__name">
+        <h3>{name}</h3>
+        <button
+          type="button"
+          className="store-item-card__rename"
+          disabled={disabled}
+          onClick={() => setEditing(true)}
+          title="Rename this product on the online store"
+        >
+          Rename
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="store-item-card__name">
+      <input
+        className="settings-input store-item-card__name-input"
+        value={draft}
+        autoFocus
+        maxLength={512}
+        aria-label="Store product name"
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void save();
+          if (e.key === 'Escape') cancel();
+        }}
+      />
+      <button type="button" className="primary" disabled={saving || !trimmed} onClick={() => void save()}>
+        Save
+      </button>
+      <button type="button" className="secondary" disabled={saving} onClick={cancel}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function StoreCategoryPicker({
   value,
   options,
@@ -2385,7 +2462,27 @@ export default function OnlineStoreImportPage({ view = 'store' }: { view?: 'stor
                       onFile={(file) => void uploadListingPhoto(listing, file)}
                     />
                     <div>
-                      <h3>{listing.name}</h3>
+                      <StoreListingName
+                        name={listing.name}
+                        disabled={busy}
+                        onSave={async (next) => {
+                          setError(null);
+                          try {
+                            await patchOnlineStoreListing(practiceId, listing.listingId, {
+                              name: next,
+                            });
+                            setListings((prev) =>
+                              prev.map((row) =>
+                                row.listingId === listing.listingId ? { ...row, name: next } : row
+                              )
+                            );
+                            setFlash(`Renamed to ${next}.`);
+                          } catch (err) {
+                            setError(apiErrorMessage(err));
+                            throw err;
+                          }
+                        }}
+                      />
                       <div className="store-item-card__subtitle">
                         {isGiftCard
                           ? 'Gift card'

@@ -18,9 +18,17 @@ import {
   type BundleSaleResolution,
 } from '../../api/memberships';
 import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
+import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
+import {
+  checkItemPricingWithCoverageChoice,
+  type CoverageChoicePrompt,
+} from '../../utils/membershipCoverageChoice';
 import {
   buildCheckItemPayload,
+  buildCheckItemPayloadFromSearch,
   getBundleLinePrice,
+  pricingItemFromSearchAndCheck,
+  pricingItemFromSearchHit,
   getCatalogLinePrice,
   newBundleSaleId,
 } from '../../utils/catalogItemPricing';
@@ -180,6 +188,8 @@ export default function EstimateWorkspace({
     patientId ?? estimate.patientId ?? pets[0]?.id ?? null
   );
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const [coveragePrompt, setCoveragePrompt] = useState<CoverageChoicePrompt | null>(null);
+  const coverageChoiceResolveRef = useRef<((id: number | null) => void) | null>(null);
 
   const locked = disabled || estimate.status === 'converted';
   const canChangePrice = useCan('invoice.price.change');
@@ -256,10 +266,37 @@ export default function EstimateWorkspace({
       setBusy(true);
       setError(null);
       try {
-        const priced = getCatalogLinePrice(item, 1);
-        const listUnit = Number(
-          item.originalPrice ?? item.wellnessPlanPricing?.originalPrice ?? priced.unitFinal
+        // Same as the invoice: ask check-item-pricing for this pet (member / client price) and
+        // price the line from its answer; the search hit alone only knows the full price.
+        let priced = getCatalogLinePrice(pricingItemFromSearchHit(item), 1);
+        let listUnit = Number(
+          item.originalPrice ?? item.wellnessPlanPricing?.originalPrice ?? item.price ?? priced.unitFinal
         );
+        if (linePatientId != null && catalogIdOf(item) != null) {
+          try {
+            const checked = await checkItemPricingWithCoverageChoice({
+              request: {
+                patientId: linePatientId,
+                practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+                clientId: clientId ?? estimate.clientId ?? undefined,
+                itemType: item.itemType,
+                item: buildCheckItemPayloadFromSearch(item),
+                estimateId: estimate.id,
+              },
+              itemName: item.name,
+              askCoverageChoice: (prompt) =>
+                new Promise<number | null>((resolve) => {
+                  coverageChoiceResolveRef.current = resolve;
+                  setCoveragePrompt(prompt);
+                }),
+            });
+            priced = getCatalogLinePrice(pricingItemFromSearchAndCheck(item, checked), 1);
+            listUnit = Number(checked.originalPrice ?? listUnit);
+          } catch (e: unknown) {
+            if (e instanceof Error && e.message === 'Coverage choice cancelled') return;
+            /* keep the search hit's price */
+          }
+        }
         const next = await addEstimateLine(estimate.id, {
           description: item.name,
           qty: 1,
@@ -282,7 +319,7 @@ export default function EstimateWorkspace({
         setBusy(false);
       }
     },
-    [estimate.id, linePatientId, onChange, showPetPicker]
+    [estimate.id, estimate.clientId, clientId, linePatientId, onChange, showPetPicker]
   );
 
   const addBundleLines = useCallback(
@@ -637,7 +674,7 @@ export default function EstimateWorkspace({
                 );
               })}
               {hits.map((item) => {
-                const priced = getCatalogLinePrice(item, 1);
+                const priced = getCatalogLinePrice(pricingItemFromSearchHit(item), 1);
                 return (
                   <li key={`${item.itemType}-${catalogIdOf(item)}-${item.name}`}>
                     <button type="button" onClick={() => void addItem(item)} disabled={busy}>
@@ -727,6 +764,24 @@ export default function EstimateWorkspace({
           </button>
         </div>
       )}
+
+      {coveragePrompt ? (
+        <MembershipCoveragePickerModal
+          itemName={coveragePrompt.itemName}
+          alternatives={coveragePrompt.alternatives}
+          initialId={coveragePrompt.initialId}
+          onCancel={() => {
+            coverageChoiceResolveRef.current?.(null);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+          onPick={(id) => {
+            coverageChoiceResolveRef.current?.(id);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+        />
+      ) : null}
 
       {emailClientId != null && (
         <ClientEmailComposeModal

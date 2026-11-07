@@ -47,6 +47,7 @@ import {
   type PaymentsLeaderboards,
 } from '../api/payments';
 import DayPaymentsListModal from '../components/DayPaymentsListModal';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 import SquareDayReconciliationModal from '../components/SquareDayReconciliationModal';
 import TodaysPaymentsDetailModal from '../components/TodaysPaymentsDetailModal';
 
@@ -120,10 +121,30 @@ const PRESETS: Record<string, () => DateRange> = {
   YTD: () => ({ from: now.startOf('year'), to: now.startOf('day') }),
 };
 
+/**
+ * "All payments" and "View payments" read the reconciliation list, which needs
+ * `report.square_reconciliation` (practice manager, billing, admin). Others don't see a button that 403s.
+ */
+export function PaymentsListActions({ onAll, onView }: { onAll: () => void; onView: () => void }) {
+  const mayList = useCanOrAdminLogin('report.square_reconciliation');
+  if (!mayList) return null;
+  return (
+    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+      <Button size="small" variant="outlined" onClick={onAll}>
+        All payments
+      </Button>
+      <Button size="small" variant="outlined" onClick={onView}>
+        View payments
+      </Button>
+    </Stack>
+  );
+}
+
 // ----------------------------------
 // Main component
 // ----------------------------------
 export default function PaymentsAnalyticsPage() {
+  const mayReconcile = useCanOrAdminLogin('report.square_reconciliation');
   const [range, setRange] = useState<DateRange>(PRESETS['7D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
   const [leaderboards, setLeaderboards] = useState<PaymentsLeaderboards | null>(null);
@@ -247,6 +268,13 @@ export default function PaymentsAnalyticsPage() {
 
   // Square received + credit card comparison for the selected daily revenue day
   useEffect(() => {
+    // Square payments and the reconciliation list need report.square_reconciliation; without it
+    // the card is hidden and nothing is requested (no raw 403 on screen).
+    if (!mayReconcile) {
+      setSquareLoading(false);
+      setSquareError(null);
+      return;
+    }
     let alive = true;
     setSquareLoading(true);
     setSquareError(null);
@@ -303,7 +331,7 @@ export default function PaymentsAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [revenueDayKey]);
+  }, [revenueDayKey, mayReconcile]);
 
   // Stripe received for the selected daily revenue day (memberships from Dec 2025 only —
   // earlier Stripe would double-count charges already in Pulse).
@@ -632,22 +660,10 @@ export default function PaymentsAnalyticsPage() {
           <CardHeader
             title={isRevenueDayToday ? "Today's Revenue" : 'Revenue'}
             action={
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => setPaymentsListOpen(true)}
-                >
-                  All payments
-                </Button>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => setPaymentsDetailOpen(true)}
-                >
-                  View payments
-                </Button>
-              </Stack>
+              <PaymentsListActions
+                onAll={() => setPaymentsListOpen(true)}
+                onView={() => setPaymentsDetailOpen(true)}
+              />
             }
           />
           <CardContent>
@@ -740,6 +756,7 @@ export default function PaymentsAnalyticsPage() {
         </Card>
 
         {/* Square received (same day as daily revenue card) */}
+        {mayReconcile && (
         <Card variant="outlined">
           <CardHeader
             title={isRevenueDayToday ? 'Square Received Today' : 'Square Received'}
@@ -839,6 +856,7 @@ export default function PaymentsAnalyticsPage() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* Stripe received (same day as daily revenue card) */}
         <Card variant="outlined">
