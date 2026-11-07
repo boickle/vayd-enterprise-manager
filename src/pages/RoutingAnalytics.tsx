@@ -28,6 +28,7 @@ import {
   Select,
   MenuItem,
   TextField,
+  LinearProgress,
 } from '@mui/material';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
@@ -54,6 +55,15 @@ import {
   type AppointmentBookingDetail,
   type AppointmentBookingsAnalyticsUser,
 } from '../api/appointmentBookingsAnalytics';
+import {
+  appointmentBookingPeriodsContaining,
+  bookingGoalPace,
+  fetchAppointmentBookingsGoalSettings,
+  percentOfBookingGoal,
+  sumBookedBetween,
+  type AppointmentBookingPeriodWindow,
+  type AppointmentBookingsPeriodGoals,
+} from '../api/appointmentBookingsGoals';
 import {
   fetchAllAppointmentRequestSubmissions,
   type AppointmentRequestSubmissionItem,
@@ -505,6 +515,136 @@ function collectBookingDetails(
   return out;
 }
 
+function bookingGoalGapLabel(booked: number, goal: number): string {
+  const gap = goal - booked;
+  if (gap > 0) return `${gap} to go`;
+  if (gap < 0) return `${Math.abs(gap)} over goal`;
+  return 'At goal';
+}
+
+function BookingGoalProgressSection({
+  windows,
+  goals,
+  users,
+  loading,
+  error,
+}: {
+  windows: AppointmentBookingPeriodWindow[];
+  goals: AppointmentBookingsPeriodGoals | null;
+  users: AppointmentBookingsAnalyticsUser[] | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardHeader
+        title="Booking goals"
+        subheader="Practice appointments booked versus the weekly (Sunday–Saturday), monthly, and quarterly goals for the periods that include the selected end date. Counts are booked so far. While a period is still open, on pace projects the finish the same way production incentives do: bookings so far, spread across every day in the period."
+      />
+      <CardContent>
+        {error && (
+          <Alert severity="warning" sx={{ mb: goals ? 2 : 0 }}>
+            {error}
+          </Alert>
+        )}
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+            <CircularProgress size={28} />
+          </Box>
+        ) : goals ? (
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' },
+              gap: 2,
+            }}
+          >
+            {windows.map((period) => {
+              const goal = goals?.[period.key] ?? 0;
+              const booked = users
+                ? sumBookedBetween(users, period.startDate, period.endDate)
+                : 0;
+              const percent = percentOfBookingGoal(booked, goal);
+              const color =
+                percent == null ? undefined : totalBookedGoalMuiColor(booked, goal);
+              const today =
+                DateTime.now().setZone(DEFAULT_PRACTICE_TIMEZONE).toISODate() ?? '';
+              const pace = bookingGoalPace(
+                booked,
+                goal,
+                period.startDate,
+                period.endDate,
+                today
+              );
+              const paceColor = pace
+                ? totalBookedGoalMuiColor(pace.projected, goal)
+                : undefined;
+              return (
+                <Box
+                  key={period.key}
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    p: 2,
+                  }}
+                >
+                  <Typography variant="subtitle2">{period.title}</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    {period.label}
+                  </Typography>
+                  {goal > 0 && percent != null ? (
+                    <>
+                      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                        {booked} / {goal}
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={Math.min(100, percent)}
+                          color={color ?? 'error'}
+                          sx={{ flex: 1, height: 8, borderRadius: 4 }}
+                        />
+                        <Typography variant="body2" sx={{ minWidth: 48, textAlign: 'right', fontWeight: 600 }}>
+                          {percent}%
+                        </Typography>
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                        {bookingGoalGapLabel(booked, goal)}
+                      </Typography>
+                      {pace && (
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            mt: 0.75,
+                            fontWeight: 600,
+                            color:
+                              paceColor === 'success'
+                                ? 'success.main'
+                                : paceColor === 'warning'
+                                  ? 'warning.main'
+                                  : 'error.main',
+                          }}
+                        >
+                          On pace for {pace.projected} ({pace.percent}%)
+                        </Typography>
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No {period.title.toLowerCase()} goal set. Add one in Settings → Employee Goals.
+                    </Typography>
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function RoutingAnalyticsPage() {
   const [preset, setPreset] = useState<string>('1D');
   const { range, draftRange, applyRange, onCustomFromChange, onCustomToChange } =
@@ -551,6 +691,18 @@ export default function RoutingAnalyticsPage() {
   const startStr = toLocalDateStr(start);
   const endStr = toLocalDateStr(end);
   const isSingleDay = start.isSame(end, 'day');
+  const goalWindows = useMemo(
+    () =>
+      appointmentBookingPeriodsContaining(
+        DEFAULT_PRACTICE_TIMEZONE,
+        DateTime.fromISO(endStr, { zone: DEFAULT_PRACTICE_TIMEZONE })
+      ),
+    [endStr]
+  );
+  const [periodGoals, setPeriodGoals] = useState<AppointmentBookingsPeriodGoals | null>(null);
+  const [goalUsers, setGoalUsers] = useState<AppointmentBookingsAnalyticsUser[] | null>(null);
+  const [goalProgressLoading, setGoalProgressLoading] = useState(true);
+  const [goalProgressError, setGoalProgressError] = useState<string | null>(null);
   const dates = useMemo(() => dateRange(start, end), [start, end]);
 
   const shiftRange = (direction: -1 | 1) => {
@@ -561,6 +713,37 @@ export default function RoutingAnalyticsPage() {
       to: range.to.add(shift, 'day'),
     });
   };
+
+  useEffect(() => {
+    let alive = true;
+    setGoalProgressLoading(true);
+    setGoalProgressError(null);
+    Promise.all([
+      fetchAppointmentBookingsGoalSettings(APPOINTMENT_REQUEST_PRACTICE_ID),
+      fetchAppointmentBookingsAnalytics({
+        startDate: goalWindows.fetchStart,
+        endDate: goalWindows.fetchEnd,
+      }),
+    ])
+      .then(([goals, bookings]) => {
+        if (!alive) return;
+        setPeriodGoals(goals.period);
+        setGoalUsers(bookings?.users ?? []);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Booking goal progress fetch failed:', e);
+        setGoalProgressError('Failed to load booking goal progress');
+        setPeriodGoals(null);
+        setGoalUsers(null);
+      })
+      .finally(() => {
+        if (alive) setGoalProgressLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [goalWindows.fetchStart, goalWindows.fetchEnd]);
 
   useEffect(() => {
     setLoading(true);
@@ -1148,6 +1331,14 @@ export default function RoutingAnalyticsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Day boundaries use the practice timezone ({DEFAULT_PRACTICE_TIMEZONE}), not UTC.
         </Typography>
+
+        <BookingGoalProgressSection
+          windows={goalWindows.periods}
+          goals={periodGoals}
+          users={goalUsers}
+          loading={goalProgressLoading}
+          error={goalProgressError}
+        />
 
         <Card sx={{ mb: 3 }}>
           <CardHeader

@@ -11,6 +11,7 @@ import { buildGmailInboxReturnPath } from './routingAppointmentRequestIntent';
 import {
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
+  isAppointmentCancelledOnPracticeCalendar,
 } from '../api/appointments';
 import {
   appointmentTypeLabelFromRow as routingTypeLabelFromRow,
@@ -411,6 +412,11 @@ function patientDisplayName(p: Patient): string | undefined {
   return name || (p.id != null ? `Pet #${p.id}` : undefined);
 }
 
+/**
+ * Same-day rows that can move with a reschedule or be picked up on End Visit.
+ * Canceled visits stay in the raw day payload (the grid hides them via
+ * confirmStatusName) and must not be offered as sibling pets.
+ */
 function isReschedulableCalendarRow(a: Appointment): boolean {
   if (a.isDeleted) return false;
   if (a.isActive === false) return false;
@@ -418,9 +424,12 @@ function isReschedulableCalendarRow(a: Appointment): boolean {
   if ((a as { type?: string }).type === 'block') return false;
   if ((a as { isBlock?: boolean }).isBlock === true) return false;
   if ((a as { isPersonalBlock?: boolean }).isPersonalBlock === true) return false;
-  const status = pickStr((a as { statusName?: string }).statusName)?.toLowerCase() ?? '';
-  if (status === 'cancelled' || status === 'canceled') return false;
+  if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   return true;
+}
+
+function patientIsInactive(p: Patient): boolean {
+  return p.isActive === false || p.isDeleted === true;
 }
 
 /** Unique patients for this client on the same practice-calendar day as `sourceAppt`. */
@@ -438,9 +447,15 @@ export function collectSameDayHouseholdVisits(
   if (!dayKey) return [];
 
   const byPatient = new Map<string, RescheduleSameDayVisit>();
+  const sourcePatientIds = new Set(
+    patientsForAppointment(sourceAppt)
+      .filter((p) => p.id != null)
+      .map((p) => String(p.id))
+  );
 
   for (const a of appointments) {
-    if (!isReschedulableCalendarRow(a)) continue;
+    const isSourceRow = a.id === sourceAppt.id;
+    if (!isSourceRow && !isReschedulableCalendarRow(a)) continue;
     if (a.client?.id == null || String(a.client.id) !== clientId) continue;
     const aDay = DateTime.fromISO(a.appointmentStart, { zone: 'utc' }).setZone(practiceTz).toISODate();
     if (aDay !== dayKey) continue;
@@ -449,6 +464,10 @@ export function collectSameDayHouseholdVisits(
     for (const p of patientsForAppointment(a)) {
       if (p.id == null) continue;
       const patientId = String(p.id);
+      const isSourcePatient = sourcePatientIds.has(patientId);
+      // Keep the pet on the visit being closed. Drop euthanized / inactive
+      // siblings so End Visit does not pre-check them for times or forward booking.
+      if (!isSourcePatient && patientIsInactive(p)) continue;
       if (byPatient.has(patientId)) continue;
       const at = a.appointmentType;
       const rawTypeId = at?.id;

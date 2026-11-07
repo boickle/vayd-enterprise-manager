@@ -41,6 +41,7 @@ import {
 } from './appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
+import MembershipComparisonPage from './pages/MembershipComparisonPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
 import MedicalNoteEncounterPage from './pages/MedicalNoteEncounterPage';
@@ -782,6 +783,7 @@ export default function App() {
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
+                    <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="jot" element={<BriefWorkspacePage />} />
                     <Route path="epiphany" element={<Navigate to="/schedule/jot" replace />} />

@@ -285,10 +285,14 @@ export type InventoryAttention = {
 };
 
 export async function getInventoryAttention(practiceId: number): Promise<InventoryAttention> {
-  const { data } = await http.get<InventoryAttention>(
+  const { data } = await http.get<Partial<InventoryAttention>>(
     `/practice/${practiceId}/inventory-counts/attention`
   );
-  return data;
+  return {
+    flaggedCounts: data?.flaggedCounts ?? 0,
+    costReviews: data?.costReviews ?? 0,
+    shrink: data?.shrink ?? { alert: false, shrinkPct: null, accuracyPct: null },
+  };
 }
 
 export async function markCountReviewed(
