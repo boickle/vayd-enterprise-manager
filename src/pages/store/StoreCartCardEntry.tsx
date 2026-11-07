@@ -19,10 +19,12 @@ export type StoreCardBillingPrefill = {
 type Props = {
   billingPrefill: StoreCardBillingPrefill;
   onClose?: () => void;
+  /** OS-A16: false for a guest, who has no account to keep a card on: the option is hidden and nothing is saved. */
+  canSaveCard?: boolean;
 };
 
 const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function StoreCartCardEntry(
-  { billingPrefill, onClose },
+  { billingPrefill, onClose, canSaveCard = true },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -108,7 +110,7 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
       if (result.error) throw new Error(result.error.message || 'Card was declined.');
       const id = result.paymentMethod?.id;
       if (!id) throw new Error('Could not save that card.');
-      return { paymentMethodId: id, saveCard };
+      return { paymentMethodId: id, saveCard: canSaveCard && saveCard };
     },
   }));
 
@@ -173,14 +175,16 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
           autoComplete="billing postal-code"
         />
       </label>
-      <label className="vayd-store__card-save">
-        <input
-          type="checkbox"
-          checked={saveCard}
-          onChange={(e) => setSaveCard(e.target.checked)}
-        />
-        <span>Save my card on file to make future purchases easier</span>
-      </label>
+      {canSaveCard ? (
+        <label className="vayd-store__card-save">
+          <input
+            type="checkbox"
+            checked={saveCard}
+            onChange={(e) => setSaveCard(e.target.checked)}
+          />
+          <span>Save my card on file to make future purchases easier</span>
+        </label>
+      ) : null}
       {onClose ? (
         <button type="button" className="vayd-store__card-link" onClick={onClose}>
           Use a card on file instead

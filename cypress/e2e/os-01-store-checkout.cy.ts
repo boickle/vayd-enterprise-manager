@@ -5,9 +5,10 @@ import '../support/e2e';
  * OS-01-11 (vayd-api docs/test-plans/online-store.md, D1): screen to API, both store checkout paths.
  *   (a) A portal client buys with a saved card: one charge on A's own Stripe customer, the order and the Scout
  *       invoice on A, one thank-you email.
- *   (b) D1 (updated Nov 7, 2026): guests buy gift cards only. A guest who adds a store item is asked to log
- *       in; the guest then buys a gift card with the Stripe test card 4242: charged once, the gift card belongs
- *       to no client, and no saved cards are shown or asked for at any point.
+ *   (b) OS-A16 (owner, Nov 7, 2026): guests may buy non-prescription store items with a new card. A guest who
+ *       adds a store item sees the card form (no saved cards, no "Save my card", no login wall); the guest
+ *       then buys a gift card with the Stripe test card 4242: charged once, the gift card belongs to no
+ *       client, and no saved cards are shown or asked for at any point.
  *
  * Seed: the H-STORE world (cy tasks seedStoreWorld / cleanStoreWorld in cypress.config.ts).
  *   STORE_DB=<test db> CYPRESS_STORE_DB=<same test db> [CYPRESS_EMAIL_CAPTURE_PATH=/tmp/store-emails.jsonl] \
@@ -195,19 +196,21 @@ describe('OS-01-11: store checkout, screen to API', () => {
     cy.get('@typedEmailCards.all').should('have.length', 0);
   });
 
-  it('OS-01-11 (b): a guest’s store item asks for a login; the guest buys a gift card with 4242, charged once, no saved cards', () => {
+  it('OS-01-11 (b): a guest’s store item shows the card form with no saved cards; the guest buys a gift card with 4242, charged once, no saved cards', () => {
     cy.intercept('POST', '**/public/store/card-on-file').as('typedEmailCards');
     cy.intercept('GET', '**/store/checkout/cards').as('myCards');
     cy.intercept('POST', '**/public/store/checkout').as('guestCheckout');
     const buyer = `${w.tag}+giftguest@vayd.test`;
 
-    // A store item: the guest is asked to log in, and no checkout form or card list is shown.
+    // A store item (OS-A16): the guest gets the checkout form with a new-card entry; no login wall, no card
+    // list, and no "Save my card" option.
     cy.clearLocalStorage();
     cy.visit('/store');
     cartWithStoreItem(w);
     cy.visit('/store/cart');
-    cy.contains('Log in to check out', { timeout: 20000 });
-    cy.contains('button', 'Place order').should('not.exist');
+    cy.contains('button', 'Place order', { timeout: 20000 });
+    cy.contains('Log in to check out').should('not.exist');
+    cy.contains('Save my card on file').should('not.exist');
     cy.get('.vayd-store__card-select').should('not.exist');
 
     // A gift card only: the guest checks out with a new card.
