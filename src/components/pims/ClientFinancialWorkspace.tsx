@@ -3,6 +3,7 @@ import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefun
 import { clampReturnQty, returnQtyProblem, returnableQty } from '../../utils/returnLimits';
 import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
 import { payLinkPreview, payLinkPreviewText } from '../../utils/payLinkPreview';
+import { usePayLinkCredit } from '../../utils/usePayLinkCredit';
 import { useWitnessOptions } from '../inventory/WasteDetailFields';
 import {
   chosenReturnLots,
@@ -773,6 +774,35 @@ function evetCreditUsedNote(inv: NormalizedInvoice): string | null {
   return used > 0.005 ? `Includes ${money(used)} account credit` : null;
 }
 
+/** A tender given back in full (a return or a refund). The API closes it with voidedAt too. */
+export function tenderFullyRefunded(t: { amount?: number; refundedAmount?: number }): boolean {
+  const refunded = Number(t.refundedAmount) || 0;
+  return refunded > 0.009 && refunded >= (Number(t.amount) || 0) - 0.009;
+}
+
+/** Text for one line of the staff-only voided/refunded payments box. */
+export function staffVoidedTenderText(
+  t: {
+    amount: number;
+    refundedAmount?: number;
+    voidedAt?: string | null;
+    voidReason?: string | null;
+  },
+  label: string,
+  byName: string | null,
+  when: string | null
+): string {
+  const word = tenderFullyRefunded(t) ? 'refunded' : 'voided';
+  return [
+    `${label} ${money(t.amount)}`,
+    byName ? `${word} by ${byName}` : word,
+    when,
+    t.voidReason,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 function voidedPaymentNote(
   items: { label: string; amount: number; refunded?: boolean }[],
 ): string | null {
@@ -873,7 +903,7 @@ function StaffVoidedPayments({ items }: { items: { key: string; text: string }[]
   if (!items.length) return null;
   return (
     <details className="client-fin__staff-audit">
-      <summary>Staff only · voided payments ({items.length})</summary>
+      <summary>Staff only · voided and refunded payments ({items.length})</summary>
       <p className="client-fin__muted">
         Kept for staff lookup. Not printed or emailed to the client.
       </p>
@@ -2029,6 +2059,7 @@ export default function ClientFinancialWorkspace({
       else rows.unshift(full);
     }
     setScoutInvoices(rows);
+    refreshPayLinkCredit();
     void refreshEstimates().catch(() => undefined);
     if (full) setSelected(full);
     else if (keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)) {
@@ -2807,9 +2838,7 @@ export default function ClientFinancialWorkspace({
               amount: Number(tender.amount) || 0,
               // A payment given back in full (a return or a refund) is closed the same way as a
               // void; say "refunded" so staff don't think it was a recording mistake.
-              refunded:
-                Number(tender.refundedAmount) > 0.009 &&
-                Number(tender.refundedAmount) >= (Number(tender.amount) || 0) - 0.009,
+              refunded: tenderFullyRefunded(tender),
             })),
         ),
         total: Number(inv.total) || 0,
@@ -2964,24 +2993,7 @@ export default function ClientFinancialWorkspace({
   );
   const unpaidTotal = unpaidScout.reduce((s, inv) => s + dueOf(inv), 0) + unpaidEvet.reduce((s, inv) => s + inv.due, 0);
   // Wave 8A: a pay link asks for what is owed less the family's spendable account credit.
-  const [payLinkCredit, setPayLinkCredit] = useState(0);
-  useEffect(() => {
-    if (clientId == null || unpaidTotal <= 0.009) {
-      setPayLinkCredit(0);
-      return;
-    }
-    let cancelled = false;
-    void fetchAvailableAccountCredit(Number(clientId))
-      .then((c) => {
-        if (!cancelled) setPayLinkCredit(Number(c.total) || 0);
-      })
-      .catch(() => {
-        if (!cancelled) setPayLinkCredit(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId, unpaidTotal]);
+  const { credit: payLinkCredit, refreshCredit: refreshPayLinkCredit } = usePayLinkCredit(clientId, unpaidTotal);
   const payLinkNet = payLinkPreview(unpaidTotal, payLinkCredit).amount;
 
   // If Scout had nothing open on load, open the newest unpaid eVet invoice once it arrives.
@@ -8125,16 +8137,14 @@ export default function ClientFinancialWorkspace({
                   .filter((t) => t.voidedAt)
                   .map((t) => ({
                     key: t.id,
-                    text: [
-                      `${tenderPayLabel(t)} ${money(t.amount)}`,
+                    text: staffVoidedTenderText(
+                      t,
+                      tenderPayLabel(t),
                       t.voidedByEmployeeId != null
-                        ? `voided by ${staffName(staffById.get(t.voidedByEmployeeId), t.voidedByEmployeeId)}`
-                        : 'voided',
+                        ? staffName(staffById.get(t.voidedByEmployeeId), t.voidedByEmployeeId)
+                        : null,
                       t.voidedAt ? formatTs(t.voidedAt) : null,
-                      t.voidReason,
-                    ]
-                      .filter(Boolean)
-                      .join(' · '),
+                    ),
                   }))}
               />
               <StaffInvoiceAudit entries={selected.staffAudit} />
