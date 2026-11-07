@@ -81,21 +81,17 @@ describe('EMR-07b: tech enters Rx directions for the vet; History shows every st
           cy.contains('label', 'refills').find('input').clear().type('2');
           cy.get('select[aria-label="Acute or chronic prescription"]').select('acute');
           cy.contains('label', 'Discard after').find('input[type="date"]').type(discardAfter);
-          cy.contains('button', 'Save Rx').should('not.be.disabled').click();
+          // 2. Two clicks (owner, Nov 6, 2026): Save sig, then Approve, which saves the refills,
+          // acute/chronic and discard date with the script (rx.invoice.approve). No Save Rx for approvers.
+          cy.contains('button', 'Save Rx').should('not.exist');
+          cy.get('.client-fin__btn-approve').click();
+          cy.contains('.client-fin__entered', 'Approved', { timeout: 20000 }).should('exist');
         });
 
         // The prescriber is the visit's vet, not the technician.
         emrSql(
           `SELECT "employee_Id" || '|' || instructions || '|' || refill FROM prescriptions WHERE "encounterOrderId" = '${order.id}' AND "isDeleted" = false`
         ).should('eq', `${w.employees.veterinarian}|${sig}|2`);
-
-        // 2. The technician approves the script for dispensing with the form's Approve button (rx.invoice.approve).
-        // Saving the Rx keeps the drawer open; openRxDrawer only clicks the chevron when it is closed.
-        openRxDrawer();
-        cy.get('.soap-invoice-line-drawer.is-open .soap-checkout-invoice-rx-match').within(() => {
-          cy.get('.client-fin__btn-approve').click();
-          cy.contains('.client-fin__entered', 'Approved', { timeout: 20000 }).should('exist');
-        });
 
         // 3. The label prints (the label screens log it right after printing).
         emrSql(

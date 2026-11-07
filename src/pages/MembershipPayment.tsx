@@ -15,6 +15,7 @@ import { useAuth } from '../auth/useAuth';
 import { getFrontendPaymentProvider } from '../config/paymentProvider';
 import { loadStripePublishableKey } from '../api/practicePublicConfig';
 import { trackPurchase } from '../utils/analytics';
+import { keepCheckoutKeyAfterError, newCheckoutKey } from '../utils/membershipCheckoutRetryKey';
 
 declare global {
   interface Window {
@@ -188,6 +189,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [formResetKey, setFormResetKey] = useState(0);
   const [stripeCardReady, setStripeCardReady] = useState(false);
   const stripeRef = useRef<Stripe | null>(null);
+  /** PAY-A9: the key of a Stripe checkout whose reply never came; paying again reuses it. */
+  const checkoutKeyRef = useRef<string | null>(null);
   const stripeCardRef = useRef<StripeCardElement | null>(null);
 
   // Promo code entered by the client at checkout
@@ -425,6 +428,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     setProcessing(true);
     setError(null);
     setPromoCodeError(null);
+    let stripeCheckoutSent = false;
 
     try {
       const emailForSquare =
@@ -576,10 +580,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error(pmError?.message || 'Unable to tokenize card.');
       }
 
-      const idempotencyKey =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `membership-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      // PAY-A9: a retry after a reply that never came reuses the same key.
+      const idempotencyKey = checkoutKeyRef.current ?? newCheckoutKey();
+      checkoutKeyRef.current = idempotencyKey;
 
       if (state.intent === PaymentIntent.SUBSCRIPTION && !state.subscriptionPlanId) {
         throw new Error('Subscription plan ID is missing for this selection.');
@@ -609,6 +612,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           }
         : undefined;
 
+      stripeCheckoutSent = true;
       let payment = await createPayment({
         provider: 'stripe',
         sourceId: paymentMethod.id,
@@ -652,6 +656,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
             }
           : {}),
       });
+      // The server answered: the next Pay is a new attempt.
+      checkoutKeyRef.current = null;
 
       if (!payment.success && stripeRef.current) {
         const secret = extractPaymentIntentClientSecret(payment.providerResponse);
@@ -709,6 +715,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       setEnrollmentComplete(true);
       onEnrollmentSucceeded?.(state.petId);
     } catch (err: any) {
+      if (stripeCheckoutSent && !keepCheckoutKeyAfterError(err)) checkoutKeyRef.current = null;
       const status = err?.response?.status;
       const serverMessage: string | undefined = err?.response?.data?.message ?? err?.response?.data?.error;
       // Stripe embeds the card error inside providerResponse.error

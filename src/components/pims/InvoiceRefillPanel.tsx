@@ -7,11 +7,14 @@ import {
   listInvoiceLineRefillOptions,
   listInvoiceRefillOptions,
   releaseInvoiceLineRefill,
+  rewriteInvoiceLineRefill,
   setRefillProductionOverride,
   type InvoiceLineRefillOption,
   type VisitInvoice,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
+import { useCan } from '../../permissions/PermissionContext';
+import RxRefillControls from './RxRefillControls';
 import './InvoiceRefillPanel.css';
 
 function shortDate(iso: string | null): string | null {
@@ -59,6 +62,9 @@ function RefillPicker({
 }) {
   const [options, setOptions] = useState<InvoiceLineRefillOption[] | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  /** The row whose refill count is open for a change (stop, fewer, or more by a vet). */
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const canChangeRefills = useCan('rx.sig.draft');
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -137,6 +143,29 @@ function RefillPicker({
                 </div>
                 {option.instructions ? (
                   <p className="inv-refill__sig">{option.instructions}</p>
+                ) : null}
+                {canChangeRefills ? (
+                  <button
+                    type="button"
+                    className="client-fin__btn-ghost inv-refill__change"
+                    onClick={() =>
+                      setEditingId((cur) => (cur === option.prescriptionId ? null : option.prescriptionId))
+                    }
+                  >
+                    {editingId === option.prescriptionId ? 'Done' : 'Change refills'}
+                  </button>
+                ) : null}
+                {editingId === option.prescriptionId ? (
+                  <RxRefillControls
+                    prescriptionId={option.prescriptionId}
+                    patientId={option.patientId}
+                    refill={option.refillsLeft}
+                    onChanged={() => {
+                      void load()
+                        .then(setOptions)
+                        .catch(() => undefined);
+                    }}
+                  />
                 ) : null}
                 {option.eligible ? (
                   <button
@@ -579,10 +608,15 @@ export function RefillCheckButton({
   );
 }
 
-/** Summary + undo for a line that is filled as a refill. */
+/**
+ * Summary + undo for a line that is filled as a refill. The directions show, locked. To change
+ * them, **New directions** stops the old script (its refills go to 0) and turns the line into a
+ * new script under the visit's doctor, starting from the item's default directions.
+ */
 export function RefillSummary({
   invoiceId,
   lineId,
+  instructions,
   canEdit,
   disabled,
   onReleased,
@@ -590,13 +624,18 @@ export function RefillSummary({
 }: {
   invoiceId: string;
   lineId: string;
+  /** The directions copied from the prescription. */
+  instructions?: string | null;
   canEdit: boolean;
   disabled?: boolean;
+  /** Called with the invoice after Undo refill or New directions. */
   onReleased: (invoice: VisitInvoice) => void;
   onError: (message: string) => void;
 }) {
   const [used, setUsed] = useState<InvoiceLineRefillOption | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmRewrite, setConfirmRewrite] = useState(false);
+  const canWriteDirections = useCan('rx.sig.draft');
 
   useEffect(() => {
     let cancelled = false;
@@ -623,6 +662,22 @@ export function RefillSummary({
     }
   };
 
+  const rewrite = async () => {
+    setBusy(true);
+    try {
+      const next = await rewriteInvoiceLineRefill(invoiceId, lineId);
+      setConfirmRewrite(false);
+      onReleased(next);
+    } catch (e) {
+      onError(errMessage(e, 'Could not write new directions.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sig = (instructions ?? used?.instructions ?? '').trim();
+  const leftAfter = used?.refillsLeft ?? null;
+
   return (
     <div className="inv-refill__summary">
       <strong>{used ? `Refill of ${rxTitle(used)}` : 'Refill of an existing prescription'}</strong>
@@ -637,18 +692,80 @@ export function RefillSummary({
             .join(' · ')}
         </span>
       ) : null}
+      <div className="inv-refill__directions">
+        <span className="inv-refill__directions-label">Directions</span>
+        <p className="inv-refill__directions-text" aria-readonly="true">
+          {sig || 'No directions on this prescription.'}
+        </p>
+      </div>
       <span className="inv-refill__locked">Directions are locked to the prescription.</span>
-      {canEdit ? (
-        <button
-          type="button"
-          className="client-fin__btn-ghost"
-          disabled={disabled || busy}
-          title="Put the refill back on the prescription and unlock the directions"
-          onClick={() => void release()}
-        >
-          {busy ? 'Undoing…' : 'Undo refill'}
-        </button>
+      {canEdit || canWriteDirections ? (
+        <div className="inv-refill__summary-actions">
+          {canWriteDirections ? (
+            <button
+              type="button"
+              className="client-fin__btn-ghost inv-refill__rewrite"
+              disabled={disabled || busy}
+              title="Stop this prescription (no refills left) and write a new script for the visit's doctor"
+              onClick={() => setConfirmRewrite(true)}
+            >
+              New directions…
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button
+              type="button"
+              className="client-fin__btn-ghost"
+              disabled={disabled || busy}
+              title="Put the refill back on the prescription and unlock the directions"
+              onClick={() => void release()}
+            >
+              {busy ? 'Undoing…' : 'Undo refill'}
+            </button>
+          ) : null}
+        </div>
       ) : null}
+      {confirmRewrite
+        ? createPortal(
+            <div className="inv-refill-backdrop" role="dialog" aria-modal="true">
+              <div className="inv-refill">
+                <h3>New directions?</h3>
+                <p className="inv-refill__hint">
+                  A refill can't change the directions. To change them, stop{' '}
+                  {used ? rxTitle(used) : 'this prescription'}
+                  {leftAfter != null
+                    ? `: its ${leftAfter + 1} refill${leftAfter + 1 === 1 ? '' : 's'} left go to 0`
+                    : ': its refills go to 0'}
+                  , so nobody fills it again with the old directions.
+                </p>
+                <p className="inv-refill__hint">
+                  This line becomes a new script for the visit's doctor, who gets the production.
+                  It starts with the item's usual directions, and it needs approval like any new
+                  script.
+                </p>
+                <div className="inv-refill__actions">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={busy}
+                    onClick={() => void rewrite()}
+                  >
+                    {busy ? 'Stopping…' : 'Stop refills and write a new script'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={busy}
+                    onClick={() => setConfirmRewrite(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

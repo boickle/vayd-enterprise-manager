@@ -9,13 +9,18 @@ export function labAbnormalCount(result: LabResult): number {
   ).length;
 }
 
-/** Rolled-up state for every form on one lab charge. */
-export type LabResultsState = 'none' | 'waiting' | 'abnormal' | 'normal';
+/**
+ * Rolled-up state for every form on one lab charge. Nobody marks a result normal: Scout flags values against
+ * each row's range or abnormal options. A notes-only (summary) form has nothing to check, so once saved it is
+ * just complete. Normal means every form had values to check and none were flagged.
+ */
+export type LabResultsState = 'none' | 'waiting' | 'abnormal' | 'normal' | 'complete';
 
 export function labResultsState(results: LabResult[] | null | undefined): LabResultsState {
   if (!results?.length) return 'none';
   if (results.some((r) => r.status === 'pending')) return 'waiting';
-  return results.some((r) => labAbnormalCount(r) > 0) ? 'abnormal' : 'normal';
+  if (results.some((r) => labAbnormalCount(r) > 0)) return 'abnormal';
+  return results.some((r) => r.templateMode === 'summary') ? 'complete' : 'normal';
 }
 
 type Props = {
@@ -26,7 +31,7 @@ type Props = {
 };
 
 /**
- * Not run / abnormal / Normal, for a lab charge wherever it appears — the
+ * Not run / abnormal / Normal / Complete, for a lab charge wherever it appears — the
  * invoice line, the SOAP checkout, or the chart timeline.
  */
 export default function LabResultChip({ results, waitingLabel = 'Not run', className }: Props) {
@@ -50,7 +55,7 @@ export default function LabResultChip({ results, waitingLabel = 'Not run', class
   }
   return (
     <span className={cls}>
-      <Check size={11} aria-hidden /> Normal
+      <Check size={11} aria-hidden /> {state === 'complete' ? 'Complete' : 'Normal'}
     </span>
   );
 }

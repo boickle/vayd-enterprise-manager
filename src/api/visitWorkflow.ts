@@ -50,6 +50,8 @@ export type SoapEncounter = {
   completedAt: string | null;
   created: string;
   updated: string;
+  /** Only on patient-chart lists (`patientId` query): the signed SOAP's addenda, oldest first. */
+  addenda?: SoapAddendum[];
 };
 
 export type PatientProblem = {
@@ -106,7 +108,15 @@ export type EncounterOrder = {
   } | null;
 };
 
-export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'gift_card' | 'other';
+export type VisitTenderMethod =
+  | 'card'
+  | 'cash'
+  | 'check'
+  | 'carecredit'
+  | 'gift_card'
+  | 'other'
+  /** PAY-06: spends the client's account credit (Scout credits, then eVet balance). */
+  | 'account_credit';
 
 export type VisitInvoiceLine = {
   id: string;
@@ -1152,7 +1162,8 @@ export async function listPatientPrescriptions(
 /** Mark a prescription as no longer taking (or clear that mark). */
 export async function updatePatientPrescription(
   id: number,
-  body: { discontinued?: boolean }
+  /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
+  body: { discontinued?: boolean; refill?: number; patientId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,
@@ -1365,6 +1376,24 @@ export async function addVisitTender(
   return data;
 }
 
+/** PAY-06: what the client can spend now; eVet credit is held while the practice's eVet sync is on. */
+export type AvailableAccountCredit = {
+  scout: number;
+  evet: number;
+  evetHeld: boolean;
+  evetHeldAmount: number;
+  total: number;
+  heldNote: string | null;
+};
+
+export async function fetchAvailableAccountCredit(clientId: number): Promise<AvailableAccountCredit> {
+  const { data } = await http.get<AvailableAccountCredit>(
+    `/visit-invoices/client/${encodeURIComponent(String(clientId))}/account-credit`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
 export async function voidVisitTender(
   invoiceId: string,
   tenderId: string,
@@ -1418,6 +1447,8 @@ export async function refundVisitTender(
     amount?: number | null;
     reason?: string;
     refundedByEmployeeId?: number | null;
+    /** They'll pay another way: keep the refunded amount owed. Default: the bill comes down. */
+    keepBalanceDue?: boolean;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1960,6 +1991,21 @@ export async function releaseInvoiceLineRefill(
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/release-refill`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/**
+ * New directions instead of a refill: the old script's refills go to 0 and the line becomes a
+ * new, unapproved script under the visit's doctor, starting from the item's default directions.
+ */
+export async function rewriteInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/rewrite-refill`,
     { practiceId: pid() }
   );
   return data;

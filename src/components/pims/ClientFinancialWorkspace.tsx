@@ -1,4 +1,5 @@
 import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
+import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefundSplit';
 import { useWitnessOptions } from '../inventory/WasteDetailFields';
 import {
   chosenReturnLots,
@@ -66,6 +67,7 @@ import {
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
 import { useCan } from '../../permissions/PermissionContext';
 import GiftCardTenderForm from '../payments/GiftCardTenderForm';
+import AccountCreditTenderForm from '../payments/AccountCreditTenderForm';
 import {
   LineProviderChangeDialog,
   PostedPaymentEditDialog,
@@ -809,6 +811,23 @@ function invoiceCardRefundable(invoice: VisitInvoice | null): number {
     .reduce((sum, t) => sum + tenderRefundable(t), 0);
 }
 
+/** PAY-A15: account credit payments on the bill that a return can still put back on the account. */
+function invoiceCreditTenders(invoice: VisitInvoice | null): VisitInvoiceTender[] {
+  if (!invoice) return [];
+  return (invoice.tenders ?? []).filter(
+    (t) => !t.voidedAt && t.method === 'account_credit' && tenderRefundable(t) > 0.009,
+  );
+}
+
+function invoiceCreditRefundable(invoice: VisitInvoice | null): number {
+  return invoiceCreditTenders(invoice).reduce((sum, t) => sum + tenderRefundable(t), 0);
+}
+
+/** Return & refund: cards first, then the bill's account credit payments (server returnLines). */
+function returnRefundSplit(invoice: VisitInvoice | null, amount: number) {
+  return splitReturnRefund(amount, invoiceCardRefundable(invoice), invoiceCreditRefundable(invoice));
+}
+
 /** Estimate return total (line + proportional tax) for the return qty draft. */
 function estimateReturnRefund(
   lines: VisitInvoiceLine[],
@@ -1226,6 +1245,7 @@ function methodLabel(method: VisitTenderMethod, paymentTypeName?: string | null)
   if (named) return named;
   if (method === 'carecredit') return 'CareCredit';
   if (method === 'gift_card') return 'Gift card';
+  if (method === 'account_credit') return 'Account credit';
   return method.charAt(0).toUpperCase() + method.slice(1);
 }
 
@@ -1578,6 +1598,12 @@ export default function ClientFinancialWorkspace({
   /** Invoices already loaded with lines, tenders, and catalog detail. */
   const hydratedInvoiceIds = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
+  // The invoice pane is long, and its error sits at the top: bring it on screen when it appears, so a
+  // refusal (e.g. "Refund the card payment first" after Void invoice at the bottom) isn't missed.
+  const paneErrorRef = useRef<HTMLParagraphElement | null>(null);
+  useEffect(() => {
+    if (error) paneErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [error]);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [repricing, setRepricing] = useState(false);
@@ -1625,6 +1651,8 @@ export default function ClientFinancialWorkspace({
     scope: 'this' | 'all';
     peers: VisitRefundPeer[];
     peersLoading: boolean;
+    /** They'll pay this another way (wrong card): the refunded amount stays owed. */
+    keepBalanceDue: boolean;
   }>(null);
   const refundPanelRef = useRef<HTMLDivElement | null>(null);
   const [editing, setEditing] = useState(false);
@@ -1835,6 +1863,14 @@ export default function ClientFinancialWorkspace({
   const canEditPostedPayment = useCan('payment.posted.edit');
   const canApproveRx = useCan('rx.invoice.approve');
   const canRedeemGiftCard = useCan('gift_card.redeem');
+  // PAY-06: whoever takes payments may spend the client's account credit.
+  const canTakePayment = useCan('payment.take');
+  const payingByAccountCredit =
+    canTakePayment &&
+    tenderMethod === 'account_credit' &&
+    !tenderPaymentType &&
+    !useSavedCard &&
+    !payByPhone;
   const payingByGiftCard =
     canRedeemGiftCard &&
     tenderMethod === 'gift_card' &&
@@ -4740,6 +4776,7 @@ export default function ClientFinancialWorkspace({
       amount: maxAmount.toFixed(2),
       reason: '',
       scope: 'this',
+      keepBalanceDue: false,
       peers: [
         {
           invoiceId: selected.id,
@@ -4821,6 +4858,7 @@ export default function ClientFinancialWorkspace({
           amount,
           reason,
           refundedByEmployeeId: cashierEmployeeId,
+          keepBalanceDue: refundDraft.keepBalanceDue,
         });
         totalRefunded += amount;
       }
@@ -5118,17 +5156,22 @@ export default function ClientFinancialWorkspace({
       return;
     }
     const estimated = estimateReturnRefund(lines, returnQty);
+    const split = returnRefundSplit(selected, estimated);
     if (refundViaStripe) {
-      const available = invoiceCardRefundable(selected);
-      if (estimated > available + 0.009) {
+      if (split.over) {
         setError(
-          `Return total ${money(estimated)} exceeds refundable card payments (${money(available)}).`
+          split.credit > 0.009 || invoiceCreditRefundable(selected) > 0.009
+            ? `Return total ${money(estimated)} is more than the card and account credit payments can give back (${money(split.max)}).`
+            : `Return total ${money(estimated)} exceeds refundable card payments (${money(split.max)}).`,
         );
         return;
       }
       const ok = await appConfirm({
         title: 'Return & refund?',
-        message: `Return the selected items and refund ${money(estimated)} to the client's card via Stripe?`,
+        message:
+          split.credit > 0.009
+            ? `Return the selected items and refund ${money(estimated)}: ${describeReturnRefund(split)}. The card part goes back through Stripe.`
+            : `Return the selected items and refund ${money(estimated)} to the client's card via Stripe?`,
         confirmLabel: `Refund ${money(estimated)}`,
         danger: true,
       });
@@ -5158,7 +5201,9 @@ export default function ClientFinancialWorkspace({
       await refreshList(next.id);
       setNote(
         refundViaStripe
-          ? `Returned items and refunded ${money(estimated)} via Stripe.`
+          ? split.credit > 0.009
+            ? `Returned items and refunded ${money(estimated)}: ${describeReturnRefund(split)}.`
+            : `Returned items and refunded ${money(estimated)} via Stripe.`
           : 'Opened a credit invoice for the returned items.',
       );
     } catch (e: unknown) {
@@ -5498,7 +5543,7 @@ export default function ClientFinancialWorkspace({
         {hasDetail ? (
         <section className="client-fin__pane">
           {error ? (
-            <p className="client-fin__err" role="alert">
+            <p ref={paneErrorRef} className="client-fin__err" role="alert">
               {error}
             </p>
           ) : null}
@@ -7297,6 +7342,7 @@ export default function ClientFinancialWorkspace({
                                   <RefillSummary
                                     invoiceId={selected.id}
                                     lineId={line.id}
+                                    instructions={line.instructions}
                                     canEdit={canEdit}
                                     disabled={busy}
                                     onReleased={(next) => afterRefillChange(line, next)}
@@ -7931,6 +7977,23 @@ export default function ClientFinancialWorkspace({
                                 }
                               />
                             </label>
+                            <p className="client-fin__muted" data-testid="refund-lowers-bill">
+                              {refundDraft.keepBalanceDue
+                                ? 'The bill stays the same, so the refunded amount is owed again.'
+                                : 'The bill comes down by the refund, so the client won’t owe it again.'}
+                            </p>
+                            <label className="client-fin__check">
+                              <input
+                                type="checkbox"
+                                checked={refundDraft.keepBalanceDue}
+                                onChange={(e) =>
+                                  setRefundDraft((cur) =>
+                                    cur ? { ...cur, keepBalanceDue: e.target.checked } : cur
+                                  )
+                                }
+                              />{' '}
+                              They’ll pay this another way (wrong card): keep it owed
+                            </label>
                             <div className="client-fin__actions">
                               {refundDraft.scope === 'this' ? (
                                 <button
@@ -8126,6 +8189,7 @@ export default function ClientFinancialWorkspace({
                           </>
                         ) : null}
                         {canRedeemGiftCard ? <option value="gift_card">Gift card</option> : null}
+                        {canTakePayment ? <option value="account_credit">Account credit</option> : null}
                       </select>
                     </label>
                     {!useSavedCard && selectedPayType && isCreditPaymentType(selectedPayType) ? (
@@ -8161,7 +8225,24 @@ export default function ClientFinancialWorkspace({
                         />
                       </div>
                     ) : null}
-                    {!payingByGiftCard && !payByPhone && !useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
+                    {payingByAccountCredit ? (
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <AccountCreditTenderForm
+                          invoiceId={selected.id}
+                          clientId={selected.clientId ?? clientId}
+                          due={remaining}
+                          cashierEmployeeId={cashierEmployeeId}
+                          className="client-fin__btn"
+                          onApplied={(next, applied, left) => {
+                            setSelected(next);
+                            resetTenderMethod();
+                            void refreshList(next.id);
+                            setNote(`Used ${money(applied)} of account credit. ${money(left)} credit left.`);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    {!payingByGiftCard && !payingByAccountCredit && !payByPhone && !useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
                     <label className="client-fin__field">
                       Amount
                       <input
@@ -8268,7 +8349,7 @@ export default function ClientFinancialWorkspace({
                         Key in card instead
                       </button>
                     ) : null}
-                    {payingByGiftCard || payByPhone || useSavedCard || (selectedPayType && isCreditPaymentType(selectedPayType)) ? null : (
+                    {payingByGiftCard || payingByAccountCredit || payByPhone || useSavedCard || (selectedPayType && isCreditPaymentType(selectedPayType)) ? null : (
                       <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
                         Record {methodLabel(tenderMethod, tenderPaymentType)}
                       </button>
@@ -8385,6 +8466,9 @@ export default function ClientFinancialWorkspace({
                     const estimated = estimateReturnRefund(lines, returnQty);
                     const cardAvail = invoiceCardRefundable(selected);
                     const cardTenders = (selected.tenders ?? []).filter(tenderCanStripeRefund);
+                    const creditTenders = invoiceCreditTenders(selected);
+                    const creditAvail = invoiceCreditRefundable(selected);
+                    const split = returnRefundSplit(selected, estimated);
                     return (
                       <>
                         {/* The refund total stands alone; the original payment is shown apart, so
@@ -8401,6 +8485,11 @@ export default function ClientFinancialWorkspace({
                             {cardTenders
                               .map((t) => `${tenderPayLabel(t)} ${money(Number(t.amount) || 0)}`)
                               .join(', ')}
+                            {creditTenders.length
+                              ? `, ${creditTenders
+                                  .map((t) => `Account credit ${money(Number(t.amount) || 0)}`)
+                                  .join(', ')}`
+                              : ''}
                             {' · '}
                             {money(cardAvail)} can still go back to the card
                           </p>
@@ -8410,19 +8499,28 @@ export default function ClientFinancialWorkspace({
                             account as credit.
                           </p>
                         )}
+                        {cardAvail > 0.009 && split.credit > 0.009 && !split.over ? (
+                          <p className="client-fin__muted client-fin__return-split" role="note">
+                            More than the card can take: {describeReturnRefund(split)}.
+                          </p>
+                        ) : null}
                         {cardAvail > 0.009 ? (
                           <button
                             type="button"
                             className="client-fin__btn"
-                            disabled={busy || estimated <= 0.009 || estimated > cardAvail + 0.009}
+                            disabled={busy || estimated <= 0.009 || split.over}
                             title={
-                              estimated > cardAvail + 0.009
-                                ? `More than the ${money(cardAvail)} that can go back to the card. Return as account credit instead.`
+                              split.over
+                                ? creditAvail > 0.009
+                                  ? `More than the ${money(split.max)} the card and account credit payments can give back. Return as account credit instead.`
+                                  : `More than the ${money(cardAvail)} that can go back to the card. Return as account credit instead.`
                                 : undefined
                             }
                             onClick={() => void submitReturns(true)}
                           >
-                            Refund {money(estimated)} to card
+                            {split.credit > 0.009 && !split.over
+                              ? `Refund ${money(estimated)} (${describeReturnRefund(split)})`
+                              : `Refund ${money(estimated)} to card`}
                           </button>
                         ) : null}
                         <button

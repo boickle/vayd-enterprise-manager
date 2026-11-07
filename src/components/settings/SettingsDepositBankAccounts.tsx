@@ -7,6 +7,7 @@ import {
   patchDepositBankAccount,
   type DepositBankAccount,
 } from '../../api/depositBankAccounts';
+import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -38,6 +39,8 @@ type Props = {
 };
 
 export default function SettingsDepositBankAccounts({ onMessage }: Props) {
+  // PAY-A8 / D3: only practice manager and admin change bank accounts; the server checks it too.
+  const canManage = useCanOrAdminLogin('deposit_account.manage');
   const [rows, setRows] = useState<DepositBankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,9 +122,11 @@ export default function SettingsDepositBankAccounts({ onMessage }: Props) {
             deposits.
           </p>
         </div>
-        <button type="button" className="btn" onClick={openNew}>
-          Add bank account
-        </button>
+        {canManage ? (
+          <button type="button" className="btn" onClick={openNew}>
+            Add bank account
+          </button>
+        ) : null}
       </div>
       {loading ? (
         <p className="settings-muted">Loading bank accounts…</p>
@@ -146,14 +151,16 @@ export default function SettingsDepositBankAccounts({ onMessage }: Props) {
                 <td>{row.accountNumber}</td>
                 <td>{row.isActive === false ? 'Inactive' : 'Active'}</td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => openEdit(row)}
-                    title="Edit bank account"
-                  >
-                    <Pencil size={14} /> Edit
-                  </button>
+                  {canManage ? (
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => openEdit(row)}
+                      title="Edit bank account"
+                    >
+                      <Pencil size={14} /> Edit
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             ))}

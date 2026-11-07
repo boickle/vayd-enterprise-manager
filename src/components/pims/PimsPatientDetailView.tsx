@@ -177,6 +177,7 @@ import { startFreshNewAppointmentRouting } from '../../utils/routingNewAppointme
 import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
 import SendRxLabelButton from '../soap/SendRxLabelButton';
+import RxRefillControls from './RxRefillControls';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import RecordHistoryLink from '../records/RecordHistoryLink';
 import PatientRecordHistoryPanel from '../records/PatientRecordHistoryPanel';
@@ -4445,6 +4446,26 @@ export default function PimsPatientDetailView({
                               <div className="pims-patient-detail__expand-text">
                                 {directions || 'No written directions on this prescription.'}
                               </div>
+                              {rx.discontinuedAt ? null : (
+                                <RxRefillControls
+                                  prescriptionId={rx.id}
+                                  patientId={Number(patientId)}
+                                  refill={rx.refill ?? null}
+                                  onChanged={(left) =>
+                                    setPrescriptions((prev) =>
+                                      prev.map((m) => (m.id === rx.id ? { ...m, refill: left } : m))
+                                    )
+                                  }
+                                  onNewScript={() =>
+                                    openFinancial({
+                                      name: rx.name,
+                                      qty: rx.quantity ?? 1,
+                                      instructions: '',
+                                      catalogItemId: rx.inventoryItemId,
+                                    })
+                                  }
+                                />
+                              )}
                             </td>
                           </tr>
                         ) : null,
@@ -4560,6 +4581,25 @@ export default function PimsPatientDetailView({
                                 <div className="pims-patient-detail__expand-text">
                                   {directions || 'No written directions on this prescription.'}
                                 </div>
+                                {Number(row.prescriptionId) > 0 ? (
+                                  <RxRefillControls
+                                    prescriptionId={Number(row.prescriptionId)}
+                                    patientId={Number(patientId)}
+                                    refill={Number.isFinite(refillsAllowed) ? refillsAllowed : null}
+                                    onChanged={(left) =>
+                                      setRxItems((prev) =>
+                                        prev.map((r) =>
+                                          Number((r as Record<string, unknown>).prescriptionId) === Number(row.prescriptionId)
+                                            ? { ...(r as Record<string, unknown>), refillsAllowed: left, hasRefills: left > 0 }
+                                            : r
+                                        )
+                                      )
+                                    }
+                                    onNewScript={() =>
+                                      openFinancial({ ...refillPrefillFromRxRow(row, g.displayName), instructions: '' })
+                                    }
+                                  />
+                                ) : null}
                               </td>
                             </tr>
                           ) : null,
@@ -4641,6 +4681,15 @@ export default function PimsPatientDetailView({
           encounter={selectedSoapNote}
           patientName={pname || null}
           onClose={() => setSelectedSoapNote(null)}
+          onAddendumAdded={(addendum) =>
+            setSoapNotes((prev) =>
+              prev.map((e) =>
+                e.id === addendum.soapEncounterId
+                  ? { ...e, addenda: [...(e.addenda ?? []), addendum] }
+                  : e,
+              ),
+            )
+          }
         />
       ) : null}
 

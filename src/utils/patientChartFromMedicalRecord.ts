@@ -1650,6 +1650,12 @@ function soapVitalsLine(v: Record<string, unknown> | null | undefined): string {
   return parts.join(' · ');
 }
 
+function soapAddendumStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 /** Signed Scout SOAPs belong on the record; open ones stay on the SOAPs tab until locked. */
 export function chartRowsFromSoapEncounters(
   encounters: SoapEncounter[] | null | undefined,
@@ -1679,10 +1685,25 @@ export function chartRowsFromSoapEncounters(
         plain(e.subjective?.chartComplaint) ||
         (complaintLine || firstProblem)?.slice(0, 120) ||
         `Visit #${e.appointmentId}`;
+      const addenda = (e.addenda ?? []).filter((a) => a.body?.trim());
+      const baseLabel = e.mode === 'quick' ? 'Quick SOAP' : 'SOAP';
+      const addendaNote =
+        addenda.length === 0
+          ? ''
+          : addenda.length === 1
+            ? ' (+ 1 addendum)'
+            : ` (+ ${addenda.length} addenda)`;
+      const addendaText = addenda
+        .map((a) => {
+          const stamp = soapAddendumStamp(a.created);
+          const who = a.createdByName?.trim();
+          return `Addendum — ${[stamp, who].filter(Boolean).join(' · ')}:\n${a.body.trim()}`;
+        })
+        .join('\n\n');
       return {
         id: `soapNote:${e.id}`,
         source: 'soapNote' as const,
-        typeLabel: e.mode === 'quick' ? 'Quick SOAP' : 'SOAP',
+        typeLabel: `${baseLabel}${addendaNote}`,
         description: preview,
         provider: '—',
         serviceDateIso: when,
@@ -1692,6 +1713,7 @@ export function chartRowsFromSoapEncounters(
           objective && `Objective:\n${objective}`,
           assessment && `Assessment:\n${assessment}`,
           plan && `Plan:\n${plan}`,
+          addendaText,
         ]
           .filter(Boolean)
           .join('\n\n'),

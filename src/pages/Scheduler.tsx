@@ -14483,7 +14483,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           clientEmail={euthanasiaEstimateTarget.clientEmail}
           clientPhone={euthanasiaEstimateTarget.clientPhone}
           isResend={euthanasiaEstimateTarget.isResend}
-          onClose={() => setEuthanasiaEstimateTarget(null)}
+          onClose={() => {
+            setEuthanasiaEstimateTarget(null);
+            // A card taken by phone puts the $ on the visit; show it without a reload.
+            void refreshSoapLockedAppointmentIds();
+          }}
+          onCardSaved={() => void refreshSoapLockedAppointmentIds()}
           onSent={({ sentTo }) => {
             setEuthanasiaConsentMode('resend');
             showToast(`Consent sent to ${sentTo}. Link copied.`);
