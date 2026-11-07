@@ -36,9 +36,9 @@ function subStatus(row: StoreStaffSubscription): 'active' | 'paused' | 'cancelle
   return 'active';
 }
 
-/** OS-10: rows whose card is failing, or whose auto-ship Stripe ended after the card kept failing. */
+/** OS-10 / OS-05: card failing, Stripe ended the auto-ship after the card kept failing, or a cancel Stripe has not confirmed. */
 export function subPaymentProblem(row: StoreStaffSubscription): boolean {
-  return row.paymentStatus === 'failing' || row.paymentStatus === 'ended';
+  return row.paymentStatus === 'failing' || row.paymentStatus === 'ended' || row.paymentStatus === 'cancel_pending';
 }
 
 function itemPrice(item: StoreItemRow | undefined): number {
