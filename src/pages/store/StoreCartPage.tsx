@@ -5,8 +5,10 @@ import {
   myStoreAccount,
   myStoreCards,
   myStoreCheckout,
+  newStoreAttemptKey,
   publicCheckout,
   storeApiError,
+  storeAttemptMayRetry,
   publicPreviewCoupon,
   publicStoreFulfillment,
   publicStoreProducts,
@@ -250,6 +252,12 @@ export default function StoreCartPage() {
   const [selectedCardId, setSelectedCardId] = useState('');
   const [enterNewCard, setEnterNewCard] = useState(false);
   const newCardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one checkout attempt = one key (the API charges at most once per key). Kept for a retry after no
+  // answer or a server error, with the same card; a definite answer (placed, declined, refused) ends it.
+  const attemptRef = useRef<{ key: string; paymentMethodId: string | null; newCard: boolean; saveCard: boolean } | null>(
+    null,
+  );
+  const placingRef = useRef(false);
   const [ship, setShip] = useState({
     customerName: '',
     email: '',
@@ -265,10 +273,17 @@ export default function StoreCartPage() {
   const [updateMailingOnFile, setUpdateMailingOnFile] = useState<'yes' | 'no' | ''>('');
   const [accountCredit, setAccountCredit] = useState(0);
   const [amountOwed, setAmountOwed] = useState(0);
+  // OS-06: old eVet bills can't be paid online while eVet sync is on; shown, not charged.
+  const [evetNotPayable, setEvetNotPayable] = useState(0);
   const [openInvoices, setOpenInvoices] = useState<StoreOpenInvoice[]>([]);
   const [applyAccountCredit, setApplyAccountCredit] = useState(false);
   const [payOutstanding, setPayOutstanding] = useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = useState(false);
+
+  useEffect(() => {
+    // A changed cart (or how it is paid) is a new attempt.
+    attemptRef.current = null;
+  }, [lines, giftLines, coupon, giftCodes, applyAccountCredit, payOutstanding, fulfillmentId]);
 
   const persist = (next: StoreCartLine[]) => {
     writeStoreCart(next);
@@ -364,6 +379,7 @@ export default function StoreCartPage() {
     if (!loggedIn || !clientId) {
       setAccountCredit(0);
       setAmountOwed(0);
+      setEvetNotPayable(0);
       setOpenInvoices([]);
       setApplyAccountCredit(false);
       setPayOutstanding(false);
@@ -375,9 +391,10 @@ export default function StoreCartPage() {
       .then((row) => {
         if (cancelled) return;
         const available = Number(row.available) || 0;
-        const owed = Number(row.owed) || 0;
+        const owed = Number(row.payableOwed) || 0;
         setAccountCredit(available);
         setAmountOwed(owed);
+        setEvetNotPayable(Number(row.evetNotPayable) || 0);
         setOpenInvoices(row.invoices || []);
         if (available < 0.01) setApplyAccountCredit(false);
         if (owed < 0.01) setPayOutstanding(false);
@@ -451,9 +468,8 @@ export default function StoreCartPage() {
   }, [loggedIn, clientId]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  // D1: a guest may buy one-time items that need no pet, with a newly entered card. Prescriptions, pet items
-  // and auto-ship need the portal login.
-  const needsLogin = !loggedIn && rxLines.length > 0;
+  // D1 (updated Nov 7, 2026): guests buy gift cards only; every store item needs the portal login.
+  const needsLogin = lines.length > 0 && !loggedIn;
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -902,17 +918,8 @@ export default function StoreCartPage() {
       ) : null}
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
-      {lines.length && !loggedIn && !needsLogin ? (
-        <p className="vayd-store__muted vayd-store__guest-note">
-          Checking out as a guest with a new card.{' '}
-          <Link to="/login" state={{ from: { pathname: '/store/cart' } }}>
-            Log in
-          </Link>{' '}
-          to use a saved card, member prices or account credit.
-        </p>
-      ) : null}
 
-      {lines.length && !needsLogin ? (
+      {lines.length && loggedIn ? (
         <div className="vayd-store__cart-grid">
           <section>
             <h2>Fulfillment</h2>
@@ -1254,6 +1261,12 @@ export default function StoreCartPage() {
                 {showOpenInvoices ? <StoreOpenInvoicesPanel invoices={openInvoices} /> : null}
               </div>
             ) : null}
+            {evetNotPayable > 0.009 ? (
+              <p className="vayd-store__muted vayd-store__evet-held">
+                ${evetNotPayable.toFixed(2)} is on older bills from our previous system, which can’t be paid
+                online yet. Please call us to pay them.
+              </p>
+            ) : null}
             <label className="vayd-store__cart-coupon">
               Coupon
               <span>
@@ -1406,20 +1419,37 @@ export default function StoreCartPage() {
                   setErr(placeBlocker);
                   return;
                 }
+                // OS-03: a second click while the first is still placing does nothing.
+                if (placingRef.current) return;
+                placingRef.current = true;
                 setBusy(true);
                 setErr(null);
+                const skipCard = creditCoversOrder && !hasAutoship;
+                const usingNewCard = !skipCard && (enterNewCard || !cards.length);
+                const savedCardId = skipCard || usingNewCard ? null : selectedCardId || null;
+                let attempt = attemptRef.current;
+                if (attempt && (attempt.newCard !== usingNewCard || (!usingNewCard && attempt.paymentMethodId !== savedCardId))) {
+                  attempt = null; // another card: a new attempt
+                }
+                if (!attempt) {
+                  attempt = { key: newStoreAttemptKey(), paymentMethodId: savedCardId, newCard: usingNewCard, saveCard: true };
+                }
+                attemptRef.current = attempt;
+                const current = attempt;
                 void (async () => {
-                  const skipCard = creditCoversOrder && !hasAutoship;
                   let paymentMethodId: string | null = null;
                   let saveCard = true;
-                  if (!skipCard) {
-                    if (enterNewCard || !cards.length) {
+                  if (usingNewCard) {
+                    // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+                    if (!current.paymentMethodId) {
                       const created = await newCardRef.current?.createPaymentMethod();
-                      paymentMethodId = created?.paymentMethodId ?? null;
-                      saveCard = created?.saveCard !== false;
-                    } else {
-                      paymentMethodId = selectedCardId || null;
+                      current.paymentMethodId = created?.paymentMethodId ?? null;
+                      current.saveCard = created?.saveCard !== false;
                     }
+                    paymentMethodId = current.paymentMethodId;
+                    saveCard = current.saveCard;
+                  } else if (!skipCard) {
+                    paymentMethodId = savedCardId;
                   }
                   const body = {
                     customerName: ship.customerName,
@@ -1429,8 +1459,7 @@ export default function StoreCartPage() {
                     payOutstanding,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
-                    // A guest's card is used once and saved to no account (OS-01).
-                    saveCard: loggedIn && saveCard,
+                    saveCard,
                     updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,
@@ -1441,6 +1470,7 @@ export default function StoreCartPage() {
                       postal: ship.postal,
                     },
                     giftCardCodes: giftCodes.map((row) => row.code),
+                    attemptKey: current.key,
                     lines: [
                       ...lines.map((l) => ({
                         inventoryItemId: l.inventoryItemId,
@@ -1455,12 +1485,20 @@ export default function StoreCartPage() {
                   const order = loggedIn
                     ? await myStoreCheckout(body)
                     : await publicCheckout(practiceId, body);
+                  attemptRef.current = null;
                   writeStoreCart([]);
                   writeStoreGiftCart([]);
                   nav(`/store/thanks/${order.id}`, { state: { order } });
                 })()
-                  .catch((e) => setErr(storeApiError(e)))
-                  .finally(() => setBusy(false));
+                  .catch((e) => {
+                    // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+                    if (!storeAttemptMayRetry(e) && attemptRef.current === current) attemptRef.current = null;
+                    setErr(storeApiError(e));
+                  })
+                  .finally(() => {
+                    placingRef.current = false;
+                    setBusy(false);
+                  });
               }}
             >
               {busy ? 'Placing order…' : 'Place order'}

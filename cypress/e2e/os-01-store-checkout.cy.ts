@@ -5,8 +5,9 @@ import '../support/e2e';
  * OS-01-11 (vayd-api docs/test-plans/online-store.md, D1): screen to API, both store checkout paths.
  *   (a) A portal client buys with a saved card: one charge on A's own Stripe customer, the order and the Scout
  *       invoice on A, one thank-you email.
- *   (b) A guest buys a non-prescription item with the Stripe test card 4242: one charge, a guest order (no
- *       client, no invoice), and no saved cards shown or asked for at any point.
+ *   (b) D1 (updated Nov 7, 2026): guests buy gift cards only. A guest who adds a store item is asked to log
+ *       in; the guest then buys a gift card with the Stripe test card 4242: charged once, the gift card belongs
+ *       to no client, and no saved cards are shown or asked for at any point.
  *
  * Seed: the H-STORE world (cy tasks seedStoreWorld / cleanStoreWorld in cypress.config.ts).
  *   STORE_DB=<test db> CYPRESS_STORE_DB=<same test db> [CYPRESS_EMAIL_CAPTURE_PATH=/tmp/store-emails.jsonl] \
@@ -114,6 +115,12 @@ describe('OS-01-11: store checkout, screen to API', () => {
 
   after(() => {
     if (w) {
+      // The guest's gift card (part b) and the gift card listing made for it.
+      sql(
+        `DELETE FROM gift_card_transactions WHERE "giftCardId" IN (SELECT id FROM gift_cards WHERE "purchaserEmail" LIKE '${w.tag}%')`,
+      );
+      sql(`DELETE FROM gift_cards WHERE "purchaserEmail" LIKE '${w.tag}%'`);
+      sql(`DELETE FROM online_store_products WHERE name LIKE '${w.tag}%' AND kind = 'gift_card'`);
       // Guest orders belong to no client, so the world clean-up can't find them.
       sql(
         `DELETE FROM mail_order_lines WHERE "mailOrderId" IN (SELECT id FROM mail_orders WHERE "customerName" LIKE '${w.tag}%' AND "clientId" IS NULL)`,
@@ -188,50 +195,76 @@ describe('OS-01-11: store checkout, screen to API', () => {
     cy.get('@typedEmailCards.all').should('have.length', 0);
   });
 
-  it('OS-01-11 (b): a guest buys with the 4242 test card; one charge, a guest order, no saved cards at any point', () => {
+  it('OS-01-11 (b): a guest’s store item asks for a login; the guest buys a gift card with 4242, charged once, no saved cards', () => {
     cy.intercept('POST', '**/public/store/card-on-file').as('typedEmailCards');
     cy.intercept('GET', '**/store/checkout/cards').as('myCards');
     cy.intercept('POST', '**/public/store/checkout').as('guestCheckout');
+    const buyer = `${w.tag}+giftguest@vayd.test`;
 
+    // A store item: the guest is asked to log in, and no checkout form or card list is shown.
     cy.clearLocalStorage();
     cy.visit('/store');
     cartWithStoreItem(w);
     cy.visit('/store/cart');
-    cy.contains('Checking out as a guest', { timeout: 20000 });
+    cy.contains('Log in to check out', { timeout: 20000 });
+    cy.contains('button', 'Place order').should('not.exist');
     cy.get('.vayd-store__card-select').should('not.exist');
 
-    cy.contains('label', 'Name').find('input').type(`${w.tag} Guest`);
+    // A gift card only: the guest checks out with a new card.
+    sql(
+      `INSERT INTO online_store_products ("practiceId", name, kind, listed, "giftCardAmounts")
+       VALUES (${w.practiceId}, '${w.tag} Gift card', 'gift_card', true, '[25, 50]'::jsonb) RETURNING id`,
+    ).then((out) => {
+      // psql may print the INSERT status after the id.
+      const listingId = Number(out.split('\n')[0]);
+      cy.window().then((win) => {
+        win.localStorage.setItem('vayd_store_cart', JSON.stringify([]));
+        win.localStorage.setItem(
+          'vayd_store_gift_cart',
+          JSON.stringify([
+            {
+              key: 'os01-gift',
+              listingId,
+              name: 'Gift card',
+              amount: 50,
+              price: 50,
+              quantity: 1,
+              sendToSelf: true,
+              recipientName: '',
+              recipientEmail: '',
+              message: '',
+              deliverAt: '',
+            },
+          ]),
+        );
+      });
+    });
+    cy.visit('/store/cart');
+    cy.contains('label', 'Name', { timeout: 20000 }).find('input').clear().type(`${w.tag} Gift guest`);
     // Client B's email (B has a household card): a guest still sees no saved card.
-    cy.contains('label', 'Email').find('input').type(w.clientB.email);
-    cy.get('.vayd-store__po-box input[type="checkbox"]').check();
-    cy.get('input[placeholder="PO Box 123 or street address"]').type('PO Box 77');
-    cy.get('input[placeholder="City"]').type('Madison');
-    cy.get('input[placeholder="State"]').type('WI');
-    cy.get('input[placeholder="Zip"]').type('53703');
+    cy.contains('label', 'Email').find('input').clear().type(w.clientB.email);
     cy.get('.vayd-store__card-select').should('not.exist');
+    cy.contains('label', 'Email').find('input').clear().type(buyer);
     enterTestCard();
-    cy.contains('button', 'Place order').click();
+    cy.contains('button', 'Pay $50.00').click();
     cy.wait('@guestCheckout').then(({ request, response }) => {
       expect(response?.statusCode).to.be.lessThan(300);
       expect(request.body.saveCard).to.eq(false);
       expect(request.body).not.to.have.property('clientId');
-      const orderId = Number(response?.body?.id);
-      sql(
-        `SELECT coalesce("clientId"::text, 'none') || '|' || "paymentStatus" || '|' || coalesce("stripePaymentId", '') || '|' || coalesce("scoutInvoiceId"::text, 'none')
-           FROM mail_orders WHERE id = ${orderId}`,
-      ).then((row) => {
-        const [client, paid, pi, invoice] = row.split('|');
-        expect(client).to.eq('none');
-        expect(paid).to.eq('paid');
-        expect(pi).to.match(/^pi_/);
-        expect(invoice).to.eq('none');
-      });
-      sql(`SELECT count(*) FROM mail_orders WHERE "stripePaymentId" = (SELECT "stripePaymentId" FROM mail_orders WHERE id = ${orderId})`).should(
-        'eq',
-        '1',
-      );
+      expect((request.body.lines as Array<{ kind?: string }>).every((l) => l.kind === 'gift_card')).to.eq(true);
     });
-    cy.contains('h1', 'Thank you', { timeout: 30000 });
+    cy.location('pathname', { timeout: 30000 }).should('eq', '/store/thanks/gift-cards');
+    sql(
+      `SELECT coalesce("purchaserClientId"::text, 'none') || '|' || "faceValue" || '|' || coalesce("stripePaymentIntentId", '')
+         FROM gift_cards WHERE "purchaserEmail" = '${buyer}'`,
+    ).then((out) => {
+      const rows = out.split('\n').filter(Boolean);
+      expect(rows).to.have.length(1);
+      const [client, face, pi] = rows[0].split('|');
+      expect(client).to.eq('none');
+      expect(Number(face)).to.eq(50);
+      expect(pi).to.match(/^pi_/);
+    });
     // B's card on file was not touched by the guest's purchase.
     sql(`SELECT coalesce("savedPaymentMethodId", '') FROM clients WHERE id = ${w.clientB.clientId}`).should(
       'match',

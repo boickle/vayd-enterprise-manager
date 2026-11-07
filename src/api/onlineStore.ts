@@ -16,6 +16,40 @@ publicStoreClient.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * A store checkout or payment refused by the API, with its HTTP status (null when no answer came back).
+ * OS-03: a 4xx is a definite answer (start a new attempt); a 5xx or no answer may have charged, so the
+ * same attempt is retried with the same key.
+ */
+export class StoreRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+  ) {
+    super(message);
+    this.name = 'StoreRequestError';
+  }
+}
+
+function storeRequestError(err: unknown): StoreRequestError {
+  const status = axios.isAxiosError(err) ? (err.response?.status ?? null) : null;
+  return new StoreRequestError(storeApiError(err), status);
+}
+
+/** OS-03: true when the same checkout attempt may be retried with the same key (no definite answer). */
+export function storeAttemptMayRetry(err: unknown): boolean {
+  if (!(err instanceof StoreRequestError)) return true;
+  return err.status == null || err.status >= 500;
+}
+
+/** OS-03: one key per checkout attempt; the API charges at most once per key. */
+export function newStoreAttemptKey(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  const rand = () => Math.random().toString(36).slice(2, 10);
+  return `${Date.now().toString(36)}-${rand()}-${rand()}-${rand()}`;
+}
+
 export function storeApiError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const data = err.response?.data as { message?: string | string[] } | string | undefined;
@@ -1634,15 +1668,23 @@ export type StoreOpenInvoice = {
 export type StoreAccountPosition = {
   available: number;
   owed: number;
+  /** OS-06: what can be paid online now (old eVet bills wait until eVet sync is off). */
+  payableOwed: number;
+  /** OS-06: old eVet bills that can't be paid online yet. */
+  evetNotPayable: number;
   invoices: StoreOpenInvoice[];
 };
 
 /** The logged-in household's credit, balance and open bills (OS-01: from the login, not an id or email). */
 export async function myStoreAccount(): Promise<StoreAccountPosition> {
   const { data } = await http.get<StoreAccountPosition>(`/store/checkout/account`);
+  const owed = Number(data?.owed) || 0;
   return {
     available: Number(data?.available) || 0,
-    owed: Number(data?.owed) || 0,
+    owed,
+    // An API without OS-06 sends neither: everything owed is payable.
+    payableOwed: data?.payableOwed == null ? owed : Number(data.payableOwed) || 0,
+    evetNotPayable: Number(data?.evetNotPayable) || 0,
     invoices: Array.isArray(data?.invoices) ? data.invoices : [],
   };
 }
@@ -1652,19 +1694,24 @@ export async function payMyStoreBalance(body: {
   paymentMethodId: string;
   customerName?: string | null;
   giftCardCodes?: string[];
-}): Promise<{ paid: number; giftCardApplied: number; cardCharged: number }> {
+  /** OS-03: one key per press of Pay; made here when the caller doesn't keep one. */
+  attemptKey?: string;
+}): Promise<{ paid: number; giftCardApplied: number; cardCharged: number; accountCredit: number }> {
   try {
-    const { data } = await http.post<{ paid: number; giftCardApplied?: number; cardCharged?: number }>(
-      `/store/checkout/pay-balance`,
-      body
-    );
+    const { data } = await http.post<{
+      paid: number;
+      giftCardApplied?: number;
+      cardCharged?: number;
+      accountCredit?: number;
+    }>(`/store/checkout/pay-balance`, { ...body, attemptKey: body.attemptKey || newStoreAttemptKey() });
     return {
       paid: Number(data?.paid) || 0,
       giftCardApplied: Number(data?.giftCardApplied) || 0,
       cardCharged: Number(data?.cardCharged) || 0,
+      accountCredit: Number(data?.accountCredit) || 0,
     };
   } catch (err) {
-    throw new Error(storeApiError(err));
+    throw storeRequestError(err);
   }
 }
 
@@ -1720,6 +1767,8 @@ export type StoreCheckoutBody = {
     postal?: string;
   };
   giftCardCodes?: string[];
+  /** OS-03: one key per checkout attempt (newStoreAttemptKey); a repeat of the same attempt returns the first order. */
+  attemptKey?: string;
   lines: Array<
     | {
         inventoryItemId: number;
@@ -1743,7 +1792,7 @@ export async function publicCheckout(practiceId: number, body: StoreCheckoutBody
     });
     return data;
   } catch (err) {
-    throw new Error(storeApiError(err));
+    throw storeRequestError(err);
   }
 }
 
@@ -1756,7 +1805,7 @@ export async function myStoreCheckout(body: StoreCheckoutBody) {
     const { data } = await http.post<StoreCheckoutResult>(`/store/checkout`, body);
     return data;
   } catch (err) {
-    throw new Error(storeApiError(err));
+    throw storeRequestError(err);
   }
 }
 
