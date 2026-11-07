@@ -55,6 +55,7 @@ import {
   getInvoiceVaccinations,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
+import { showPaymentSuccess } from './checkoutSuccessNote';
 import { HiddenButChargedTag } from '../pims/HiddenButChargedTag';
 import { appConfirm, appDeclineHow, appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
@@ -1722,7 +1723,7 @@ export default function VisitCheckoutPanel({
       onInvoicePaid: (payload) => {
         if (payload.invoiceId !== invoiceId) return;
         setActiveCheckoutId(null);
-        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
         onInvoiceChange({
           ...invoice,
           status: 'paid',
@@ -1944,7 +1945,7 @@ export default function VisitCheckoutPanel({
         const { invoice: fresh } = await syncTerminalCheckout(invoiceId);
         if (stopped || fresh.status !== 'paid') return;
         setActiveCheckoutId(null);
-        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
         onInvoiceChange(fresh);
       } catch {
         /* keep polling; a transient failure should not end the wait */
@@ -2093,7 +2094,7 @@ export default function VisitCheckoutPanel({
         if (!/already paid/i.test(apiErrorMessage(e))) throw e;
         setActiveCheckoutId(null);
         onInvoiceChange(await getInvoice(invoice.id));
-        setNote('This invoice was already paid on Scout Terminal.');
+        showPaymentSuccess({ setError, setNote }, 'This invoice was already paid on Scout Terminal.');
       }
     });
 
@@ -4010,7 +4011,7 @@ export default function VisitCheckoutPanel({
               onApplied={(next, applied, left) => {
                 onInvoiceChange(next);
                 setAccountCreditOpen(false);
-                setNote(`Used $${applied.toFixed(2)} of account credit. $${left.toFixed(2)} credit left.`);
+                showPaymentSuccess({ setError, setNote }, `Used $${applied.toFixed(2)} of account credit. $${left.toFixed(2)} credit left.`);
               }}
             />
           ) : null}
@@ -4024,7 +4025,8 @@ export default function VisitCheckoutPanel({
                 onInvoiceChange(next);
                 setGiftCardOpen(false);
                 const left = Math.round((card.balance - applied) * 100) / 100;
-                setNote(
+                showPaymentSuccess(
+                  { setError, setNote },
                   `Took $${applied.toFixed(2)} from gift card ••••${card.last4}. $${left.toFixed(2)} left on the card.`,
                 );
               }}
@@ -4104,7 +4106,7 @@ export default function VisitCheckoutPanel({
           onPaid={(next) => {
             setPhoneCardOpen(false);
             onInvoiceChange(next);
-            setNote('Card charged over the phone — invoice marked paid.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone — invoice marked paid.');
           }}
         />
       ) : null}

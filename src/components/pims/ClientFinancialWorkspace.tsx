@@ -232,6 +232,7 @@ import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
+import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
 import { lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
@@ -8218,7 +8219,8 @@ export default function ClientFinancialWorkspace({
                             resetTenderMethod();
                             void refreshList(next.id);
                             const left = Math.round((card.balance - applied) * 100) / 100;
-                            setNote(
+                            showPaymentSuccess(
+                              { setError, setNote },
                               `Took ${money(applied)} from gift card ••••${card.last4}. ${money(left)} left on the card.`,
                             );
                           }}
@@ -8237,7 +8239,7 @@ export default function ClientFinancialWorkspace({
                             setSelected(next);
                             resetTenderMethod();
                             void refreshList(next.id);
-                            setNote(`Used ${money(applied)} of account credit. ${money(left)} credit left.`);
+                            showPaymentSuccess({ setError, setNote }, `Used ${money(applied)} of account credit. ${money(left)} credit left.`);
                           }}
                         />
                       </div>
@@ -8773,7 +8775,7 @@ export default function ClientFinancialWorkspace({
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
-            setNote('Card charged over the phone.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone.');
           }}
         />
       ) : null}
