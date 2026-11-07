@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router';
 import {
   myStoreCards,
   myStoreCheckout,
+  newStoreAttemptKey,
   publicCheckout,
   storeApiError,
+  storeAttemptMayRetry,
   type GiftCardCheckoutLine,
   type StoreSavedCard,
 } from '../../api/onlineStore';
@@ -226,6 +228,9 @@ export function StoreGiftCardCheckout({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const cardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one key per checkout attempt; kept after no answer or a 5xx, new after a 4xx or any change.
+  const attemptRef = useRef<{ key: string; signature: string; paymentMethodId: string | null; saveCard: boolean } | null>(null);
+  const placingRef = useRef(false);
   const total = storeGiftCartTotal(lines);
   const faceTotal = lines.reduce((n, l) => n + l.amount * l.quantity, 0);
 
@@ -262,15 +267,35 @@ export function StoreGiftCardCheckout({
       setErr('Enter your name and email for the receipt.');
       return;
     }
+    if (placingRef.current) return;
+    placingRef.current = true;
     setBusy(true);
     setErr(null);
+    let attempt: NonNullable<typeof attemptRef.current> | null = null;
     try {
+      const usingNewCard = enterNewCard || !cards.length;
+      const signature = JSON.stringify([
+        usingNewCard ? 'new' : selectedCardId,
+        clientId,
+        giftCardCheckoutLines(lines),
+        total,
+      ]);
+      attempt = attemptRef.current;
+      if (!attempt || attempt.signature !== signature) {
+        attempt = { key: newStoreAttemptKey(), signature, paymentMethodId: null, saveCard: Boolean(clientId) };
+      }
+      attemptRef.current = attempt;
       let paymentMethodId: string | null = null;
       let saveCard = Boolean(clientId);
-      if (enterNewCard || !cards.length) {
-        const created = await cardRef.current?.createPaymentMethod();
-        paymentMethodId = created?.paymentMethodId ?? null;
-        saveCard = Boolean(clientId) && created?.saveCard !== false;
+      if (usingNewCard) {
+        // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+        if (!attempt.paymentMethodId) {
+          const created = await cardRef.current?.createPaymentMethod();
+          attempt.paymentMethodId = created?.paymentMethodId ?? null;
+          attempt.saveCard = Boolean(clientId) && created?.saveCard !== false;
+        }
+        paymentMethodId = attempt.paymentMethodId;
+        saveCard = attempt.saveCard;
       } else {
         paymentMethodId = selectedCardId || null;
       }
@@ -282,14 +307,19 @@ export function StoreGiftCardCheckout({
         saveCard,
         ship: {},
         lines: giftCardCheckoutLines(lines),
+        attemptKey: attempt.key,
       };
       // OS-01: a logged-in purchase is for the login's household; a guest's belongs to no household.
       const result = clientId ? await myStoreCheckout(body) : await publicCheckout(practiceId, body);
+      attemptRef.current = null;
       writeStoreGiftCart([]);
       nav('/store/thanks/gift-cards', { state: { order: result } });
     } catch (e) {
+      // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+      if (!storeAttemptMayRetry(e) && attemptRef.current === attempt) attemptRef.current = null;
       setErr(storeApiError(e));
     } finally {
+      placingRef.current = false;
       setBusy(false);
     }
   };

@@ -3,7 +3,9 @@ import {
   myStoreAccount,
   myStoreCards,
   payMyStoreBalance,
+  newStoreAttemptKey,
   storeApiError,
+  storeAttemptMayRetry,
   type StoreOpenInvoice,
   type StoreSavedCard,
 } from '../../api/onlineStore';
@@ -37,7 +39,9 @@ function cardLabel(card: StoreSavedCard): string {
 export default function PortalAccountCard({ clientId, email, customerName, onShop }: Props) {
   const practiceId = currentPracticeId();
   const [credit, setCredit] = useState(0);
+  // OS-06: `owed` is only what can be paid online; `held` is old eVet bills that wait for eVet sync to end.
   const [owed, setOwed] = useState(0);
+  const [held, setHeld] = useState(0);
   const [invoices, setInvoices] = useState<StoreOpenInvoice[]>([]);
   const [payOpen, setPayOpen] = useState(false);
   const [invoicesOpen, setInvoicesOpen] = useState(false);
@@ -58,6 +62,13 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
     postal: '',
   });
   const newCardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one key per payment attempt, kept after no answer or a 5xx, new after a 4xx or any change.
+  const attemptRef = useRef<{
+    key: string;
+    signature: string;
+    paymentMethodId: string | null;
+  } | null>(null);
+  const payingRef = useRef(false);
 
   useEffect(() => {
     if (!clientId) return;
@@ -86,12 +97,14 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
         const row = await myStoreAccount();
         if (cancelled) return;
         setCredit(Number(row.available) || 0);
-        setOwed(Number(row.owed) || 0);
+        setOwed(Number(row.payableOwed) || 0);
+        setHeld(Number(row.evetNotPayable) || 0);
         setInvoices(row.invoices || []);
       } catch {
         if (!cancelled) {
           setCredit(0);
           setOwed(0);
+          setHeld(0);
         }
       }
       const row = await myStoreCards().catch(() => ({ hasCard: false, cards: [] as StoreSavedCard[] }));
@@ -105,7 +118,7 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
     };
   }, [clientId, email, customerName]);
 
-  if (credit < 0.01 && owed < 0.01 && !note) return null;
+  if (credit < 0.01 && owed < 0.01 && held < 0.01 && !note) return null;
 
   const giftCardBalance = giftCodes.reduce((sum, row) => sum + row.balance, 0);
   // The server only applies gift cards to Scout invoices, never to eVet ones.
@@ -119,16 +132,32 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
   const needsCard = cardDue > 0.009;
 
   async function payNow() {
+    // OS-03: a second click while the first is still paying does nothing.
+    if (payingRef.current) return;
+    payingRef.current = true;
     setBusy(true);
     setError(null);
     setNote(null);
+    let attempt: NonNullable<typeof attemptRef.current> | null = null;
     try {
+      const usingNewCard = needsCard && (enterNewCard || !cards.length);
+      const codes = giftCodes.map((row) => row.code);
+      const signature = JSON.stringify([owed, usingNewCard ? 'new' : needsCard ? cardId : 'none', codes]);
+      attempt = attemptRef.current;
+      if (!attempt || attempt.signature !== signature) {
+        attempt = { key: newStoreAttemptKey(), signature, paymentMethodId: null };
+      }
+      attemptRef.current = attempt;
       let paymentMethodId = '';
       if (needsCard) {
         paymentMethodId = cardId;
-        if (enterNewCard || !cards.length) {
-          const created = await newCardRef.current?.createPaymentMethod();
-          paymentMethodId = created?.paymentMethodId ?? '';
+        if (usingNewCard) {
+          // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+          if (!attempt.paymentMethodId) {
+            const created = await newCardRef.current?.createPaymentMethod();
+            attempt.paymentMethodId = created?.paymentMethodId ?? null;
+          }
+          paymentMethodId = attempt.paymentMethodId ?? '';
         }
         if (!paymentMethodId) {
           setError('Choose or enter a card to pay.');
@@ -138,8 +167,10 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
       const result = await payMyStoreBalance({
         paymentMethodId,
         customerName,
-        giftCardCodes: giftCodes.map((row) => row.code),
+        giftCardCodes: codes,
+        attemptKey: attempt.key,
       });
+      attemptRef.current = null;
       setOwed(0);
       setInvoices([]);
       setPayOpen(false);
@@ -153,13 +184,16 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
           : `Paid ${money(result.paid)}. Thank you.`,
       );
     } catch (e: unknown) {
+      // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+      if (!storeAttemptMayRetry(e) && attemptRef.current === attempt) attemptRef.current = null;
       setError(storeApiError(e));
     } finally {
+      payingRef.current = false;
       setBusy(false);
     }
   }
 
-  if (note && credit < 0.01 && owed < 0.01) {
+  if (note && credit < 0.01 && owed < 0.01 && held < 0.01) {
     return (
       <section className="pp-account" aria-label="Account balance">
         <p className="pp-account__note">{note}</p>
@@ -178,14 +212,14 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
             {credit > 0.009 ? '💚' : '💳'}
           </span>
           <span className="pp-account__copy">
-            <span className="pp-stat-k">{credit > 0.009 ? 'You have a credit' : `Your balance: ${money(owed)}`}</span>
+            <span className="pp-stat-k">{credit > 0.009 ? 'You have a credit' : `Your balance: ${money(owed + held)}`}</span>
             <span className="pp-stat-l">{credit > 0.009 ? money(credit) : 'We appreciate your prompt payment!'}</span>
           </span>
           {credit > 0.009 ? (
             <button type="button" className="pp-btn pp-btn--primary pp-btn--sm" onClick={onShop}>
               Explore using it on the store
             </button>
-          ) : (
+          ) : owed < 0.01 ? null : (
             <button
               type="button"
               className="pp-btn pp-btn--primary pp-btn--sm"
@@ -199,7 +233,14 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
           )}
         </div>
 
-        {credit <= 0.009 && payOpen ? (
+        {held > 0.009 ? (
+          <p className="pp-account__note vayd-store__evet-held">
+            {money(held)} is on older bills from our previous system, which can’t be paid online yet. Please
+            call us to pay them.
+          </p>
+        ) : null}
+
+        {credit <= 0.009 && owed >= 0.01 && payOpen ? (
           <div className="pp-account__pay">
             {invoices.length > 0 ? (
               <button type="button" className="pp-btn pp-btn--ghost pp-btn--sm pp-account__invoices-btn" onClick={() => setInvoicesOpen(true)}>
