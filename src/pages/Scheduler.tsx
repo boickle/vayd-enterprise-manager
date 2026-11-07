@@ -385,7 +385,10 @@ import {
   ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
   writeRoutingRescheduleIntent,
   type RescheduleSameDayVisit,
+  type RoutingRescheduleIntentV1,
+  type RoutingRescheduleScope,
 } from '../utils/routingRescheduleIntent';
+import { RescheduleScopeModal } from '../components/RescheduleScopeModal';
 import {
   fetchAndCacheRescheduleSourcePlacementSnapshot,
 } from '../utils/routingRescheduleScoreCompare';
@@ -3618,6 +3621,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [editPreviewScoreLoading, setEditPreviewScoreLoading] = useState(false);
   const [editPreviewScoreError, setEditPreviewScoreError] = useState<string | null>(null);
   const [editPreviewConfirming, setEditPreviewConfirming] = useState(false);
+  /** Reschedule / Explore alternatives on a household with other visits that day: which to move. */
+  const [rescheduleScopePrompt, setRescheduleScopePrompt] = useState<{
+    intent: RoutingRescheduleIntentV1;
+    explore: boolean;
+  } | null>(null);
+  const rescheduleScopeResolveRef = useRef<((scope: RoutingRescheduleScope | null) => void) | null>(
+    null
+  );
+  const askRescheduleScope = useCallback(
+    (intent: RoutingRescheduleIntentV1, explore: boolean) =>
+      new Promise<RoutingRescheduleScope | null>((resolve) => {
+        rescheduleScopeResolveRef.current = resolve;
+        setRescheduleScopePrompt({ intent, explore });
+      }),
+    []
+  );
+  const answerRescheduleScope = useCallback((scope: RoutingRescheduleScope | null) => {
+    const resolve = rescheduleScopeResolveRef.current;
+    rescheduleScopeResolveRef.current = null;
+    setRescheduleScopePrompt(null);
+    resolve?.(scope);
+  }, []);
   const [editTimeAlignPrompt, setEditTimeAlignPrompt] = useState<{
     siblings: Appointment[];
     startIso: string;
@@ -11344,6 +11369,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   : {}),
               };
             }
+            // Other visits for this household the same day: ask whether to move just this one
+            // or all of them before routing opens (owner, Nov 7, 2026).
+            const otherSameDay = new Set(
+              (intent.sameDayVisits ?? [])
+                .map((v) => v.appointmentId)
+                .filter((id) => id !== intent!.appointmentId)
+            );
+            if (otherSameDay.size > 0) {
+              const scope = await askRescheduleScope(intent, explore);
+              if (!scope) return;
+              intent = { ...intent, rescheduleScope: scope };
+            }
             writeRoutingRescheduleIntent(intent);
             void fetchAndCacheRescheduleSourcePlacementSnapshot(intent);
             if (embedInRoutingWorkspace) {
@@ -11728,6 +11765,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       authEmployeeId,
       authDoctorId,
       euthanasiaConsentMode,
+      askRescheduleScope,
     ]
   );
 
@@ -14392,6 +14430,48 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               setActualVisitModal(updated);
             }
           }}
+        />
+      ) : null}
+
+      {rescheduleScopePrompt ? (
+        <RescheduleScopeModal
+          open
+          explore={rescheduleScopePrompt.explore}
+          clientLabel={rescheduleScopePrompt.intent.clientDisplayLabel?.trim() || 'This household'}
+          dayLabel={
+            rescheduleScopePrompt.intent.practiceDateKey
+              ? DateTime.fromISO(rescheduleScopePrompt.intent.practiceDateKey).toFormat('ccc, LLL d')
+              : 'this day'
+          }
+          selectedPetName={
+            rescheduleScopePrompt.intent.sameDayVisits
+              ?.find((v) => v.appointmentId === rescheduleScopePrompt.intent.appointmentId)
+              ?.patientName?.trim() || ''
+          }
+          visits={[
+            ...new Map(
+              (rescheduleScopePrompt.intent.sameDayVisits ?? []).map((v) => [v.appointmentId, v])
+            ).values(),
+          ].map((v) => {
+            const row = rawAppointments.find((a) => a.id === v.appointmentId);
+            const start = row
+              ? DateTime.fromISO(row.appointmentStart, { zone: 'utc' }).setZone(PRACTICE_TZ)
+              : null;
+            const end = row
+              ? DateTime.fromISO(row.appointmentEnd, { zone: 'utc' }).setZone(PRACTICE_TZ)
+              : null;
+            const time =
+              start?.isValid && end?.isValid
+                ? `${start.toFormat('h:mm a')} – ${end.toFormat('h:mm a')}`
+                : '';
+            return {
+              appointmentId: v.appointmentId,
+              label: [v.patientName, v.appointmentTypeName, time].filter(Boolean).join(' · '),
+              isSelected: v.appointmentId === rescheduleScopePrompt.intent.appointmentId,
+            };
+          })}
+          onChoose={(scope) => answerRescheduleScope(scope)}
+          onCancel={() => answerRescheduleScope(null)}
         />
       ) : null}
 

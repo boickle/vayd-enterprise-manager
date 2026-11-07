@@ -468,7 +468,9 @@ export function collectSameDayHouseholdVisits(
       // Keep the pet on the visit being closed. Drop euthanized / inactive
       // siblings so End Visit does not pre-check them for times or forward booking.
       if (!isSourcePatient && patientIsInactive(p)) continue;
-      if (byPatient.has(patientId)) continue;
+      // One row per pet. When the same pet has two visits that day, the visit that was
+      // right-clicked wins, so Reschedule moves that one (training review B1, Nov 7, 2026).
+      if (byPatient.has(patientId) && !isSourceRow) continue;
       const at = a.appointmentType;
       const rawTypeId = at?.id;
       const appointmentTypeId =
