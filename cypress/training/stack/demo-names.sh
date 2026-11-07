@@ -56,5 +56,23 @@ for k in $(j "' '.join(w['types'].keys())"); do
   id=$(j "w['types']['$k']")
   q "UPDATE appointment_types SET name=regexp_replace(name, '^hsch-[0-9-]+ ', ''), \"prettyName\"=regexp_replace(coalesce(\"prettyName\", name), '^hsch-[0-9-]+ ', '') WHERE id=$id"
 done
+
+# Scheduling and Routing videos (docs/training/scheduling-routing.md, section 4).
+# Doctors need an eVet-style id, or Get Best Route shows "Doctor <number>" instead of the name.
+q "UPDATE employees SET \"pimsId\"='90417' WHERE id=$(j "w['employees']['doctorA']") AND \"pimsId\" IS NULL"
+q "UPDATE employees SET \"pimsId\"='90418' WHERE id=$(j "w['employees']['doctorB']") AND \"pimsId\" IS NULL"
+# Clean record numbers on the demo pets (the seed's are long test tags).
+q "UPDATE patients SET \"pimsId\"='10' || id WHERE id IN ($(j "','.join(str(x) for x in w['households']['A']['activePetIds'] + [w['households']['A']['inactivePetId'], w['households']['B']['petId']])")) AND \"pimsId\" LIKE 'hsch-%'"
+# Only the demo staff show in doctor and staff pickers (the copied test database holds hundreds of test providers).
+q "UPDATE employees SET \"isActive\"=false WHERE \"isProvider\"=true AND id NOT IN ($(j "','.join(str(v) for v in w['employees'].values())"))"
+# Maria's portal login uses the same email as her client record, or a portal request makes a second household.
+q "UPDATE users SET email='maria.rivera@example.com', \"allowText\"=true, \"allowEmail\"=true WHERE id=$(j "w['users']['client']")"
+# Messages to the demo families are allowed (the stack captures email, and texts with TRAINING_SMS_CAPTURE=1).
+q "UPDATE clients SET \"doNotEmail\"=false, \"doNotSms\"=false, \"doNotSendReminders\"=false, \"smsOptOut\"=false WHERE id IN ($(j "w['households']['A']['clientId']"),$(j "w['households']['B']['clientId']"))"
+# The online request form offers these visit types.
+q "UPDATE appointment_types SET \"showInApptRequestForm\"=true, \"newPatientAllowed\"=true WHERE id IN ($(j "w['types']['medical']"),$(j "w['types']['recheck']"),$(j "w['types']['wellness']"))"
+# Client liaisons may book these types by hand on the calendar (Settings -> Roles).
+q "INSERT INTO employee_role_appointment_types (\"roleId\", \"appointmentTypeId\") SELECT a.\"roleId\", t.id FROM employee_role_assignments a, appointment_types t WHERE a.\"employeeId\"=$(j "w['employees']['cl']") AND t.id IN ($(j "w['types']['medical']"),$(j "w['types']['recheck']"),$(j "w['types']['wellness']")) ON CONFLICT DO NOTHING"
+
 psql -h localhost -U vayd -d "$DB" -Atc "select 'types: ' || string_agg(name, ', ') from appointment_types where id in ($(j "','.join(str(v) for v in w['types'].values())"))"
 echo "demo names applied to $DB"

@@ -39,7 +39,7 @@ def openai_clip(text, name, wav):
         f.write(data)
 
 # Clips are cached by voice + style + text, so a re-take only makes the lines that changed.
-cache = os.path.join(os.environ.get("TRAINING_WORK", os.path.expanduser("~/.vayd-training")), "voice-cache")
+cache = os.environ.get("TRAINING_VOICE_CACHE") or os.path.expanduser("~/.vayd-training/voice-cache")
 os.makedirs(cache, exist_ok=True)
 made = 0
 for l in lines:

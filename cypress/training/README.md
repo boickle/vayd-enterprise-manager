@@ -24,6 +24,10 @@ Nothing on this stack can reach a real client:
 ```bash
 export API_DIR=~/worktrees/<vayd-api checkout on build-doctor-flow>
 bash cypress/training/stack/stack-up.sh       # fresh DB, demo names, API :3210, app :5210
+# A second stack alongside another session: set the variables in stack/stack-env.sh first
+# (TRAINING_DB, TRAINING_API_PORT, TRAINING_APP_PORT, TRAINING_STRIPE_PORT, TRAINING_OSRM_PORT,
+# TRAINING_REDIS_DB, TRAINING_WORK). record.sh and stack-down.sh read the same variables.
+# TRAINING_SMS_CAPTURE=1 records texts in $TRAINING_WORK/stack/sms.jsonl instead of failing.
 
 # Record straight to the final file. Fix and repeat until it passes and the clicks are in sync.
 bash cypress/training/record.sh emr-v6-wrap-up openai:nova "$HOME/Movies/VAYD Training/EMR V6 - Wrap-up, recap and signing.mp4"

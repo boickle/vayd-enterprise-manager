@@ -12,7 +12,8 @@
 set -euo pipefail
 NAME="$1"; VOICE="$2"; FINAL="$3"
 HERE="$(cd "$(dirname "$0")" && pwd)"; FE="$(cd "$HERE/../.." && pwd)"
-WORK="${TRAINING_WORK:-$HOME/.vayd-training}"; E="$WORK/stack"; OUT="$WORK/$NAME"
+source "$(cd "$(dirname "$0")" && pwd)/stack/stack-env.sh"
+WORK="$TRAINING_WORK"; E="$WORK/stack"; OUT="$WORK/$NAME"
 API_DIR="${API_DIR:?Set API_DIR to the vayd-api checkout the stack runs}"; export API_DIR
 [ -f "$E/world.json" ] || { echo "No $E/world.json: start the stack first (stack/stack-up.sh)"; exit 1; }
 # Sign-in tokens in world.json last 4 hours. Restart the stack well before that.
@@ -25,9 +26,9 @@ mkdir -p "$OUT"; rm -rf "$OUT/videos" "$OUT/frames" "$OUT/screenshots" "$OUT/fai
 bash "$HERE/make-voice.sh" "$HERE/narration/$NAME.json" "$VOICE" "$OUT"
 cd "$FE"
 if ! env -u ELECTRON_RUN_AS_NODE TRAINING_NARRATION="$OUT/narration.json" TRAINING_OUT="$OUT" \
-  CYPRESS_BASE_URL=http://localhost:5210 CYPRESS_API_URL=http://localhost:3210 \
+  CYPRESS_BASE_URL=http://localhost:$TRAINING_APP_PORT CYPRESS_API_URL=http://localhost:$TRAINING_API_PORT \
   CYPRESS_SCHEDULING_WORLD="$(cat "$E/world.json")" CYPRESS_EMAIL_CAPTURE_PATH="$E/emails.jsonl" \
-  CYPRESS_SCH_API_DIR="$API_DIR" CYPRESS_SCH_DB=vayd_api_test_e2e CYPRESS_SCH_SMS_CAPTURE="$E/sms.jsonl" \
+  CYPRESS_SCH_API_DIR="$API_DIR" CYPRESS_SCH_DB=$TRAINING_DB CYPRESS_SCH_SMS_CAPTURE="$E/sms.jsonl" \
   npx cypress run --browser electron --config-file cypress.training.config.ts \
   --spec "cypress/training/$NAME.cy.ts" > "$OUT/run.log" 2>&1; then
   echo "FAILED. Error:"

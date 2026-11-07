@@ -65,3 +65,6 @@ docs/.preview/
 
 # Local editor workspace
 BothRepos.code-workspace
+
+# Training probe and recording output (screenshots, screen text)
+cypress/training-out/
