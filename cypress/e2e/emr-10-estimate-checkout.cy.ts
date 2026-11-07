@@ -67,6 +67,7 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
   let cremationName: string;
   let cremationId: number;
   let clayId: number;
+  let secondWitnessId: number;
 
   const procedure = (name: string, price: number) =>
     emrSql(
@@ -87,11 +88,17 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
         );
       });
       procedure(`Clay paw print ${w.tag}`, 40).then((id) => (clayId = id));
+      // Nov 6, 2026: no checkout before euthanasia consent is on file. A second staff member to hear oral consent (invented).
+      emrSql(
+        `INSERT INTO employees ("firstName","lastName",email,"isProvider","practiceId","pimsId","pimsType","isActive","isDeleted")
+         VALUES ('Tamsin','Reedly','${w.tag}+witness@vayd.test',false,${w.practiceId},'${w.tag}-witness','EMRTEST',true,false) RETURNING id`,
+      ).then((id) => (secondWitnessId = Number(id)));
     }),
   );
   after(() => {
     // Settling posts chart treatment lines that point at these procedures: clean the world first,
     // then any treatment lines still on the test procedures, then the procedures.
+    if (secondWitnessId) emrSql(`DELETE FROM employees WHERE id = ${secondWitnessId}`);
     cleanEmrWorld();
     if (world) {
       const mine = `SELECT id FROM procedures WHERE "pimsType" = 'EMRTEST' AND "pimsId" LIKE '${world.tag}-%'`;
@@ -130,12 +137,12 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
       signIn(world, `/schedule/soap/${appointmentId}/${patientId}?clientId=${clientId}`);
       cy.intercept('POST', '**/soap-encounters/*/orders').as('addOrder');
       cy.intercept('GET', '**/room-loader/items/search*').as('planSearch');
-      cy.get('input[placeholder="Type here to add a charge, or a note…"]', { timeout: 40000 })
+      cy.get('input[placeholder="Type here to add a charge…"]', { timeout: 40000 })
         .first()
         .type(cremationName);
       cy.wait('@planSearch');
-      // Pick the catalog result by its full unique name. The "Add as note: <typed text>" row is always
-      // in the list and also contains the name, so leave it out (clicking it creates a $0 note order).
+      // Pick the catalog result by its full unique name. (Since Nov 4 the checkout charge box has no
+      // "Add as note" row; the :not() keeps the pick on a catalog result either way.)
       cy.contains('.soap-plan-result:not(.soap-plan-result-note) .soap-plan-result-name', cremationName, { timeout: 20000 })
         .closest('.soap-plan-result')
         .click();
@@ -165,6 +172,14 @@ describe('EMR-10-9: estimate items at checkout, duplicate warning on the SOAP', 
         expect(del.status).to.be.lessThan(300),
       );
     });
+
+    // Consent is on file before checkout: oral consent heard by two staff (the "Gave oral consent" call).
+    emrApi(world, 'POST', '/consent/euthanasia/witness', {
+      appointmentId,
+      patientId,
+      method: 'oral',
+      witnessEmployeeIds: [world.staff.employeeId, secondWitnessId],
+    }).then((res) => expect(res.status, JSON.stringify(res.body)).to.be.lessThan(300));
 
     // Checkout: the items are listed read-only (no Accept / Decline); the bubble explains the money.
     signIn(world, `/schedule/soap/${appointmentId}/${patientId}/checkout?clientId=${clientId}`);
