@@ -65,6 +65,8 @@ describe('PAY-06-10: account credit at visit checkout', () => {
 
       // The rest on the card (stubbed: records a card tender for what is due).
       cy.contains('button', 'Card on file', { timeout: 30000 }).should('not.be.disabled').click();
+      // Wave 11: Card on file opens a confirm that names the amount; this click charges.
+      cy.contains('button', /^Charge \$[\d,.]+ to /, { timeout: 30000 }).click();
       cy.contains(/Charged the card on file/i, { timeout: 30000 });
 
       visitInvoice(dog).then((inv) => {
