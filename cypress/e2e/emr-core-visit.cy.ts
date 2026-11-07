@@ -158,6 +158,8 @@ describe('EMR-11-2: sick visit, Rx and the saved card', () => {
       cy.visit(soapPath(cat, clientId, '/checkout'));
       cy.contains('h1', 'Checkout', { timeout: 30000 });
       cy.contains('button', 'Card on file', { timeout: 30000 }).should('not.be.disabled').click();
+      // Wave 11: Card on file opens a confirm that names the amount; this click charges.
+      cy.contains('button', /^Charge \$[\d,.]+ to /, { timeout: 30000 }).click();
       cy.contains(/Charged the card on file/i, { timeout: 30000 });
       visitInvoice(cat).then((inv) => {
         expect(inv.status).to.eq('paid');

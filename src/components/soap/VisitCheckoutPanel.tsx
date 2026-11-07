@@ -30,6 +30,7 @@ import {
   chargeSavedCard,
   createInvoice,
   getInvoiceCardOnFile,
+  fetchAvailableAccountCredit,
   deleteOrder,
   getInvoice,
   syncTerminalCheckout,
@@ -128,6 +129,12 @@ import { listPatientMemberships, type PatientMembership } from '../../api/member
 import { usedUpMembershipNote } from '../../utils/membershipLineUsage';
 import MembershipBenefitsPausedTag from '../pims/MembershipBenefitsPausedTag';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
+import {
+  accountCreditButtonText,
+  cardOnFileButtonText,
+  cardText,
+  paidTenderLines,
+} from './checkoutPaymentText';
 import CheckoutPetSignalment from './CheckoutPetSignalment';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
@@ -2129,6 +2136,33 @@ export default function VisitCheckoutPanel({
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const [giftCardOpen, setGiftCardOpen] = useState(false);
   const [accountCreditOpen, setAccountCreditOpen] = useState(false);
+  const [cardConfirmOpen, setCardConfirmOpen] = useState(false);
+  /** Spendable account credit for the household; the Account credit button shows it. */
+  const [spendableCredit, setSpendableCredit] = useState(0);
+  /** The API leaves a gift card's last characters off its tender, so remember them as they are redeemed. */
+  const [giftLast4ByTender, setGiftLast4ByTender] = useState<Record<string, string>>({});
+  const creditClientId = invoice?.clientId ?? null;
+  const creditWatch = `${invoice?.id}|${invoice?.amountPaid}|${invoice?.status}`;
+  useEffect(() => {
+    if (!creditClientId || isPaid || isVoid) {
+      setSpendableCredit(0);
+      return;
+    }
+    let live = true;
+    fetchAvailableAccountCredit(creditClientId)
+      .then((c) => {
+        if (live) setSpendableCredit(Number(c?.total) || 0);
+      })
+      .catch(() => {
+        if (live) setSpendableCredit(0);
+      });
+    return () => {
+      live = false;
+    };
+  }, [creditClientId, creditWatch, isPaid, isVoid]);
+  useEffect(() => {
+    setCardConfirmOpen(false);
+  }, [invoice?.id, invoice?.amountPaid]);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -3762,7 +3796,30 @@ export default function VisitCheckoutPanel({
                 <span>{money(invoice.amountPaid)}</span>
               </div>
             )}
+            {!isVoid && !isPaid && Number(invoice.amountPaid) > 0 && (
+              <div className="soap-invoice-row balance-due" data-testid="checkout-balance-due">
+                <span>Balance due</span>
+                <span>{money(Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0)))}</span>
+              </div>
+            )}
           </div>
+          {isPaid && !isVoid && (
+            <div className="soap-invoice-paid-in-full" data-testid="checkout-paid-in-full">
+              <div className="soap-invoice-paid-in-full-title">Paid in full</div>
+              {(() => {
+                const lines = paidTenderLines(invoice.tenders, giftLast4ByTender);
+                return lines.length ? (
+                  <ul aria-label="How it was paid">
+                    {lines.map((t) => (
+                      <li key={t.id}>
+                        <span>{t.label}</span> <span>{money(t.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null;
+              })()}
+            </div>
+          )}
 
           {error && <div className="soap-error">{error}</div>}
           {note && <div className="soap-note-banner">{note}</div>}
@@ -3913,8 +3970,9 @@ export default function VisitCheckoutPanel({
                 ) : null}
                 <button
                   type="button"
-                  className="soap-btn"
+                  className={`soap-btn${hasSavedCard ? ' is-highlight' : ''}${cardConfirmOpen ? ' is-active' : ''}`}
                   disabled={payDisabled || !hasSavedCard}
+                  data-testid="card-on-file-button"
                   title={
                     !branchReady
                       ? 'Choose the branch and location inventory is drawn from'
@@ -3924,9 +3982,9 @@ export default function VisitCheckoutPanel({
                           : ''
                         : 'No card saved on file'
                   }
-                  onClick={chargeCardOnFile}
+                  onClick={() => setCardConfirmOpen((open) => !open)}
                 >
-                  <CreditCard size={14} /> Card on file
+                  <CreditCard size={14} /> {cardOnFileButtonText(cardOnFile)}
                 </button>
                 <button
                   type="button"
@@ -3976,12 +4034,13 @@ export default function VisitCheckoutPanel({
                   <PermissionGate permission="payment.take">
                     <button
                       type="button"
-                      className={`soap-btn ghost${accountCreditOpen ? ' is-active' : ''}`}
+                      className={`soap-btn ghost${accountCreditOpen ? ' is-active' : ''}${spendableCredit > 0.005 ? ' is-highlight' : ''}`}
+                      data-testid="account-credit-button"
                       disabled={payDisabled}
                       title={!branchReady ? 'Choose the branch and location inventory is drawn from' : "Use the client's account credit"}
                       onClick={() => setAccountCreditOpen((open) => !open)}
                     >
-                      <Wallet size={14} /> Account credit
+                      <Wallet size={14} /> {accountCreditButtonText(spendableCredit)}
                     </button>
                   </PermissionGate>
                 ) : null}
@@ -4020,6 +4079,26 @@ export default function VisitCheckoutPanel({
               </button>
             )}
           </div>
+          {cardConfirmOpen && hasSavedCard && invoice && !isPaid && !isVoid ? (
+            <div className="soap-checkout-card-confirm" data-testid="card-on-file-confirm">
+              <button
+                type="button"
+                className="soap-btn primary"
+                disabled={payDisabled}
+                onClick={() => {
+                  setCardConfirmOpen(false);
+                  chargeCardOnFile();
+                }}
+              >
+                <CreditCard size={14} /> Charge{' '}
+                {money(Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0)))} to{' '}
+                {cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : 'the card on file'}
+              </button>
+              <button type="button" className="soap-btn ghost" onClick={() => setCardConfirmOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : null}
           {accountCreditOpen && invoice?.clientId && !isPaid && !isVoid ? (
             <AccountCreditTenderForm
               invoiceId={invoice.id}
@@ -4040,6 +4119,11 @@ export default function VisitCheckoutPanel({
               channel="visit"
               onCancel={() => setGiftCardOpen(false)}
               onApplied={(next, applied, card) => {
+                const seen = new Set((invoice.tenders ?? []).map((t) => t.id));
+                const fresh = (next.tenders ?? []).find((t) => t.method === 'gift_card' && !seen.has(t.id));
+                if (fresh && card.last4) {
+                  setGiftLast4ByTender((m) => ({ ...m, [fresh.id]: card.last4 }));
+                }
                 onInvoiceChange(next);
                 setGiftCardOpen(false);
                 const left = Math.round((card.balance - applied) * 100) / 100;
