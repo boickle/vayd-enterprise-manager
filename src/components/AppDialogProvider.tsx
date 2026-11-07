@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Ban, FileText, Receipt } from 'lucide-react';
 import {
+  APP_DIALOG_ALT_RESULT,
   registerAppDialogHandler,
   type AppDialogRequest,
   type AccountCreditDialogResult,
@@ -326,6 +327,15 @@ export default function AppDialogProvider({ children }: { children: React.ReactN
                           onClick={() => finish(false)}
                         >
                           {req.cancelLabel ?? 'Cancel'}
+                        </button>
+                      ) : null}
+                      {req.kind === 'confirm' && req.altLabel ? (
+                        <button
+                          type="button"
+                          className="app-dialog__btn"
+                          onClick={() => finish(APP_DIALOG_ALT_RESULT)}
+                        >
+                          {req.altLabel}
                         </button>
                       ) : null}
                       <button
