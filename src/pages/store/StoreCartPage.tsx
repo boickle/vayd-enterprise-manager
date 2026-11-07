@@ -5,8 +5,10 @@ import {
   myStoreAccount,
   myStoreCards,
   myStoreCheckout,
+  newStoreAttemptKey,
   publicCheckout,
   storeApiError,
+  storeAttemptMayRetry,
   publicPreviewCoupon,
   publicStoreFulfillment,
   publicStoreProducts,
@@ -250,6 +252,12 @@ export default function StoreCartPage() {
   const [selectedCardId, setSelectedCardId] = useState('');
   const [enterNewCard, setEnterNewCard] = useState(false);
   const newCardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one checkout attempt = one key (the API charges at most once per key). Kept for a retry after no
+  // answer or a server error, with the same card; a definite answer (placed, declined, refused) ends it.
+  const attemptRef = useRef<{ key: string; paymentMethodId: string | null; newCard: boolean; saveCard: boolean } | null>(
+    null,
+  );
+  const placingRef = useRef(false);
   const [ship, setShip] = useState({
     customerName: '',
     email: '',
@@ -269,6 +277,11 @@ export default function StoreCartPage() {
   const [applyAccountCredit, setApplyAccountCredit] = useState(false);
   const [payOutstanding, setPayOutstanding] = useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = useState(false);
+
+  useEffect(() => {
+    // A changed cart (or how it is paid) is a new attempt.
+    attemptRef.current = null;
+  }, [lines, giftLines, coupon, giftCodes, applyAccountCredit, payOutstanding, fulfillmentId]);
 
   const persist = (next: StoreCartLine[]) => {
     writeStoreCart(next);
@@ -1396,20 +1409,37 @@ export default function StoreCartPage() {
                   setErr(placeBlocker);
                   return;
                 }
+                // OS-03: a second click while the first is still placing does nothing.
+                if (placingRef.current) return;
+                placingRef.current = true;
                 setBusy(true);
                 setErr(null);
+                const skipCard = creditCoversOrder && !hasAutoship;
+                const usingNewCard = !skipCard && (enterNewCard || !cards.length);
+                const savedCardId = skipCard || usingNewCard ? null : selectedCardId || null;
+                let attempt = attemptRef.current;
+                if (attempt && (attempt.newCard !== usingNewCard || (!usingNewCard && attempt.paymentMethodId !== savedCardId))) {
+                  attempt = null; // another card: a new attempt
+                }
+                if (!attempt) {
+                  attempt = { key: newStoreAttemptKey(), paymentMethodId: savedCardId, newCard: usingNewCard, saveCard: true };
+                }
+                attemptRef.current = attempt;
+                const current = attempt;
                 void (async () => {
-                  const skipCard = creditCoversOrder && !hasAutoship;
                   let paymentMethodId: string | null = null;
                   let saveCard = true;
-                  if (!skipCard) {
-                    if (enterNewCard || !cards.length) {
+                  if (usingNewCard) {
+                    // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+                    if (!current.paymentMethodId) {
                       const created = await newCardRef.current?.createPaymentMethod();
-                      paymentMethodId = created?.paymentMethodId ?? null;
-                      saveCard = created?.saveCard !== false;
-                    } else {
-                      paymentMethodId = selectedCardId || null;
+                      current.paymentMethodId = created?.paymentMethodId ?? null;
+                      current.saveCard = created?.saveCard !== false;
                     }
+                    paymentMethodId = current.paymentMethodId;
+                    saveCard = current.saveCard;
+                  } else if (!skipCard) {
+                    paymentMethodId = savedCardId;
                   }
                   const body = {
                     customerName: ship.customerName,
@@ -1430,6 +1460,7 @@ export default function StoreCartPage() {
                       postal: ship.postal,
                     },
                     giftCardCodes: giftCodes.map((row) => row.code),
+                    attemptKey: current.key,
                     lines: [
                       ...lines.map((l) => ({
                         inventoryItemId: l.inventoryItemId,
@@ -1444,12 +1475,20 @@ export default function StoreCartPage() {
                   const order = loggedIn
                     ? await myStoreCheckout(body)
                     : await publicCheckout(practiceId, body);
+                  attemptRef.current = null;
                   writeStoreCart([]);
                   writeStoreGiftCart([]);
                   nav(`/store/thanks/${order.id}`, { state: { order } });
                 })()
-                  .catch((e) => setErr(storeApiError(e)))
-                  .finally(() => setBusy(false));
+                  .catch((e) => {
+                    // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+                    if (!storeAttemptMayRetry(e) && attemptRef.current === current) attemptRef.current = null;
+                    setErr(storeApiError(e));
+                  })
+                  .finally(() => {
+                    placingRef.current = false;
+                    setBusy(false);
+                  });
               }}
             >
               {busy ? 'Placing order…' : 'Place order'}
