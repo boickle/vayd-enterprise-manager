@@ -1550,13 +1550,17 @@ export type StoreSavedCard = {
   recommended?: boolean;
 };
 
-export async function publicStoreCardOnFile(practiceId: number, email: string) {
-  const { data } = await http.post<{
+/**
+ * The logged-in household's saved cards (OS-01). The API finds them from the portal login; guests never
+ * see saved cards, and no card is ever looked up by a typed email.
+ */
+export async function myStoreCards() {
+  const { data } = await http.get<{
     hasCard: boolean;
     brand?: string | null;
     last4?: string | null;
     cards?: StoreSavedCard[];
-  }>(`/public/store/card-on-file`, { practiceId, email });
+  }>(`/store/checkout/cards`);
   return data;
 }
 
@@ -1633,16 +1637,9 @@ export type StoreAccountPosition = {
   invoices: StoreOpenInvoice[];
 };
 
-export async function publicAccountCredit(
-  practiceId: number,
-  clientId: number,
-  email: string,
-): Promise<StoreAccountPosition> {
-  const { data } = await http.post<StoreAccountPosition>(`/public/store/account-credit`, {
-    practiceId,
-    clientId,
-    email,
-  });
+/** The logged-in household's credit, balance and open bills (OS-01: from the login, not an id or email). */
+export async function myStoreAccount(): Promise<StoreAccountPosition> {
+  const { data } = await http.get<StoreAccountPosition>(`/store/checkout/account`);
   return {
     available: Number(data?.available) || 0,
     owed: Number(data?.owed) || 0,
@@ -1650,20 +1647,16 @@ export async function publicAccountCredit(
   };
 }
 
-export async function publicPayAccountBalance(
-  practiceId: number,
-  body: {
-    clientId: number;
-    email: string;
-    paymentMethodId: string;
-    customerName?: string | null;
-    giftCardCodes?: string[];
-  },
-): Promise<{ paid: number; giftCardApplied: number; cardCharged: number }> {
+/** Pay the logged-in household's balance. The card must be new or one of the household's own. */
+export async function payMyStoreBalance(body: {
+  paymentMethodId: string;
+  customerName?: string | null;
+  giftCardCodes?: string[];
+}): Promise<{ paid: number; giftCardApplied: number; cardCharged: number }> {
   try {
     const { data } = await http.post<{ paid: number; giftCardApplied?: number; cardCharged?: number }>(
-      `/public/store/pay-balance`,
-      { practiceId, ...body }
+      `/store/checkout/pay-balance`,
+      body
     );
     return {
       paid: Number(data?.paid) || 0,
@@ -1707,45 +1700,60 @@ export type StoreCheckoutResult = Omit<MailOrder, 'id'> & {
   giftCards?: PurchasedGiftCard[];
 };
 
-export async function publicCheckout(
-  practiceId: number,
-  body: {
-    customerName: string;
-    customerEmail?: string;
-    couponCode?: string;
-    applyAccountCredit?: boolean;
-    payOutstanding?: boolean;
-    paymentMethodId?: string | null;
-    saveCard?: boolean;
-    updateMailingOnFile?: boolean;
-    clientId?: number | null;
-    patientId?: number | null;
-    fulfillmentId?: string | null;
-    ship: {
-      name?: string;
-      line1?: string;
-      line2?: string;
-      city?: string;
-      state?: string;
-      postal?: string;
-    };
-    giftCardCodes?: string[];
-    lines: Array<
-      | {
-          inventoryItemId: number;
-          quantity: number;
-          autoshipFrequency?: string | null;
-          patientIds?: number[] | null;
-        }
-      | GiftCardCheckoutLine
-    >;
-  }
-) {
+export type StoreCheckoutBody = {
+  customerName: string;
+  customerEmail?: string;
+  couponCode?: string;
+  applyAccountCredit?: boolean;
+  payOutstanding?: boolean;
+  paymentMethodId?: string | null;
+  saveCard?: boolean;
+  updateMailingOnFile?: boolean;
+  patientId?: number | null;
+  fulfillmentId?: string | null;
+  ship: {
+    name?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    postal?: string;
+  };
+  giftCardCodes?: string[];
+  lines: Array<
+    | {
+        inventoryItemId: number;
+        quantity: number;
+        autoshipFrequency?: string | null;
+        patientIds?: number[] | null;
+      }
+    | GiftCardCheckoutLine
+  >;
+};
+
+/**
+ * Guest checkout (D1): non-prescription, one-time items with a newly entered card. The order belongs to no
+ * household; the API ignores any client named in the body.
+ */
+export async function publicCheckout(practiceId: number, body: StoreCheckoutBody) {
   try {
     const { data } = await http.post<StoreCheckoutResult>(`/public/store/checkout`, {
       practiceId,
       ...body,
     });
+    return data;
+  } catch (err) {
+    throw new Error(storeApiError(err));
+  }
+}
+
+/**
+ * Logged-in checkout (OS-01): the API takes the household from the portal login, for saved cards, member
+ * prices, pets, account credit, the balance, the mailing-address update and auto-ship.
+ */
+export async function myStoreCheckout(body: StoreCheckoutBody) {
+  try {
+    const { data } = await http.post<StoreCheckoutResult>(`/store/checkout`, body);
     return data;
   } catch (err) {
     throw new Error(storeApiError(err));
