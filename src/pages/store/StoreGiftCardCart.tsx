@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  myStoreCards,
+  myStoreCheckout,
   publicCheckout,
-  publicStoreCardOnFile,
   storeApiError,
   type GiftCardCheckoutLine,
   type StoreSavedCard,
@@ -227,24 +228,29 @@ export function StoreGiftCardCheckout({
   const cardRef = useRef<StoreCartCardEntryHandle>(null);
   const total = storeGiftCartTotal(lines);
   const faceTotal = lines.reduce((n, l) => n + l.amount * l.quantity, 0);
-  const onFileEmail = clientId ? prefill.email.trim() : '';
 
   useEffect(() => {
-    // Only a logged-in household sees its saved cards; guests always enter one.
-    if (!onFileEmail) return;
+    // OS-01: only a logged-in household sees its saved cards, found from the login; guests always enter one.
+    if (!clientId) {
+      setCards([]);
+      setEnterNewCard(true);
+      return;
+    }
     let cancelled = false;
-    void publicStoreCardOnFile(practiceId, onFileEmail).then((row) => {
-      if (cancelled) return;
-      const next = row.hasCard ? (row.cards ?? []) : [];
-      setCards(next);
-      const recommended = next.find((c) => c.recommended) ?? next[0];
-      setSelectedCardId(recommended?.paymentMethodId || '');
-      setEnterNewCard(!next.length);
-    });
+    void myStoreCards()
+      .then((row) => {
+        if (cancelled) return;
+        const next = row.hasCard ? (row.cards ?? []) : [];
+        setCards(next);
+        const recommended = next.find((c) => c.recommended) ?? next[0];
+        setSelectedCardId(recommended?.paymentMethodId || '');
+        setEnterNewCard(!next.length);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [onFileEmail, practiceId]);
+  }, [clientId]);
 
   useEffect(() => {
     setName((current) => current || prefill.name);
@@ -269,15 +275,16 @@ export function StoreGiftCardCheckout({
         paymentMethodId = selectedCardId || null;
       }
       if (!paymentMethodId) throw new Error('Enter a card to pay for the gift card.');
-      const result = await publicCheckout(practiceId, {
+      const body = {
         customerName: name.trim(),
         customerEmail: email.trim(),
-        clientId,
         paymentMethodId,
         saveCard,
         ship: {},
         lines: giftCardCheckoutLines(lines),
-      });
+      };
+      // OS-01: a logged-in purchase is for the login's household; a guest's belongs to no household.
+      const result = clientId ? await myStoreCheckout(body) : await publicCheckout(practiceId, body);
       writeStoreGiftCart([]);
       nav('/store/thanks/gift-cards', { state: { order: result } });
     } catch (e) {

@@ -2,11 +2,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
 import {
-  publicAccountCredit,
+  myStoreAccount,
+  myStoreCards,
+  myStoreCheckout,
   publicCheckout,
   storeApiError,
   publicPreviewCoupon,
-  publicStoreCardOnFile,
   publicStoreFulfillment,
   publicStoreProducts,
   publicStoreTax,
@@ -368,10 +369,9 @@ export default function StoreCartPage() {
       setPayOutstanding(false);
       return;
     }
-    const email = ship.email.trim();
-    if (!email) return;
+    // OS-01: the API finds the household from the login; the email field plays no part.
     let cancelled = false;
-    void publicAccountCredit(practiceId, clientId, email)
+    void myStoreAccount()
       .then((row) => {
         if (cancelled) return;
         const available = Number(row.available) || 0;
@@ -392,7 +392,7 @@ export default function StoreCartPage() {
     return () => {
       cancelled = true;
     };
-  }, [loggedIn, clientId, ship.email]);
+  }, [loggedIn, clientId]);
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
@@ -421,23 +421,39 @@ export default function StoreCartPage() {
   }, [auth.clientInfo, clientId, loggedIn]);
 
   useEffect(() => {
-    const email = ship.email.trim();
-    if (!email) {
+    // OS-01: saved cards only for a logged-in client, found from the login. Guests always enter a card,
+    // and the email typed on this page never looks anything up.
+    if (!loggedIn || !clientId) {
       setCards([]);
       setSelectedCardId('');
+      setEnterNewCard(true);
       return;
     }
-    void publicStoreCardOnFile(practiceId, email).then((row) => {
-      const next = row.hasCard ? row.cards ?? [] : [];
-      setCards(next);
-      const recommended = next.find((c) => c.recommended) ?? next[0];
-      setSelectedCardId(recommended?.paymentMethodId || '');
-      setEnterNewCard(!next.length);
-    });
-  }, [ship.email]);
+    let cancelled = false;
+    void myStoreCards()
+      .then((row) => {
+        if (cancelled) return;
+        const next = row.hasCard ? row.cards ?? [] : [];
+        setCards(next);
+        const recommended = next.find((c) => c.recommended) ?? next[0];
+        setSelectedCardId(recommended?.paymentMethodId || '');
+        setEnterNewCard(!next.length);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCards([]);
+        setSelectedCardId('');
+        setEnterNewCard(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, clientId]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  const needsLogin = lines.length > 0 && !loggedIn;
+  // D1: a guest may buy one-time items that need no pet, with a newly entered card. Prescriptions, pet items
+  // and auto-ship need the portal login.
+  const needsLogin = !loggedIn && rxLines.length > 0;
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -886,8 +902,17 @@ export default function StoreCartPage() {
       ) : null}
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
+      {lines.length && !loggedIn && !needsLogin ? (
+        <p className="vayd-store__muted vayd-store__guest-note">
+          Checking out as a guest with a new card.{' '}
+          <Link to="/login" state={{ from: { pathname: '/store/cart' } }}>
+            Log in
+          </Link>{' '}
+          to use a saved card, member prices or account credit.
+        </p>
+      ) : null}
 
-      {lines.length && loggedIn ? (
+      {lines.length && !needsLogin ? (
         <div className="vayd-store__cart-grid">
           <section>
             <h2>Fulfillment</h2>
@@ -1396,16 +1421,16 @@ export default function StoreCartPage() {
                       paymentMethodId = selectedCardId || null;
                     }
                   }
-                  const order = await publicCheckout(practiceId, {
+                  const body = {
                     customerName: ship.customerName,
                     customerEmail: ship.email,
                     couponCode: coupon || undefined,
                     applyAccountCredit,
                     payOutstanding,
-                    clientId,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
-                    saveCard,
+                    // A guest's card is used once and saved to no account (OS-01).
+                    saveCard: loggedIn && saveCard,
                     updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,
@@ -1425,7 +1450,11 @@ export default function StoreCartPage() {
                       })),
                       ...giftCardCheckoutLines(giftLines),
                     ],
-                  });
+                  };
+                  // OS-01: a logged-in order goes to the household of the login, never one named in the body.
+                  const order = loggedIn
+                    ? await myStoreCheckout(body)
+                    : await publicCheckout(practiceId, body);
                   writeStoreCart([]);
                   writeStoreGiftCart([]);
                   nav(`/store/thanks/${order.id}`, { state: { order } });

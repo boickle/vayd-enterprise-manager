@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  publicAccountCredit,
-  publicPayAccountBalance,
-  publicStoreCardOnFile,
+  myStoreAccount,
+  myStoreCards,
+  payMyStoreBalance,
   storeApiError,
   type StoreOpenInvoice,
   type StoreSavedCard,
@@ -17,9 +17,9 @@ import '../store/Store.css';
 
 type Props = {
   clientId: number;
-  /** Email on the client record. The balance lookup only matches this. */
+  /** Email on the client record; prefills the new-card billing form. */
   email: string;
-  /** Sign-in email, used as a second place to find a saved card. */
+  /** Not used for lookups any more (OS-01): cards and bills come from the login. */
   cardEmail?: string | null;
   customerName?: string | null;
   onShop: () => void;
@@ -34,7 +34,7 @@ function cardLabel(card: StoreSavedCard): string {
   return card.last4 ? `${brand} •••• ${card.last4}` : brand;
 }
 
-export default function PortalAccountCard({ clientId, email, cardEmail, customerName, onShop }: Props) {
+export default function PortalAccountCard({ clientId, email, customerName, onShop }: Props) {
   const practiceId = currentPracticeId();
   const [credit, setCredit] = useState(0);
   const [owed, setOwed] = useState(0);
@@ -47,7 +47,6 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [billingEmail, setBillingEmail] = useState(email.trim());
   const [giftCodes, setGiftCodes] = useState<AppliedGiftCard[]>([]);
   const [billingPrefill, setBillingPrefill] = useState({
     name: customerName?.trim() || '',
@@ -69,7 +68,6 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
       const onFile = String(info?.email || info?.primaryEmail || '').trim();
       if (onFile) lookup = onFile;
       if (cancelled) return;
-      if (lookup) setBillingEmail(lookup);
       const displayName =
         customerName?.trim() ||
         [info?.firstName, info?.lastName].filter(Boolean).join(' ').trim() ||
@@ -83,9 +81,9 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
         state: String(info?.state || info?.stateProvince || '').trim(),
         postal: String(info?.zipcode || info?.zip || '').trim(),
       });
-      if (!lookup) return;
+      // OS-01: the API takes the household from the portal login, never from an id or email we send.
       try {
-        const row = await publicAccountCredit(practiceId, clientId, lookup);
+        const row = await myStoreAccount();
         if (cancelled) return;
         setCredit(Number(row.available) || 0);
         setOwed(Number(row.owed) || 0);
@@ -96,28 +94,16 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
           setOwed(0);
         }
       }
-      const cardEmails = Array.from(
-        new Set([lookup, (cardEmail || '').trim(), email.trim()].filter(Boolean).map((value) => value.toLowerCase())),
-      );
-      const rows = await Promise.all(
-        cardEmails.map((value) =>
-          publicStoreCardOnFile(practiceId, value).catch(() => ({ hasCard: false, cards: [] as StoreSavedCard[] })),
-        ),
-      );
+      const row = await myStoreCards().catch(() => ({ hasCard: false, cards: [] as StoreSavedCard[] }));
       if (cancelled) return;
-      const seen = new Set<string>();
-      const unique = rows.flatMap((row) => row.cards || []).filter((card) => {
-        if (!card.paymentMethodId || seen.has(card.paymentMethodId)) return false;
-        seen.add(card.paymentMethodId);
-        return true;
-      });
-      setCards(unique);
-      setCardId(unique[0]?.paymentMethodId || '');
+      const mine = (row.cards || []).filter((card) => Boolean(card.paymentMethodId));
+      setCards(mine);
+      setCardId(mine[0]?.paymentMethodId || '');
     })();
     return () => {
       cancelled = true;
     };
-  }, [clientId, email, cardEmail, customerName, practiceId]);
+  }, [clientId, email, customerName]);
 
   if (credit < 0.01 && owed < 0.01 && !note) return null;
 
@@ -149,9 +135,7 @@ export default function PortalAccountCard({ clientId, email, cardEmail, customer
           return;
         }
       }
-      const result = await publicPayAccountBalance(practiceId, {
-        clientId,
-        email: billingEmail.trim(),
+      const result = await payMyStoreBalance({
         paymentMethodId,
         customerName,
         giftCardCodes: giftCodes.map((row) => row.code),
