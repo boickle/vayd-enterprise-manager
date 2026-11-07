@@ -78,9 +78,37 @@ export type HouseholdScheduledVisitConflict = {
   isHold: boolean;
   notes: string | null;
   appointmentStartIso: string;
+  /** End of the visit; with patientIds, lets routing hide a slot on top of a pet's own visit (B5). */
+  appointmentEndIso?: string | null;
+  /** Pets on this visit (ids as strings). */
+  patientIds?: string[];
   practiceDateKey: string;
   primaryProviderId: string | null;
 };
+
+/**
+ * True when a routing slot would overlap a visit that one of the pets being booked already has
+ * (training review B5, Nov 7, 2026: Biscuit was offered 10:50, on top of his own 11:00 recheck).
+ */
+export function slotOverlapsBookedPetVisit(
+  slotStartIso: string | null | undefined,
+  serviceMinutes: number,
+  bookingPatientIds: readonly string[],
+  conflicts: readonly HouseholdScheduledVisitConflict[],
+): boolean {
+  if (!slotStartIso || bookingPatientIds.length === 0 || conflicts.length === 0) return false;
+  const start = Date.parse(slotStartIso);
+  if (!Number.isFinite(start)) return false;
+  const end = start + Math.max(1, serviceMinutes) * 60_000;
+  const pets = new Set(bookingPatientIds.map(String));
+  return conflicts.some((c) => {
+    if (!c.patientIds?.some((id) => pets.has(String(id)))) return false;
+    const cStart = Date.parse(c.appointmentStartIso);
+    const cEnd = c.appointmentEndIso ? Date.parse(c.appointmentEndIso) : cStart + 30 * 60_000;
+    if (!Number.isFinite(cStart) || !Number.isFinite(cEnd)) return false;
+    return start < cEnd && cStart < end;
+  });
+}
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -431,6 +459,8 @@ export async function findHouseholdScheduledVisitConflicts(args: {
       isHold: points <= 0,
       notes: appointmentNotesForDisplay(appt),
       appointmentStartIso: appt.appointmentStart!,
+      appointmentEndIso: appt.appointmentEnd ?? null,
+      patientIds: apptPatients.map((p) => String(p.id)).filter((id) => id && id !== 'undefined'),
       practiceDateKey,
       primaryProviderId: resolveSchedulerProviderFilterFromAppointment(appt, []) || null,
     });

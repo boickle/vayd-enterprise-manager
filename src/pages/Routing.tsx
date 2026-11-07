@@ -204,10 +204,12 @@ import {
 import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import { fetchRoutingDoctor } from '../utils/routingDoctorLookup';
 import {
   buildBookingAppointmentTypeCatalog,
   dispatchRoutingFocusHouseholdVisit,
   findHouseholdScheduledVisitConflicts,
+  slotOverlapsBookedPetVisit,
   resolveRoutingHouseholdVisitClientId,
   shouldWarnHouseholdVisitsOnRoutingSearch,
   unpinRoutingHouseholdVisitHighlight,
@@ -3608,8 +3610,7 @@ export default function Routing({
     let internalId: string | undefined = doctorIdByPims[opt.doctorPimsId];
     if (!internalId) {
       try {
-        const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
-        const emp = Array.isArray(data) ? data[0] : data;
+        const emp = await fetchRoutingDoctor(opt.doctorPimsId);
         const resolvedId =
           (emp?.id != null ? String(emp.id) : undefined) ??
           (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
@@ -3931,8 +3932,7 @@ export default function Routing({
       if (!doctorNameReqs.current[pid]) {
         doctorNameReqs.current[pid] = (async () => {
           try {
-            const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
-            const emp = Array.isArray(data) ? data[0] : data;
+            const emp = await fetchRoutingDoctor(pid);
 
             const name = buildDoctorName(emp, `Doctor ${pid}`);
 
@@ -4863,8 +4863,7 @@ export default function Routing({
     if (!doctorNameReqs.current[pid]) {
       doctorNameReqs.current[pid] = (async () => {
         try {
-          const { data } = await http.get(`/employees/pims/${encodeURIComponent(pid)}`);
-          const emp = Array.isArray(data) ? data[0] : data;
+          const emp = await fetchRoutingDoctor(pid);
           const name = buildDoctorName(emp, `Doctor ${pid}`);
           setDoctorNames((m) => ({ ...m, [pid]: name }));
           return name;
@@ -5761,7 +5760,24 @@ export default function Routing({
     }
 
     const requestedDoctorId = form.doctorId.trim();
-    return rows.map((r) => {
+    // B5: never offer a slot on top of a visit a pet being booked already has.
+    const ownVisitConflicts = householdVisitBanner?.conflicts ?? [];
+    const bookingPetIds = selectedRoutingPatientIds.map(String);
+    const slotMinutes = Math.max(1, Number(form.newAppt.serviceMinutes) || 30);
+    const rowsWithoutOwnVisit =
+      ownVisitConflicts.length > 0 && bookingPetIds.length > 0
+        ? rows.filter(
+            (r) =>
+              !slotOverlapsBookedPetVisit(
+                r.suggestedStartIso ?? r.arrivalWindow?.windowStartIso,
+                slotMinutes,
+                bookingPetIds,
+                ownVisitConflicts,
+              ),
+          )
+        : rows;
+
+    return rowsWithoutOwnVisit.map((r) => {
       // Force index look nice for EMPTY day
       const empty = isEmptyDay(r);
       const displayInsertionIndex = empty ? 1 : (r.insertionIndex ?? 0) + 1;
@@ -5791,6 +5807,9 @@ export default function Routing({
     latestRoutingRequestId,
     resultsSortedByDateTime,
     asapResultsSortMode,
+    householdVisitBanner,
+    selectedRoutingPatientIds,
+    form.newAppt.serviceMinutes,
   ]);
 
   /** Zone class + polygon name are the same for all cards in a search—show once in Results header. */
@@ -5950,8 +5969,8 @@ export default function Routing({
         try {
           let internalId = doctorIdByPims[pims];
           if (!internalId) {
-            const { data } = await http.get(`/employees/pims/${encodeURIComponent(pims)}`);
-            const resolved = data?.id != null ? String(data.id) : '';
+            const emp = await fetchRoutingDoctor(pims);
+            const resolved = emp?.id != null ? String(emp.id) : '';
             if (!resolved) continue;
             internalId = resolved;
             if (!cancelled) {

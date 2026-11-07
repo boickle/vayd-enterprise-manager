@@ -1658,8 +1658,8 @@ export function SchedulerActualVisitTimeModal({
                   className="settings-muted scheduler-actual-visit-times-hint"
                   style={{ gridColumn: '1 / -1', margin: 0 }}
                 >
-                  Save start anytime. Follow-up is required when you save end time — you can fill
-                  visit times and forward booking in any order.
+                  Save start anytime. Every visit needs a follow-up plan before the end time can be
+                  saved — you can fill visit times and the follow-up in any order.
                 </p>
               ) : null}
 
@@ -1712,8 +1712,8 @@ export function SchedulerActualVisitTimeModal({
 
               {dispositionLocked ? null : (
                 <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-                  Optional here — checkout asks this while the client is still at the door. Answer
-                  it now only if this visit is not going through checkout.
+                  Every visit needs a follow-up plan. It&apos;s best done at checkout, while the
+                  family is still there. If it wasn&apos;t, plan it here when you save the end time.
                 </p>
               )}
 
