@@ -702,6 +702,17 @@ export function AddCreditButton({ onClick, disabled }: { onClick: () => void; di
   );
 }
 
+/** Void on an old eVet invoice follows `invoice.void`, same as voiding a Scout invoice. */
+export function EvetVoidButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  const mayVoidInvoice = useCan('invoice.void');
+  if (!mayVoidInvoice) return null;
+  return (
+    <button type="button" className="client-fin__btn-ghost" disabled={disabled} onClick={onClick}>
+      Void
+    </button>
+  );
+}
+
 export function LineAmount({
   line,
 }: {
@@ -5903,14 +5914,7 @@ export default function ClientFinancialWorkspace({
                     Return items
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="client-fin__btn-ghost"
-                  disabled={busy}
-                  onClick={() => void takeOverEvet('void')}
-                >
-                  Void
-                </button>
+                <EvetVoidButton disabled={busy} onClick={() => void takeOverEvet('void')} />
               </div>
             </>
           ) : selected ? (
