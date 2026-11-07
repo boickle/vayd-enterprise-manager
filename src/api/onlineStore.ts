@@ -1668,15 +1668,23 @@ export type StoreOpenInvoice = {
 export type StoreAccountPosition = {
   available: number;
   owed: number;
+  /** OS-06: what can be paid online now (old eVet bills wait until eVet sync is off). */
+  payableOwed: number;
+  /** OS-06: old eVet bills that can't be paid online yet. */
+  evetNotPayable: number;
   invoices: StoreOpenInvoice[];
 };
 
 /** The logged-in household's credit, balance and open bills (OS-01: from the login, not an id or email). */
 export async function myStoreAccount(): Promise<StoreAccountPosition> {
   const { data } = await http.get<StoreAccountPosition>(`/store/checkout/account`);
+  const owed = Number(data?.owed) || 0;
   return {
     available: Number(data?.available) || 0,
-    owed: Number(data?.owed) || 0,
+    owed,
+    // An API without OS-06 sends neither: everything owed is payable.
+    payableOwed: data?.payableOwed == null ? owed : Number(data.payableOwed) || 0,
+    evetNotPayable: Number(data?.evetNotPayable) || 0,
     invoices: Array.isArray(data?.invoices) ? data.invoices : [],
   };
 }

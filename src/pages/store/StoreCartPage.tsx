@@ -273,6 +273,8 @@ export default function StoreCartPage() {
   const [updateMailingOnFile, setUpdateMailingOnFile] = useState<'yes' | 'no' | ''>('');
   const [accountCredit, setAccountCredit] = useState(0);
   const [amountOwed, setAmountOwed] = useState(0);
+  // OS-06: old eVet bills can't be paid online while eVet sync is on; shown, not charged.
+  const [evetNotPayable, setEvetNotPayable] = useState(0);
   const [openInvoices, setOpenInvoices] = useState<StoreOpenInvoice[]>([]);
   const [applyAccountCredit, setApplyAccountCredit] = useState(false);
   const [payOutstanding, setPayOutstanding] = useState(false);
@@ -377,6 +379,7 @@ export default function StoreCartPage() {
     if (!loggedIn || !clientId) {
       setAccountCredit(0);
       setAmountOwed(0);
+      setEvetNotPayable(0);
       setOpenInvoices([]);
       setApplyAccountCredit(false);
       setPayOutstanding(false);
@@ -388,9 +391,10 @@ export default function StoreCartPage() {
       .then((row) => {
         if (cancelled) return;
         const available = Number(row.available) || 0;
-        const owed = Number(row.owed) || 0;
+        const owed = Number(row.payableOwed) || 0;
         setAccountCredit(available);
         setAmountOwed(owed);
+        setEvetNotPayable(Number(row.evetNotPayable) || 0);
         setOpenInvoices(row.invoices || []);
         if (available < 0.01) setApplyAccountCredit(false);
         if (owed < 0.01) setPayOutstanding(false);
@@ -1256,6 +1260,12 @@ export default function StoreCartPage() {
                 ) : null}
                 {showOpenInvoices ? <StoreOpenInvoicesPanel invoices={openInvoices} /> : null}
               </div>
+            ) : null}
+            {evetNotPayable > 0.009 ? (
+              <p className="vayd-store__muted vayd-store__evet-held">
+                ${evetNotPayable.toFixed(2)} is on older bills from our previous system, which can’t be paid
+                online yet. Please call us to pay them.
+              </p>
             ) : null}
             <label className="vayd-store__cart-coupon">
               Coupon
