@@ -61,6 +61,7 @@ import { appConfirm, appDeclineHow, appPrompt } from '../../utils/appDialog';
 import { removeWithRecordedDose } from '../RemoveVaccineDoseDialog';
 import {
   formatDeclinedDate,
+  declineNoteForDisplay,
   isOffRecordDeclineNote,
   offRecordDeclineNote,
   type DeclinedTreatmentItem,
@@ -2574,7 +2575,7 @@ export default function VisitCheckoutPanel({
                         )}
                       </div>
                       {o.state === 'declined' && o.note?.trim() ? (
-                        <div className="soap-invoice-previsit-reason">{o.note.trim()}</div>
+                        <div className="soap-invoice-previsit-reason">{declineNoteForDisplay(o.note)}</div>
                       ) : null}
                       <PrevisitCheckinPriceNote note={o.note} state={o.state} />
                     </div>
@@ -2771,7 +2772,7 @@ export default function VisitCheckoutPanel({
                           )}
                         </div>
                         {o.state === 'declined' && o.note?.trim() ? (
-                          <div className="soap-invoice-previsit-reason">{o.note.trim()}</div>
+                          <div className="soap-invoice-previsit-reason">{declineNoteForDisplay(o.note)}</div>
                         ) : null}
                         <PrevisitCheckinPriceNote note={o.note} state={o.state} />
                       </div>
