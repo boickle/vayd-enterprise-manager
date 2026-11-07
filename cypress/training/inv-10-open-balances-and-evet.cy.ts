@@ -36,6 +36,8 @@ describe('Training: INV-10 open balances and eVet', () => {
     });
     line('inv10-07', () => pointAt(() => cy.contains('Sends $').filter(':visible').first(), 4500));
     line('inv10-08');
+    line('inv10-08b', () => tap(() => cy.contains('button', 'Edit in Scout')));
+    line('inv10-08c', () => pointAt(() => cy.contains('button', 'Save invoice'), 4500));
     line('inv10-09');
     line('inv10-10');
     finish();

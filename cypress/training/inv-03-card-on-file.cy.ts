@@ -50,7 +50,13 @@ describe('Training: INV-03 card on file', () => {
     line('inv03-01');
     line('inv03-02', () => pointAt(() => btn('Card on file'), 4000));
     line('inv03-03', () => pointAt(() => cy.get('.soap-checkout-consent'), 5000));
+    line('inv03-03b', () => {
+      tap(() => cy.get('.soap-checkout-consent input'));
+      cy.get('.soap-checkout-consent input').should('be.checked');
+    });
     line('inv03-04');
+    line('inv03-tap1', () => pointAt(() => btn('Tap to Pay'), 4000));
+    line('inv03-tap2');
     line('inv03-05', () => {
       tap(() => btn('Card over phone'));
       cy.contains('h3', 'Card over the phone').should('be.visible');

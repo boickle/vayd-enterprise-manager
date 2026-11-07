@@ -28,6 +28,14 @@
   "text": "Tell Tom kindly, and ask for another card."
  },
  {
+  "id": "inv05-tap1",
+  "text": "In the field, you'll usually take a new card with Tap to Pay on the Stripe reader."
+ },
+ {
+  "id": "inv05-tap2",
+  "text": "This demo has no reader connected, so we'll use Card over phone. It works the same way."
+ },
+ {
   "id": "inv05-08",
   "text": "Click Card over phone to take the new card."
  },

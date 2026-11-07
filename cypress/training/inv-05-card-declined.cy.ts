@@ -50,6 +50,8 @@ describe('Training: INV-05 card declined', () => {
     line('inv05-05', () => pointAt(() => cy.contains('Your card was declined'), 4000));
     line('inv05-06', () => pointAt(() => cy.get('.soap-invoice-row.total'), 3500));
     line('inv05-07');
+    line('inv05-tap1', () => pointAt(() => btn('Tap to Pay'), 4000));
+    line('inv05-tap2');
     line('inv05-08', () => {
       tap(() => btn('Card over phone'));
       cy.contains('h3', 'Card over the phone').should('be.visible');

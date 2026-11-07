@@ -19,6 +19,8 @@
 | 4 | Checkout | Point at the red message "Your card was declined." | "Scout says the card was declined." | — |
 | 5 | Checkout | Point at **Total** $75.00, with nothing paid | "Check the bill: nothing is paid." | — |
 | 6 | Voice-over | — | "Tell Tom kindly, and ask for another card." | — |
+| 7a | Checkout | Point at **Tap to Pay** (no click) | "In the field, you'll usually take a new card with Tap to Pay on the Stripe reader." | — |
+| 7b | Checkout | (nothing to click) | "This demo has no reader connected, so we'll use Card over phone. It works the same way." | — |
 | 7 | Checkout | Click **Card over phone** | "Take the new card." | — |
 | 8 | **Card over the phone** | Type "Tom Chen" in **Name on card** | "The name on the card." | — |
 | 9 | **Card over the phone** | Type 4242 4242 4242 4242, 12/34, 123 and the ZIP | "And the card." | Stripe test card |

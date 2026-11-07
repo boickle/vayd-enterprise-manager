@@ -15,6 +15,8 @@
 |---|---|---|---|---|
 | 1 | Maple's Checkout page | Point at **Card on file**, greyed out | "The Riveras don't have a card saved yet." | Rivera visit for Maple: Nail trim $22.50 and Dental X-rays $162 (procedures, so no lot is needed). Total $184.50 |
 | 2 | Checkout | Point at the box above the payment buttons: "Owner is happy for us to keep this card on file… Ask before you tap — uncheck if they say no." (it only shows while no card is saved, so it is shown here, not at the end) | "Ask first, then charge once. With the card reader, the question is this box. Untick it if they say no." | — |
+| 3a | Checkout | Point at **Tap to Pay** (no click) | "In the field, you'll usually take a new card with Tap to Pay on the Stripe reader." | — |
+| 3b | Checkout | (nothing to click) | "This demo has no reader connected, so we'll use Card over phone. It works the same way." | — |
 | 3 | Checkout | Click **Card over phone** (tooltip: "Virtual terminal — key in a card the owner reads out over the phone") | "Maria reads her card out over the phone." | — |
 | 4 | **Card over the phone** | Type the name in **Name on card** | "Type the name on the card." | — |
 | 5 | **Card over the phone** | Type 4242 4242 4242 4242, 12/34, 123 and the ZIP | "Then the card number, expiry, security code and ZIP." | Stripe test card |

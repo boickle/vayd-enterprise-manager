@@ -139,7 +139,7 @@ function ripple(doc: Document, x: number, y: number) {
 /** Scrolls the element to the middle of the screen (clear of sticky headers) and yields it. */
 function center(get: () => Cypress.Chainable<JQuery<HTMLElement>>) {
   get().then(($el) => $el[0].scrollIntoView({ block: 'center', behavior: 'smooth' }));
-  cy.wait(450, { log: false });
+  cy.wait(300, { log: false });
   settle(get);
   return get();
 }

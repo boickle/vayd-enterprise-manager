@@ -106,3 +106,22 @@ Same stack and setup as batch A. Dry runs are in `~/.vayd-training-inv/dry/`. Tw
 
 ## Run notes
 - One INV-12 run stalled about 25 minutes while another session's memory use pushed free memory to 40% (level 2); I stopped only my own run, waited for level 1 and 76% free, and it then ran normally.
+
+# Pass 2: final takes (Nova), Nov 7, 2026
+
+Stack: `vayd_api_test_inv`, API on build-doctor-flow 882ed47f (rebuilt; migrations ran on the training DB only), Stripe test mode. The fresh DB needs `setup/invoicing-demo.sql` loaded once (`psql -f`) before any INV spec: without it `Nail trim` is missing and the order POST returns 400. Files are in `~/Movies/VAYD Training/`; frames in `~/.vayd-training-inv/finals-frames/<ID>/`.
+
+- **INV-01:** Pass 2: recorded, 128 s, 5 clicks in sync. To be RE-TAKEN after the line-row price/QTY overlap fix (owner, later).
+- **INV-02:** Pass 2: recorded, 82 s, no clicks. To be RE-TAKEN after the overlap fix.
+- **INV-03:** Pass 2: recorded, 95 s, 5 clicks in sync; the consent box now starts unticked and the video ticks it ("Ask the client, then tick the box"). Spec and narration since gained two Tap to Pay lines (point at Tap to Pay; "no reader connected, so Card over phone") that are NOT in the recorded file. RE-TAKE later, with the overlap fix.
+- **INV-04:** Pass 2: recorded, 109 s, 7 clicks, one 0.1 s late (the Method list click, +2.1 s). To be RE-TAKEN after the running-balance, Account credit amount and card-on-file changes.
+- **INV-05:** Pass 2: recorded with the two Tap to Pay lines, 136 s, 6 clicks in sync.
+- **INV-07:** Pass 2: recorded, 94 s, 7 clicks in sync.
+- **INV-09:** Pass 2: recorded, 73 s, 4 clicks in sync.
+- **INV-10:** Pass 2: see report (adds the Edit in Scout click and narration).
+- **INV-11:** Pass 2: recorded, 112 s, 7 clicks in sync.
+- **INV-12:** Pass 2: recorded, 92 s, 6 clicks, one 0.1 s late (inv12-07, +2.1 s).
+- **INV-06, INV-08:** not recorded (waiting on a real-send decision).
+- Kit: `trainingKit.ts` `center()` waits 300 ms (was 450) before settling, so taps land slightly sooner.
+- App wording leftover: the consent box now starts unticked but still says "uncheck if they say no" (VisitCheckoutPanel.tsx).
+- **INV-10 (Pass 2):** recorded, 78 s, 2 clicks in sync. Adds the Edit in Scout click ("That takes the invoice over. Scout owns this bill now..."), pointing at Save invoice. Possible app bug: right after Edit in Scout the ledger Balance due reads $235.00 (was $155.00) and lists #48213 as a Scout invoice; it looks double-counted until a reload.
