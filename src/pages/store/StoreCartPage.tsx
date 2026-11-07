@@ -451,9 +451,8 @@ export default function StoreCartPage() {
   }, [loggedIn, clientId]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  // D1: a guest may buy one-time items that need no pet, with a newly entered card. Prescriptions, pet items
-  // and auto-ship need the portal login.
-  const needsLogin = !loggedIn && rxLines.length > 0;
+  // D1 (updated Nov 7, 2026): guests buy gift cards only; every store item needs the portal login.
+  const needsLogin = lines.length > 0 && !loggedIn;
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -902,17 +901,8 @@ export default function StoreCartPage() {
       ) : null}
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
-      {lines.length && !loggedIn && !needsLogin ? (
-        <p className="vayd-store__muted vayd-store__guest-note">
-          Checking out as a guest with a new card.{' '}
-          <Link to="/login" state={{ from: { pathname: '/store/cart' } }}>
-            Log in
-          </Link>{' '}
-          to use a saved card, member prices or account credit.
-        </p>
-      ) : null}
 
-      {lines.length && !needsLogin ? (
+      {lines.length && loggedIn ? (
         <div className="vayd-store__cart-grid">
           <section>
             <h2>Fulfillment</h2>
@@ -1429,8 +1419,7 @@ export default function StoreCartPage() {
                     payOutstanding,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
-                    // A guest's card is used once and saved to no account (OS-01).
-                    saveCard: loggedIn && saveCard,
+                    saveCard,
                     updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,

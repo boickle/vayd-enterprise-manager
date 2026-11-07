@@ -2,6 +2,7 @@
  * OS-01 frontend component tests (docs/test-plans/online-store.md in vayd-api, D1).
  *
  *   OS-01-9   Cart page hides cards from guests: no card request for a typed email; only card entry shown.
+ *             D1 update (Nov 7, 2026): guests buy gift cards only; a store item asks for the login.
  *   OS-01-10  A logged-in client sees its own cards (from the login), and editing the email changes nothing.
  *
  * Every HTTP call the page makes goes through the mocked `http` client, so the tests see each request.
@@ -132,21 +133,20 @@ describe('StoreCartPage — OS-01-9: cart page hides cards from guests', () => {
     expect(screen.queryByText(/1111|4242/)).not.toBeInTheDocument();
   });
 
-  it('OS-01-9: a guest buying a store item types an email that has cards: no card request, only the card entry', async () => {
+  it('OS-01-9 (D1 update): a guest with a store item is asked to log in, and the page asks for no cards', async () => {
     authState.current = { token: null, userId: null, clientInfo: null };
     localStorage.setItem('vayd_store_cart', JSON.stringify([storeLine()]));
     renderCart();
 
-    const email = await screen.findByLabelText('Email');
-    await act(async () => {
-      fireEvent.change(email, { target: { value: 'b@vayd.test' } });
-    });
+    expect(await screen.findByText('Log in to check out')).toBeInTheDocument();
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
     });
 
     expect(requestedUrls().filter((url) => /card|account|pay-balance/i.test(url))).toEqual([]);
-    expect(screen.getByTestId('new-card-entry')).toHaveTextContent('Enter a card');
+    // No checkout form for a guest with store items: no card entry, no saved cards.
+    expect(screen.queryByRole('button', { name: 'Place order' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('new-card-entry')).not.toBeInTheDocument();
     expect(screen.queryByText(/Card on file/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/1111|4242/)).not.toBeInTheDocument();
   });
