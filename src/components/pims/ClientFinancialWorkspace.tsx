@@ -763,11 +763,14 @@ function evetCreditUsedNote(inv: NormalizedInvoice): string | null {
 }
 
 function voidedPaymentNote(
-  items: { label: string; amount: number }[],
+  items: { label: string; amount: number; refunded?: boolean }[],
 ): string | null {
   if (!items.length) return null;
   return `(${items
-    .map((item) => `voided ${item.label} payment - ${money(item.amount)}`)
+    .map(
+      (item) =>
+        `${item.refunded ? 'refunded' : 'voided'} ${item.label} payment - ${money(item.amount)}`,
+    )
     .join('; ')})`;
 }
 
@@ -2791,6 +2794,11 @@ export default function ClientFinancialWorkspace({
             .map((tender) => ({
               label: tenderPayLabel(tender),
               amount: Number(tender.amount) || 0,
+              // A payment given back in full (a return or a refund) is closed the same way as a
+              // void; say "refunded" so staff don't think it was a recording mistake.
+              refunded:
+                Number(tender.refundedAmount) > 0.009 &&
+                Number(tender.refundedAmount) >= (Number(tender.amount) || 0) - 0.009,
             })),
         ),
         total: Number(inv.total) || 0,
