@@ -54,3 +54,10 @@
   - **Timing:** the saved card loads a moment after the ledger opens. If Cash is picked before **Card on file** has appeared in the list, the screen flips back to the card. The recording waits for it. A small rough edge in the app; reported.
 - **Gift card code:** staff can see a gift card's code only through Gift cards, then reveal (managers and billing). The demo needs the code ready.
 - **Ready to record.**
+
+## Pass 1 dry run (Nov 7, 2026)
+
+- **Script changes:** none to the steps. Bill is Maple's Dental X-rays at the member price ($162). Maria's saved Visa is made in Stripe test mode before the take; the gift card is issued through the API and its code is read from the test database.
+- **Checked:** gift card $50, account credit $30, card on file $82, the ledger row "Gift Card, Account credit, Visa •••• 4242" and the Method list with **Cash**, **Amount** and **Cash received**.
+- **Ledger look:** Maria's ledger also lists the demo $25 card invoice (#498) and the $30 credit row. That is the demo data; it is on screen but not narrated.
+- Spec: `cypress/training/inv-04-split-payment.cy.ts`.

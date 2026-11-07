@@ -1,0 +1,22 @@
+[
+ {"id":"inv01-01","text":"A charge that never reaches the bill is care we gave for free. Here's how charges get on, and who adds what."},
+ {"id":"inv01-02","text":"This is Maple's visit. The bill builds in the Checkout panel on the right while you work."},
+ {"id":"inv01-03","text":"Remember this: every charge goes on from this panel. Writing it in the plan doesn't charge it."},
+ {"id":"inv01-04","text":"To charge something, click the box that says type here to add a charge."},
+ {"id":"inv01-05","text":"Start typing the item's name."},
+ {"id":"inv01-06","text":"Pick it from the list."},
+ {"id":"inv01-07","text":"Maple's plan covers the exam, so it shows as covered, with no charge."},
+ {"id":"inv01-08","text":"Items the family agreed to on the pre-visit form wait here, under Pre-visit accepts."},
+ {"id":"inv01-09","text":"Click Accept on the nail trim, and it goes on the bill."},
+ {"id":"inv01-10","text":"There it is, at Maple's member price."},
+ {"id":"inv01-11","text":"If the family says no, click Decline. Don't delete it."},
+ {"id":"inv01-12","text":"Give a reason."},
+ {"id":"inv01-13","text":"Then click Chart the decline. It goes on the record and the reminder list, so we can offer it again. Don't chart it only takes it off today's bill."},
+ {"id":"inv01-14","text":"The chews stay here as declined, with the reason. Re-add brings them back if the family changes their mind."},
+ {"id":"inv01-15","text":"Things the family declined at an earlier visit show here too."},
+ {"id":"inv01-16","text":"Add to invoice puts one on today's bill if they want it now."},
+ {"id":"inv01-17","text":"Vaccines need a dose. Medications need a script. Products need a lot. See the vaccine line asking for the dose given?"},
+ {"id":"inv01-18","text":"The panel tells you what's missing, right here."},
+ {"id":"inv01-19","text":"Who does what? The doctor writes the plan and approves scripts. Techs add charges and record doses. Whoever is with the family takes payment."},
+ {"id":"inv01-20","text":"The most common mistakes are writing a treatment in the plan and assuming it's charged, and deleting an item the family declined instead of declining it. Remember: every charge goes on from the Checkout panel. The chart and the bill are separate."}
+]

@@ -1,0 +1,20 @@
+[
+ {"id":"inv03-01","text":"A saved card makes the next visit, refills and memberships easy. But only with the family's OK."},
+ {"id":"inv03-02","text":"The Riveras don't have a card saved yet, so Card on file is greyed out."},
+ {"id":"inv03-03","text":"Ask first, then charge once. With the card reader, the question is this box. Untick it if they say no."},
+ {"id":"inv03-04","text":"Here the bill is one hundred eighty four dollars and fifty cents, and Maria will read her card out over the phone."},
+ {"id":"inv03-05","text":"Click Card over phone."},
+ {"id":"inv03-06","text":"Type the name on the card."},
+ {"id":"inv03-07","text":"Then the card number."},
+ {"id":"inv03-08","text":"The expiry."},
+ {"id":"inv03-09","text":"The security code."},
+ {"id":"inv03-10","text":"And the ZIP."},
+ {"id":"inv03-11","text":"Maria says yes to keeping it on file, so tick this. If they say no, leave it unticked."},
+ {"id":"inv03-12","text":"Click Charge once. The button shows the exact amount."},
+ {"id":"inv03-13","text":"Scout says the card was charged and the invoice is paid."},
+ {"id":"inv03-14","text":"The bill shows paid, and the card is saved."},
+ {"id":"inv03-15","text":"Later, Maple has a second bill. Now Card on file is ready to click."},
+ {"id":"inv03-16","text":"One click charges the whole balance."},
+ {"id":"inv03-17","text":"Wait for this note. Don't click again."},
+ {"id":"inv03-18","text":"The most common mistakes are saving a card without asking, and clicking Card on file again because the screen is slow. Remember: ask before you save a card, then charge it once."}
+]

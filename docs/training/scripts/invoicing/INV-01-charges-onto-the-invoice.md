@@ -19,12 +19,12 @@
 | 4 | Checkout panel | Type "Office exam" | "Start typing the item's name." | — |
 | 5 | Search list | Click **Office exam** (shown as PROCEDURE, $75.00) | "Pick it." | — |
 | 6 | Checkout panel | Point at the new line: a heart and **covered** | "Maple's plan covers the exam, so it shows as covered: no charge." | — |
-| 7 | Checkout panel | Point at **PRE-VISIT ACCEPTS**: "Owner already agreed on the pre-visit form. Accept to charge, or decline with a reason if you won't do it." | "Items the family agreed to on the pre-visit form wait here." | Two pre-visit items for Maple, priced at the member price (Nail trim $22.50, Dental chews $21.60) |
+| 7 | Checkout panel | Point at **Pre-visit accepts**: "Owner already agreed on the pre-visit form. Accept to charge, or decline with a reason if you won't do it." | "Items the family agreed to on the pre-visit form wait here." | Two pre-visit items for Maple, priced at the member price (Nail trim $22.50, Dental chews $21.60) |
 | 8 | Checkout panel | Click **Accept** on Nail trim | "Accept puts it on the bill." | — |
 | 9 | Checkout panel | Click **Decline** on Dental chews | "If the family says no, decline it. Don't delete it." | — |
 | 10 | **Decline this item?** | Type the reason in **Reason**: "Owner wants to wait until spring" | "Give a reason." | — |
 | 11 | **Decline this item?** | Click **Chart the decline** ("Red declined line on the record and reminder list") | "Chart the decline puts it on the record and the reminder list, so we can offer it again. Don't chart it only takes it off today's bill." | — |
-| 12 | Checkout panel | Point at the line: **DECLINED**, the reason, and **Re-add** | "It stays here as declined. Re-add brings it back if they change their mind." | — |
+| 12 | Checkout panel | Point at the chews row, still under **Pre-visit accepts**: the red **declined** tag, the reason and **Re-add** | "It stays here as declined. Re-add brings it back if they change their mind." | — |
 | 13 | Checkout panel | Point at **Declined at an earlier visit** and its **Add to invoice** button | "Things the family declined at an earlier visit show here too. Add to invoice if they want it today." | A charted decline dated before today |
 | 14 | Checkout panel | Point at the DHPP line, "Record the dose given", and the line under **Checkout**: "1 item still need doses, scripts, or a lot picked." | "Vaccines need a dose. Medications need a script. Products need a lot: Pick a lot, or Existing stock. The panel tells you what's missing." | A DHPP line without a dose |
 | 15 | Voice-over | — | "Who does what: the doctor writes the plan and approves scripts. Techs add charges and record doses. Whoever is with the family takes payment." | — |
@@ -51,3 +51,10 @@
 - **Bug: Accept as a tech or CL (fixed Nov 6, API 1d97356f).** Accepting a pre-visit item at the automatic member price no longer needs the price-change permission, and a member discount is no longer applied twice. I did not re-walk it on Nov 7: check it in the dry run. Seeding pre-visit items at the member price is still the safe setup.
 - **Branch list:** the Branch dropdown on the test stack lists many test branches. Before recording, set the visit's branch so the list isn't shown.
 - **Status (Nov 7):** ready to record; do the step 13 and Accept checks above in the dry run.
+
+## Pass 1 dry run (Nov 7, 2026)
+
+- **Script changes:** step 12 now says the declined chews stay in the **Pre-visit accepts** box (that is where the screen shows them), not on a separate line. The video says "Checkout panel on the right" and uses Maple on the Adult plan (heart and covered on the exam).
+- **Checked:** Accept at the member price works for a CL login ($22.50, "Member 10%"); the earlier decline shows once the visit has a bill; the decline dialog, Chart the decline, Re-add and the "still need doses" note all showed.
+- **Not shown:** who can do what is voice-over only (nothing on screen separates the roles).
+- Spec: `cypress/training/inv-01-charges-onto-invoice.cy.ts`.

@@ -49,3 +49,10 @@
 - **Still open (checked Nov 7): estimates ignore the member discount.** A $180 Dental X-rays estimate for Maple (on the plan) shows $180.00, while her bill gets the member price. Use Juniper (no plan) for the recording, as the script does.
 - **Pepper** appears in **Charge to** because the demo makes her active; that is demo data, not the old inactive-pet bug (fixed in f1b504f).
 - **Status (Nov 7):** ready to record, on a stack where the demo login has the Info or Field inbox for the email steps.
+
+## Pass 1 dry run (Nov 7, 2026)
+
+- **Script changes:** the video now ends by closing the estimate (**Save estimate**) and pointing at the list row with its status. The email window is the real one, but the test stack has no Gmail, so the spec stubs the shared Info inbox and the send inside the browser. Nothing is emailed.
+- **Checked:** New estimate, Charge to Juniper, two items, total $630.00, Email estimate window ("Review and edit the email before sending to Maria Rivera", From info@, the estimate table in the message), Send email. The History box on the client page doesn't show the new "Estimate email" line until reload.
+- **Not true to life:** with the stubbed send the estimate stays **Draft** in the list. A real send may change it to Sent; check on a stack with a real inbox before the final take.
+- Spec: `cypress/training/inv-06-make-and-send-estimate.cy.ts`.

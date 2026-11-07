@@ -44,3 +44,9 @@
 - **Tax:** shown only as the **Sales tax** total, at 5.5% on the demo stack.
 - **Totals:** checked on screen and in the database.
 - **Status (Nov 7):** ready to record. None of the Nov 6 to 7 commits changes these screens; not re-walked on Nov 7.
+
+## Pass 1 dry run (Nov 7, 2026)
+
+- **Script changes:** none to the steps. The bill is built through the visit's orders (Office exam and DHPP covered; chews $21.60; Biohazard disposal $7.20 at the member price; Nail trim $22.50). The **Subtotal** row shows only when it differs from the total, and here it does ($51.30, tax $1.19, total $52.49), as the script says.
+- **Checked:** the "Normally hidden: shown to client because it has a charge" tag, **Pick a lot** on the chews and "Record the dose given" on the vaccine all show. Because the vaccine and chews still need a dose and a lot, the panel says "2 items still need doses, scripts, or a lot picked" under the total.
+- Spec: `cypress/training/inv-02-review-before-checkout.cy.ts`. No clicks in this video (only pointing); it runs about 70 seconds with a free voice, under the 2 minutes planned.
