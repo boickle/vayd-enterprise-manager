@@ -1303,7 +1303,8 @@ export default function VisitCheckoutPanel({
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
   const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
   // Asked out loud at the door. Starts unchecked if this household said no before.
-  const [saveCardConsent, setSaveCardConsent] = useState(true);
+  // Starts unticked: staff ask the owner first, and only a ticked box saves the card.
+  const [saveCardConsent, setSaveCardConsent] = useState(false);
   const [cardDeclinedAt, setCardDeclinedAt] = useState<string | null>(null);
   const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
     Record<string, OrderPrescription>
@@ -1684,7 +1685,7 @@ export default function VisitCheckoutPanel({
     if (!invoice?.id) {
       setCardOnFile(null);
       setCardDeclinedAt(null);
-      setSaveCardConsent(true);
+      setSaveCardConsent(false);
       return;
     }
     let cancelled = false;
@@ -1693,13 +1694,13 @@ export default function VisitCheckoutPanel({
         if (cancelled) return;
         setCardOnFile(lookup.card);
         setCardDeclinedAt(lookup.declinedAt);
-        setSaveCardConsent(!lookup.declinedAt);
+        setSaveCardConsent(false);
       })
       .catch(() => {
         if (cancelled) return;
         setCardOnFile(null);
         setCardDeclinedAt(null);
-        setSaveCardConsent(true);
+        setSaveCardConsent(false);
       });
     return () => {
       cancelled = true;
