@@ -1,0 +1,16 @@
+[
+ {"id":"inv15-01","text":"Discounts come straight out of margin, and they show up in the reports. A reason makes each one explainable later. Tom's bill needs a goodwill discount."},
+ {"id":"inv15-02","text":"Only managers lower a price, and always with a reason."},
+ {"id":"inv15-03","text":"Click the pencil next to the price."},
+ {"id":"inv15-04","text":"Type the new price, 60, and press Enter."},
+ {"id":"inv15-05","text":"Scout asks why."},
+ {"id":"inv15-06","text":"Say why."},
+ {"id":"inv15-07","text":"Click Apply discount."},
+ {"id":"inv15-08","text":"The line now shows the new price."},
+ {"id":"inv15-08b","text":"Open the Staff audit."},
+ {"id":"inv15-08c","text":"It records the old price, the new price, and who changed it."},
+ {"id":"inv15-09","text":"If a family qualifies for an employer promotion, it waits at checkout on their first visit."},
+ {"id":"inv15-10","text":"Click Confirm promotion to apply it, once per client."},
+ {"id":"inv15-11","text":"The twenty dollars comes off the total."},
+ {"id":"inv15-12","text":"The most common mistakes are discounting without a clear reason, and discounting a member line the plan already covers. Remember: only managers can lower a price, and every discount needs a reason."}
+]

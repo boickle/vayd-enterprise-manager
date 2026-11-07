@@ -1,0 +1,23 @@
+[
+ {"id":"inv13-01","text":"Account credit is the family's money. They should see it used, not forgotten."},
+ {"id":"inv13-02","text":"This is the household balance. Credit counts against what they owe."},
+ {"id":"inv13-03","text":"Credit pays at checkout, including credit from eVet."},
+ {"id":"inv13-04","text":"To add credit by hand, click Add credit."},
+ {"id":"inv13-05","text":"This adds money to the family's account."},
+ {"id":"inv13-06","text":"Type the amount."},
+ {"id":"inv13-07","text":"And why. It's saved with your name on the account ledger."},
+ {"id":"inv13-08","text":"Then click Add credit."},
+ {"id":"inv13-09","text":"The credit shows on the ledger as a negative line."},
+ {"id":"inv13-10","text":"A pay link now asks only for what's left after the credit."},
+ {"id":"inv13-11","text":"Add more, and the line updates right away. Click Add credit again."},
+ {"id":"inv13-12","text":"Type a bigger amount."},
+ {"id":"inv13-13","text":"With a reason."},
+ {"id":"inv13-14","text":"And add it."},
+ {"id":"inv13-15","text":"When the credit covers the whole bill, Scout tells you to use Account credit instead of sending a pay link."},
+ {"id":"inv13-16","text":"At checkout, click Account credit."},
+ {"id":"inv13-17","text":"Scout shows what's available."},
+ {"id":"inv13-18","text":"Click Apply credit."},
+ {"id":"inv13-19","text":"And it shows what's left."},
+ {"id":"inv13-20","text":"Credit also comes from returns, overpayments and eVet. Credit from eVet can only be spent once eVet sync is turned off."},
+ {"id":"inv13-21","text":"The most common mistakes are charging the card when the family has credit, and adding credit without a clear reason. Remember: credit pays at checkout, including credit from eVet, but only once eVet sync is off."}
+]

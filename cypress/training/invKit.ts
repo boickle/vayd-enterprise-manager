@@ -126,3 +126,10 @@ export function giveSavedCard(clientId: number, email: string, name: string, pm 
     );
   });
 }
+
+/** Batch C: puts a client's Scout account credit back to $0 (marks any credit invoice, one that is overpaid, as deleted). */
+export function clearAccountCredit(clientId: number) {
+  sql(
+    `UPDATE visit_invoices SET "isDeleted"=true WHERE "clientId"=${clientId} AND "isDeleted"=false AND status<>'void' AND COALESCE(total,0)-COALESCE("amountPaid",0) < -0.009`
+  );
+}

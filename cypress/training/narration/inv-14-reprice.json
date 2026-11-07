@@ -1,0 +1,15 @@
+[
+ {"id":"inv14-01","text":"When a family joins a plan during the visit, the bill should drop to member prices. Reprice does it in one step. Maria just signed Juniper up for a plan, but the bill still shows full prices."},
+ {"id":"inv14-02","text":"Here is the total at full price."},
+ {"id":"inv14-03","text":"Reprice before you take payment."},
+ {"id":"inv14-04","text":"Click Reprice to apply today's membership and discount prices."},
+ {"id":"inv14-05","text":"Scout lists each line that would change. Drops are ticked for you."},
+ {"id":"inv14-06","text":"The exam is now covered by the plan."},
+ {"id":"inv14-07","text":"Other items get the member discount."},
+ {"id":"inv14-08","text":"Here's the new total before you apply it."},
+ {"id":"inv14-09","text":"Click Reprice to apply it."},
+ {"id":"inv14-10","text":"Member prices, with covered lines marked."},
+ {"id":"inv14-11","text":"And the new total."},
+ {"id":"inv14-12","text":"If every line is already right, Scout says so. A line someone priced by hand is kept, and marked as priced by hand."},
+ {"id":"inv14-13","text":"The most common mistakes are keying member prices by hand instead of repricing, and taking payment before repricing. Remember: Reprice before you take payment. Check the preview, then apply."}
+]
