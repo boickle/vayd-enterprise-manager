@@ -1,16 +1,70 @@
 [
-  {"id": "v14-01", "text": "Driveways and farms lose signal. Scout is built for that: you keep charting, nothing you type is lost, and no card is charged twice."},
-  {"id": "v14-02", "text": "Here's Biscuit's SOAP. Now say the signal drops."},
-  {"id": "v14-03", "text": "This brown banner comes up. Your changes are kept on the page, and they save when the signal is back."},
-  {"id": "v14-04", "text": "So keep typing."},
-  {"id": "v14-05", "text": "It says Not saved yet. Your text is kept right here."},
-  {"id": "v14-06", "text": "When the signal comes back, the banner goes away, and your text saves by itself."},
-  {"id": "v14-07", "text": "Nothing to retype. Just stay on the page until it's saved."},
-  {"id": "v14-08", "text": "Payments work differently. When it's time to pay, click Checkout."},
-  {"id": "v14-09", "text": "Say the signal drops again,"},
-  {"id": "v14-10", "text": "and you click Card on file."},
-  {"id": "v14-11", "text": "It says Not charged. If the card was charged after all, it will show here when the connection returns."},
-  {"id": "v14-12", "text": "Wait for the signal, then look at the invoice."},
-  {"id": "v14-13", "text": "If it's still open, like this one, try once more. If it says paid, you're done."},
-  {"id": "v14-14", "text": "Two mistakes to avoid: closing the tab while you're offline, and running the card again and again. Stay on the page until it saves, and check the invoice before you charge again."}
+ {
+  "id": "v14-01",
+  "text": "Driveways and farms lose signal. Scout is built for that: you keep charting, nothing you type is lost, and no card is charged twice."
+ },
+ {
+  "id": "v14-02",
+  "text": "Here's Biscuit's SOAP. Now say the signal drops."
+ },
+ {
+  "id": "v14-03",
+  "text": "This brown banner comes up. Your changes are kept on the page, and they save when the signal is back."
+ },
+ {
+  "id": "v14-04",
+  "text": "So keep typing."
+ },
+ {
+  "id": "v14-05",
+  "text": "It says Not saved yet. Your text is kept right here."
+ },
+ {
+  "id": "v14-05b",
+  "text": "You can still move around the chart. Click Objective."
+ },
+ {
+  "id": "v14-05c",
+  "text": "Then go back to Subjective."
+ },
+ {
+  "id": "v14-05d",
+  "text": "Your text is still here. Moving between tabs doesn't lose anything, even with no signal."
+ },
+ {
+  "id": "v14-06",
+  "text": "When the signal comes back, the banner goes away, and your text saves by itself."
+ },
+ {
+  "id": "v14-07",
+  "text": "Nothing to retype. Just stay on the page until it's saved."
+ },
+ {
+  "id": "v14-08",
+  "text": "Payments work differently. When it's time to pay, click Checkout."
+ },
+ {
+  "id": "v14-09",
+  "text": "Say the signal drops again,"
+ },
+ {
+  "id": "v14-10",
+  "text": "and you click Card on file."
+ },
+ {
+  "id": "v14-11",
+  "text": "It says Not charged. If the card was charged after all, it will show here when the connection returns."
+ },
+ {
+  "id": "v14-12",
+  "text": "Wait for the signal, then look at the invoice."
+ },
+ {
+  "id": "v14-13",
+  "text": "If it's still open, like this one, try once more. If it says paid, you're done."
+ },
+ {
+  "id": "v14-14",
+  "text": "Two mistakes to avoid: closing the tab while you're offline, and running the card again and again. Stay on the page until it saves, and check the invoice before you charge again."
+ }
 ]

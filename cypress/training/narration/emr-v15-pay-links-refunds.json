@@ -1,0 +1,90 @@
+[
+ {
+  "id": "v15-01",
+  "text": "After a visit, three tools cover almost every money question: pay links, refunds, and returns. And one thing we never do is void a bill that was paid by card."
+ },
+ {
+  "id": "v15-02",
+  "text": "Here's Tom Chen's billing. He still owes for Biscuit's recheck."
+ },
+ {
+  "id": "v15-03",
+  "text": "To collect it, click Text pay link."
+ },
+ {
+  "id": "v15-04",
+  "text": "The text has a secure link for the exact balance."
+ },
+ {
+  "id": "v15-04b",
+  "text": "You'd send it from here. For this demo, click Cancel,"
+ },
+ {
+  "id": "v15-04c",
+  "text": "and Don't send."
+ },
+ {
+  "id": "v15-05",
+  "text": "Email pay link sends the same link for the same balance, so the family can never pay twice. If they ask again, just resend it."
+ },
+ {
+  "id": "v15-06",
+  "text": "Now a bill Tom already paid by card."
+ },
+ {
+  "id": "v15-07",
+  "text": "To give money back, click Refund on the payment."
+ },
+ {
+  "id": "v15-08",
+  "text": "Type the amount. A partial refund is fine,"
+ },
+ {
+  "id": "v15-09",
+  "text": "add the reason,"
+ },
+ {
+  "id": "v15-09b",
+  "text": "Leave this box unchecked. Check it only if they'll pay another way, like a different card."
+ },
+ {
+  "id": "v15-10",
+  "text": "and click Process refund."
+ },
+ {
+  "id": "v15-11",
+  "text": "It goes back to the same card, through Stripe. The payment now shows the refund. Scout won't let you refund more than the card paid."
+ },
+ {
+  "id": "v15-11b",
+  "text": "And the bill comes down by the same twenty dollars, with a Refund line, so nothing is due."
+ },
+ {
+  "id": "v15-12",
+  "text": "If the family brought an item back, use Return items instead. It refunds just those items, and the stock goes back on the shelf."
+ },
+ {
+  "id": "v15-13",
+  "text": "Forgot to charge for something on a paid bill? Don't reopen it or void it. Click New invoice, and add it there."
+ },
+ {
+  "id": "v15-14",
+  "text": "Voiding is only for lead client liaisons, billing and managers. Here's what a manager sees on this card-paid bill. Click Void invoice,"
+ },
+ {
+  "id": "v15-15",
+  "text": "give a reason,"
+ },
+ {
+  "id": "v15-16",
+  "text": "and click Void."
+ },
+ {
+  "id": "v15-17",
+  "text": "Scout says no. Voiding would leave the money taken and give the family nothing back. Refund the card first."
+ },
+ {
+  "id": "v15-18",
+  "text": "Two mistakes to avoid: making a new link every time the family asks, and voiding to give money back. Resend the same link, and refund instead of voiding."
+ }
+]

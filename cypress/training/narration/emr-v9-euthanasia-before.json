@@ -1,0 +1,134 @@
+[
+ {
+  "id": "v9-01",
+  "text": "Before a euthanasia visit, we price it, get the family's consent, and get a card on file. Then the day itself is only about the pet and the family."
+ },
+ {
+  "id": "v9-02",
+  "text": "Clementine's visit is in two days. Right-click it,"
+ },
+ {
+  "id": "v9-03",
+  "text": "go to Visit Prep,"
+ },
+ {
+  "id": "v9-04",
+  "text": "and choose Send Euthanasia Consent."
+ },
+ {
+  "id": "v9-05",
+  "text": "This is the estimate. Usually whoever books the visit builds it ahead of time, so it may already be here. If it's empty, here's how."
+ },
+ {
+  "id": "v9-05a",
+  "text": "Type Euthanasia Group in the search,"
+ },
+ {
+  "id": "v9-05b",
+  "text": "and pick the package. It walks you through the choices."
+ },
+ {
+  "id": "v9-05c",
+  "text": "Pick the euthanasia for the pet. Clementine is a cat."
+ },
+ {
+  "id": "v9-05d",
+  "text": "Click Next."
+ },
+ {
+  "id": "v9-05e",
+  "text": "Pick the aftercare the family wants: private cremation, with her ashes returned."
+ },
+ {
+  "id": "v9-05f",
+  "text": "Next."
+ },
+ {
+  "id": "v9-05g",
+  "text": "Add the same-day fee only for a same-day visit. Click Add."
+ },
+ {
+  "id": "v9-06",
+  "text": "Check the lines. We always price the visit first, because the consent form shows the family one total."
+ },
+ {
+  "id": "v9-07",
+  "text": "the weight,"
+ },
+ {
+  "id": "v9-08",
+  "text": "and the aftercare. The form asks the family to confirm it, so make sure it matches what they asked for."
+ },
+ {
+  "id": "v9-08b",
+  "text": "This box shows the card. Right now, there's no card on file."
+ },
+ {
+  "id": "v9-09",
+  "text": "Most families sign the online form. Click Email consent."
+ },
+ {
+  "id": "v9-10",
+  "text": "It's sent, and the link is copied, in case you want to text it yourself."
+ },
+ {
+  "id": "v9-11",
+  "text": "Here's what the family sees. Four short steps: their details, aftercare and the items they'd like, their consent, and the card."
+ },
+ {
+  "id": "v9-13",
+  "text": "If a family can't manage the form, take the card over the phone instead. Use one or the other for a visit, not both. Here's the phone path."
+ },
+ {
+  "id": "v9-14",
+  "text": "Right-click the visit again,"
+ },
+ {
+  "id": "v9-15",
+  "text": "and go to Visit Prep. It now says Re-send Euthanasia Consent, because the form went out."
+ },
+ {
+  "id": "v9-16",
+  "text": "Open it,"
+ },
+ {
+  "id": "v9-17",
+  "text": "and click Take card by phone."
+ },
+ {
+  "id": "v9-18",
+  "text": "Read the family this first: their card won't be charged until the day of the visit."
+ },
+ {
+  "id": "v9-19",
+  "text": "Then type the card as they read it out. In this demo, it's Stripe's test card."
+ },
+ {
+  "id": "v9-20",
+  "text": "Click Authorize."
+ },
+ {
+  "id": "v9-21",
+  "text": "Now the box turns green: card on file, and the amount held. Nothing is charged until the visit."
+ },
+ {
+  "id": "v9-21b",
+  "text": "Close the estimate."
+ },
+ {
+  "id": "v9-21c",
+  "text": "The visit on the schedule now shows a green dollar sign, so anyone can see the card is held."
+ },
+ {
+  "id": "v9-22",
+  "text": "On the form, the family reads that a hold is not a charge. You never place or move the hold yourself. Scout places it about a day before the visit, moves it if the visit moves, and releases it if the visit is cancelled."
+ },
+ {
+  "id": "v9-23",
+  "text": "Client liaisons: this call is usually yours. The family hears the plan, and you take the card."
+ },
+ {
+  "id": "v9-24",
+  "text": "Two mistakes to avoid: sending the consent before the estimate is right, and charging the family over the phone. Fix the estimate first, and remember, we only hold. Nothing is charged until the visit."
+ }
+]

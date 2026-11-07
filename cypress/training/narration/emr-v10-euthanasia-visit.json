@@ -1,0 +1,78 @@
+[
+ {
+  "id": "v10-01",
+  "text": "At a euthanasia visit, consent comes first, then payment. Scout won't take payment until the family's consent is recorded."
+ },
+ {
+  "id": "v10-02",
+  "text": "Here's Clementine's SOAP. Before anything else, look at the Euthanasia consent box."
+ },
+ {
+  "id": "v10-03",
+  "text": "It says sent. The form went out, but the family hasn't signed it yet."
+ },
+ {
+  "id": "v10-04",
+  "text": "If they signed a paper form at the visit, click Signed printed consent."
+ },
+ {
+  "id": "v10-05",
+  "text": "If they gave consent out loud, click Gave oral consent."
+ },
+ {
+  "id": "v10-06",
+  "text": "Pick the first staff member who heard it,"
+ },
+ {
+  "id": "v10-07",
+  "text": "and the second. Scout won't let you pick the same person twice."
+ },
+ {
+  "id": "v10-08",
+  "text": "Click Record consent."
+ },
+ {
+  "id": "v10-09",
+  "text": "Now it says oral, and who heard it."
+ },
+ {
+  "id": "v10-10",
+  "text": "When it's time to pay, click Checkout."
+ },
+ {
+  "id": "v10-11",
+  "text": "This is the estimate the family approved. The bubble says exactly how much."
+ },
+ {
+  "id": "v10-12",
+  "text": "A clay paw print was added at the visit, so it says the difference goes on the same card. If the bill comes in lower, it says the rest of the hold is released."
+ },
+ {
+  "id": "v10-13",
+  "text": "If the family changes their mind at the door, that's okay. Click Family declined. It releases the hold, charges nothing, and then you cancel the visit."
+ },
+ {
+  "id": "v10-14",
+  "text": "Otherwise, click Run Payment from Authorization. Nothing is charged until you click it. Click it once, and wait."
+ },
+ {
+  "id": "v10-15",
+  "text": "It's paid, on the card the family gave."
+ },
+ {
+  "id": "v10-16",
+  "text": "The old consent link is closed now, because consent is on file. And once a visit is checked out, the online form can't be signed at all. That's why consent comes first."
+ },
+ {
+  "id": "v10-17",
+  "text": "Doctors: check the consent box before you start. If it doesn't say signed, record printed or oral consent first."
+ },
+ {
+  "id": "v10-18",
+  "text": "When Clementine is marked as passed, the wrap-up closes everything still open for her: future visits, reminders, refills, memberships and auto-ships. Nobody will call or text the family about her."
+ },
+ {
+  "id": "v10-19",
+  "text": "Two mistakes to avoid: checking out before consent is recorded, and oral consent with only one witness. Consent first, two people who heard it, then one click to pay."
+ }
+]

@@ -29,6 +29,10 @@ describe('Training: EMR V12 medical note', () => {
         { log: false }
       );
     license(true);
+    cy.exec(
+      `psql -q -d ${db} -c "INSERT INTO procedures (name, price, cost, \\"practiceId\\", \\"isActive\\", \\"isDeleted\\", \\"pimsType\\") SELECT 'Nail trim', 25, 0, 1, true, false, 'scout' WHERE NOT EXISTS (SELECT 1 FROM procedures WHERE name='Nail trim' AND \\"isDeleted\\"=false)"`,
+      { log: false }
+    );
     const appt: Record<number, number> = {};
     const start = new Date(Math.floor((Date.now() - 30 * 60_000) / (15 * 60_000)) * 15 * 60_000);
     [
@@ -103,9 +107,25 @@ describe('Training: EMR V12 medical note', () => {
       tap(() => tab('Plan'));
       plan().should('exist');
     });
-    line('v12-08', () => typeSlowly(plan, 'Trimmed all nails, no bleeding. Next trim in 6 weeks.'));
+    line('v12-08', () => typeSlowly(plan, '- Nail trim, no bleeding.{enter}- Discussed a nail grinder for home.'));
     line('v12-09', () => pointAt(() => cy.contains('button', 'Start AI scribe').first(), 3000));
-    line('v12-10', () => tap(() => tab('Checkout prep')));
+    const prepRow = (text: string) => cy.contains('.soap-scribe-planitem-row', text);
+    line('v12-10', () => {
+      tap(() => tab('Checkout prep'));
+      prepRow('nail grinder').should('exist');
+    });
+    line('v12-10b', () => pointAt(() => cy.get('.soap-scribe-planitems-list'), 5000));
+    line('v12-10c', () => {
+      tap(() => prepRow('Nail trim, no bleeding').find('input'));
+      prepRow('Nail trim, no bleeding').contains('.soap-plan-result', 'Nail trim', { timeout: 20000 }).should('exist');
+    });
+    line('v12-10d', () => {
+      tap(() => prepRow('Nail trim, no bleeding').contains('.soap-plan-result', 'Nail trim'));
+      cy.contains('.soap-scribe-planitem-row', 'Nail trim, no bleeding').should('not.exist');
+    });
+    line('v12-10e', () => pointAt(() => prepRow('nail grinder').find('.soap-plan-add-to-sections'), 4000));
+    line('v12-10f', () => pointAt(() => prepRow('nail grinder').find('.soap-scribe-planitem-trash'), 1800));
+    line('v12-10g', () => pointAt(() => cy.get('.soap-scribe-planitems-list'), 4000));
     line('v12-11', () => tap(() => tab('Client email')));
     line('v12-12', () => {
       tap(() => cy.contains('.soap-header-actions button', 'Switch to SOAP'));

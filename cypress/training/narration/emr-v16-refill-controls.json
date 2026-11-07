@@ -1,0 +1,16 @@
+[
+  {"id": "v16-01", "text": "Refills can change after the visit. The family stops a medication, or the doctor wants fewer or more. You do that on the pet's chart."},
+  {"id": "v16-02", "text": "Here's Maple's chart. Click the Rx tab."},
+  {"id": "v16-03", "text": "Every prescription is here, including the ones from eVet."},
+  {"id": "v16-04", "text": "Click one to open it."},
+  {"id": "v16-05", "text": "You see the doctor's directions, and how many refills are left."},
+  {"id": "v16-06", "text": "Change the number,"},
+  {"id": "v16-07", "text": "and click Save refills. Doctors and techs can lower refills or stop them. Adding refills is for a licensed vet only."},
+  {"id": "v16-08", "text": "If the family stops the medication, click Stop refills."},
+  {"id": "v16-09", "text": "Now there are none left, so nobody can refill it by mistake."},
+  {"id": "v16-10", "text": "Need different directions? Never change a refill. New directions stops this prescription and writes a new script under the doctor, starting from the item's usual directions."},
+  {"id": "v16-11", "text": "Every change is logged. Click History."},
+  {"id": "v16-12", "text": "Here's who stopped the refills, and when."},
+  {"id": "v16-13", "text": "One more rule: once a doctor hasn't seen the pet for a year, refills can't be used. The pet needs an exam first."},
+  {"id": "v16-14", "text": "Two mistakes to avoid: changing directions on a refill, and leaving refills on a medication the family stopped. Stop the refills, or write a new script."}
+]

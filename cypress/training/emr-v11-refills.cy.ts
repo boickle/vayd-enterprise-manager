@@ -75,8 +75,27 @@ describe('Training: EMR V11 refills', () => {
       cy.get('.inv-refill__summary', { timeout: 30000 }).should('exist');
     });
     line('v11-07', () => {
-      pointAt(() => cy.get('.inv-refill__summary strong'), 2500);
-      pointAt(() => cy.get('.inv-refill__locked'), 2500);
+      pointAt(() => cy.get('.inv-refill__summary strong'), 1800);
+      pointAt(() => cy.get('.inv-refill__summary > span').first(), 2200);
+    });
+    line('v11-07b', () => {
+      pointAt(() => cy.get('.inv-refill__directions-text'), 3000);
+      pointAt(() => cy.get('.inv-refill__locked'), 2000);
+    });
+    line('v11-08', () => {
+      tap(() => cy.contains('.inv-refill__summary button', 'New directions'));
+      cy.contains('[role="dialog"] h3', 'New directions?').should('exist');
+    });
+    line('v11-09', () => pointAt(() => cy.contains('[role="dialog"] p', 'go to 0'), 4000));
+    line('v11-09b', () => pointAt(() => cy.contains('[role="dialog"] p', 'new script for the visit'), 3500));
+    line('v11-09c', () => {
+      tap(() => cy.contains('[role="dialog"] button', 'Stop refills and write a new script'));
+      cy.contains('[role="dialog"] h3', 'New directions?').should('not.exist');
+      cy.contains('.client-fin__sig-label', 'Directions (sig)', { timeout: 30000 }).should('exist');
+    });
+    line('v11-09d', () => {
+      pointAt(() => cy.contains('label.client-fin__sig', 'Directions (sig)').find('textarea'), 3500);
+      pointAt(() => refillLine().find('select').first(), 2000);
     });
     line('v11-10', () => {
       tap(() => cy.contains('a, button', /^View details$/).first());

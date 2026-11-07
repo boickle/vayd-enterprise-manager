@@ -1,21 +1,102 @@
 [
-  {"id": "v12-01", "text": "Not every visit needs a doctor's exam. A tech visit, like a nail trim, is written up as a medical note, and a licensed tech can sign it."},
-  {"id": "v12-02", "text": "Maple is in for a nail trim. Right-click her visit,"},
-  {"id": "v12-03", "text": "go to On Visit Day,"},
-  {"id": "v12-04", "text": "and choose Start Encounter."},
-  {"id": "v12-05", "text": "Pick Medical note, not SOAP."},
-  {"id": "v12-06", "text": "A medical note has two parts. First, History: why they're here, and how the pet is doing."},
-  {"id": "v12-07", "text": "Then click Plan,"},
-  {"id": "v12-08", "text": "and write what was done today, and what happens next."},
-  {"id": "v12-09", "text": "You can also record the room with Start AI scribe, and Write up visit drafts both parts for you."},
-  {"id": "v12-10", "text": "Checkout prep is where today's charges go,"},
-  {"id": "v12-11", "text": "and Client email is for a short note to the family, if they'd like one."},
-  {"id": "v12-12", "text": "If the doctor ends up doing an exam, don't start over. Click Switch to SOAP."},
-  {"id": "v12-13", "text": "What you wrote moves into the SOAP. It works until the note is signed."},
-  {"id": "v12-13b", "text": "Click Cancel, since Maple really is a tech visit."},
-  {"id": "v12-14", "text": "Jordan is a licensed tech, so he can sign. Click Wrap up. It signs and locks the note."},
-  {"id": "v12-15", "text": "Here's a note for Biscuit, opened by a tech who isn't licensed."},
-  {"id": "v12-16", "text": "Wrap up stays grey, and says why. Write it up, and ask a licensed tech or the doctor to sign it the same day."},
-  {"id": "v12-17", "text": "Doctors can sign these too. But if you examined the pet, use a SOAP."},
-  {"id": "v12-18", "text": "Two mistakes to avoid: using a medical note for a doctor's exam, and leaving it unsigned. Pick the right record, and get it signed today."}
+ {
+  "id": "v12-01",
+  "text": "Not every visit needs a doctor's exam. A tech visit, like a nail trim, is written up as a medical note, and a licensed tech can sign it."
+ },
+ {
+  "id": "v12-02",
+  "text": "Maple is in for a nail trim. Right-click her visit,"
+ },
+ {
+  "id": "v12-03",
+  "text": "go to On Visit Day,"
+ },
+ {
+  "id": "v12-04",
+  "text": "and choose Start Encounter."
+ },
+ {
+  "id": "v12-05",
+  "text": "Pick Medical note, not SOAP."
+ },
+ {
+  "id": "v12-06",
+  "text": "A medical note has two parts. First, History: why they're here, and how the pet is doing."
+ },
+ {
+  "id": "v12-07",
+  "text": "Then click Plan,"
+ },
+ {
+  "id": "v12-08",
+  "text": "and write what you did today, and what you talked about with the family, one line each."
+ },
+ {
+  "id": "v12-09",
+  "text": "You can also record the room with Start AI scribe, and Write up visit drafts both parts for you."
+ },
+ {
+  "id": "v12-10",
+  "text": "Then click Checkout prep."
+ },
+ {
+  "id": "v12-10b",
+  "text": "Checkout prep isn't where you check out. It's a double check. It lists each line of your plan, and anything the AI scribe heard, so you charge for what you did, cover what you talked about, and add any callback."
+ },
+ {
+  "id": "v12-10c",
+  "text": "The nail trim was done. Click its line,"
+ },
+ {
+  "id": "v12-10d",
+  "text": "and pick the charge."
+ },
+ {
+  "id": "v12-10e",
+  "text": "The nail grinder was only talked about. Mark it Declined, add a reminder or a callback,"
+ },
+ {
+  "id": "v12-10f",
+  "text": "or just trash it."
+ },
+ {
+  "id": "v12-10g",
+  "text": "You can also skip it. Nothing here has to be cleared before you wrap up. It's there to catch what you might have missed."
+ },
+ {
+  "id": "v12-11",
+  "text": "and Client email is for a short note to the family, if they'd like one."
+ },
+ {
+  "id": "v12-12",
+  "text": "If the doctor ends up doing an exam, don't start over. Click Switch to SOAP."
+ },
+ {
+  "id": "v12-13",
+  "text": "What you wrote moves into the SOAP. It works until the note is signed."
+ },
+ {
+  "id": "v12-13b",
+  "text": "Click Cancel, since Maple really is a tech visit."
+ },
+ {
+  "id": "v12-14",
+  "text": "Jordan is a licensed tech, so Jordan can sign. Click Wrap up. It signs and locks the note."
+ },
+ {
+  "id": "v12-15",
+  "text": "Here's a note for Biscuit, opened by a tech who isn't licensed."
+ },
+ {
+  "id": "v12-16",
+  "text": "Wrap up stays grey, and says why. Write it up, and ask a licensed tech or the doctor to sign it the same day."
+ },
+ {
+  "id": "v12-17",
+  "text": "Doctors can sign these too. But if you examined the pet, use a SOAP."
+ },
+ {
+  "id": "v12-18",
+  "text": "Two mistakes to avoid: using a medical note for a doctor's exam, and leaving it unsigned. Pick the right record, and get it signed today."
+ }
 ]

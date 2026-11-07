@@ -1,25 +1,106 @@
 [
-  {"id": "v8-01", "text": "Every medication that goes home needs directions the family can follow, and an approval before it's dispensed. That keeps the label right, and the pet safe."},
-  {"id": "v8-02", "text": "Biscuit has a yeast infection in his right ear. In Checkout, add his ear medication."},
-  {"id": "v8-03", "text": "Pick Mometamax."},
-  {"id": "v8-04", "text": "The line opens by itself, and says Approve the sig. Checkout waits until it's approved."},
-  {"id": "v8-05", "text": "The directions start from the item's default. Read them, and fit them to this pet."},
-  {"id": "v8-06", "text": "Add to them,"},
-  {"id": "v8-07", "text": "and click Save sig."},
-  {"id": "v8-08", "text": "It shows who entered them."},
-  {"id": "v8-09", "text": "Type the refills. Zero if there are none."},
-  {"id": "v8-10", "text": "Pick acute or chronic."},
-  {"id": "v8-11", "text": "Discard after is filled in for you. Change it if the medication expires sooner."},
-  {"id": "v8-12", "text": "Click Save Rx."},
-  {"id": "v8-13", "text": "Then click Approve. It means the script is checked, and ready to dispense."},
-  {"id": "v8-14", "text": "The line closes with a check mark, and Checkout is ready."},
-  {"id": "v8-14b", "text": "Open it again. It shows who approved it."},
-  {"id": "v8-15", "text": "To print the label, click Send label to DYMO."},
-  {"id": "v8-16", "text": "Review it first. It has the practice, the pet and owner, and the doctor with their license."},
-  {"id": "v8-17", "text": "Print on DYMO sends it to the label printer. We'll close it here."},
-  {"id": "v8-18", "text": "Click History."},
-  {"id": "v8-19", "text": "It lists who entered the directions, and who approved them, with times. It's for staff only, and never printed."},
-  {"id": "v8-20", "text": "Doctors are the prescriber. Techs can enter directions and approve too, and Scout saves them for the visit's doctor."},
-  {"id": "v8-21", "text": "Client liaisons can't write directions. A new script waits for a doctor or tech, or goes to Mail order."},
-  {"id": "v8-22", "text": "Two mistakes to avoid: typing directions and walking away without saving, and approving without reading them. Check the directions, save, then approve."}
+ {
+  "id": "v8-01",
+  "text": "Every medication that goes home needs directions the family can follow, and an approval before it's dispensed. That keeps the label right, and the pet safe."
+ },
+ {
+  "id": "v8-02",
+  "text": "Biscuit has a yeast infection in his right ear. In Checkout, add his ear medication."
+ },
+ {
+  "id": "v8-03",
+  "text": "Pick Mometamax."
+ },
+ {
+  "id": "v8-04",
+  "text": "The line opens by itself, and says Approve the sig. Checkout waits until it's approved."
+ },
+ {
+  "id": "v8-05",
+  "text": "The directions start from the item's default. Read them, and fit them to this pet."
+ },
+ {
+  "id": "v8-06",
+  "text": "Add to them,"
+ },
+ {
+  "id": "v8-07",
+  "text": "and click Save sig."
+ },
+ {
+  "id": "v8-08",
+  "text": "It shows who entered them."
+ },
+ {
+  "id": "v8-09",
+  "text": "Type the refills. Zero if there are none."
+ },
+ {
+  "id": "v8-10",
+  "text": "Pick acute or chronic."
+ },
+ {
+  "id": "v8-11",
+  "text": "Discard after is filled in for you. Change it if the medication expires sooner."
+ },
+ {
+  "id": "v8-13",
+  "text": "Then click Approve."
+ },
+ {
+  "id": "v8-14",
+  "text": "The line closes with a check mark, and Checkout is ready. Approve saved the refills and dates with the script. Two clicks: Save sig, then Approve."
+ },
+ {
+  "id": "v8-14b",
+  "text": "Open it again. It shows who approved it."
+ },
+ {
+  "id": "v8-14c",
+  "text": "Need to change something after it's approved? Just change it. Here, one refill. It now says Changed after approval."
+ },
+ {
+  "id": "v8-14d",
+  "text": "Click Approve changes."
+ },
+ {
+  "id": "v8-14e",
+  "text": "It's approved again, and the change is on the History. Once the visit is checked out, the script is locked. To change refills later, use the pet's chart."
+ },
+ {
+  "id": "v8-15",
+  "text": "To print the label, click Send label to DYMO."
+ },
+ {
+  "id": "v8-16",
+  "text": "Review it first. It has the practice, the pet and owner, and the doctor with their license."
+ },
+ {
+  "id": "v8-17",
+  "text": "Print on DYMO sends it to the label printer."
+ },
+ {
+  "id": "v8-17b",
+  "text": "We'll close it here."
+ },
+ {
+  "id": "v8-18",
+  "text": "Click History."
+ },
+ {
+  "id": "v8-19",
+  "text": "It lists who entered the directions, and who approved them, with times. It's for staff only, and never printed."
+ },
+ {
+  "id": "v8-20",
+  "text": "Doctors are the prescriber. Techs can enter directions and approve too, and Scout saves them for the visit's doctor."
+ },
+ {
+  "id": "v8-21",
+  "text": "Client liaisons can't write directions. A new script waits for a doctor or tech, or goes to Mail order."
+ },
+ {
+  "id": "v8-22",
+  "text": "Two mistakes to avoid: typing directions and walking away without saving, and approving without reading them. Check the directions, save, then approve."
+ }
 ]

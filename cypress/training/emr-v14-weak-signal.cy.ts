@@ -85,6 +85,16 @@ describe('Training: EMR V14 weak signal', () => {
       cy.contains('Not saved yet', { timeout: 20000 }).should('exist');
       pointAt(() => cy.contains('Not saved yet').first(), 3000);
     });
+    line('v14-05b', () => {
+      tap(() => cy.contains('button.soap-tab', 'Objective'));
+      cy.contains('Objective notes').should('exist');
+      cy.wait(1200);
+    });
+    line('v14-05c', () => {
+      tap(() => cy.contains('button.soap-tab', 'Subjective'));
+      cy.contains('.soap-rich__editor', 'no discharge').should('exist');
+    });
+    line('v14-05d', () => pointAt(() => cy.contains('.soap-rich__editor', 'no discharge').first(), 4000));
     line('v14-06', () => {
       network(true);
       cy.get('[data-testid="offline-banner"]').should('not.exist');

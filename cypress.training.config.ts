@@ -28,6 +28,10 @@ export default defineConfig({
     // Clicks and typing scroll their target to the middle, not under the sticky headers, so the cursor stays on it.
     scrollBehavior: 'center',
     // Bigger than the test default so the planner window and its edges fit with room around them.
+    // The Stripe card fields (V9) sit in a stripe.com iframe; the spec types into it.
+    chromeWebSecurity: false,
+    // Outside scripts (Stripe, maps) are sometimes slow to load; the wait is never in the video.
+    pageLoadTimeout: 120000,
     viewportWidth: 1600,
     viewportHeight: 900,
     async setupNodeEvents(on, config) {

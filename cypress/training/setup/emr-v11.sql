@@ -14,6 +14,10 @@ DELETE FROM inventory_items WHERE "pimsId" LIKE 'training-v11%';
 -- Refills and refill lines from an earlier take.
 UPDATE visit_invoice_lines SET "isDeleted"=true WHERE "patientId"=:pet AND "refillOfPrescriptionId" IS NOT NULL;
 
+-- Carprofen's usual directions in the catalog: a new script (New directions) starts from these.
+UPDATE inventory_items SET "dispenseNote"='Give 1 caplet by mouth once a day with food.'
+ WHERE name='Carprofen 75 mg caplet';
+
 INSERT INTO medical_records ("practiceId","patientId","pimsType","pimsId","isActive","isDeleted")
 VALUES (1, :pet, 'EVET', 'training-v11-mr', true, false);
 

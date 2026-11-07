@@ -74,10 +74,6 @@ describe('Training: EMR V8 prescriptions', () => {
       choose(() => rx().find('select[aria-label="Acute or chronic prescription"]'), 'acute');
     });
     line('v8-11', () => pointAt(() => rx().contains('label', /Discard after/i), 3500));
-    line('v8-12', () => {
-      tap(() => rx().find('button.client-fin__btn-save-rx'));
-      cy.wait(1500);
-    });
     line('v8-13', () => {
       tap(() => cy.get('button.client-fin__btn-approve').first());
       cy.get('.soap-checkout-invoice-rx-match', { timeout: 30000 }).should('not.exist');
@@ -91,6 +87,25 @@ describe('Training: EMR V8 prescriptions', () => {
       cy.contains('.client-fin__entered', /^Approved/, { timeout: 30000 }).should('exist');
       pointAt(() => cy.contains('.client-fin__entered', /^Approved/), 2200);
     });
+    line('v8-14c', () => {
+      rx().find('.client-fin__refill-input').clear();
+      typeSlowly(() => rx().find('.client-fin__refill-input'), '1');
+      cy.contains('button', 'Approve changes', { timeout: 10000 }).should('exist');
+      pointAt(() => cy.contains('.client-fin__entered', 'Changed after approval'), 2500);
+    });
+    line('v8-14d', () => {
+      tap(() => cy.contains('button', 'Approve changes'));
+      cy.contains('button', 'Approve changes').should('not.exist');
+    });
+    line('v8-14e', () => {
+      cy.contains('.soap-invoice-line', 'Mometamax').then(($l) => {
+        if (!$l.find('.soap-checkout-invoice-rx-match').length) {
+          cy.wrap($l).find('button.soap-invoice-line-expand').click();
+        }
+      });
+      cy.contains('.client-fin__entered', /^Approved/, { timeout: 30000 }).should('exist');
+      pointAt(() => cy.contains('.client-fin__entered', /^Approved/), 3000);
+    });
     line('v8-15', () => {
       tap(() => cy.get('button.client-fin__dymo').first());
       cy.get('[role="dialog"]', { timeout: 30000 }).contains('Print prescription label').should('exist');
@@ -98,6 +113,8 @@ describe('Training: EMR V8 prescriptions', () => {
     line('v8-16', () => pointAt(() => cy.get('.soap-rx-label-static'), 5000));
     line('v8-17', () => {
       pointAt(() => cy.get('[role="dialog"]').contains('button', 'Print on DYMO'), 2000);
+    });
+    line('v8-17b', () => {
       tap(() => cy.get('[role="dialog"]').contains('button', /^\s*Close\s*$/));
       cy.get('.soap-rx-label-static').should('not.exist');
     });
