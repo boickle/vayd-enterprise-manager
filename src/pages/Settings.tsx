@@ -71,6 +71,7 @@ import SettingsEmployeeDirectory, {
   type EmployeeHubSection,
 } from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+import SettingsClosedDates from '../components/settings/SettingsClosedDates';
 import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
 import SettingsPermissionAudit from '../components/settings/SettingsPermissionAudit';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
@@ -527,6 +528,8 @@ export default function Settings() {
   const { hasRole } = usePermissions();
   const canViewAutomaticTasks =
     isAdmin || hasRole('practice_admin', 'practice_manager');
+  /** Practice managers and the medical director keep holidays closed for online booking (owner, Nov 7, 2026). */
+  const canManageClosedDays = useCan('appointment_type.manage');
 
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
@@ -1366,11 +1369,29 @@ export default function Settings() {
     }
   };
 
+  const closedDaysForNonAdmin =
+    !isAdmin && canManageClosedDays ? (
+      <div className="settings-section" style={{ marginBottom: 28 }}>
+        <SettingsClosedDates
+          practiceId={practiceId}
+          onMessage={(msg, kind) => {
+            if (kind === 'error') {
+              setError(msg);
+              setSuccess(null);
+            } else {
+              setSuccess(msg);
+              setError(null);
+            }
+          }}
+        />
+      </div>
+    ) : null;
+
   if (!isAdmin && canManageMembershipPlans) {
     return (
       <div className="container">
         <div className="settings-page">
-          <h1 className="settings-title">Settings: Memberships</h1>
+          <h1 className="settings-title">{canManageClosedDays ? 'Settings' : 'Settings: Memberships'}</h1>
           {error && (
             <div className="settings-message settings-error-message">
               {error}
@@ -1383,6 +1404,7 @@ export default function Settings() {
               <button onClick={() => setSuccess(null)} className="settings-close">×</button>
             </div>
           )}
+          {closedDaysForNonAdmin}
           <SettingsMemberships
             onMessage={(msg, kind) => {
               if (kind === 'error') {
@@ -1418,12 +1440,33 @@ export default function Settings() {
     return (
       <div className="container">
         <div className="settings-page">
+          {closedDaysForNonAdmin ? (
+            <>
+              <h1 className="settings-title">Settings</h1>
+              {error && <div className="settings-message settings-error-message">{error}</div>}
+              {success && <div className="settings-message settings-success-message">{success}</div>}
+              {closedDaysForNonAdmin}
+            </>
+          ) : null}
           <h1 className="settings-title">Automatic Tasks</h1>
           <p className="settings-section-description">
             Work Scout chases on its own. This list is for practice managers and admins. The rules
             themselves are changed by an admin.
           </p>
           <SettingsAutomaticTasks practiceId={REMINDERS_PRACTICE_ID} readOnly />
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin && closedDaysForNonAdmin) {
+    return (
+      <div className="container">
+        <div className="settings-page">
+          <h1 className="settings-title">Settings</h1>
+          {error && <div className="settings-message settings-error-message">{error}</div>}
+          {success && <div className="settings-message settings-success-message">{success}</div>}
+          {closedDaysForNonAdmin}
         </div>
       </div>
     );
