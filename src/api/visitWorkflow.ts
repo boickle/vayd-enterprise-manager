@@ -1491,6 +1491,8 @@ export async function getVisitReturnOptions(invoiceId: string): Promise<{
         branchLocationId: number | null;
         standing: number;
       }[];
+      /** Wave 8A: how many of this line already came back on earlier returns. */
+      returnedQty?: number;
     }
   >;
 }> {
@@ -1593,7 +1595,10 @@ export async function applyInvoiceReprice(
 
 export type ClientPayLink = {
   url: string;
+  /** Wave 8A: what the link asks for, net of the family's account credit. */
   amount: number;
+  /** Wave 8A: account credit left off the link; applied to the bills when they pay. */
+  accountCreditApplied?: number;
   invoiceIds: string[];
   invoiceLabels: string[];
 };
