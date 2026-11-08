@@ -21,7 +21,13 @@ export type RecordHistoryEntry = {
   at: string;
   kind: string;
   /** Which record the step belongs to (the pet's History lists several kinds together). */
-  entityType?: 'prescription' | 'vaccination' | 'lab_result' | 'encounter' | 'problem';
+  entityType?:
+    | 'prescription'
+    | 'vaccination'
+    | 'lab_result'
+    | 'encounter'
+    | 'problem'
+    | 'idexx_result';
   entityId?: string | null;
   /** What the record is: "Rx #1203", "Rabies 3yr dose", "Heartworm snap", "Visit #4410". */
   subject?: string;
