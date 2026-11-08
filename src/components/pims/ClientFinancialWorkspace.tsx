@@ -1703,7 +1703,7 @@ export default function ClientFinancialWorkspace({
   /** Counter lines (no visit order): the prescription written when the script was approved. */
   const [writtenRxById, setWrittenRxById] = useState<Record<number, OrderPrescription>>({});
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
-  const [printedLineId, setPrintedLineId] = useState<string | null>(null);
+  const [printed, setPrinted] = useState<{ lineId: string; viaDialog: boolean } | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
   const petLookupsTried = useRef<Set<number>>(new Set());
   const [staffById, setStaffById] = useState<Map<number, Employee>>(new Map());
@@ -6516,25 +6516,27 @@ export default function ClientFinancialWorkspace({
                           <>
                             <SendRxLabelButton
                               className="client-fin__dymo"
-                              direct
-                              disabled={!scriptApproved}
+                              blockedReason={
+                                scriptApproved
+                                  ? null
+                                  : 'Save the sig and approve the Rx before printing the label.'
+                              }
                               source={invoiceLabelSource(line)}
                               onError={(message) => {
-                                setError(
-                                  message ||
-                                    (!scriptApproved ? 'Approve the script before sending a label.' : null)
-                                );
+                                setError(message || null);
                                 if (message) {
                                   setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
                                 }
                               }}
-                              onSuccess={() => {
+                              onSuccess={(_printer, method) => {
                                 setError(null);
-                                setPrintedLineId(line.id);
+                                setPrinted({ lineId: line.id, viaDialog: method === 'system' });
                               }}
                             />
-                            {printedLineId === line.id ? (
-                              <span className="client-fin__entered">Sent to DYMO</span>
+                            {printed?.lineId === line.id ? (
+                              <span className="client-fin__entered">
+                                {printed.viaDialog ? 'Label sent to print dialog' : 'Label printed'}
+                              </span>
                             ) : null}
                           </>
                         );

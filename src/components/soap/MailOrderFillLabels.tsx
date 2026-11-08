@@ -2,6 +2,8 @@ import { useState } from 'react';
 import SendRxLabelButton from './SendRxLabelButton';
 import {
   MAIL_ORDER_BAG_NOTES_MAX,
+  printMailOrderBagLabelWithSystemDialog,
+  type MailOrderBagLabelData,
 } from '../../utils/dymoPrescriptionLabel';
 import { printMailOrderBagLabelDirect } from '../../utils/printRxLabel';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
@@ -86,6 +88,7 @@ export default function MailOrderFillLabels({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [bagNeedsDialog, setBagNeedsDialog] = useState(false);
 
   const bagNotes = clipNotes([checkNotes, order.notes].filter(Boolean).join(' · '));
   const mailOrderNumber = `#${order.id}`;
@@ -100,23 +103,38 @@ export default function MailOrderFillLabels({
 
   const labelDoctor = mailLabelDoctor(order, line);
 
-  const printBag = async (printerName?: string) => {
+  const bagLabel: MailOrderBagLabelData = {
+    orderNumber: mailOrderNumber,
+    clientName: order.customerName,
+    patientName: line.patientName || order.patientName || 'Household',
+    patientWeight,
+    notes: bagNotes,
+  };
+
+  /** Bag label alone: USB DYMO first; if that fails, offer the system print dialog. */
+  const printBagOnDymo = async () => {
+    setBagNeedsDialog(false);
     try {
-      const printed = await printMailOrderBagLabelDirect({
-        orderNumber: mailOrderNumber,
-        clientName: order.customerName,
-        patientName: line.patientName || order.patientName || 'Household',
-        patientWeight,
-        notes: bagNotes,
-      });
-      setStatus(`Printed Rx and bag labels on ${printerName || printed}.`);
+      const printed = await printMailOrderBagLabelDirect(bagLabel);
+      setStatus(`Printed the bag label on ${printed}.`);
       setError(null);
     } catch (e) {
+      setStatus(null);
       setError(
-        e instanceof Error
-          ? `Rx printed. Bag label failed: ${e.message}`
-          : 'Rx printed. Could not print the bag label.',
+        `${e instanceof Error ? e.message : 'Could not print the bag label on DYMO.'} Use the print dialog for a Bluetooth or Wi-Fi printer.`,
       );
+      setBagNeedsDialog(true);
+    }
+  };
+
+  const printBagWithDialog = () => {
+    try {
+      printMailOrderBagLabelWithSystemDialog(bagLabel);
+      setStatus('Print dialog opened for the bag label.');
+      setError(null);
+      setBagNeedsDialog(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open the print dialog.');
     }
   };
 
@@ -124,7 +142,9 @@ export default function MailOrderFillLabels({
     <>
       <SendRxLabelButton
         className={className}
+        label="Print Rx + bag labels"
         stopClickPropagation
+        bagLabel={bagLabel}
         source={{
           patientId: line.patientId,
           patientName: line.patientName || order.patientName || 'Patient',
@@ -159,8 +179,14 @@ export default function MailOrderFillLabels({
           setStatus(null);
         }}
         disabled={!labelDoctor.employeeId && !labelDoctor.name}
-        onSuccess={(printerName) => {
-          void printBag(printerName);
+        onSuccess={(printerName, method) => {
+          setError(null);
+          setBagNeedsDialog(false);
+          setStatus(
+            method === 'system'
+              ? 'Print dialog opened with the Rx and bag labels.'
+              : `Printed Rx and bag labels on ${printerName}.`,
+          );
         }}
       />
       <button
@@ -168,11 +194,23 @@ export default function MailOrderFillLabels({
         className={className}
         onClick={(e) => {
           e.stopPropagation();
-          void printBag();
+          void printBagOnDymo();
         }}
       >
         Bag label only
       </button>
+      {bagNeedsDialog ? (
+        <button
+          type="button"
+          className={className}
+          onClick={(e) => {
+            e.stopPropagation();
+            printBagWithDialog();
+          }}
+        >
+          Bag label: use system print dialog
+        </button>
+      ) : null}
       {!labelDoctor.employeeId && !labelDoctor.name ? (
         <p className="mail-queue__danger-text">No doctor is on this script.</p>
       ) : null}

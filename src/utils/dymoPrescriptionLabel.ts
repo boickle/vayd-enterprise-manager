@@ -599,16 +599,10 @@ export async function printPrescriptionLabel(
   }
 }
 
-export function printPrescriptionLabelWithSystemDialog(
-  data: PrescriptionLabelData,
-  existingWindow?: Window | null
-): void {
-  const printWindow = existingWindow ?? window.open('', '_blank', 'popup,width=720,height=500');
-  if (!printWindow) throw new Error('Allow pop-ups to use the system print dialog.');
-
+function prescriptionLabelPageHtml(data: PrescriptionLabelData): string {
   const logoBits = pngFromDataUrl(data.practiceLogoPng) ?? VAYD_LABEL_LOGO_PNG_BASE64;
   const logoSrc = `data:image/png;base64,${logoBits}`;
-  const body = [
+  return [
     `<div class="head"><img class="logo" alt="" src="${logoSrc}" /><div><div class="practice">${escapeXml(data.practiceName)}</div><div class="contact">${escapeXml(`${data.practiceAddress} · Tel ${data.practicePhone}`)}</div></div></div>`,
     `<div class="pet">${escapeXml(data.patientName)}</div>`,
     `<div class="meta">${escapeXml(ownerMetaLine(data))}</div>`,
@@ -617,13 +611,30 @@ export function printPrescriptionLabelWithSystemDialog(
     `<div class="foot">${escapeXml(footerLine(data))}</div>`,
     `<div class="legal">${escapeXml(VETERINARY_CAUTION)}</div>`,
   ].join('');
+}
 
-  printWindow.document.write(`<!doctype html>
-<html><head><title>Prescription label</title><style>
+function bagLabelPageHtml(data: MailOrderBagLabelData): string {
+  const weight = (data.patientWeight || '').trim();
+  const notes = (data.notes || '').trim().slice(0, MAIL_ORDER_BAG_NOTES_MAX);
+  return [
+    `<div class="bag-title">${escapeXml(`Mail order ${data.orderNumber}`)}</div>`,
+    `<div class="bag-client">${escapeXml(data.clientName)}</div>`,
+    `<div class="bag-pet">${escapeXml(data.patientName)}</div>`,
+    weight ? `<div class="bag-weight">${escapeXml(weight)}</div>` : '',
+    notes ? `<div class="bag-notes">${escapeXml(notes)}</div>` : '',
+  ].join('');
+}
+
+/** HTML for the system print dialog: one 30326-sized page per label. Exported for tests. */
+export function systemDialogLabelsHtml(pages: string[], title: string): string {
+  const body = pages.map((page) => `<section class="label">${page}</section>`).join('');
+  return `<!doctype html>
+<html><head><title>${escapeXml(title)}</title><style>
 @page { size: 3.1in 1.8in; margin: 0; }
 * { box-sizing: border-box; }
-html, body { width: 3.1in; height: 1.8in; margin: 0; }
-body { padding: .05in .07in; font: 6.5pt/1.12 Arial, sans-serif; color: #000; overflow: hidden; display: flex; flex-direction: column; }
+html, body { width: 3.1in; margin: 0; }
+.label { width: 3.1in; height: 1.8in; padding: .05in .07in; font: 6.5pt/1.12 Arial, sans-serif; color: #000; overflow: hidden; display: flex; flex-direction: column; break-after: page; page-break-after: always; }
+.label:last-child { break-after: auto; page-break-after: auto; }
 .head { display: flex; align-items: center; gap: .06in; }
 .logo { width: .26in; height: .26in; object-fit: contain; }
 .practice { font-size: 7pt; font-weight: 700; }
@@ -634,6 +645,44 @@ body { padding: .05in .07in; font: 6.5pt/1.12 Arial, sans-serif; color: #000; ov
 .sig { font-size: 8pt; font-weight: 700; flex: 1; white-space: pre-wrap; }
 .foot { font-size: 6pt; margin-top: 2pt; }
 .legal { font-size: 5pt; }
-</style></head><body>${body}<script>window.onload=()=>{window.print();window.close();}</script></body></html>`);
+.bag-title { font-size: 12pt; font-weight: 700; }
+.bag-client { font-size: 10pt; font-weight: 700; margin-top: 6pt; }
+.bag-pet { font-size: 11pt; font-weight: 700; margin-top: 4pt; }
+.bag-weight { font-size: 9pt; margin-top: 3pt; }
+.bag-notes { font-size: 8pt; margin-top: 5pt; white-space: pre-wrap; }
+</style></head><body>${body}<script>window.onload=()=>{window.print();window.close();}</script></body></html>`;
+}
+
+function writeSystemDialog(printWindow: Window, pages: string[], title: string): void {
+  printWindow.document.write(systemDialogLabelsHtml(pages, title));
   printWindow.document.close();
+}
+
+function openPrintWindow(existingWindow?: Window | null): Window {
+  const printWindow = existingWindow ?? window.open('', '_blank', 'popup,width=720,height=500');
+  if (!printWindow) throw new Error('Allow pop-ups to use the system print dialog.');
+  return printWindow;
+}
+
+/**
+ * Prints through the browser's print dialog, so any printer the computer can see works
+ * (Bluetooth / Wi-Fi DYMO, office printer). Pass `bagLabel` to add the mail-order bag
+ * label as a second page of the same print job.
+ */
+export function printPrescriptionLabelWithSystemDialog(
+  data: PrescriptionLabelData,
+  existingWindow?: Window | null,
+  bagLabel?: MailOrderBagLabelData | null,
+): void {
+  const printWindow = openPrintWindow(existingWindow);
+  const pages = [prescriptionLabelPageHtml(data)];
+  if (bagLabel) pages.push(bagLabelPageHtml(bagLabel));
+  writeSystemDialog(printWindow, pages, bagLabel ? 'Prescription and bag labels' : 'Prescription label');
+}
+
+export function printMailOrderBagLabelWithSystemDialog(
+  data: MailOrderBagLabelData,
+  existingWindow?: Window | null,
+): void {
+  writeSystemDialog(openPrintWindow(existingWindow), [bagLabelPageHtml(data)], 'Mail-order bag label');
 }
