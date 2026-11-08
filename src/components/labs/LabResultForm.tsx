@@ -12,13 +12,13 @@ import './LabResultForm.css';
 
 type Draft = Record<string, { value: string; comments: string }>;
 
-/** Seed the grid from saved answers, falling back to the template defaults. */
+/** Seed the grid from saved answers only. Template defaults are never pre-filled (LAB-05). */
 function toDraft(result: LabResult): Draft {
   const draft: Draft = {};
   for (const el of result.elementsSnapshot ?? []) {
     const saved = result.values?.[el.key];
     draft[el.key] = {
-      value: saved?.value ?? (result.status === 'pending' ? (el.defaultValue ?? '') : ''),
+      value: saved?.value ?? '',
       comments: saved?.comments ?? '',
     };
   }
@@ -53,6 +53,38 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
       ...draft,
       [key]: { ...(draft[key] ?? { value: '', comments: '' }), [field]: next },
     };
+    setDraft(nextDraft);
+    if (!missingKeys.length) return;
+    const missing = missingLabResultRows(elements, nextDraft);
+    setMissingKeys(missing.map((el) => el.key));
+    setError(
+      missing.length
+        ? `Enter a value or a comment on each row. Still blank: ${missing.map((el) => el.name).join(', ')}.`
+        : null,
+    );
+  }
+
+  /** Choice rows that have a normal answer and are still blank. Numeric rows are never offered. */
+  const fillableKeys = useMemo(
+    () =>
+      elements
+        .filter(
+          (el) =>
+            el.valueType === 'select' &&
+            !!el.defaultValue &&
+            (el.options ?? []).includes(el.defaultValue) &&
+            !draft[el.key]?.value,
+        )
+        .map((el) => el.key),
+    [elements, draft],
+  );
+
+  function fillNormalValues() {
+    const nextDraft: Draft = { ...draft };
+    for (const el of elements) {
+      if (!fillableKeys.includes(el.key)) continue;
+      nextDraft[el.key] = { ...(draft[el.key] ?? { comments: '' }), value: el.defaultValue ?? '' };
+    }
     setDraft(nextDraft);
     if (!missingKeys.length) return;
     const missing = missingLabResultRows(elements, nextDraft);
@@ -252,6 +284,16 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
 
       {!readOnly ? (
         <div className="lab-result-form__actions">
+          {!isSummary && elements.some((el) => el.valueType === 'select' && el.defaultValue) ? (
+            <button
+              type="button"
+              className="brief-btn"
+              disabled={saving !== null || !fillableKeys.length}
+              onClick={fillNormalValues}
+            >
+              Fill normal values
+            </button>
+          ) : null}
           {onCancel ? (
             <button type="button" className="brief-btn" onClick={onCancel}>
               Cancel
