@@ -243,6 +243,10 @@ export default function StoreCartPage() {
   const [couponOff, setCouponOff] = useState(0);
   const [couponFreeShip, setCouponFreeShip] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // B5 (owner, Nov 7, 2026): a logged-in client can't place the order until her name and email have loaded, and a
+  // "fill this in" message clears itself once the thing it asked for is there.
+  const [detailsLoaded, setDetailsLoaded] = useState(false);
+  const errFromBlockerRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [options, setOptions] = useState<StoreFulfillmentOption[]>([]);
   const [fulfillmentId, setFulfillmentId] = useState('');
@@ -414,7 +418,11 @@ export default function StoreCartPage() {
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
-    void fetchClientInfo(clientId).then((info) => {
+    setDetailsLoaded(false);
+    void fetchClientInfo(clientId)
+      .catch(() => null)
+      .then((info) => {
+      setDetailsLoaded(true);
       if (!info) return;
       const onFile = onFileShipAddress(info as Record<string, unknown>);
       setOnFileAddress(onFile);
@@ -619,6 +627,12 @@ export default function StoreCartPage() {
               ? 'Choose whether to save this as the mailing address on file.'
               : null;
   const canPlace = placeBlocker == null;
+  useEffect(() => {
+    if (errFromBlockerRef.current && err && err !== placeBlocker) {
+      errFromBlockerRef.current = false;
+      setErr(null);
+    }
+  }, [err, placeBlocker]);
 
   return (
     <div className="vayd-store__cart">
@@ -1418,12 +1432,14 @@ export default function StoreCartPage() {
             <button
               type="button"
               className="primary vayd-store__place"
-              disabled={busy}
+              disabled={busy || (loggedIn && !detailsLoaded)}
               onClick={() => {
                 if (placeBlocker) {
+                  errFromBlockerRef.current = true;
                   setErr(placeBlocker);
                   return;
                 }
+                errFromBlockerRef.current = false;
                 // OS-03: a second click while the first is still placing does nothing.
                 if (placingRef.current) return;
                 placingRef.current = true;
