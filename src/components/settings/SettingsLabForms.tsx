@@ -392,7 +392,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 ? 'No archived lab forms.'
                 : templates.length
                   ? 'No active lab forms. Restore one from Archived, or create a new one.'
-                  : 'No lab forms yet. “Install standard forms” adds the usual in-house set.'}
+                  : 'No lab forms yet. “Add missing standard forms” adds the usual in-house set.'}
             </p>
           ) : (
             grouped.map(([category, rows]) => (
