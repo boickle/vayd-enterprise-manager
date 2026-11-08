@@ -34,17 +34,25 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
   const [error, setError] = useState<string | null>(null);
   const [saveCard, setSaveCard] = useState(true);
   const [billing, setBilling] = useState(billingPrefill);
+  // Fields the buyer typed in this card form. Every other field follows the page (name, email, address on
+  // file) as it changes, so a name or email typed on the page after this form appeared is not cut to its
+  // first letter (OS-A17: the gift card page sent Stripe "s" as the billing email).
+  const edited = useRef<Set<keyof StoreCardBillingPrefill>>(new Set());
 
   useEffect(() => {
-    setBilling((prev) => ({
-      name: prev.name || billingPrefill.name,
-      email: prev.email || billingPrefill.email,
-      line1: prev.line1 || billingPrefill.line1,
-      line2: prev.line2 || billingPrefill.line2,
-      city: prev.city || billingPrefill.city,
-      state: prev.state || billingPrefill.state,
-      postal: prev.postal || billingPrefill.postal,
-    }));
+    setBilling((prev) => {
+      const pick = (key: keyof StoreCardBillingPrefill): string =>
+        (edited.current.has(key) ? prev[key] : billingPrefill[key] || prev[key]) ?? '';
+      return {
+        name: pick('name'),
+        email: pick('email'),
+        line1: pick('line1'),
+        line2: pick('line2'),
+        city: pick('city'),
+        state: pick('state'),
+        postal: pick('postal'),
+      };
+    });
   }, [billingPrefill]);
 
   useEffect(() => {
@@ -115,6 +123,7 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
   }));
 
   const setField = (key: keyof StoreCardBillingPrefill, value: string) => {
+    edited.current.add(key);
     setBilling((prev) => ({ ...prev, [key]: value }));
   };
 

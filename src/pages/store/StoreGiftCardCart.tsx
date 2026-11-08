@@ -399,6 +399,7 @@ export function StoreGiftCardCheckout({
             ref={cardRef}
             billingPrefill={{ name, email, line1: '', line2: '', city: '', state: '', postal: '' }}
             onClose={cards.length ? () => setEnterNewCard(false) : undefined}
+            canSaveCard={Boolean(clientId)}
           />
         )}
         {err ? <p className="vayd-store__place-err">{err}</p> : null}
