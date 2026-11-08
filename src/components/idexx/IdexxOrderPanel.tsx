@@ -155,6 +155,18 @@ export default function IdexxOrderPanel({
           Added to the bill from IDEXX: {note.added.join(', ')}.
         </p>
       ) : null}
+      {note?.removed?.length ? (
+        <p className="idexx-order__note idexx-order__note--ok">
+          Removed in IDEXX: {note.removed.join(', ')}. The charge came off the bill.
+        </p>
+      ) : null}
+      {note?.stillCharged?.length ? (
+        <p className="idexx-order__note idexx-order__note--warn">
+          Removed in IDEXX but still on the bill:{' '}
+          {note.stillCharged.map((u) => `${u.name ?? `test ${u.code}`} (${u.reason})`).join('; ')} A
+          Billing task was opened to review the charge.
+        </p>
+      ) : null}
       {note?.uncaptured.length ? (
         <p className="idexx-order__note idexx-order__note--warn">
           Added in IDEXX but not on the bill:{' '}

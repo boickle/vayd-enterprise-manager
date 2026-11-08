@@ -1,10 +1,31 @@
 import { useRef, useState } from 'react';
+import { checkAppointmentRequestRecord } from '../api/clientRecordUploads';
 import { useCameraCaptureAvailable } from '../utils/cameraCapture';
 import {
   CLIENT_RECORD_MAX_FILES,
+  type ClientRecordFileCheck,
   clientRecordFileError,
+  clientRecordsVerified,
+  petsMissingQualifyingRecords,
+  prepareClientRecordFile,
 } from '../utils/clientRecordFiles';
 import './ClientRecordUploadFields.css';
+
+const CHECK_UNAVAILABLE_MESSAGE =
+  "We couldn't check this file right now. Try again in a minute, or choose \"Please request them\" and we'll get the records from your vet.";
+
+function checkErrorMessage(err: unknown): string {
+  const ax = err as { response?: { status?: number; data?: { message?: unknown } } };
+  const status = ax?.response?.status;
+  const msg = ax?.response?.data?.message;
+  // 400s carry a message written for the client (wrong format, too large).
+  if (status === 400) {
+    if (typeof msg === 'string' && msg.trim()) return msg;
+    if (Array.isArray(msg) && typeof msg[0] === 'string') return msg[0];
+  }
+  if (status === 429) return 'Too many files checked in a short time. Wait a few minutes and try again.';
+  return CHECK_UNAVAILABLE_MESSAGE;
+}
 
 export type ClientRecordPetOption = {
   id: string;
@@ -19,7 +40,11 @@ export type PendingClientRecordFile = {
   formPetId: string;
   /** Which picked practice these records came from. */
   practiceKey?: string;
+  /** Checked when added; only kept files are attached on submit. */
+  check: ClientRecordFileCheck;
 };
+
+type FilesUpdate = (prev: PendingClientRecordFile[]) => PendingClientRecordFile[];
 
 type Choice = 'upload' | 'request' | 'holdoff';
 type Delivery = Choice | '';
@@ -30,8 +55,12 @@ type Props = {
   delivery: Delivery;
   onDeliveryChange: (value: Choice) => void;
   files: PendingClientRecordFile[];
-  onFilesChange: (files: PendingClientRecordFile[]) => void;
+  /** Receives an updater because checks finish after the files are added. */
+  onFilesChange: (update: FilesUpdate) => void;
   pets: ClientRecordPetOption[];
+  /** Pets that are new patients; each needs a qualifying record to open earlier dates. */
+  newPetIds: string[];
+  practiceId: number;
   deliveryError?: string;
   filesError?: string;
   /** Shown under the previous-practice picker (no separate section heading). */
@@ -58,6 +87,8 @@ export function ClientRecordUploadFields({
   files,
   onFilesChange,
   pets,
+  newPetIds,
+  practiceId,
   deliveryError,
   filesError,
   variant = 'standalone',
@@ -91,16 +122,43 @@ export function ClientRecordUploadFields({
       for (const f of files) {
         if (f.practiceKey === key && f.previewUrl) URL.revokeObjectURL(f.previewUrl);
       }
-      onFilesChange(files.filter((f) => f.practiceKey !== key));
+      onFilesChange((prev) => prev.filter((f) => f.practiceKey !== key));
+    }
+  };
+
+  const setCheck = (localId: string, patch: Partial<PendingClientRecordFile>) => {
+    onFilesChange((prev) =>
+      prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const runCheck = async (localId: string, original: File, formPetId: string) => {
+    const petName = pets.find((pet) => pet.id === formPetId)?.name?.trim() || '';
+    try {
+      const file = await prepareClientRecordFile(original);
+      const result = await checkAppointmentRequestRecord({
+        practiceId,
+        file,
+        formPetId,
+        petName,
+      });
+      const check: ClientRecordFileCheck =
+        result.status !== 'rejected' && result.checkToken
+          ? { state: result.status, token: result.checkToken, message: result.message }
+          : { state: 'rejected', message: result.message || CHECK_UNAVAILABLE_MESSAGE };
+      setCheck(localId, { file, check });
+    } catch (err) {
+      setCheck(localId, { check: { state: 'rejected', message: checkErrorMessage(err) } });
     }
   };
 
   const addFiles = (list: FileList | null) => {
     if (!list?.length) return;
-    const next = [...files];
+    const added: PendingClientRecordFile[] = [];
     let error: string | null = null;
+    const kept = files.filter((f) => f.check.state !== 'rejected').length;
     for (const file of Array.from(list)) {
-      if (next.length >= CLIENT_RECORD_MAX_FILES) {
+      if (kept + added.length >= CLIENT_RECORD_MAX_FILES) {
         error = `You can upload up to ${CLIENT_RECORD_MAX_FILES} files.`;
         break;
       }
@@ -110,22 +168,25 @@ export function ClientRecordUploadFields({
         continue;
       }
       const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
-      next.push({
+      added.push({
         localId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         file,
         previewUrl,
         formPetId: activePetId,
         practiceKey: activePracticeKey,
+        check: { state: 'checking' },
       });
     }
     setLocalError(error);
-    onFilesChange(next);
+    if (added.length === 0) return;
+    onFilesChange((prev) => [...prev, ...added]);
+    for (const item of added) void runCheck(item.localId, item.file, item.formPetId);
   };
 
   const removeFile = (localId: string) => {
     const target = files.find((file) => file.localId === localId);
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
-    onFilesChange(files.filter((file) => file.localId !== localId));
+    onFilesChange((prev) => prev.filter((file) => file.localId !== localId));
   };
 
   const photoHint = canTakePhoto
@@ -156,6 +217,13 @@ export function ClientRecordUploadFields({
       detail: 'You can always ask us later.',
     });
   }
+
+  const checking = files.some((f) => f.check.state === 'checking');
+  const hasKept = files.some((f) => f.check.state === 'qualifies' || f.check.state === 'accepted');
+  const verified = clientRecordsVerified(files, newPetIds);
+  const missingPetNames = petsMissingQualifyingRecords(files, newPetIds).map((id) =>
+    petLabel(pets, id),
+  );
 
   return (
     <div
@@ -338,6 +406,16 @@ export function ClientRecordUploadFields({
                         ? ` · ${practices.find((p) => p.key === item.practiceKey)?.name ?? ''}`
                         : ''}
                     </span>
+                    <span
+                      className={`client-record-upload__check client-record-upload__check--${item.check.state}`}
+                      role="status"
+                    >
+                      {item.check.state === 'checking'
+                        ? 'Checking this file…'
+                        : item.check.state === 'rejected'
+                          ? `Not added. ${item.check.message}`
+                          : item.check.message}
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -351,9 +429,27 @@ export function ClientRecordUploadFields({
             </ul>
           ) : (
             <p className="client-record-upload__hint" style={{ marginTop: 10, marginBottom: 0 }}>
-              Photos of paper records are fine. You can add more than one page.
+              Add the records from your vet&apos;s office, such as the vaccine history or visit notes. Photos of printed pages are fine, and you can add more than one page. Invoices and notes you wrote yourself can&apos;t be used.
             </p>
           )}
+          {files.length > 0 && !checking ? (
+            verified ? (
+              <p className="client-record-upload__summary client-record-upload__summary--ok">
+                Your records look good. Earlier appointment times are open.
+              </p>
+            ) : hasKept && missingPetNames.length > 0 ? (
+              <p className="client-record-upload__summary">
+                Earlier appointment times open once each pet has a record from their vet that shows
+                vaccine or visit history with dates. Still needed for: {missingPetNames.join(', ')}.
+              </p>
+            ) : !hasKept ? (
+              <p className="client-record-upload__summary">
+                We need records from your vet&apos;s office, such as the vaccine history or visit
+                notes. Invoices and notes you wrote yourself can&apos;t be used. If you don&apos;t
+                have them, choose &quot;Please request them&quot; and we&apos;ll ask your vet.
+              </p>
+            ) : null
+          ) : null}
           {localError || filesError ? (
             <div className="client-record-upload__error">{filesError || localError}</div>
           ) : null}

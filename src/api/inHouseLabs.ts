@@ -81,8 +81,8 @@ export async function archiveLabFormTemplate(id: number): Promise<void> {
 
 export async function seedLabFormTemplates(
   templates: UpsertLabFormTemplate[]
-): Promise<{ created: number; updated: number }> {
-  const { data } = await http.post<{ created: number; updated: number }>(
+): Promise<{ created: number; skipped: number }> {
+  const { data } = await http.post<{ created: number; skipped: number }>(
     '/in-house-labs/templates/seed',
     { templates },
     { params: { practiceId: pid() } }

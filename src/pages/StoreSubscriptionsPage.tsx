@@ -15,6 +15,7 @@ import './Settings.css';
 import './MailOrders.css';
 import './StoreOps.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 
 function practiceIdFromToken(token: string | null): number {
   try {
@@ -34,6 +35,11 @@ function subStatus(row: StoreStaffSubscription): 'active' | 'paused' | 'cancelle
   if (!row.active) return 'cancelled';
   if (row.paused) return 'paused';
   return 'active';
+}
+
+/** OS-10 / OS-05: card failing, Stripe ended the auto-ship after the card kept failing, or a cancel Stripe has not confirmed. */
+export function subPaymentProblem(row: StoreStaffSubscription): boolean {
+  return row.paymentStatus === 'failing' || row.paymentStatus === 'ended' || row.paymentStatus === 'cancel_pending';
 }
 
 function itemPrice(item: StoreItemRow | undefined): number {
@@ -96,7 +102,7 @@ export default function StoreSubscriptionsPage() {
   const practiceId = practiceIdFromToken(token);
   const [rows, setRows] = useState<StoreStaffSubscription[]>([]);
   const [storeItems, setStoreItems] = useState<StoreItemRow[]>([]);
-  const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'all'>('active');
+  const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'payment' | 'all'>('active');
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -107,6 +113,8 @@ export default function StoreSubscriptionsPage() {
   const [cardRow, setCardRow] = useState<StoreStaffSubscription | null>(null);
   const [editItemId, setEditItemId] = useState(0);
   const [editQty, setEditQty] = useState('1');
+  // B4 (owner, Nov 7, 2026): only managers change what a client pays (item, quantity); the team sees them locked.
+  const canChangeMoney = useCanOrAdminLogin('store.autoship.money');
   const [editFrequency, setEditFrequency] = useState('monthly');
   const [editItemQ, setEditItemQ] = useState('');
 
@@ -128,7 +136,9 @@ export default function StoreSubscriptionsPage() {
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((row) => {
-      if (filter !== 'all' && subStatus(row) !== filter) return false;
+      if (filter === 'payment') {
+        if (!subPaymentProblem(row)) return false;
+      } else if (filter !== 'all' && subStatus(row) !== filter) return false;
       if (!needle) return true;
       const hay = [row.itemName, row.customerName, row.customerEmail, row.patientName, row.stripeSubscriptionId]
         .filter(Boolean)
@@ -275,6 +285,7 @@ export default function StoreSubscriptionsPage() {
           ['active', 'Active'],
           ['paused', 'Paused'],
           ['cancelled', 'Cancelled'],
+          ['payment', 'Payment problems'],
           ['all', 'All'],
         ] as const).map(([key, label]) => (
           <button
@@ -388,8 +399,16 @@ export default function StoreSubscriptionsPage() {
                         ? row.pausedUntil
                           ? `Paused until ${formatPauseUntil(row.pausedUntil)}`
                           : 'Paused'
-                        : 'Cancelled'}
+                        : row.paymentStatus === 'ended'
+                          ? 'Ended: card failed'
+                          : 'Cancelled'}
                   </span>
+                  {row.paymentStatus === 'failing' ? (
+                    <span className="mail-queue__badge is-stop">Payment failing</span>
+                  ) : null}
+                  {row.paymentStatus === 'cancel_pending' ? (
+                    <span className="mail-queue__badge is-stop">Cancel pending: Stripe not confirmed</span>
+                  ) : null}
                   {row.active ? (
                     <>
                       <button
@@ -534,7 +553,7 @@ export default function StoreSubscriptionsPage() {
                   <input
                     className="settings-input"
                     placeholder="Bravecto, strength…"
-                    disabled={busyId === editRow.id}
+                    disabled={busyId === editRow.id || !canChangeMoney}
                     value={editItemQ}
                     onChange={(e) => setEditItemQ(e.target.value)}
                   />
@@ -543,7 +562,7 @@ export default function StoreSubscriptionsPage() {
                   Item
                   <select
                     className="settings-input"
-                    disabled={busyId === editRow.id}
+                    disabled={busyId === editRow.id || !canChangeMoney}
                     value={editItemId}
                     onChange={(e) => setEditItemId(Number(e.target.value))}
                   >
@@ -555,6 +574,13 @@ export default function StoreSubscriptionsPage() {
                     ))}
                   </select>
                 </label>
+                {!canChangeMoney ? (
+                  <p className="settings-muted" data-testid="autoship-locked-note">
+                    Looks wrong? On the order in the queue, use Re-send… to send it to the doctor with a note
+                    (prescriptions), or Mark pending and ask a manager (other items). Only managers change the item or
+                    quantity.
+                  </p>
+                ) : null}
                 <div className="autoship-edit__row">
                   <label className="settings-label">
                     Qty
@@ -562,7 +588,7 @@ export default function StoreSubscriptionsPage() {
                       className="settings-input"
                       type="number"
                       min={1}
-                      disabled={busyId === editRow.id}
+                      disabled={busyId === editRow.id || !canChangeMoney}
                       value={editQty}
                       onChange={(e) => setEditQty(e.target.value)}
                     />

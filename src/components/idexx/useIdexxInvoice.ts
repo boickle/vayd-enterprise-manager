@@ -12,6 +12,8 @@ export type IdexxSyncNote = {
   orderId: number;
   added: string[];
   uncaptured: IdexxSyncResult['uncaptured'];
+  removed?: IdexxSyncResult['removed'];
+  stillCharged?: IdexxSyncResult['stillCharged'];
 };
 
 /**
@@ -48,10 +50,15 @@ export function useIdexxInvoice(
   const sync = useCallback(
     async (orderId: number) => {
       const res = await syncIdexxOrder(orderId);
-      if (res.added.length || res.uncaptured.length) {
+      if (
+        res.added.length ||
+        res.uncaptured.length ||
+        res.removed?.length ||
+        res.stillCharged?.length
+      ) {
         setNotes((prev) => [...prev.filter((n) => n.orderId !== orderId), { orderId, ...res }]);
       }
-      if (res.added.length) chargesAdded.current?.();
+      if (res.added.length || res.removed?.length) chargesAdded.current?.();
       await reload();
       return res;
     },

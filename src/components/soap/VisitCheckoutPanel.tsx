@@ -30,6 +30,7 @@ import {
   chargeSavedCard,
   createInvoice,
   getInvoiceCardOnFile,
+  fetchAvailableAccountCredit,
   deleteOrder,
   getInvoice,
   syncTerminalCheckout,
@@ -128,6 +129,12 @@ import { listPatientMemberships, type PatientMembership } from '../../api/member
 import { usedUpMembershipNote } from '../../utils/membershipLineUsage';
 import MembershipBenefitsPausedTag from '../pims/MembershipBenefitsPausedTag';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
+import {
+  accountCreditButtonText,
+  cardOnFileButtonText,
+  cardText,
+  paidTenderLines,
+} from './checkoutPaymentText';
 import CheckoutPetSignalment from './CheckoutPetSignalment';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
@@ -156,7 +163,7 @@ import {
   toDateInput,
   tomorrowInput,
 } from '../../utils/printRxLabel';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -1306,7 +1313,8 @@ export default function VisitCheckoutPanel({
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
   const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
   // Asked out loud at the door. Starts unchecked if this household said no before.
-  const [saveCardConsent, setSaveCardConsent] = useState(true);
+  // Starts unticked: staff ask the owner first, and only a ticked box saves the card.
+  const [saveCardConsent, setSaveCardConsent] = useState(false);
   const [cardDeclinedAt, setCardDeclinedAt] = useState<string | null>(null);
   const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
     Record<string, OrderPrescription>
@@ -1697,7 +1705,7 @@ export default function VisitCheckoutPanel({
     if (!invoice?.id) {
       setCardOnFile(null);
       setCardDeclinedAt(null);
-      setSaveCardConsent(true);
+      setSaveCardConsent(false);
       return;
     }
     let cancelled = false;
@@ -1706,13 +1714,13 @@ export default function VisitCheckoutPanel({
         if (cancelled) return;
         setCardOnFile(lookup.card);
         setCardDeclinedAt(lookup.declinedAt);
-        setSaveCardConsent(!lookup.declinedAt);
+        setSaveCardConsent(false);
       })
       .catch(() => {
         if (cancelled) return;
         setCardOnFile(null);
         setCardDeclinedAt(null);
-        setSaveCardConsent(true);
+        setSaveCardConsent(false);
       });
     return () => {
       cancelled = true;
@@ -2141,6 +2149,33 @@ export default function VisitCheckoutPanel({
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const [giftCardOpen, setGiftCardOpen] = useState(false);
   const [accountCreditOpen, setAccountCreditOpen] = useState(false);
+  const [cardConfirmOpen, setCardConfirmOpen] = useState(false);
+  /** Spendable account credit for the household; the Account credit button shows it. */
+  const [spendableCredit, setSpendableCredit] = useState(0);
+  /** The API leaves a gift card's last characters off its tender, so remember them as they are redeemed. */
+  const [giftLast4ByTender, setGiftLast4ByTender] = useState<Record<string, string>>({});
+  const creditClientId = invoice?.clientId ?? null;
+  const creditWatch = `${invoice?.id}|${invoice?.amountPaid}|${invoice?.status}`;
+  useEffect(() => {
+    if (!creditClientId || isPaid || isVoid) {
+      setSpendableCredit(0);
+      return;
+    }
+    let live = true;
+    fetchAvailableAccountCredit(creditClientId)
+      .then((c) => {
+        if (live) setSpendableCredit(Number(c?.total) || 0);
+      })
+      .catch(() => {
+        if (live) setSpendableCredit(0);
+      });
+    return () => {
+      live = false;
+    };
+  }, [creditClientId, creditWatch, isPaid, isVoid]);
+  useEffect(() => {
+    setCardConfirmOpen(false);
+  }, [invoice?.id, invoice?.amountPaid]);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -3074,6 +3109,19 @@ export default function VisitCheckoutPanel({
                         'covered'
                       ) : (
                         <>
+                          {(() => {
+                            const regular = handDiscountRegularAmount(l);
+                            return regular == null ? null : (
+                              <>
+                                <s
+                                  data-testid="checkout-regular-price"
+                                  style={{ color: '#dc2626', fontSize: 12 }}
+                                >
+                                  {money(regular)}
+                                </s>{' '}
+                              </>
+                            );
+                          })()}
                           {money(l.amount)}
                           {(() => {
                             const md = membershipLineDiscount(l);
@@ -3774,7 +3822,30 @@ export default function VisitCheckoutPanel({
                 <span>{money(invoice.amountPaid)}</span>
               </div>
             )}
+            {!isVoid && !isPaid && Number(invoice.amountPaid) > 0 && (
+              <div className="soap-invoice-row balance-due" data-testid="checkout-balance-due">
+                <span>Balance due</span>
+                <span>{money(Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0)))}</span>
+              </div>
+            )}
           </div>
+          {isPaid && !isVoid && (
+            <div className="soap-invoice-paid-in-full" data-testid="checkout-paid-in-full">
+              <div className="soap-invoice-paid-in-full-title">Paid in full</div>
+              {(() => {
+                const lines = paidTenderLines(invoice.tenders, giftLast4ByTender);
+                return lines.length ? (
+                  <ul aria-label="How it was paid">
+                    {lines.map((t) => (
+                      <li key={t.id}>
+                        <span>{t.label}</span> <span>{money(t.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null;
+              })()}
+            </div>
+          )}
 
           {error && <div className="soap-error">{error}</div>}
           {note && <div className="soap-note-banner">{note}</div>}
@@ -3862,7 +3933,7 @@ export default function VisitCheckoutPanel({
               <span>
                 {cardDeclinedAt
                   ? `This household said no to keeping a card on file last time${formatDeclineDay(cardDeclinedAt)}. Leave unchecked unless they have changed their mind.`
-                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap — uncheck if they say no.'}
+                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap. Tick this box when they say yes.'}
               </span>
             </label>
           )}
@@ -3936,8 +4007,9 @@ export default function VisitCheckoutPanel({
                 ) : null}
                 <button
                   type="button"
-                  className="soap-btn"
+                  className={`soap-btn${hasSavedCard ? ' is-highlight' : ''}${cardConfirmOpen ? ' is-active' : ''}`}
                   disabled={payDisabled || !hasSavedCard}
+                  data-testid="card-on-file-button"
                   title={
                     !branchReady
                       ? 'Choose the branch and location inventory is drawn from'
@@ -3947,9 +4019,9 @@ export default function VisitCheckoutPanel({
                           : ''
                         : 'No card saved on file'
                   }
-                  onClick={chargeCardOnFile}
+                  onClick={() => setCardConfirmOpen((open) => !open)}
                 >
-                  <CreditCard size={14} /> Card on file
+                  <CreditCard size={14} /> {cardOnFileButtonText(cardOnFile)}
                 </button>
                 <button
                   type="button"
@@ -3999,12 +4071,13 @@ export default function VisitCheckoutPanel({
                   <PermissionGate permission="payment.take">
                     <button
                       type="button"
-                      className={`soap-btn ghost${accountCreditOpen ? ' is-active' : ''}`}
+                      className={`soap-btn ghost${accountCreditOpen ? ' is-active' : ''}${spendableCredit > 0.005 ? ' is-highlight' : ''}`}
+                      data-testid="account-credit-button"
                       disabled={payDisabled}
                       title={!branchReady ? 'Choose the branch and location inventory is drawn from' : "Use the client's account credit"}
                       onClick={() => setAccountCreditOpen((open) => !open)}
                     >
-                      <Wallet size={14} /> Account credit
+                      <Wallet size={14} /> {accountCreditButtonText(spendableCredit)}
                     </button>
                   </PermissionGate>
                 ) : null}
@@ -4043,6 +4116,26 @@ export default function VisitCheckoutPanel({
               </button>
             )}
           </div>
+          {cardConfirmOpen && hasSavedCard && invoice && !isPaid && !isVoid ? (
+            <div className="soap-checkout-card-confirm" data-testid="card-on-file-confirm">
+              <button
+                type="button"
+                className="soap-btn primary"
+                disabled={payDisabled}
+                onClick={() => {
+                  setCardConfirmOpen(false);
+                  chargeCardOnFile();
+                }}
+              >
+                <CreditCard size={14} /> Charge{' '}
+                {money(Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0)))} to{' '}
+                {cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : 'the card on file'}
+              </button>
+              <button type="button" className="soap-btn ghost" onClick={() => setCardConfirmOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : null}
           {accountCreditOpen && invoice?.clientId && !isPaid && !isVoid ? (
             <AccountCreditTenderForm
               invoiceId={invoice.id}
@@ -4063,6 +4156,11 @@ export default function VisitCheckoutPanel({
               channel="visit"
               onCancel={() => setGiftCardOpen(false)}
               onApplied={(next, applied, card) => {
+                const seen = new Set((invoice.tenders ?? []).map((t) => t.id));
+                const fresh = (next.tenders ?? []).find((t) => t.method === 'gift_card' && !seen.has(t.id));
+                if (fresh && card.last4) {
+                  setGiftLast4ByTender((m) => ({ ...m, [fresh.id]: card.last4 }));
+                }
                 onInvoiceChange(next);
                 setGiftCardOpen(false);
                 const left = Math.round((card.balance - applied) * 100) / 100;
