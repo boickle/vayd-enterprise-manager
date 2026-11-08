@@ -13,9 +13,9 @@
 
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
-| 1 | Analytics, **Payments** ("Payments collected by day, method, and doctor.") | Point at the **Today's Revenue** card: **Practice revenue** $100.00 and **Total** $100.00 | "Start with today's revenue." | Today: Chen bill (Office exam $75) paid $40 cash and $35 check #1042; a Rivera nail trim of $25 paid by card. Signed in as Robin Hale (manager), who has the Payments report |
-| 2 | Payments | Point at the one thing to remember | "Every check and cash payment goes into a deposit the same day." | — |
-| 3 | Left menu | Click **Create deposit** | "Now the deposit." | A deposit bank account, "Operating account" |
+| 1 | Home, **Quick actions** | Point at **Create deposit** | "Cash and checks are the payments most likely to go missing. A same-day deposit means every one is accounted for." | Today: Chen bill (Office exam $75) paid $40 cash and $35 check |
+| 2 | Home | Point at the one thing to remember | "Every check and cash payment goes into a deposit the same day." | — |
+| 3 | Quick actions | Click **Create deposit** | "Click Create deposit, under Quick actions." | A deposit bank account, "Operating account" |
 | 4 | **Create deposit** | Point at "Grab undeposited cash and check payments into a posted deposit so they cannot disappear untracked." | "Every cash and check payment not yet deposited is listed here." | — |
 | 5 | Create deposit | Choose "Operating account · 000123456" in **Deposit to** | "Choose the bank account." | — |
 | 6 | Create deposit | Point at **Deposited on** (today's date is filled in) | "The date you take it to the bank." | — |
@@ -27,7 +27,7 @@
 | 12 | **Deposit slip** | Click **Print deposit slip** (then **Close**) | "Print the slip for the bank." | — |
 | 13 | **Recent deposits** | Point at the new row: Nov 7, Operating account, $75.00, 2 lines, posted, Robin Hale | "It's listed under Recent deposits, and the payments are gone from the undeposited list." | — |
 
-**On hold: the "Today's payments" lists.** The two buttons on the Today's Revenue card, **All payments** and **View payments**, don't work in the demo (see the notes), so this video doesn't open them.
+**Deposits only (owner, Nov 8, 2026).** The video doesn't open Analytics. Its **All payments** and **View payments** lists are only for billing, practice managers, admins and the observer, so most staff won't see them.
 
 ## What else you can do here
 

@@ -17,34 +17,14 @@ describe('Training: INV-16 end of day', () => {
     // An earlier take's deposit goes away, so the cash and check are undeposited again.
     sql(`DELETE FROM practice_deposit_lines`);
     sql(`DELETE FROM practice_deposits`);
-    cy.then(() => signInAsScheduling('manager', '/schedule/analytics/payments'));
-    cy.contains('Practice revenue', { timeout: 60000 }).should('exist');
-    cy.contains('button', 'View payments', { timeout: 30000 }).should('exist');
-    // The test stack has no Square, so its "Square Received Today" card shows a 500 error. Hide just that error alert (off camera).
-    cy.contains('.MuiCard-root', 'Square Received Today', { timeout: 30000 }).find('.MuiAlert-root').then(($a) => { $a.hide(); });
+    // Deposits only: the Analytics payments lists are for billing, managers, admin and observer (owner, Nov 8, 2026).
+    cy.then(() => signInAsScheduling('manager', '/schedule'));
+    cy.contains('a', 'Create deposit', { timeout: 60000 }).should('be.visible');
     cy.wait(2500);
 
-    const dlg = () => cy.get('.MuiDialog-root [role="dialog"]');
-    const closeDlg = () => {
-      tap(() => cy.contains('.MuiDialog-root button', /^Close$/));
-      cy.get('.MuiDialog-root').should('not.exist');
-    };
     startClock();
-    line('inv16-01', () => pointAt(() => cy.contains('.MuiCard-root', "Today's Revenue"), 4500));
+    line('inv16-01', () => pointAt(() => cy.contains('a', 'Create deposit'), 4500));
     line('inv16-02');
-    line('inv16-03', () => {
-      tap(() => cy.contains('button', 'View payments'));
-      cy.contains('Payments for', { timeout: 30000 }).should('exist');
-    });
-    line('inv16-04', () => pointAt(() => dlg(), 5000));
-    line('inv16-05', () => closeDlg());
-    line('inv16-06', () => {
-      tap(() => cy.contains('button', 'All payments'));
-      cy.contains('All payments —', { timeout: 30000 }).should('exist');
-      cy.contains('.MuiDialog-root', 'Credit card', { timeout: 30000 }).should('exist');
-    });
-    line('inv16-07', () => pointAt(() => dlg(), 5500));
-    line('inv16-08', () => closeDlg());
     line('inv16-09', () => {
       tap(() => cy.contains('a', 'Create deposit'));
       cy.contains('h5', 'Create deposit', { timeout: 30000 }).should('exist');
