@@ -11,7 +11,7 @@ import {
   ListChecks,
   Mail,
   Mic,
-  MessageSquare,
+  HelpCircle,
   Package,
   PackageSearch,
   PanelLeft,
@@ -182,8 +182,8 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/routing' ||
       location.pathname === '/schedule/jot' ||
       location.pathname.startsWith('/schedule/jot/') ||
-      location.pathname === '/schedule/chat' ||
-      location.pathname.startsWith('/schedule/chat/') ||
+      location.pathname === '/schedule/help' ||
+      location.pathname.startsWith('/schedule/help/') ||
       // SOAP / medical-note chart: fill the outlet so chart + invoice scroll independently.
       /^\/schedule\/(soap|note)\/[^/]+\/[^/]+$/.test(location.pathname),
     [location.pathname]
@@ -313,16 +313,16 @@ export default function ScheduleLayout() {
               <span className="schedule-app__quick-link-label">Jot</span>
             </NavLink>
             <NavLink
-              to="/schedule/chat"
+              to="/schedule/help"
               className={({ isActive }) =>
                 `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
               }
-              title={railCollapsedEffective ? 'Chat' : undefined}
+              title={railCollapsedEffective ? 'Help' : undefined}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
-                <MessageSquare size={18} strokeWidth={1.75} />
+                <HelpCircle size={18} strokeWidth={1.75} />
               </span>
-              <span className="schedule-app__quick-link-label">Chat</span>
+              <span className="schedule-app__quick-link-label">Help</span>
             </NavLink>
             <NavLink
               to="/schedule/room-loader"
