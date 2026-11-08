@@ -90,6 +90,8 @@ type Props = {
     lineRefills?: MailLineRxDecision[],
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
     approvalBasis?: 'standard' | 'chart' | 'refills',
+    /** Owner (Nov 7, 2026): lower quantities to approve (online store orders); Scout refunds the difference. */
+    lineQuantities?: Array<{ lineId: number; quantity: number }>,
   ) => void;
   onPresentationSynced?: () => void;
 };
@@ -110,6 +112,7 @@ export default function MailOrderTaskPanel({
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [decisionsByLine, setDecisionsByLine] = useState<Record<number, MailRxDecisionDraft>>({});
   const [scriptsByLine, setScriptsByLine] = useState<Record<number, string>>({});
+  const [qtyByLine, setQtyByLine] = useState<Record<number, string>>({});
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [rejectNoteError, setRejectNoteError] = useState<string | null>(null);
@@ -164,6 +167,8 @@ export default function MailOrderTaskPanel({
     );
     return { ...order, lines: scoped };
   }, [order, taskId]);
+  // Owner (Nov 7, 2026): only online store orders can be lowered here (a visit's mail order is changed on its bill).
+  const canLowerQty = scopedOrder?.origin === 'online_store';
 
   const groups = useMemo(
     () => (scopedOrder ? groupLines(scopedOrder) : []),
@@ -253,7 +258,19 @@ export default function MailOrderTaskPanel({
       setSummaryError('Write directions for each item before approving.');
       return;
     }
-    onApprove('approved', lineRefills, lineScripts, 'standard');
+    const lineQuantities: Array<{ lineId: number; quantity: number }> = [];
+    for (const line of current.lines || []) {
+      const raw = qtyByLine[line.id];
+      if (raw == null || raw.trim() === '') continue;
+      const ordered = Number(line.quantity) || 1;
+      const wanted = Number(raw);
+      if (!Number.isInteger(wanted) || wanted < 1 || wanted > ordered) {
+        setSummaryError(`${line.name}: approve between 1 and ${ordered}. For more, the family places a new order.`);
+        return;
+      }
+      if (wanted < ordered) lineQuantities.push({ lineId: line.id, quantity: wanted });
+    }
+    onApprove('approved', lineRefills, lineScripts, 'standard', lineQuantities);
   }
 
   return (
@@ -328,6 +345,22 @@ export default function MailOrderTaskPanel({
               <h4>
                 {line.name} × {Number(line.quantity)}
               </h4>
+              {canLowerQty && canApprove && line.lineStatus !== 'ok_to_mail' && line.lineStatus !== 'rejected' ? (
+                <label className="pims-task-mail__qty">
+                  Quantity to approve
+                  <input
+                    type="number"
+                    min={1}
+                    max={Number(line.quantity) || 1}
+                    step={1}
+                    value={qtyByLine[line.id] ?? String(Number(line.quantity) || 1)}
+                    onChange={(e) => setQtyByLine((prev) => ({ ...prev, [line.id]: e.target.value }))}
+                  />
+                  <span className="pims-task-mail__hint">
+                    Lower it if fewer are right; Scout refunds the difference to the family. For more, they place a new order.
+                  </span>
+                </label>
+              ) : null}
               <p className="pims-task-mail__line-meta">
                 {line.autoshipFrequency
                   ? `Auto-ship ${formatAutoshipFrequency(line.autoshipFrequency)}${
