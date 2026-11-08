@@ -343,6 +343,7 @@ export default function PimsTaskDetailView({
     lineRefills?: MailLineRxDecision[],
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
     approvalBasis?: 'standard' | 'chart' | 'refills',
+    lineQuantities?: Array<{ lineId: number; quantity: number }>,
   ) => {
     if (!task || mailOrderId == null || !canMutate) return;
     if (outcome === 'rejected' && !approvalNote.trim()) {
@@ -359,6 +360,7 @@ export default function PimsTaskDetailView({
         taskId: task.id,
         lineRefills,
         lineScripts,
+        lineQuantities: lineQuantities?.length ? lineQuantities : undefined,
       });
       setApprovalNote('');
       const d = await getTask(task.id);
@@ -678,8 +680,8 @@ export default function PimsTaskDetailView({
           busy={busy}
           approvalNote={approvalNote}
           onApprovalNoteChange={setApprovalNote}
-          onApprove={(outcome, lineRefills, lineScripts, approvalBasis) =>
-            void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis)
+          onApprove={(outcome, lineRefills, lineScripts, approvalBasis, lineQuantities) =>
+            void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis, lineQuantities)
           }
           onPresentationSynced={() => {
             void getTask(task.id).then(setTask).catch(() => undefined);

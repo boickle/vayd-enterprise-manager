@@ -15,6 +15,7 @@ import './Settings.css';
 import './MailOrders.css';
 import './StoreOps.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 
 function practiceIdFromToken(token: string | null): number {
   try {
@@ -112,6 +113,8 @@ export default function StoreSubscriptionsPage() {
   const [cardRow, setCardRow] = useState<StoreStaffSubscription | null>(null);
   const [editItemId, setEditItemId] = useState(0);
   const [editQty, setEditQty] = useState('1');
+  // B4 (owner, Nov 7, 2026): only managers change what a client pays (item, quantity); the team sees them locked.
+  const canChangeMoney = useCanOrAdminLogin('store.autoship.money');
   const [editFrequency, setEditFrequency] = useState('monthly');
   const [editItemQ, setEditItemQ] = useState('');
 
@@ -550,7 +553,7 @@ export default function StoreSubscriptionsPage() {
                   <input
                     className="settings-input"
                     placeholder="Bravecto, strength…"
-                    disabled={busyId === editRow.id}
+                    disabled={busyId === editRow.id || !canChangeMoney}
                     value={editItemQ}
                     onChange={(e) => setEditItemQ(e.target.value)}
                   />
@@ -559,7 +562,7 @@ export default function StoreSubscriptionsPage() {
                   Item
                   <select
                     className="settings-input"
-                    disabled={busyId === editRow.id}
+                    disabled={busyId === editRow.id || !canChangeMoney}
                     value={editItemId}
                     onChange={(e) => setEditItemId(Number(e.target.value))}
                   >
@@ -571,6 +574,13 @@ export default function StoreSubscriptionsPage() {
                     ))}
                   </select>
                 </label>
+                {!canChangeMoney ? (
+                  <p className="settings-muted" data-testid="autoship-locked-note">
+                    Looks wrong? On the order in the queue, use Re-send… to send it to the doctor with a note
+                    (prescriptions), or Mark pending and ask a manager (other items). Only managers change the item or
+                    quantity.
+                  </p>
+                ) : null}
                 <div className="autoship-edit__row">
                   <label className="settings-label">
                     Qty
@@ -578,7 +588,7 @@ export default function StoreSubscriptionsPage() {
                       className="settings-input"
                       type="number"
                       min={1}
-                      disabled={busyId === editRow.id}
+                      disabled={busyId === editRow.id || !canChangeMoney}
                       value={editQty}
                       onChange={(e) => setEditQty(e.target.value)}
                     />
