@@ -80,7 +80,8 @@ export default function WasteAdjustPage() {
       if (def) setBranchId(def.id);
       setReasons(admin.reasons.filter((r) => r.isActive));
       setMethods(admin.methods.filter((m) => m.isActive));
-      if (admin.reasons[0]) setReasonCode(admin.reasons[0].code);
+      const firstActive = admin.reasons.find((r) => r.isActive);
+      if (firstActive) setReasonCode(firstActive.code);
     })();
   }, [practiceId]);
 

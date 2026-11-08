@@ -311,7 +311,9 @@ export function estimateLinesReplacedByPanel(
   option: RoomLoaderPanelOption,
   lines: EngineEstimateLine[]
 ): EngineEstimateLine[] {
-  const refs = option.replacesItems ?? [];
+  // RL-15: a panel also replaces a staff line for its own item (e.g. the senior Standard panel and a
+  // "Senior Screen" reminder line are the same catalog item), so accepting it never charges twice.
+  const refs = [option.item, ...(option.replacesItems ?? [])].filter((ref): ref is RoomLoaderItemRef => !!ref);
   if (refs.length === 0) return [];
   return (lines ?? []).filter((line) => refs.some((ref) => refMatches(ref, line)));
 }
