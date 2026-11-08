@@ -572,7 +572,7 @@ const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
 /** Admin double-click on practice calendar — distinct from routing / reschedule book flows. */
-const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERIDE';
+const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERRIDE';
 
 /** True when the timed grid itself scrolls (embedded routing column). */
 function timedGridScrollRoot(el: HTMLElement): HTMLElement | null {
@@ -7605,7 +7605,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const dayStart = dayDt.setZone(PRACTICE_TZ).startOf('day');
       const start = dayStart.plus({ minutes: clamped });
       const end = start.plus({ minutes: 30 });
-      setBookPrefill({ modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE });
+      setBookPrefill({ modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE, noDefaultType: true });
       setBookSlot({ start, end });
     },
     [
@@ -7626,7 +7626,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (!canManualBookOnCalendar) return;
       const start = dayDt.setZone(PRACTICE_TZ).startOf('day');
       const end = start.plus({ days: 1 });
-      setBookPrefill({ allDay: true, modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE });
+      setBookPrefill({ allDay: true, modalTitle: MANUAL_CALENDAR_BOOK_MODAL_TITLE, noDefaultType: true });
       setBookSlot({ start, end });
     },
     [scheduleCalendarInteractionLock, notifyScheduleCalendarLocked, canManualBookOnCalendar]
