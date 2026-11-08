@@ -1538,6 +1538,8 @@ function OrderDetail({
   const [taskNote, setTaskNote] = useState('');
   const [benchNote, setBenchNote] = useState('');
   const [checkNotes, setCheckNotes] = useState(open.checkNotes || '');
+  // Q4 (owner, Nov 7, 2026): the person who filled an order must say why they are checking it themselves.
+  const [selfCheckReason, setSelfCheckReason] = useState('');
   const [sameCheckConfirm, setSameCheckConfirm] = useState<{
     patientId: number | null;
     lineIds: number[];
@@ -2322,23 +2324,38 @@ function OrderDetail({
                       someone else needs to check this.
                     </p>
                   ) : null}
+                  {canSelfCheck ? (
+                    <label className="settings-label">
+                      Why are you checking your own fill? (required)
+                      <textarea
+                        className="settings-input"
+                        rows={2}
+                        value={selfCheckReason}
+                        placeholder="For example: only one on shift today"
+                        onChange={(e) => setSelfCheckReason(e.target.value)}
+                      />
+                    </label>
+                  ) : null}
                   <div className="mail-queue__actions">
                     <button
                       type="button"
                       className="mail-queue__btn"
-                      onClick={() => setSameCheckConfirm(null)}
+                      onClick={() => {
+                        setSameCheckConfirm(null);
+                        setSelfCheckReason('');
+                      }}
                     >
                       Cancel
                     </button>
                     <button
                       type="button"
                       className="mail-queue__btn is-primary"
-                      disabled={!employeeId || !mailFillDone(open) || !canSelfCheck}
+                      disabled={!employeeId || !mailFillDone(open) || !canSelfCheck || !selfCheckReason.trim()}
                       onClick={() =>
                         void onRun(async () => {
                           const order = await pharmacyMailAction(practiceId, open.id, {
                             action: 'check_override',
-                            notes: `Self-check override: the person who filled this order also checked ${sameCheckConfirm.label} (no second person available).`,
+                            notes: `Self-check override (${sameCheckConfirm.label}): ${selfCheckReason.trim()}`,
                             patientId: sameCheckConfirm.patientId ?? undefined,
                             lineIds:
                               sameCheckConfirm.patientId == null
@@ -2346,6 +2363,7 @@ function OrderDetail({
                                 : undefined,
                           });
                           setSameCheckConfirm(null);
+                          setSelfCheckReason('');
                           if (mailCheckDone(order)) setViewStep('contacted');
                           return order;
                         })
