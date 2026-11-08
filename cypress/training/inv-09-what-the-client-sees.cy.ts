@@ -48,7 +48,6 @@ describe('Training: INV-09 what the client sees', () => {
     });
     line('inv09-09c', () => pointAt(() => cy.get('.vayd-store__card-entry'), 4500));
     line('inv09-10', () => pointAt(() => cy.contains('.pp-account__pay button', /^Pay \$/), 3000));
-    line('inv09-11');
     line('inv09-12');
     finish();
   });

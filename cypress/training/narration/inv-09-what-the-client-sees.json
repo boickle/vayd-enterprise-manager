@@ -48,10 +48,6 @@
   "text": "Then she pays the exact balance."
  },
  {
-  "id": "inv09-11",
-  "text": "When a family has credit instead, the portal says You have a credit, and offers to use it in the store."
- },
- {
   "id": "inv09-12",
   "text": "The most common mistakes are telling a family to look for an old receipt in the portal, when it only shows what's open, and a portal that shows nothing because the email on their record is different from their login. Remember: the portal shows what the family owes right now. For past receipts, email one from the ledger."
  }

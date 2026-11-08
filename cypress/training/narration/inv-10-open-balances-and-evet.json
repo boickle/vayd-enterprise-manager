@@ -28,16 +28,20 @@
   "text": "Or send one pay link for everything, eVet included."
  },
  {
-  "id": "inv10-08",
-  "text": "Gift cards only pay Scout bills, not eVet ones."
- },
- {
   "id": "inv10-08b",
   "text": "Now, on this eVet invoice, click Edit in Scout."
  },
  {
   "id": "inv10-08c",
-  "text": "That takes the invoice over. Scout owns this bill now, and you can remove lines, then save."
+  "text": "That takes the invoice over. Scout owns this bill now. The same line is here, and the balance is the same."
+ },
+ {
+  "id": "inv10-08d",
+  "text": "On the ledger, Balance due is still $155.00."
+ },
+ {
+  "id": "inv10-08e",
+  "text": "Now you collect it like any visit bill: Tap to Pay, card on file, cash, check, gift card or account credit."
  },
  {
   "id": "inv10-09",
@@ -45,6 +49,6 @@
  },
  {
   "id": "inv10-10",
-  "text": "The most common mistakes are telling a family their old eVet balance is gone, and using a gift card on an eVet bill. Remember: eVet balances came across. Collect them in Scout like any open invoice."
+  "text": "The most common mistakes are telling a family their old eVet balance is gone, and treating a very old balance as a button you can press to write off. Remember: eVet balances came across. Collect them in Scout like any open invoice."
  }
 ]

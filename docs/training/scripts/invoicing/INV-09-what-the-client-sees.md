@@ -21,7 +21,7 @@
 | 6 | Pay form | Point at **Have a gift card?** | "She can use a gift card here too." | — |
 | 7 | Pay form | Point at **Name on card**, **Card number** and "Save my card on file to make future purchases easier" | "She types her card, and can choose to save it." | — |
 | 8 | Pay form | Point at **Pay $22.50** | "Then pays the exact balance." | Stripe test card, if paying on camera |
-| 9 | Voice-over | — | "When a family has credit instead, the portal says You have a credit, and offers to use it in the store." | — |
+| 9 | (cut) | — | The "You have a credit" line is not in the video: Maria has no credit on screen. | — |
 
 ## What else you can do here
 

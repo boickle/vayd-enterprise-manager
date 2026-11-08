@@ -52,7 +52,10 @@ describe('Training: INV-15 manual discounts', () => {
       tap(() => cy.contains('.app-dialog button', /^(Apply discount|Add discount)$/));
       cy.contains('.app-dialog', 'Why is this discounted?').should('not.exist');
     });
-    line('inv15-08', () => pointAt(() => cy.contains('.client-fin__price-shown-row', '$60.00'), 3500));
+    line('inv15-08', () => {
+      cy.contains('.client-fin__was', '$75.00', { timeout: 30000 }).should('exist');
+      pointAt(() => cy.contains('.client-fin__was', '$75.00').parent(), 3500);
+    });
     line('inv15-08b', () => tap(() => cy.contains('summary', 'Staff audit')));
     line('inv15-08c', () => pointAt(() => cy.contains('Price changed on'), 5000));
     offCamera(() => {
