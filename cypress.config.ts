@@ -184,6 +184,35 @@ export default defineConfig({
         },
       });
 
+      // ── H-LAB: Labs world ──────────────────────────────────────────────────
+      // Runs vayd-api's test/scripts/labs-e2e-seed.ts (in-house lab forms, IDEXX-coded labs, two-pet household, Staff
+      // client, PLUS pet, eVet lab history, staff logins per role). The database is LABS_DB / CYPRESS_LABS_DB
+      // (default vayd_api_test_e2e); its name must contain "test" (the script refuses otherwise) and the API the dev
+      // server talks to must use the same one. LABS_API_DIR overrides the API checkout (default ../vayd-api).
+      const labsApiDir = path.resolve(process.env.LABS_API_DIR || '../vayd-api');
+      const labsDb = process.env.LABS_DB || process.env.CYPRESS_LABS_DB || 'vayd_api_test_e2e';
+      const labsWorldFile = path.join(os.tmpdir(), 'labs-world-current.json');
+      const runLabsSeed = (command: 'seed' | 'clean') =>
+        execFileSync('npx', ['ts-node', '-T', 'test/scripts/labs-e2e-seed.ts', command, labsDb, labsWorldFile], {
+          cwd: labsApiDir,
+          env: { ...process.env, DB_DATABASE: labsDb, NODE_ENV: 'test', NODE_OPTIONS: '--no-experimental-strip-types' },
+          stdio: ['ignore', 'inherit', 'inherit'],
+        });
+      on('task', {
+        /** Seeds the Labs world (shape: cypress/support/labsWorld.ts) and returns it. */
+        seedLabsWorld() {
+          runLabsSeed('seed');
+          return JSON.parse(fs.readFileSync(labsWorldFile, 'utf8'));
+        },
+        cleanLabsWorld() {
+          if (fs.existsSync(labsWorldFile)) {
+            runLabsSeed('clean');
+            fs.unlinkSync(labsWorldFile);
+          }
+          return null;
+        },
+      });
+
       // ── H-STORE: Online Store world ─────────────────────────────────────────
       // Runs vayd-api's test/scripts/store-e2e-seed.ts: a listed store item and Rx item, a tag-along rebate, two
       // portal clients with household Stripe customer ids, an auto-ship, an open eVet invoice, an Rx with refills,
