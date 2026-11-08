@@ -86,6 +86,7 @@ describe('LABS-03: email lab results', () => {
         .click();
 
       cy.intercept('POST', '**/gmail/messages/send*').as('sendEmail');
+      cy.intercept('POST', '**/scout-chart/communications*').as('chartLog');
       cy.get('[role="dialog"]', { timeout: 30000 }).within(() => {
         cy.contains('Email lab results').should('exist');
         cy.contains(/\.pdf/i).should('exist');
@@ -106,6 +107,8 @@ describe('LABS-03: email lab results', () => {
       });
 
       // The chart logged it against the client.
+      // The screen logs the email with its own request right after the send; wait for it before reading back.
+      cy.wait('@chartLog', { timeout: 60000 }).its('response.statusCode').should('be.lessThan', 300);
       labsApi<Array<{ typeLabel: string; message: string }>>(
         'veterinarian',
         'GET',

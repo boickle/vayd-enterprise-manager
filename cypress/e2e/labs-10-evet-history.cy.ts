@@ -30,15 +30,22 @@ describe('LAB-10-5: eVet in-house history', () => {
     cy.get('[data-chart-row-id^="evetInHouseLab:"]', { timeout: 30000 }).should('have.length', 1).as('row');
     cy.get('@row').should('contain.text', 'Heartworm 4Dx (eVet)');
     cy.get('@row').click();
-    cy.get('@row').should('contain.text', 'Anaplasma: POSITIVE');
-    cy.get('@row').should('contain.text', 'Heartworm Ag: NEGATIVE');
+    // The values open in the row's body, a sibling table row directly under it.
+    cy.get('@row').next('tr').as('body');
+    cy.get('@body').should('contain.text', 'Anaplasma: POSITIVE');
+    cy.get('@body').should('contain.text', 'Heartworm Ag: NEGATIVE');
   });
 
   it('a result is read only and its raw element id is never the only label', () => {
     openChart();
-    cy.get('[data-chart-row-id^="evetInHouseLab:"]', { timeout: 30000 }).click();
-    cy.get('[data-chart-row-id^="evetInHouseLab:"]').should('not.contain.text', 'Unnamed eVet field');
-    cy.get('[data-chart-row-id^="evetInHouseLab:"]').find('input, textarea, select').should('have.length', 0);
+    cy.get('[data-chart-row-id^="evetInHouseLab:"]', { timeout: 30000 }).click().as('row');
+    cy.get('@row').next('tr').as('body').should('contain.text', 'Anaplasma: POSITIVE');
+    cy.get('@row').should('not.contain.text', 'Unnamed eVet field');
+    cy.get('@body').should('not.contain.text', 'Unnamed eVet field');
+    // Read only: no editable field in the row or its body. (The row's "Select" checkbox is for emailing/printing, not a value.)
+    const editable = 'input:not([type="checkbox"]), textarea, select, [contenteditable="true"]';
+    cy.get('@row').find(editable).should('have.length', 0);
+    cy.get('@body').find(editable).should('have.length', 0);
   });
 
   it('printing the whole chart builds the PDF with the eVet result in it', () => {
