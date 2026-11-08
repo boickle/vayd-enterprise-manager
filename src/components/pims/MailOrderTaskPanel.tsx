@@ -346,9 +346,10 @@ export default function MailOrderTaskPanel({
                 {line.name} × {Number(line.quantity)}
               </h4>
               {canLowerQty && canApprove && line.lineStatus !== 'ok_to_mail' && line.lineStatus !== 'rejected' ? (
-                <label className="pims-task-mail__qty">
-                  Quantity to approve
+                <label className="pims-task-mail__qty" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+                  <span style={{ fontWeight: 600 }}>Quantity to approve</span>
                   <input
+                    style={{ width: 72 }}
                     type="number"
                     min={1}
                     max={Number(line.quantity) || 1}
@@ -356,7 +357,7 @@ export default function MailOrderTaskPanel({
                     value={qtyByLine[line.id] ?? String(Number(line.quantity) || 1)}
                     onChange={(e) => setQtyByLine((prev) => ({ ...prev, [line.id]: e.target.value }))}
                   />
-                  <span className="pims-task-mail__hint">
+                  <span className="pims-task-mail__hint" style={{ flexBasis: '100%', fontSize: 13, opacity: 0.8 }}>
                     Lower it if fewer are right; Scout refunds the difference to the family. For more, they place a new order.
                   </span>
                 </label>
