@@ -311,11 +311,11 @@ export default function SettingsLabForms({ onMessage }: Props) {
       const res = await seedLabFormTemplates(LAB_FORM_SEEDS);
       await load();
       say(
-        `Standard lab forms installed — ${res.created} added, ${res.updated} refreshed.`,
+        `${res.created} standard ${res.created === 1 ? 'form' : 'forms'} added. Existing forms were not changed.`,
         'success'
       );
     } catch (err) {
-      say(err instanceof Error ? err.message : 'Could not install the standard forms.', 'error');
+      say(err instanceof Error ? err.message : 'Could not add the standard forms.', 'error');
     } finally {
       setSeeding(false);
     }
@@ -357,7 +357,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
           disabled={seeding}
           onClick={() => void installStandard()}
         >
-          {seeding ? 'Installing…' : 'Install standard forms'}
+          {seeding ? 'Adding…' : 'Add missing standard forms'}
         </button>
       </div>
 
@@ -392,7 +392,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 ? 'No archived lab forms.'
                 : templates.length
                   ? 'No active lab forms. Restore one from Archived, or create a new one.'
-                  : 'No lab forms yet. “Install standard forms” adds the usual in-house set.'}
+                  : 'No lab forms yet. “Add missing standard forms” adds the usual in-house set.'}
             </p>
           ) : (
             grouped.map(([category, rows]) => (
