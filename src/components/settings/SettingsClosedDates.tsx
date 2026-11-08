@@ -39,14 +39,27 @@ function label(iso: string): string {
   });
 }
 
-/** Collapsed-list label, e.g. "4 closed days · next Thu, Nov 26, 2026". */
-export function summaryText(dates: string[], today = new Date()): string {
-  const t = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
-    today.getDate()
+/** Local YYYY-MM-DD for a Date. */
+export function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
   ).padStart(2, '0')}`;
-  const next = dates.find((d) => d >= t);
-  const count = `${dates.length} closed day${dates.length === 1 ? '' : 's'}`;
-  return next ? `${count} · next ${label(next)}` : `${count} (all past)`;
+}
+
+/** Splits closed days into today-or-later and already passed. */
+export function splitClosedDates(
+  dates: string[],
+  today = new Date()
+): { upcoming: string[]; past: string[] } {
+  const t = isoDay(today);
+  return { upcoming: dates.filter((d) => d >= t), past: dates.filter((d) => d < t) };
+}
+
+/** Collapsed-list label for upcoming days, e.g. "4 upcoming closed days · next Thu, Nov 26, 2026". */
+export function summaryText(upcoming: string[]): string {
+  if (upcoming.length === 0) return 'No upcoming closed days';
+  const n = upcoming.length;
+  return `${n} upcoming closed day${n === 1 ? '' : 's'} · next ${label(upcoming[0]!)}`;
 }
 
 /** Practice-wide closed days (holidays): online booking offers no times on these dates. */
@@ -54,6 +67,7 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
   const [dates, setDates] = useState<string[] | null>(null);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showPast, setShowPast] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +99,8 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
     }
   };
 
+  const todayIso = isoDay(new Date());
+  const split = splitClosedDates(dates ?? []);
   const valid = ISO_DATE.test(draft);
   const already = valid && dates?.includes(draft);
 
@@ -99,11 +115,12 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
         {dates != null && dates.length === 0 && <p className="settings-muted">No closed days.</p>}
         {dates != null && dates.length > 0 && (
           <details className="settings-closed-dates">
-            <summary>{summaryText(dates)}</summary>
+            <summary>{summaryText(split.upcoming)}</summary>
             <ul>
-              {dates.map((d) => (
-                <li key={d}>
-                  {label(d)}{' '}
+              {(showPast ? dates : split.upcoming).map((d) => (
+                <li key={d} className={d < todayIso ? 'settings-muted' : undefined}>
+                  {label(d)}
+                  {d < todayIso ? ' (past)' : ''}{' '}
                   <button
                     type="button"
                     className="btn"
@@ -111,7 +128,7 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
                     aria-label={`Remove ${d}`}
                     onClick={() =>
                       void persist(
-                        (dates ?? []).filter((x) => x !== d),
+                        dates.filter((x) => x !== d),
                         `${label(d)} reopened for online booking.`
                       )
                     }
@@ -121,6 +138,17 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
                 </li>
               ))}
             </ul>
+            {split.past.length > 0 && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setShowPast((v) => !v)}
+              >
+                {showPast
+                  ? 'Hide past days'
+                  : `Show ${split.past.length} past day${split.past.length === 1 ? '' : 's'}`}
+              </button>
+            )}
           </details>
         )}
       </div>
