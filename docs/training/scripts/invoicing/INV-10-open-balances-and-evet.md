@@ -19,7 +19,7 @@
 | 4 | Ledger | Click the eVet row | "Open it to see what it was for." | — |
 | 5 | eVet invoice | Point at **Edit in Scout** | "To work on it in Scout, use Edit in Scout. Then take payment like any bill." | — |
 | 6 | Ledger | Point at **Text pay link**: "Sends $140.00 for 2 unpaid invoices" | "Or send one pay link for everything, eVet included." | The Chens have no account credit, so the line shows the full $140.00 |
-| 7 | Voice-over | — | "Gift cards only pay Scout bills, not eVet ones." | — |
+| 7 | (cut) | — | "Gift cards only pay Scout bills" was wrong: after Edit in Scout, any method works. Instead: click Edit in Scout, point at the Scout-owned bill (same line, same balance) and the ledger Balance due $155.00, then say "Now you collect it like any visit bill: Tap to Pay, card on file, cash, check, gift card or account credit." | — |
 | 8 | Voice-over | — | "Very old balances: talk to billing. Writing a balance off is a billing decision, not a button." | — |
 
 ## What else you can do here
@@ -35,7 +35,7 @@
 
 ## Closing
 
-"The most common mistakes: telling a family their old eVet balance is gone, and using a gift card on an eVet bill. Remember: eVet balances came across. Collect them in Scout like any open invoice."
+"The most common mistakes: telling a family their old eVet balance is gone, and treating a very old balance as a button you can press to write off. Remember: eVet balances came across. Collect them in Scout like any open invoice."
 
 ## Notes from the check in the app (Nov 7, 2026)
 

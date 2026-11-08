@@ -20,6 +20,8 @@ describe('Training: INV-16 end of day', () => {
     cy.then(() => signInAsScheduling('manager', '/schedule/analytics/payments'));
     cy.contains('Practice revenue', { timeout: 60000 }).should('exist');
     cy.contains('button', 'View payments', { timeout: 30000 }).should('exist');
+    // The test stack has no Square, so its "Square Received Today" card shows a 500 error. Hide just that error alert (off camera).
+    cy.contains('.MuiCard-root', 'Square Received Today', { timeout: 30000 }).find('.MuiAlert-root').then(($a) => { $a.hide(); });
     cy.wait(2500);
 
     const dlg = () => cy.get('.MuiDialog-root [role="dialog"]');
