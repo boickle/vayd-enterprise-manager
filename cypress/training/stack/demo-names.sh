@@ -19,6 +19,10 @@ emp "$(j "w['employees']['manager']")"   Robin  Hale
 
 q "UPDATE clients SET \"firstName\"='Maria', \"lastName\"='Rivera', email='maria.rivera@example.com' WHERE id=$(j "w['households']['A']['clientId']")"
 q "UPDATE clients SET \"firstName\"='Tom', \"lastName\"='Chen', email='tom.chen@example.com' WHERE id=$(j "w['households']['B']['clientId']")"
+# B6 (owner, Nov 7, 2026): 10-digit demo phones. The seed's 12-digit numbers made every client page's texting panel fail
+# ("Invalid phone number format").
+q "UPDATE clients SET phone1='9195550101' WHERE id=$(j "w['households']['A']['clientId']")"
+q "UPDATE clients SET phone1='9195550102' WHERE id=$(j "w['households']['B']['clientId']")"
 
 q "UPDATE patients SET name='Maple', species='Canine' WHERE id=$(j "w['households']['A']['activePetIds'][0]")"
 q "UPDATE patients SET name='Juniper', species='Feline' WHERE id=$(j "w['households']['A']['activePetIds'][1]")"
