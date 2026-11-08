@@ -201,6 +201,17 @@ export default function AutoshipManageModal({
     >
       {error ? <div className="pp-error">{error}</div> : null}
 
+      {sub.paymentStatus === 'failing' ? (
+        <div className="pp-error" role="status" data-testid="autoship-payment-failing">
+          Payment failing: update your card.{' '}
+          {sub.stripeSubscriptionId && !showCard ? (
+            <button type="button" className="pp-link-btn" onClick={() => setShowCard(true)}>
+              Update card
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className={`pp-autoship-summary${sub.paused ? ' pp-autoship-summary--paused' : ''}`}>
         <div className="pp-autoship-summary-icon" aria-hidden>
           {sub.paused ? '⏸️' : '🚚'}

@@ -66,3 +66,29 @@ export function combinedAccountBalance(
   if (evetBalance == null && scout === 0) return null;
   return (evetBalance ?? 0) + scout;
 }
+
+/**
+ * The eVet part of the balance, without eVet invoices Scout has taken over.
+ *
+ * `evetBalance` comes from the client record loaded with the page, and the API leaves taken-over
+ * invoices out of it. Right after "Edit in Scout" the page still holds the older record, so the
+ * invoice's balance sits in that figure and again in the new Scout invoice. `evetInvoices` must be
+ * the list that arrived with `evetBalance` (not a later reload): when the record is refreshed the
+ * taken-over invoice is gone from both and nothing is taken off twice.
+ */
+export function evetBalanceWithoutAdopted(
+  evetBalance: number | null | undefined,
+  evetInvoices: { status: string; due: number; raw: Record<string, unknown> }[],
+  adoptedEvetIds: ReadonlySet<number>,
+): number {
+  let balance = evetBalance ?? 0;
+  if (adoptedEvetIds.size === 0) return balance;
+  for (const inv of evetInvoices) {
+    const id = Number(inv.raw.id);
+    if (!Number.isFinite(id) || !adoptedEvetIds.has(id)) continue;
+    const status = String(inv.status).toLowerCase();
+    if (inv.raw.isDeleted === true || status === 'void' || status === 'deleted') continue;
+    if (inv.due > 0.005) balance -= inv.due;
+  }
+  return Math.round(balance * 100) / 100;
+}

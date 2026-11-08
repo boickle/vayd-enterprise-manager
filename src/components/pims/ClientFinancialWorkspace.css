@@ -2114,3 +2114,71 @@
   font-size: 12px;
   white-space: normal;
 }
+
+/* Card on file (Wave 12) */
+.client-card {
+  border: 1px solid #d8e2dc;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.client-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.client-card__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.client-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.client-card__card {
+  margin: 6px 0 2px;
+  font-weight: 600;
+}
+.client-card__muted {
+  margin: 2px 0;
+  font-size: 13px;
+  color: #5d6b64;
+}
+.client-card__warn {
+  color: #b91c1c;
+}
+.client-card__note {
+  margin: 8px 0 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fff8e6;
+  border: 1px solid #f1dca0;
+  font-size: 13px;
+}
+.client-card__form {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  max-width: 460px;
+}
+.client-card__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.client-card__box {
+  border: 1px solid #c9d5ce;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+.client-card__consent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+}

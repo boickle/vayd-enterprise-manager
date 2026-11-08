@@ -1639,7 +1639,7 @@ a.soap-header-client:hover {
 }
 .soap-invoice-lines-head {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 44px;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem var(--soap-line-qty-col, 3.5rem) var(--soap-line-amt-col, 10.5rem) 44px;
   column-gap: 6px;
   align-items: center;
   padding: 6px 10px;
@@ -1657,7 +1657,7 @@ a.soap-header-client:hover {
 }
 .soap-invoice-line {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 44px;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem var(--soap-line-qty-col, 3.5rem) var(--soap-line-amt-col, 10.5rem) 44px;
   align-items: start;
   column-gap: 6px;
   row-gap: 6px;
@@ -1686,7 +1686,7 @@ a.soap-header-client:hover {
 }
 .soap-invoice-line.is-declined,
 .soap-invoice-line.is-off-record {
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem auto;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem var(--soap-line-qty-col, 3.5rem) var(--soap-line-amt-col, 10.5rem) auto;
 }
 .soap-invoice-line.is-declined {
   color: #b91c1c;
@@ -1813,7 +1813,8 @@ a.soap-header-client:hover {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 0 6px;
   width: 100%;
   min-width: 0;
   white-space: nowrap;
@@ -1898,7 +1899,7 @@ a.soap-header-client:hover {
 .soap-invoice-line-ship {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 44px;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem var(--soap-line-qty-col, 3.5rem) var(--soap-line-amt-col, 10.5rem) 44px;
   column-gap: 6px;
   align-items: start;
   padding: 0 0 2px;
@@ -3842,4 +3843,61 @@ a.soap-header-client:hover {
   color: #15803d;
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* Wave 11: running balance, payment-method highlights, and the paid-in-full tender list. */
+.soap-invoice-row.balance-due {
+  font-weight: 700;
+  font-size: 15px;
+  color: #b45309;
+}
+.soap-invoice-row.balance-due.is-zero {
+  color: #15803d;
+}
+.soap-invoice-paid-in-full {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  border-radius: 8px;
+  color: #166534;
+}
+.soap-invoice-paid-in-full-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+.soap-invoice-paid-in-full ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 13px;
+}
+.soap-invoice-paid-in-full li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.soap-btn.is-highlight {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #166534;
+  box-shadow: 0 0 0 1px #16a34a inset;
+}
+.soap-btn.is-highlight:hover:not(:disabled) {
+  background: #dcfce7;
+}
+.soap-checkout-card-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid #16a34a;
+  background: #f0fdf4;
+  border-radius: 8px;
+}
+.soap-checkout-card-confirm-text {
+  font-weight: 600;
+  color: #166534;
 }

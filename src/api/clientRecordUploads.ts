@@ -11,7 +11,40 @@ export type ClientRecordUpload = {
   byteSize: number;
   created: string;
   url: string;
+  /** qualifies | accepted, or null for files uploaded before checks existed. */
+  checkStatus?: string | null;
+  checkDocType?: string | null;
+  checkSummary?: string | null;
 };
+
+export type ClientRecordCheckResult = {
+  status: 'qualifies' | 'accepted' | 'rejected';
+  /** Present when the file was kept; send with slot search and submit. */
+  checkToken: string | null;
+  formPetId: string;
+  docType: string | null;
+  message: string;
+};
+
+/** Check one record file before the form is submitted. Rejected files are not stored. */
+export async function checkAppointmentRequestRecord(input: {
+  practiceId: number;
+  file: File;
+  formPetId: string;
+  petName: string;
+}): Promise<ClientRecordCheckResult> {
+  const body = new FormData();
+  body.append('file', input.file);
+  body.append('practiceId', String(input.practiceId));
+  body.append('formPetId', input.formPetId);
+  body.append('petName', input.petName);
+  const { data } = await http.post<ClientRecordCheckResult>(
+    '/public/appointments/record-checks',
+    body,
+    { timeout: 90_000 },
+  );
+  return data;
+}
 
 export async function uploadAppointmentRequestRecord(input: {
   uploadToken: string;

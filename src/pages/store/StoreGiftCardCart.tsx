@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  myStoreCards,
+  myStoreCheckout,
+  newStoreAttemptKey,
   publicCheckout,
-  publicStoreCardOnFile,
   storeApiError,
+  storeAttemptMayRetry,
   type GiftCardCheckoutLine,
   type StoreSavedCard,
 } from '../../api/onlineStore';
@@ -225,26 +228,34 @@ export function StoreGiftCardCheckout({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const cardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one key per checkout attempt; kept after no answer or a 5xx, new after a 4xx or any change.
+  const attemptRef = useRef<{ key: string; signature: string; paymentMethodId: string | null; saveCard: boolean } | null>(null);
+  const placingRef = useRef(false);
   const total = storeGiftCartTotal(lines);
   const faceTotal = lines.reduce((n, l) => n + l.amount * l.quantity, 0);
-  const onFileEmail = clientId ? prefill.email.trim() : '';
 
   useEffect(() => {
-    // Only a logged-in household sees its saved cards; guests always enter one.
-    if (!onFileEmail) return;
+    // OS-01: only a logged-in household sees its saved cards, found from the login; guests always enter one.
+    if (!clientId) {
+      setCards([]);
+      setEnterNewCard(true);
+      return;
+    }
     let cancelled = false;
-    void publicStoreCardOnFile(practiceId, onFileEmail).then((row) => {
-      if (cancelled) return;
-      const next = row.hasCard ? (row.cards ?? []) : [];
-      setCards(next);
-      const recommended = next.find((c) => c.recommended) ?? next[0];
-      setSelectedCardId(recommended?.paymentMethodId || '');
-      setEnterNewCard(!next.length);
-    });
+    void myStoreCards()
+      .then((row) => {
+        if (cancelled) return;
+        const next = row.hasCard ? (row.cards ?? []) : [];
+        setCards(next);
+        const recommended = next.find((c) => c.recommended) ?? next[0];
+        setSelectedCardId(recommended?.paymentMethodId || '');
+        setEnterNewCard(!next.length);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [onFileEmail, practiceId]);
+  }, [clientId]);
 
   useEffect(() => {
     setName((current) => current || prefill.name);
@@ -256,33 +267,59 @@ export function StoreGiftCardCheckout({
       setErr('Enter your name and email for the receipt.');
       return;
     }
+    if (placingRef.current) return;
+    placingRef.current = true;
     setBusy(true);
     setErr(null);
+    let attempt: NonNullable<typeof attemptRef.current> | null = null;
     try {
+      const usingNewCard = enterNewCard || !cards.length;
+      const signature = JSON.stringify([
+        usingNewCard ? 'new' : selectedCardId,
+        clientId,
+        giftCardCheckoutLines(lines),
+        total,
+      ]);
+      attempt = attemptRef.current;
+      if (!attempt || attempt.signature !== signature) {
+        attempt = { key: newStoreAttemptKey(), signature, paymentMethodId: null, saveCard: Boolean(clientId) };
+      }
+      attemptRef.current = attempt;
       let paymentMethodId: string | null = null;
       let saveCard = Boolean(clientId);
-      if (enterNewCard || !cards.length) {
-        const created = await cardRef.current?.createPaymentMethod();
-        paymentMethodId = created?.paymentMethodId ?? null;
-        saveCard = Boolean(clientId) && created?.saveCard !== false;
+      if (usingNewCard) {
+        // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+        if (!attempt.paymentMethodId) {
+          const created = await cardRef.current?.createPaymentMethod();
+          attempt.paymentMethodId = created?.paymentMethodId ?? null;
+          attempt.saveCard = Boolean(clientId) && created?.saveCard !== false;
+        }
+        paymentMethodId = attempt.paymentMethodId;
+        saveCard = attempt.saveCard;
       } else {
         paymentMethodId = selectedCardId || null;
       }
       if (!paymentMethodId) throw new Error('Enter a card to pay for the gift card.');
-      const result = await publicCheckout(practiceId, {
+      const body = {
         customerName: name.trim(),
         customerEmail: email.trim(),
-        clientId,
         paymentMethodId,
         saveCard,
         ship: {},
         lines: giftCardCheckoutLines(lines),
-      });
+        attemptKey: attempt.key,
+      };
+      // OS-01: a logged-in purchase is for the login's household; a guest's belongs to no household.
+      const result = clientId ? await myStoreCheckout(body) : await publicCheckout(practiceId, body);
+      attemptRef.current = null;
       writeStoreGiftCart([]);
       nav('/store/thanks/gift-cards', { state: { order: result } });
     } catch (e) {
+      // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+      if (!storeAttemptMayRetry(e) && attemptRef.current === attempt) attemptRef.current = null;
       setErr(storeApiError(e));
     } finally {
+      placingRef.current = false;
       setBusy(false);
     }
   };
@@ -362,6 +399,7 @@ export function StoreGiftCardCheckout({
             ref={cardRef}
             billingPrefill={{ name, email, line1: '', line2: '', city: '', state: '', postal: '' }}
             onClose={cards.length ? () => setEnterNewCard(false) : undefined}
+            canSaveCard={Boolean(clientId)}
           />
         )}
         {err ? <p className="vayd-store__place-err">{err}</p> : null}

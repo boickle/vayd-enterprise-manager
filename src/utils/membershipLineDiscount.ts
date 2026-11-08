@@ -40,6 +40,26 @@ export function membershipLineDiscount(line: {
 }
 
 /**
+ * The regular price total of a line a manager cut by hand (Office exam $75 to $60), to show struck
+ * through next to the charged amount, or null for any other line. The server keeps the price before the
+ * cut in `listUnitPrice` when the cut is made, as it does for member pricing; a membership discount is
+ * shown by its own tag, so it is left to `membershipLineDiscount`.
+ */
+export function handDiscountRegularAmount(line: {
+  discountReason?: string | null;
+  listUnitPrice?: number | null;
+  manualDiscountAmount?: number | string | null;
+  qty?: number | string | null;
+  amount?: number | string | null;
+  isCovered?: boolean;
+}): number | null {
+  if (line.isCovered || isMembershipDiscountReason(line.discountReason)) return null;
+  if (line.listUnitPrice == null || !((Number(line.manualDiscountAmount) || 0) > 0.009)) return null;
+  const regular = round2(Number(line.listUnitPrice) * (Number(line.qty) || 1));
+  return regular - (Number(line.amount) || 0) > 0.009 ? regular : null;
+}
+
+/**
  * Short tag under a struck-through line ("Member 10%"); the full label goes in its tooltip.
  * Owner, Oct 31, 2026: show it like every other discount: regular price crossed out, the
  * discounted price and total shown.
