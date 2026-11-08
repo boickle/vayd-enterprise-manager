@@ -65,6 +65,15 @@ describe('card on file consent box at checkout', () => {
     expect(box.checked).toBe(false);
   });
 
+  it('W12-2: the label says staff tick the box when the client agrees, not "uncheck"', async () => {
+    render(<VisitCheckoutPanel {...(props as object)} />);
+    await screen.findByRole('checkbox');
+    const label = document.querySelector('.soap-checkout-consent')?.textContent ?? '';
+    expect(label).toMatch(/Tick this box when they say yes/);
+    expect(label).not.toMatch(/uncheck/i);
+    expect(label).toMatch(/keep this card on file for future visits, refills, and memberships/);
+  });
+
   it('Tap to Pay without ticking the box does not ask to save the card', async () => {
     render(<VisitCheckoutPanel {...(props as object)} />);
     await screen.findByRole('checkbox');

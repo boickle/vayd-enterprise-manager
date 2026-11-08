@@ -3896,7 +3896,7 @@ export default function VisitCheckoutPanel({
               <span>
                 {cardDeclinedAt
                   ? `This household said no to keeping a card on file last time${formatDeclineDay(cardDeclinedAt)}. Leave unchecked unless they have changed their mind.`
-                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap — uncheck if they say no.'}
+                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap. Tick this box when they say yes.'}
               </span>
             </label>
           )}
