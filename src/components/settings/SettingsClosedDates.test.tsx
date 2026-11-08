@@ -1,7 +1,7 @@
 /** SCH-A14: practice closed days can be viewed, added and removed. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
-import SettingsClosedDates, { parseClosedDates } from './SettingsClosedDates';
+import SettingsClosedDates, { parseClosedDates, summaryText } from './SettingsClosedDates';
 
 const get = vi.hoisted(() => vi.fn());
 const put = vi.hoisted(() => vi.fn());
@@ -53,4 +53,14 @@ it('shows an empty state', async () => {
   get.mockResolvedValue({});
   render(<SettingsClosedDates practiceId={1} />);
   expect(await screen.findByText('No closed days.')).toBeInTheDocument();
+});
+
+it('starts collapsed with a count and the next closed day', async () => {
+  const { container } = render(<SettingsClosedDates practiceId={1} />);
+  await screen.findByLabelText('Remove 2026-11-26');
+  expect(container.querySelector('details')).not.toHaveAttribute('open');
+  expect(summaryText(['2026-11-26', '2026-12-25'], new Date(2026, 11, 1))).toMatch(
+    /^2 closed days · next .*Dec 25, 2026$/
+  );
+  expect(summaryText(['2026-11-26'], new Date(2027, 0, 1))).toBe('1 closed day (all past)');
 });

@@ -39,6 +39,16 @@ function label(iso: string): string {
   });
 }
 
+/** Collapsed-list label, e.g. "4 closed days · next Thu, Nov 26, 2026". */
+export function summaryText(dates: string[], today = new Date()): string {
+  const t = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate()
+  ).padStart(2, '0')}`;
+  const next = dates.find((d) => d >= t);
+  const count = `${dates.length} closed day${dates.length === 1 ? '' : 's'}`;
+  return next ? `${count} · next ${label(next)}` : `${count} (all past)`;
+}
+
 /** Practice-wide closed days (holidays): online booking offers no times on these dates. */
 export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
   const [dates, setDates] = useState<string[] | null>(null);
@@ -87,27 +97,32 @@ export default function SettingsClosedDates({ practiceId, onMessage }: Props) {
           by hand.
         </p>
         {dates != null && dates.length === 0 && <p className="settings-muted">No closed days.</p>}
-        <ul>
-          {(dates ?? []).map((d) => (
-            <li key={d}>
-              {label(d)}{' '}
-              <button
-                type="button"
-                className="btn"
-                disabled={saving}
-                aria-label={`Remove ${d}`}
-                onClick={() =>
-                  void persist(
-                    (dates ?? []).filter((x) => x !== d),
-                    `${label(d)} reopened for online booking.`
-                  )
-                }
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
+        {dates != null && dates.length > 0 && (
+          <details className="settings-closed-dates">
+            <summary>{summaryText(dates)}</summary>
+            <ul>
+              {dates.map((d) => (
+                <li key={d}>
+                  {label(d)}{' '}
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={saving}
+                    aria-label={`Remove ${d}`}
+                    onClick={() =>
+                      void persist(
+                        (dates ?? []).filter((x) => x !== d),
+                        `${label(d)} reopened for online booking.`
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
       <label className="settings-premeds-window-field">
         <input
