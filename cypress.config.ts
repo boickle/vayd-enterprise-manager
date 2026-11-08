@@ -184,6 +184,38 @@ export default defineConfig({
         },
       });
 
+      // ── H-STORE: Online Store world ─────────────────────────────────────────
+      // Runs vayd-api's test/scripts/store-e2e-seed.ts: a listed store item and Rx item, a tag-along rebate, two
+      // portal clients with household Stripe customer ids, an auto-ship, an open eVet invoice, an Rx with refills,
+      // a gift card and a ready-to-fill order. The database is REQUIRED (STORE_DB or CYPRESS_STORE_DB); its name
+      // must contain "test" and not be vayd_api_local (the script refuses otherwise), and the API the dev server
+      // talks to must use the same one. STORE_API_DIR overrides the API checkout (default ../vayd-api).
+      const storeApiDir = path.resolve(process.env.STORE_API_DIR || '../vayd-api');
+      const storeDb = process.env.STORE_DB || process.env.CYPRESS_STORE_DB || '';
+      const storeWorldFile = path.join(os.tmpdir(), 'store-world-current.json');
+      const runStoreSeed = (command: 'seed' | 'clean') => {
+        if (!storeDb) throw new Error('Set STORE_DB to a test database (e.g. vayd_api_test_os_a) before using the store seed.');
+        execFileSync('npx', ['ts-node', '-T', 'test/scripts/store-e2e-seed.ts', command, storeDb, storeWorldFile], {
+          cwd: storeApiDir,
+          env: { ...process.env, DB_DATABASE: storeDb, NODE_ENV: 'test', NODE_OPTIONS: '--no-experimental-strip-types' },
+          stdio: ['ignore', 'inherit', 'inherit'],
+        });
+      };
+      on('task', {
+        /** Seeds the Online Store world (shape: see the world JSON written by store-e2e-seed.ts) and returns it. */
+        seedStoreWorld() {
+          runStoreSeed('seed');
+          return JSON.parse(fs.readFileSync(storeWorldFile, 'utf8'));
+        },
+        cleanStoreWorld() {
+          if (fs.existsSync(storeWorldFile)) {
+            runStoreSeed('clean');
+            fs.unlinkSync(storeWorldFile);
+          }
+          return null;
+        },
+      });
+
       return config;
     },
     viewportWidth: 1280,
