@@ -6,10 +6,10 @@
 - **B5:** **Place order** waits until the client's details have loaded, and a "fill this in" message clears itself once they arrive (frontend `bd67207`; 2 tests).
 - **B6:** `demo-names.sh` gives the Riveras and the Chens 10-digit phones.
 - **Q8 walked:** thyroid is lot-tracked in the demo. Riley's fill shows **Lot TH24117 · exp 2027-09-04 · QOH 6** already chosen, and **Finish filling** lists it (OSV-08 step 7).
-- **Found on the way (not fixed; your call):**
-  - **B7:** two cart updates for the same email at the same moment make the API fail with a duplicate key on `store_cart_snapshots_open_email` (seen once during OSV-01). The client sees nothing; one abandoned-cart snapshot update is lost. The fix is small: on that error, update the existing row instead.
-  - **Tax on refunds:** rejecting an item refunds price × quantity without its sales tax, and the lower-quantity refund does the same. If the family should get the tax back too, that's one change for both.
-  - **Add lot on the fill screen:** the mail team can create a lot (with a quantity on hand) from the fill screen. Fine if intended; otherwise limit it to inventory managers.
+- **Found on the way, owner answers (Nov 8):**
+  - **B7 (fix):** two cart updates for the same email at the same moment made the API fail with a duplicate key on `store_cart_snapshots_open_email` (seen once during OSV-01). Now the second update updates the cart the first one saved.
+  - **Tax on refunds (fix):** a rejected item, or units a doctor takes off, now refund their sales tax too, at the rate on the order's bill. Scout records the refunded units as a return on the store order's Scout bill, settled at once, so the Sales & Tax report takes the sale and its tax off the online store column in the month of the refund.
+  - **Add lot on the fill screen (keep):** the mail team may create a lot with a quantity on hand.
 - **Recording:** the client panel's **Recent texts** shows "Request failed…" on the training stack because it has no texting key, on purpose. Keep it out of frame.
 - **Recording on a busy Mac:** when another session's Cypress uses Electron at the same time, our page loads hang. The probes ran in Chrome (`OSV_BROWSER=chrome`).
 
