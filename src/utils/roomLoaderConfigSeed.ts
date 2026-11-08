@@ -642,7 +642,7 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
       required: true,
       pitchHtml:
         '<p>It appears that {petName} has either not started the FeLV (Feline Leukemia) vaccine series or is not currently up to date.</p><p>FeLV is a contagious and potentially fatal virus spread through close contact between cats, like grooming or sharing food and water bowls.</p><p>Based on updated veterinary guidelines, FeLV is now considered a core vaccine for all kittens under one year old, regardless of whether they live indoors or outdoors. We also highly recommend it for any adult cats who go outside or live with cats who do.</p><p>Do you want us to give the FeLV vaccine? For initial immunity, two vaccines must be given, 3&ndash;4 weeks apart.</p>',
-      pitchItem: item('inventory', 76, 'FeLV (Leukemia) Vaccine - 1 year', 'FELV1'),
+      pitchItem: FELV_INITIAL,
       pitchDisplayName: '',
       pitchCautionHtml: '',
       equivalentItems: [FELV_INITIAL, ...FELV_EQUIVALENTS],

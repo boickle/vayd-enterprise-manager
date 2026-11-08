@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { DateTime } from 'luxon';
-import { MessageSquare, RefreshCw, Search, Send, Sparkles } from 'lucide-react';
+import { HelpCircle, MessageSquare, RefreshCw, Search, Send, Sparkles } from 'lucide-react';
+import HelpTopics from '../components/help/HelpTopics';
+import AssistantAnswer from '../components/help/AssistantAnswer';
 import { useAuth } from '../auth/useAuth';
 import {
   chatAboutChart,
@@ -56,7 +58,7 @@ function hitHref(hit: AssistantChatSearchHit): string | null {
   if (hit.scope === 'client' && hit.clientId) {
     return `/schedule/clients?clientId=${encodeURIComponent(hit.clientId)}`;
   }
-  if (hit.scope === 'practice') return '/schedule/chat';
+  if (hit.scope === 'practice') return '/schedule/help';
   return null;
 }
 
@@ -275,13 +277,13 @@ export default function PracticeChatPage() {
       <header className="practice-chat__head">
         <div>
           <h1>
-            <MessageSquare size={20} aria-hidden />
-            Chat
+            <HelpCircle size={20} aria-hidden />
+            Help
           </h1>
           <p>
-            Staff desk + Scout coach (employees and admins — not the client portal). Who&apos;s
-            working, what we carry, estimates, and day-to-day how Scout works. Settings/Admin
-            how-to is only for admins. Private to your login.
+            How-to topics with training videos, and an assistant below that answers questions
+            about Scout, who&apos;s working today, what we carry, and rough estimates. Your
+            questions are private to your login.
           </p>
         </div>
         <button
@@ -296,6 +298,7 @@ export default function PracticeChatPage() {
       </header>
 
       <div className="pims-emr-case-prep practice-chat__body">
+        <HelpTopics showGaps={viewerIsAdmin} />
         <section className="pims-emr-prep__card pims-emr-case-prep__summary" aria-labelledby="practice-chat-ctx">
           <h3 id="practice-chat-ctx">
             <Sparkles size={15} aria-hidden />
@@ -317,11 +320,13 @@ export default function PracticeChatPage() {
           <div className="pims-emr-case-prep__chat-head">
             <h3 id="practice-chat-ask">
               <MessageSquare size={15} aria-hidden />
-              Ask the practice desk
+              Ask a question
             </h3>
             <p className="pims-emr-case-prep__chat-hint">
-              Ask how to do something in Scout and it will walk you through. Patient charts and
-              household balances stay on those pages.
+              Ask how to do something in Scout, or who&apos;s working today. It answers from the
+              topics above and links to the one it used. How-to questions it can&apos;t answer are
+              saved without your name, so we know which topics to add. Patient charts and household
+              balances stay on those pages.
             </p>
           </div>
 
@@ -412,9 +417,13 @@ export default function PracticeChatPage() {
                 className={`pims-emr-case-prep__bubble pims-emr-case-prep__bubble--${m.role}`}
               >
                 <span className="pims-emr-case-prep__who">
-                  {m.role === 'user' ? 'You' : 'Practice'}
+                  {m.role === 'user' ? 'You' : 'Help'}
                 </span>
-                <p style={{ whiteSpace: 'pre-wrap' }}>{m.content}</p>
+                {m.role === 'assistant' ? (
+                  <AssistantAnswer content={m.content} />
+                ) : (
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{m.content}</p>
+                )}
               </div>
             ))}
             {chatBusy ? (

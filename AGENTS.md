@@ -15,3 +15,10 @@ This applies to both repos, vayd-enterprise-manager and vayd-api.
 - **Fixes found in a training or demo worktree:** commit them on `build-doctor-flow`, then merge `build-doctor-flow` into the training branch.
 - **Before recording training videos,** merge `build-doctor-flow` into the training branch, so the videos show the screens that will ship.
 - **The demo stack** runs this same code against its own test database. Only its data is separate.
+
+## Help topics (the Help page and the Help assistant)
+
+- Help topics are markdown files in `vayd-api/src/scribe/help/`. The Help page shows them with their training videos, and the Help assistant answers from them.
+- **Update the matching topic in the same change** when a change renames a button, moves a screen, or changes a workflow staff use. Find it with `grep -l "<web-app file path>" vayd-api/src/scribe/help/*.md` (each topic lists the web-app files it describes under `covers:`), then set `reviewed:` to today.
+- If the change makes a training video show an old screen or button name, add or update `video_note:` (for example: "Recorded before … was renamed …"). Re-recording is the owner's call.
+- New video: add `video:` (S3 key under `training-videos/`) and `video_source:` (file name in `~/Movies/VAYD Training`), then upload with `npm run help:videos` in vayd-api, once per environment. At go-live, run `npm run help:videos -- --check` against production.

@@ -278,6 +278,11 @@ export type SchedulerBookPrefill = {
   lockProvider?: boolean;
   /** Replaces the default “Book appointment” dialog title. */
   modalTitle?: string;
+  /**
+   * Start with no appointment type: the user must choose one (booking by hand on the calendar).
+   * Owner, Nov 7, 2026: a preset Medical Visit / 60 min was easy to book by mistake.
+   */
+  noDefaultType?: boolean;
   /** When true with `lockClient` false, show read-only client (routing: admin cannot search-change client here). */
   disableClientSearch?: boolean;
   /** Employee “add another pet” same-slot flow — ignores Role manual booking settings. */
@@ -1209,9 +1214,10 @@ export function SchedulerBookModal({
     if (!allDayBookSession) return;
     setTypeId((prev) => {
       if (prev && typesForActivePicker.some((t) => String(t.id) === prev)) return prev;
+      if (prefill?.noDefaultType) return '';
       return typesForActivePicker[0] ? String(typesForActivePicker[0].id) : '';
     });
-  }, [allDayBookSession, typesForActivePicker]);
+  }, [allDayBookSession, typesForActivePicker, prefill?.noDefaultType]);
 
   useEffect(() => {
     if (prefill?.allDay) return;
@@ -1249,6 +1255,7 @@ export function SchedulerBookModal({
         isRescheduleBook && prefill?.rescheduleVisitPatches?.length === 1
           ? prefill.rescheduleVisitPatches[0]?.appointmentTypeId
           : undefined;
+      if (prefill?.noDefaultType) return '';
       const id = resolveBookModalDefaultAppointmentTypeId({
         sortedPickerTypes: sortedPicker,
         allTypes: appointmentTypes,
@@ -1261,6 +1268,7 @@ export function SchedulerBookModal({
       appointmentTypes,
       isRescheduleBook,
       prefill?.appointmentTypeId,
+      prefill?.noDefaultType,
       prefill?.rescheduleVisitPatches,
       prefill?.routingStatsTypeKey,
     ]
@@ -3547,7 +3555,7 @@ export function SchedulerBookModal({
                     onChange={(e) => setTypeId(e.target.value)}
                     required
                   >
-                    <option value="">Select…</option>
+                    <option value="">Choose…</option>
                     {typesForActivePicker.map((t) => (
                       <option key={t.id} value={String(t.id)}>
                         {t.name || t.prettyName}
