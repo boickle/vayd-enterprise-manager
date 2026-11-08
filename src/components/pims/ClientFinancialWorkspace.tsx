@@ -4992,7 +4992,7 @@ export default function ClientFinancialWorkspace({
         mode === 'void'
           ? 'Invoice voided. Scout owns this bill now.'
           : mode === 'edit'
-            ? 'Scout owns this bill. Remove lines, then save.'
+            ? 'Scout owns this bill now. Edit it, then save.'
             : asReturn
               ? 'Taken over in Scout. Enter return quantities below.'
               : 'This invoice was never paid, so there is nothing to refund. Remove the charges you don’t want (with a reason), or void the invoice.'
@@ -6217,7 +6217,7 @@ export default function ClientFinancialWorkspace({
                   Directions aren’t saved. Save or delete the line before leaving this client.
                 </p>
               ) : null}
-              {editing || hasUnsavedDeletes ? (
+              {hasUnsavedDeletes ? (
                 <p className="client-fin__muted">
                   Removed lines are not saved yet. Back or leave without saving to undo.
                 </p>

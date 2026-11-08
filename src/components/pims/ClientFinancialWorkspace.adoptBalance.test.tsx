@@ -54,8 +54,13 @@ const evetInvoice = (id: number, number: string, due: number) =>
     raw: { id, invoiceNumber: number, isDeleted: false },
   }) as never;
 
-// #48213 owes $80 and another old invoice owes $75: the record's balance is $155.
-const invoices = [evetInvoice(48213, '48213', 80), evetInvoice(40100, '40100', 75)];
+// Owner's video: eVet #48213 owes $80 (the record's eVet balance), Scout #524 owes $75: $155 in all.
+const invoices = [evetInvoice(48213, '48213', 80)];
+const scout524 = {
+  id: 'scout-524', practiceId: 1, clientId: 5, evetInvoiceId: null, status: 'finalized',
+  total: 75, amountPaid: 0, subtotal: 75, taxTotal: 0, lines: [], tenders: [], isDeleted: false,
+  invoiceNumber: 524,
+} as never;
 
 const adopted = {
   id: 'scout-1',
@@ -75,17 +80,17 @@ const adopted = {
 
 describe('W12-3 balance after Edit in Scout', () => {
   beforeEach(() => {
-    listClientVisitInvoices.mockReset().mockResolvedValue([]);
+    listClientVisitInvoices.mockReset().mockResolvedValue([scout524]);
     getInvoice.mockReset().mockResolvedValue(adopted);
     adoptEvetInvoice.mockReset().mockResolvedValue(adopted);
   });
 
   it('the helper takes a taken-over invoice out of the eVet balance once', () => {
     const set = new Set([48213]);
-    expect(evetBalanceWithoutAdopted(155, invoices as never, set)).toBe(75);
-    expect(evetBalanceWithoutAdopted(155, invoices as never, new Set())).toBe(155);
+    expect(evetBalanceWithoutAdopted(80, invoices as never, set)).toBe(0);
+    expect(evetBalanceWithoutAdopted(80, invoices as never, new Set())).toBe(80);
     // A refreshed record no longer lists the invoice: nothing more comes off.
-    expect(evetBalanceWithoutAdopted(75, [invoices[1]] as never, set)).toBe(75);
+    expect(evetBalanceWithoutAdopted(0, [], set)).toBe(0);
   });
 
   it('Balance due stays $155.00 right after Edit in Scout, with no reload', async () => {
@@ -94,7 +99,7 @@ describe('W12-3 balance after Edit in Scout', () => {
         <ClientFinancialWorkspace
           clientId={5}
           clientName="Pat Client"
-          evetBalance={155}
+          evetBalance={80}
           evetInvoices={invoices}
           pets={[]}
           cashierEmployeeId={1}
@@ -102,16 +107,22 @@ describe('W12-3 balance after Edit in Scout', () => {
       </MemoryRouter>,
     );
     await screen.findByText('Balance due');
-    expect(screen.getByText('$155.00')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.client-fin__bal-value')?.textContent).toBe('$155.00'));
 
     // After the take-over, the ledger lists the Scout copy.
-    listClientVisitInvoices.mockResolvedValue([adopted]);
+    listClientVisitInvoices.mockResolvedValue([scout524, adopted]);
     fireEvent.click(await screen.findByText('#48213'));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit in Scout' }));
     await waitFor(() => expect(adoptEvetInvoice).toHaveBeenCalledWith(48213));
     await waitFor(() => expect(listClientVisitInvoices).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit in Scout' })).toBeNull());
     expect(screen.queryByText('$235.00')).toBeNull();
-    expect(screen.getAllByText('$155.00').length).toBeGreaterThan(0);
+    // The edit pane reads like a normal edit; "not saved yet" waits for a removed line.
+    expect(screen.getAllByText('Scout owns this bill now. Edit it, then save.').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Removed lines are not saved yet/)).toBeNull();
+    expect(document.querySelector('.client-fin__bal-value')?.textContent).toBe('$155.00');
+    // The pay-link line agrees with the balance, and the eVet row is gone from the ledger.
+    expect(screen.getAllByText(/Sends \$155\.00 for 2 unpaid invoices/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('#48213')).toHaveLength(1); // the Scout copy only
   });
 });
