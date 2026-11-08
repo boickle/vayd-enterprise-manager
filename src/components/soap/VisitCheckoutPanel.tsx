@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { membershipCoveredAmount, membershipCoveredLabel } from '../../utils/membershipCoveredRow';
 import { PrevisitCheckinPriceNote } from './PrevisitCheckinPriceNote';
 import { INVOICE_HAS_RETURNS_MESSAGE } from '../inventory/returnLineStock';
 import {
@@ -3796,8 +3797,8 @@ export default function VisitCheckoutPanel({
           <div className="soap-invoice-totals">
             {Number(invoice.membershipAdjustments) !== 0 && (
               <div className="soap-invoice-row covered">
-                <span>Membership covered</span>
-                <span>{money(invoice.membershipAdjustments)}</span>
+                <span>{membershipCoveredLabel(invoice.lines ?? [])}</span>
+                <span>{membershipCoveredAmount(invoice.membershipAdjustments)}</span>
               </div>
             )}
             {Number(invoice.subtotal) !== Number(invoice.total) && (
