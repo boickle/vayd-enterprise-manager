@@ -324,6 +324,8 @@ export default function IdexxResultsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providerId, setProviderId] = useState<number | ''>('');
   const loadGen = useRef(0);
+  /** A check already running: a second click waits for it rather than syncing every order again. */
+  const checkingNow = useRef(false);
 
   useEffect(() => {
     void fetchPrimaryProviders()
@@ -402,6 +404,8 @@ export default function IdexxResultsPage() {
   }, [load]);
 
   async function checkNow() {
+    if (checkingNow.current) return;
+    checkingNow.current = true;
     setChecking(true);
     try {
       await syncIdexxResults();
@@ -414,6 +418,7 @@ export default function IdexxResultsPage() {
     } catch (e) {
       setError(idexxErrorMessage(e, 'IDEXX is unavailable. Try again in a minute.'));
     } finally {
+      checkingNow.current = false;
       setChecking(false);
     }
   }
