@@ -1719,7 +1719,9 @@ export function SchedulerBookModal({
       instructions: defaultStaffNotes,
       needsPremeds: defaultPremeds,
     };
-    setRoutingBookVisitEdits([...patientRows, noPatientRow]);
+    // Owner, Nov 7, 2026 (training review, SR-03): offer "No patient" only when the household has no
+    // pets to book. With pets, the extra unticked section looked like something to fill in.
+    setRoutingBookVisitEdits(patientRows.length > 0 ? patientRows : [noPatientRow]);
   }, [
     open,
     prefill?.routingPreviewBook,
@@ -2235,7 +2237,11 @@ export function SchedulerBookModal({
     } else if (perVisitRoutingBook) {
       const selected = routingBookVisitEdits.filter((v) => v.selected);
       if (selected.length === 0) {
-        setFormError('Select at least one patient, or choose No patient.');
+        setFormError(
+          routingBookVisitEdits.some((v) => v.isNoPatient)
+            ? 'Select at least one patient, or choose No patient.'
+            : 'Select at least one patient.'
+        );
         return;
       }
       if (selected.some((v) => !v.appointmentTypeId.trim())) {
