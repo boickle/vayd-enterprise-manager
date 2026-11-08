@@ -7,9 +7,11 @@ import {
   DIRECTIONS_MAX_LINES,
   directionsFitsLabel,
   listDymoPrinters,
+  printMailOrderBagLabel,
   printPrescriptionLabel,
   printPrescriptionLabelWithSystemDialog,
   type DymoPrinter,
+  type MailOrderBagLabelData,
   type PrescriptionLabelData,
 } from '../../utils/dymoPrescriptionLabel';
 import { loadPracticeLetterhead, loadProviderSignature } from '../../utils/practiceLetterhead';
@@ -19,9 +21,13 @@ import {
   clampRefillExpiration,
   maxRefillExpirationInput,
   refillExpirationExceedsMax,
+  toDateInput,
 } from '../../utils/printRxLabel';
 import './RxLabelModal.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+
+/** `dymo`: sent straight to a connected DYMO. `system`: the browser print dialog opened. */
+export type RxLabelPrintMethod = 'dymo' | 'system';
 
 export type RxLabelPrescriptionInput = {
   name: string;
@@ -49,7 +55,11 @@ type Props = {
   /** When omitted, the label prints from the fields on this form (already-saved Rx). */
   onSavePrescription?: (value: RxLabelPrescriptionInput) => Promise<{ rxNumber: number | null }>;
   mailOrderNumber?: string | null;
-  onPrinted?: (printerName: string) => void;
+  /** Discard-after date from the invoice line (YYYY-MM-DD). Defaults to one year after prescribed. */
+  discardAfter?: string | null;
+  /** Mail order: also print the bag label (second DYMO label, or page 2 of the print dialog). */
+  bagLabel?: MailOrderBagLabelData | null;
+  onPrinted?: (printerName: string, method: RxLabelPrintMethod) => void;
   onClose: () => void;
 };
 
@@ -90,6 +100,8 @@ export default function RxLabelModal({
   prescription,
   onSavePrescription,
   mailOrderNumber,
+  discardAfter: initialDiscardAfter,
+  bagLabel,
   onPrinted,
   onClose,
 }: Props) {
@@ -111,14 +123,17 @@ export default function RxLabelModal({
   const [startDate, setStartDate] = useState(prescription.startDate || dateForInput(new Date()));
   const [refillExpiration, setRefillExpiration] = useState(prescription.refillExpiration);
   const [discardAfter, setDiscardAfter] = useState(
-    addYear(prescription.startDate || dateForInput(new Date()))
+    () =>
+      toDateInput(initialDiscardAfter) ||
+      addYear(prescription.startDate || dateForInput(new Date()))
   );
   const [printers, setPrinters] = useState<DymoPrinter[]>([]);
   const [printerName, setPrinterName] = useState('');
   const [loadingPrinters, setLoadingPrinters] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [bagError, setBagError] = useState<string | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -175,11 +190,10 @@ export default function RxLabelModal({
         connected[0] ??
         next[0];
       setPrinterName(selected?.name ?? '');
-      if (next.length === 0) setError('No DYMO LabelWriter printers were found.');
-    } catch (e) {
+    } catch {
+      // No DYMO Connect (Bluetooth / Wi-Fi printer, or not installed): the print-dialog note covers it.
       setPrinters([]);
       setPrinterName('');
-      setError(e instanceof Error ? e.message : 'Could not connect to DYMO Connect.');
     } finally {
       setLoadingPrinters(false);
     }
@@ -271,15 +285,29 @@ export default function RxLabelModal({
     }
     setPrinting(true);
     setError(null);
-    setSuccess(false);
+    setBagError(null);
+    setSuccess(null);
     try {
       const label = await saveAndBuildLabel();
       await printPrescriptionLabel(printerName, label);
       window.localStorage.setItem(LAST_PRINTER_KEY, printerName);
       // EMR-07b: staff-only prescription history ("Label printed by …, Rx #…"). Never on the label.
       await recordRxLabelPrinted(label.prescriptionNumber);
-      setSuccess(true);
-      onPrinted?.(printerName);
+      let bagPrinted = false;
+      if (bagLabel) {
+        try {
+          await printMailOrderBagLabel(printerName, bagLabel);
+          bagPrinted = true;
+        } catch (e) {
+          setBagError(
+            `Rx label printed. Bag label failed: ${e instanceof Error ? e.message : 'DYMO error'}`,
+          );
+        }
+      }
+      setSuccess(
+        bagPrinted ? `Rx and bag labels sent to ${printerName}.` : `Label sent to ${printerName}.`,
+      );
+      onPrinted?.(printerName, 'dymo');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not print the prescription label.');
     } finally {
@@ -295,8 +323,19 @@ export default function RxLabelModal({
     }
     setPrinting(true);
     setError(null);
+    setBagError(null);
+    setSuccess(null);
     try {
-      printPrescriptionLabelWithSystemDialog(await saveAndBuildLabel(), printWindow);
+      const label = await saveAndBuildLabel();
+      printPrescriptionLabelWithSystemDialog(label, printWindow, bagLabel);
+      // Same staff-only history entry as a DYMO print: the label was sent to a printer.
+      await recordRxLabelPrinted(label.prescriptionNumber);
+      setSuccess(
+        bagLabel
+          ? 'Print dialog opened with the Rx label and the bag label (page 2).'
+          : 'Print dialog opened. Choose your label printer there.',
+      );
+      onPrinted?.('system print dialog', 'system');
     } catch (e) {
       printWindow.close();
       setError(e instanceof Error ? e.message : 'Could not open the print dialog.');
@@ -306,7 +345,39 @@ export default function RxLabelModal({
   };
 
   const providerLine = veterinarianName;
+  // No DYMO plugged in (e.g. Bluetooth / Wi-Fi): the print dialog becomes the main button.
+  const dymoConnected = printers.some((printer) => printer.isConnected);
+  const systemPrimary = !loadingPrinters && !dymoConnected;
   const directionsOver = !directionsFitsLabel(instructions);
+
+  const dymoButton = (
+    <button
+      type="button"
+      className={systemPrimary ? 'soap-btn ghost' : 'soap-btn primary'}
+      disabled={
+        printing ||
+        loadingPrinters ||
+        !printerName ||
+        !dymoConnected ||
+        missing.length > 0 ||
+        directionsOver
+      }
+      onClick={() => void printToDymo()}
+    >
+      <Printer size={14} /> {printing && !systemPrimary ? 'Printing…' : 'Print on DYMO'}
+    </button>
+  );
+  const systemButton = (
+    <button
+      type="button"
+      className={systemPrimary ? 'soap-btn primary' : 'soap-btn ghost'}
+      disabled={printing || missing.length > 0 || directionsOver}
+      onClick={() => void systemPrint()}
+    >
+      {systemPrimary ? <Printer size={14} /> : null}
+      {printing && systemPrimary ? 'Printing…' : 'Use system print dialog'}
+    </button>
+  );
 
   return createPortal(
     <div className="rx-label-backdrop">
@@ -487,33 +558,26 @@ export default function RxLabelModal({
         {missing.length > 0 && (
           <p className="soap-rx-label-note">Required before printing: {missing.join(', ')}.</p>
         )}
+        {systemPrimary ? (
+          <p className="soap-rx-label-note">
+            No DYMO is plugged in. Use the print dialog to print to a Bluetooth or Wi-Fi label
+            printer.
+          </p>
+        ) : null}
         {error && <p className="soap-dose-error">{error}</p>}
+        {bagError && <p className="soap-dose-error">{bagError}</p>}
         {success && (
           <p className="soap-rx-label-success" role="status">
-            Label sent to {printerName}.
+            {success}
           </p>
         )}
 
         <div className="soap-modal-actions">
-          <button
-            type="button"
-            className="soap-btn ghost"
-            disabled={printing || directionsOver}
-            onClick={() => void systemPrint()}
-          >
-            Use system print dialog
-          </button>
           <button type="button" className="soap-btn ghost" disabled={printing} onClick={onClose}>
             Close
           </button>
-          <button
-            type="button"
-            className="soap-btn primary"
-            disabled={printing || loadingPrinters || !printerName || missing.length > 0 || directionsOver}
-            onClick={() => void printToDymo()}
-          >
-            <Printer size={14} /> {printing ? 'Printing…' : 'Print on DYMO'}
-          </button>
+          {systemPrimary ? dymoButton : systemButton}
+          {systemPrimary ? systemButton : dymoButton}
         </div>
       </div>
     </div>,

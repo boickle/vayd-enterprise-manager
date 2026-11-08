@@ -1182,7 +1182,7 @@ function PrescriptionRow({
               {saving ? 'Saving…' : recorded ? 'Update Rx' : 'Save Rx'}
             </button>
             <DymoLink
-              label="Send Rx label to DYMO"
+              label="Print Rx label"
               disabled={disabled || saving}
               title="Review and print a prescription label"
               onClick={() => {
