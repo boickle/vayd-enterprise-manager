@@ -121,6 +121,14 @@ export default function StoreThanks() {
       ) : (
         <p>Prescription items are reviewed before we pack. Autoship renewal dates are on the order.</p>
       )}
+      {order?.autoshipNotSetUp?.length ? (
+        <div className="vayd-store__note">
+          <p style={{ margin: 0 }}>
+            Your order is placed, but we could not set up auto-ship for {order.autoshipNotSetUp.join(', ')}{' '}
+            yet. It will not renew until we do. Our team will contact you.
+          </p>
+        </div>
+      ) : null}
       {giftSection}
       <Link to="/store">Back to the store</Link>
     </>

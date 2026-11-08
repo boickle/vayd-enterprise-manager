@@ -163,7 +163,7 @@ import {
   toDateInput,
   tomorrowInput,
 } from '../../utils/printRxLabel';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -3096,6 +3096,19 @@ export default function VisitCheckoutPanel({
                         'covered'
                       ) : (
                         <>
+                          {(() => {
+                            const regular = handDiscountRegularAmount(l);
+                            return regular == null ? null : (
+                              <>
+                                <s
+                                  data-testid="checkout-regular-price"
+                                  style={{ color: '#dc2626', fontSize: 12 }}
+                                >
+                                  {money(regular)}
+                                </s>{' '}
+                              </>
+                            );
+                          })()}
                           {money(l.amount)}
                           {(() => {
                             const md = membershipLineDiscount(l);
@@ -3896,7 +3909,7 @@ export default function VisitCheckoutPanel({
               <span>
                 {cardDeclinedAt
                   ? `This household said no to keeping a card on file last time${formatDeclineDay(cardDeclinedAt)}. Leave unchecked unless they have changed their mind.`
-                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap — uncheck if they say no.'}
+                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap. Tick this box when they say yes.'}
               </span>
             </label>
           )}

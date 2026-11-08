@@ -26,5 +26,7 @@ describe('checkoutPaymentText', () => {
     );
     expect(lines).toEqual([{ id: 'g', label: 'Gift card ••••9PVM', amount: 50 }]);
     expect(paidTenderLines([{ id: 'g', method: 'gift_card', amount: 50 } as never])[0].label).toBe('Gift card');
+    // W12-4: after a reload the API names the card on the tender.
+    expect(paidTenderLines([{ id: 'g', method: 'gift_card', amount: 50, giftCardLast4: '9PVM' } as never])[0].label).toBe('Gift card ••••9PVM');
   });
 });

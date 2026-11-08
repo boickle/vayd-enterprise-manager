@@ -153,6 +153,7 @@ import {
 import {
   readFinancialPrefill,
   scoutArFromInvoices,
+  evetBalanceWithoutAdopted,
   type FinancialRefillPrefill,
 } from '../../utils/clientFinancial';
 import {
@@ -266,8 +267,9 @@ import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
+import ClientCardOnFileSection from './ClientCardOnFileSection';
 import './ClientFinancialWorkspace.css';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export type FinancialPet = {
@@ -717,11 +719,25 @@ export function EvetVoidButton({ onClick, disabled }: { onClick: () => void; dis
 export function LineAmount({
   line,
 }: {
-  line: Pick<VisitInvoiceLine, 'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason'>;
+  line: Pick<
+    VisitInvoiceLine,
+    'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason' | 'manualDiscountAmount'
+  >;
 }) {
   if (line.isCovered) return <>covered</>;
   const memberDiscount = membershipLineDiscount(line);
-  if (!memberDiscount) return <>{money(line.amount)}</>;
+  if (!memberDiscount) {
+    // A hand-discounted line: the regular price struck through, then what is charged.
+    const regular = handDiscountRegularAmount(line);
+    return regular == null ? (
+      <>{money(line.amount)}</>
+    ) : (
+      <>
+        <s className="client-fin__was" data-testid="line-regular-price">{money(regular)}</s>{' '}
+        {money(line.amount)}
+      </>
+    );
+  }
   return (
     <>
       <div>{money(line.amount)}</div>
@@ -1295,6 +1311,7 @@ function cardFingerprint(tender: {
 }
 
 function tenderPayLabel(tender: VisitInvoiceTender): string {
+  if (tender.method === 'gift_card' && tender.giftCardLast4) return `Gift card ••••${tender.giftCardLast4}`;
   return cardFingerprint(tender) ?? methodLabel(tender.method, tender.paymentTypeName);
 }
 
@@ -2966,14 +2983,18 @@ export default function ClientFinancialWorkspace({
     return status === filter;
   });
 
-  const combinedBalance = (evetBalance ?? 0) + scoutArFromInvoices(scoutInvoices);
-  useEffect(() => {
-    onCombinedBalance?.(combinedBalance);
-  }, [combinedBalance, onCombinedBalance]);
   const adoptedEvetIds = useMemo(
     () => new Set(scoutInvoices.map((inv) => inv.evetInvoiceId).filter((id): id is number => id != null)),
     [scoutInvoices]
   );
+  // An eVet invoice taken over with "Edit in Scout" is still inside the balance this page loaded
+  // with, and is also a Scout invoice now: count it once, with no reload.
+  const combinedBalance =
+    evetBalanceWithoutAdopted(evetBalance, evetInvoices, adoptedEvetIds) +
+    scoutArFromInvoices(scoutInvoices);
+  useEffect(() => {
+    onCombinedBalance?.(combinedBalance);
+  }, [combinedBalance, onCombinedBalance]);
   const unpaidEvet = useMemo(
     () =>
       evetLedgerInvoices.filter((inv) => {
@@ -4986,7 +5007,7 @@ export default function ClientFinancialWorkspace({
         mode === 'void'
           ? 'Invoice voided. Scout owns this bill now.'
           : mode === 'edit'
-            ? 'Scout owns this bill. Remove lines, then save.'
+            ? 'Scout owns this bill now. Edit it, then save.'
             : asReturn
               ? 'Taken over in Scout. Enter return quantities below.'
               : 'This invoice was never paid, so there is nothing to refund. Remove the charges you don’t want (with a reason), or void the invoice.'
@@ -5283,6 +5304,8 @@ export default function ClientFinancialWorkspace({
       {/* With an invoice open, its messages show on the invoice (owner request, Oct 30, 2026). */}
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
+
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
 
       <div
         ref={splitRef}
@@ -6209,7 +6232,7 @@ export default function ClientFinancialWorkspace({
                   Directions aren’t saved. Save or delete the line before leaving this client.
                 </p>
               ) : null}
-              {editing || hasUnsavedDeletes ? (
+              {hasUnsavedDeletes ? (
                 <p className="client-fin__muted">
                   Removed lines are not saved yet. Back or leave without saving to undo.
                 </p>
