@@ -8,6 +8,7 @@ import {
   type LabResult,
 } from '../../api/inHouseLabs';
 import { labSummaryHasText, missingLabResultRows } from '../../utils/labValues';
+import { useLabResultEnterAccess } from './useLabResultEnterAccess';
 import './LabResultForm.css';
 
 type Draft = Record<string, { value: string; comments: string }>;
@@ -39,6 +40,12 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
   const [saving, setSaving] = useState<'complete' | 'pending' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
+
+  const { canEnter } = useLabResultEnterAccess();
+  // LAB-A9: without lab_result.enter the form is read-only (front desk, client liaisons).
+  const editable = !readOnly && canEnter;
+  // LAB-A6: a completed result cannot be set back to pending; only "Save results" stays.
+  const isComplete = result.status === 'complete';
 
   const elements = useMemo(() => result.elementsSnapshot ?? [], [result.elementsSnapshot]);
   const isSummary = result.templateMode === 'summary';
@@ -180,7 +187,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               setError(null);
             }}
             onBlur={setSummary}
-            disabled={readOnly}
+            disabled={!editable}
             minHeightPx={220}
             placeholder="Describe what you saw."
           />
@@ -217,7 +224,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                         <select
                           className="lab-result-form__input"
                           value={cell.value}
-                          disabled={readOnly}
+                          disabled={!editable}
                           aria-label={`${el.name} value`}
                           aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
@@ -235,7 +242,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                           type="text"
                           inputMode={el.valueType === 'number' ? 'decimal' : 'text'}
                           value={cell.value}
-                          disabled={readOnly}
+                          disabled={!editable}
                           aria-label={`${el.name} value`}
                           aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
@@ -255,7 +262,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                         className="lab-result-form__notes"
                         rows={2}
                         value={cell.comments}
-                        disabled={readOnly}
+                        disabled={!editable}
                         aria-label={`${el.name} comments`}
                         aria-invalid={missing || undefined}
                         onChange={(e) => setCell(el.key, 'comments', e.target.value)}
@@ -282,9 +289,13 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
         </p>
       ) : null}
 
+      {!canEnter && !readOnly ? (
+        <p className="lab-result-form__readonly">A tech or doctor enters results</p>
+      ) : null}
+
       {!readOnly ? (
         <div className="lab-result-form__actions">
-          {!isSummary && elements.some((el) => el.valueType === 'select' && el.defaultValue) ? (
+          {editable && !isSummary && elements.some((el) => el.valueType === 'select' && el.defaultValue) ? (
             <button
               type="button"
               className="brief-btn"
@@ -299,22 +310,26 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               Cancel
             </button>
           ) : null}
-          <button
-            type="button"
-            className="brief-btn"
-            disabled={saving !== null}
-            onClick={() => void save('pending')}
-          >
-            {saving === 'pending' ? 'Saving…' : 'Save, finish later'}
-          </button>
-          <button
-            type="button"
-            className="brief-btn brief-btn--primary"
-            disabled={saving !== null}
-            onClick={() => void save('complete')}
-          >
-            {saving === 'complete' ? 'Saving…' : 'Save results'}
-          </button>
+          {editable && !isComplete ? (
+            <button
+              type="button"
+              className="brief-btn"
+              disabled={saving !== null}
+              onClick={() => void save('pending')}
+            >
+              {saving === 'pending' ? 'Saving…' : 'Save, finish later'}
+            </button>
+          ) : null}
+          {editable ? (
+            <button
+              type="button"
+              className="brief-btn brief-btn--primary"
+              disabled={saving !== null}
+              onClick={() => void save('complete')}
+            >
+              {saving === 'complete' ? 'Saving…' : 'Save results'}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LabResultForm from './LabResultForm';
 import type { LabResult } from '../../api/inHouseLabs';
 
+// LAB-A9: the entry controls follow lab_result.enter. Tests grant it unless a case says otherwise.
+let granted: string[] = [];
+let loginRole = 'employee';
+vi.mock('../../permissions/PermissionContext', () => ({
+  usePermissions: () => ({ can: (k: string) => granted.includes(k) }),
+}));
+vi.mock('../../auth/useAuth', () => ({ useAuth: () => ({ role: loginRole }) }));
+
 const saveLabResult = vi.fn();
 vi.mock('../../api/inHouseLabs', async (orig) => ({
   ...(await orig<typeof import('../../api/inHouseLabs')>()),
@@ -25,6 +33,8 @@ function pending(name: string, elementsSnapshot: El[]): LabResult {
 }
 
 beforeEach(() => {
+  granted = ['lab_result.enter'];
+  loginRole = 'employee';
   saveLabResult.mockReset();
   saveLabResult.mockImplementation(async (_id: number, body: { status: string }) => ({ ...pending('x', []), status: body.status }));
 });
@@ -74,5 +84,48 @@ describe('LabResultForm pre-fill (LAB-05)', () => {
     expect((screen.getByLabelText('NITRITE value') as HTMLSelectElement).value).toBe('Negative');
     await userEvent.click(screen.getByRole('button', { name: 'Save results' }));
     expect(saveLabResult).not.toHaveBeenCalled();
+  });
+});
+
+describe('LAB-A6 finish later on a completed result', () => {
+  it('LAB-A6-1: a completed result shows no "Save, finish later" but keeps Save results', () => {
+    const done = { ...pending('Blood Glucose', [num('glu', 'BLOOD GLUCOSE', '0')]), status: 'complete' } as LabResult;
+    render(<LabResultForm result={done} onSaved={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Save, finish later' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save results' })).toBeInTheDocument();
+  });
+
+  it('LAB-A6-1: a pending result still shows "Save, finish later"', () => {
+    render(<LabResultForm result={pending('Blood Glucose', [num('glu', 'BLOOD GLUCOSE', '0')])} onSaved={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Save, finish later' })).toBeInTheDocument();
+  });
+});
+
+describe('LAB-A9 read-only without lab_result.enter', () => {
+  it('LAB-A9-1: a liaison sees the form read-only with the line and no save buttons', () => {
+    granted = [];
+    loginRole = 'client_liaison';
+    render(<LabResultForm result={pending('Blood Glucose', [num('glu', 'BLOOD GLUCOSE', '0')])} onSaved={vi.fn()} />);
+    expect(screen.getByText('A tech or doctor enters results')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save results' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save, finish later' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fill normal values' })).toBeNull();
+    expect(screen.getByLabelText('BLOOD GLUCOSE value')).toBeDisabled();
+    expect(screen.getByLabelText('BLOOD GLUCOSE comments')).toBeDisabled();
+    expect(saveLabResult).not.toHaveBeenCalled();
+  });
+
+  it('LAB-A9-1: a person with lab_result.enter sees the save buttons and no line', () => {
+    render(<LabResultForm result={pending('Blood Glucose', [num('glu', 'BLOOD GLUCOSE', '0')])} onSaved={vi.fn()} />);
+    expect(screen.queryByText('A tech or doctor enters results')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save results' })).toBeInTheDocument();
+    expect(screen.getByLabelText('BLOOD GLUCOSE value')).not.toBeDisabled();
+  });
+
+  it('LAB-A9-1: an admin login keeps the save buttons', () => {
+    granted = [];
+    loginRole = 'admin';
+    render(<LabResultForm result={pending('Blood Glucose', [num('glu', 'BLOOD GLUCOSE', '0')])} onSaved={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Save results' })).toBeInTheDocument();
   });
 });
