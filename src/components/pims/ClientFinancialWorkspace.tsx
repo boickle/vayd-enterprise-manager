@@ -269,7 +269,7 @@ import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
 import ClientCardOnFileSection from './ClientCardOnFileSection';
 import './ClientFinancialWorkspace.css';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export type FinancialPet = {
@@ -719,11 +719,25 @@ export function EvetVoidButton({ onClick, disabled }: { onClick: () => void; dis
 export function LineAmount({
   line,
 }: {
-  line: Pick<VisitInvoiceLine, 'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason'>;
+  line: Pick<
+    VisitInvoiceLine,
+    'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason' | 'manualDiscountAmount'
+  >;
 }) {
   if (line.isCovered) return <>covered</>;
   const memberDiscount = membershipLineDiscount(line);
-  if (!memberDiscount) return <>{money(line.amount)}</>;
+  if (!memberDiscount) {
+    // A hand-discounted line: the regular price struck through, then what is charged.
+    const regular = handDiscountRegularAmount(line);
+    return regular == null ? (
+      <>{money(line.amount)}</>
+    ) : (
+      <>
+        <s className="client-fin__was" data-testid="line-regular-price">{money(regular)}</s>{' '}
+        {money(line.amount)}
+      </>
+    );
+  }
   return (
     <>
       <div>{money(line.amount)}</div>

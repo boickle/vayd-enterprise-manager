@@ -163,7 +163,7 @@ import {
   toDateInput,
   tomorrowInput,
 } from '../../utils/printRxLabel';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -3096,6 +3096,19 @@ export default function VisitCheckoutPanel({
                         'covered'
                       ) : (
                         <>
+                          {(() => {
+                            const regular = handDiscountRegularAmount(l);
+                            return regular == null ? null : (
+                              <>
+                                <s
+                                  data-testid="checkout-regular-price"
+                                  style={{ color: '#dc2626', fontSize: 12 }}
+                                >
+                                  {money(regular)}
+                                </s>{' '}
+                              </>
+                            );
+                          })()}
                           {money(l.amount)}
                           {(() => {
                             const md = membershipLineDiscount(l);
