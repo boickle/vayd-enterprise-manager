@@ -266,6 +266,7 @@ import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
+import ClientCardOnFileSection from './ClientCardOnFileSection';
 import './ClientFinancialWorkspace.css';
 import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
@@ -5283,6 +5284,8 @@ export default function ClientFinancialWorkspace({
       {/* With an invoice open, its messages show on the invoice (owner request, Oct 30, 2026). */}
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
+
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
 
       <div
         ref={splitRef}
