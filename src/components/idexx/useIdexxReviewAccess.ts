@@ -17,3 +17,13 @@ export function useIdexxReviewAccess(): { canReview: boolean; mustGiveReason: bo
     (perms.isLicensed && perms.licenseType === 'veterinarian') || perms.hasRole(...VET_ROLES);
   return { canReview, mustGiveReason: canReview && !isVet };
 }
+
+/**
+ * LAB-04 follow-up: who sees the "Which pet is this?" control. The server checks `lab_result.enter`
+ * on PATCH results/:id/patient; admin and superadmin logins pass there, so they see the control too.
+ */
+export function useIdexxAssignAccess(): { canAssign: boolean } {
+  const { role } = useAuth() as { role?: string | string[] };
+  const perms = usePermissions();
+  return { canAssign: perms.can('lab_result.enter') || isAnalyticsAdmin(normalizeAuthRoles(role)) };
+}
