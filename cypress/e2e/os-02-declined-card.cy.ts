@@ -74,6 +74,10 @@ describe('OS-02-6: a declined card places no order, screen to API', () => {
     cy.intercept('POST', '**/store/checkout').as('myCheckout');
     if (Cypress.env('EMAIL_CAPTURE_PATH')) cy.clearCapturedEmails();
 
+    let subsBefore = '';
+    sql(`SELECT count(*) FROM online_store_subscriptions WHERE "clientId" = ${w.clientA.clientId}`).then((n) => {
+      subsBefore = n;
+    });
     sql(`SELECT count(*) FROM mail_orders WHERE "clientId" = ${w.clientA.clientId}`).then((before) => {
       cy.apiLogin('client', { email: w.clientA.email, password: w.clientA.password, startPath: '/store' });
       cy.window().then((win) => {
@@ -105,9 +109,11 @@ describe('OS-02-6: a declined card places no order, screen to API', () => {
       });
       // No order for A: the Mail Orders list reads mail_orders.
       sql(`SELECT count(*) FROM mail_orders WHERE "clientId" = ${w.clientA.clientId}`).should('eq', before);
-      sql(
-        `SELECT count(*) FROM online_store_subscriptions WHERE "clientId" = ${w.clientA.clientId} AND created > now() - interval '10 minutes'`,
-      ).should('eq', '0');
+      // No new auto-ship for A (the seed world already has one).
+      sql(`SELECT count(*) FROM online_store_subscriptions WHERE "clientId" = ${w.clientA.clientId}`).should(
+        'eq',
+        subsBefore,
+      );
     });
     if (Cypress.env('EMAIL_CAPTURE_PATH')) {
       cy.capturedEmails().then((all) => {

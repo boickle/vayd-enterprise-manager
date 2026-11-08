@@ -46,6 +46,21 @@ const stripeField = (name: string, value: string) =>
     .clear()
     .type(value);
 
+/** Fill the card form's billing address when the page has not filled it from the address on file. */
+const fillBillingIfEmpty = () => {
+  const fields: Array<[string, string]> = [
+    ['billing address-line1', '12 Fixture Lane'],
+    ['billing address-level2', 'Madison'],
+    ['billing address-level1', 'WI'],
+    ['billing postal-code', '53703'],
+  ];
+  for (const [ac, value] of fields) {
+    cy.get(`input[autocomplete="${ac}"]`).then(($el) => {
+      if (!String($el.val() ?? '').trim()) cy.wrap($el).type(value);
+    });
+  }
+};
+
 const enterCard = (number: string) => {
   stripeField('cardnumber', number);
   stripeField('exp-date', '1234');
@@ -55,6 +70,7 @@ const enterCard = (number: string) => {
     .then(($body) => {
       if (Cypress.$($body).find('input[name="postal"]').length) stripeField('postal', '53703');
     });
+  fillBillingIfEmpty();
   cy.wait(1500);
 };
 

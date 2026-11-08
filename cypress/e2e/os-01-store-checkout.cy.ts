@@ -64,6 +64,21 @@ const stripeField = (name: string, value: string) =>
     .clear()
     .type(value);
 
+/** Fill the card form's billing address when the page has not filled it from the address on file. */
+const fillBillingIfEmpty = () => {
+  const fields: Array<[string, string]> = [
+    ['billing address-line1', '12 Fixture Lane'],
+    ['billing address-level2', 'Madison'],
+    ['billing address-level1', 'WI'],
+    ['billing postal-code', '53703'],
+  ];
+  for (const [ac, value] of fields) {
+    cy.get(`input[autocomplete="${ac}"]`).then(($el) => {
+      if (!String($el.val() ?? '').trim()) cy.wrap($el).type(value);
+    });
+  }
+};
+
 const enterTestCard = () => {
   stripeField('cardnumber', '4242424242424242');
   stripeField('exp-date', '1234');
@@ -73,6 +88,7 @@ const enterTestCard = () => {
     .then(($body) => {
       if (Cypress.$($body).find('input[name="postal"]').length) stripeField('postal', '53703');
     });
+  fillBillingIfEmpty();
   cy.wait(1500); // let Stripe report the card complete
 };
 
@@ -95,11 +111,13 @@ const cartWithStoreItem = (w: StoreWorld) => {
   });
 };
 
-const thankYouEmailsTo = (email: string): Cypress.Chainable<unknown[]> =>
+/** Thank-you emails for one order. Outside production the API sends every email to the owner's address,
+ *  so the order number in the subject is what identifies it. */
+const thankYouEmailsForOrder = (orderId: number): Cypress.Chainable<unknown[]> =>
   cy.capturedEmails().then((all) =>
-    (all as Array<{ to?: string | string[]; subject?: string }>).filter((m) => {
-      const to = ([] as string[]).concat(m.to ?? []).map((t) => t.toLowerCase());
-      return to.includes(email.toLowerCase()) && /thank/i.test(String(m.subject ?? ''));
+    (all as Array<{ subject?: string }>).filter((m) => {
+      const subject = String(m.subject ?? '');
+      return /thank/i.test(subject) && subject.includes(`#${orderId}`);
     }),
   );
 
@@ -132,6 +150,7 @@ describe('OS-01-11: store checkout, screen to API', () => {
   });
 
   it('OS-01-11 (a): a portal client buys with a saved card; one charge on A, order and invoice on A, one thank-you', () => {
+    let secondOrderId = 0;
     cy.intercept('POST', '**/public/store/card-on-file').as('typedEmailCards');
     cy.intercept('GET', '**/store/checkout/cards').as('myCards');
     cy.intercept('POST', '**/store/checkout').as('myCheckout');
@@ -153,15 +172,20 @@ describe('OS-01-11: store checkout, screen to API', () => {
       /^cus_\w+\|pm_\w+$/,
     );
 
-    // Second purchase: with the saved card, from A's own list.
+    // Second purchase: with the saved card, from A's own list. A fresh alias, so a leftover request from the
+    // first visit (the dev server runs effects twice) is not read as this visit's list.
     if (Cypress.env('EMAIL_CAPTURE_PATH')) cy.clearCapturedEmails();
+    cy.intercept('GET', '**/store/checkout/cards').as('myCardsAgain');
+    // The page fills name and email from the client's profile when it loads; wait for it before typing.
+    cy.intercept('GET', '**/clients/*').as('clientProfile');
     cartWithStoreItem(w);
     cy.visit('/store/cart');
-    cy.wait('@myCards').then(({ response }) => {
+    cy.wait('@myCardsAgain').then(({ response }) => {
       const cards = (response?.body?.cards ?? []) as Array<{ paymentMethodId: string; last4: string }>;
       expect(cards).to.have.length(1);
       expect(cards[0].last4).to.eq('4242');
       cy.get('.vayd-store__card-select', { timeout: 20000 }).should('contain.text', '4242');
+      cy.wait('@clientProfile');
       // Typing someone else's email changes nothing.
       cy.contains('label', 'Email').find('input').clear().type(w.clientB.email);
       cy.get('.vayd-store__card-select option').should('have.length', 1);
@@ -171,6 +195,7 @@ describe('OS-01-11: store checkout, screen to API', () => {
         expect(request.body.paymentMethodId).to.eq(cards[0].paymentMethodId);
         expect(request.body).not.to.have.property('clientId');
         const orderId = Number(response?.body?.id);
+        secondOrderId = orderId;
         sql(
           `SELECT o."clientId" || '|' || o."paymentStatus" || '|' || o."stripePaymentId" || '|' || v."clientId" || '|' || v.status || '|' || v."stripePaymentIntentId"
              FROM mail_orders o JOIN visit_invoices v ON v.id = o."scoutInvoiceId" WHERE o.id = ${orderId}`,
@@ -191,7 +216,7 @@ describe('OS-01-11: store checkout, screen to API', () => {
     });
     cy.contains('h1', 'Thank you', { timeout: 30000 });
     if (Cypress.env('EMAIL_CAPTURE_PATH')) {
-      thankYouEmailsTo(w.clientA.email).should('have.length', 1);
+      cy.then(() => thankYouEmailsForOrder(secondOrderId).should('have.length', 1));
     }
     cy.get('@typedEmailCards.all').should('have.length', 0);
   });
@@ -200,7 +225,8 @@ describe('OS-01-11: store checkout, screen to API', () => {
     cy.intercept('POST', '**/public/store/card-on-file').as('typedEmailCards');
     cy.intercept('GET', '**/store/checkout/cards').as('myCards');
     cy.intercept('POST', '**/public/store/checkout').as('guestCheckout');
-    const buyer = `${w.tag}+giftguest@vayd.test`;
+    // Stripe refuses .test addresses in billing details, so the guest uses example.com.
+    const buyer = `${w.tag}+giftguest@example.com`;
 
     // A store item (OS-A16): the guest gets the checkout form with a new-card entry; no login wall, no card
     // list, and no "Save my card" option.
@@ -268,11 +294,11 @@ describe('OS-01-11: store checkout, screen to API', () => {
       expect(Number(face)).to.eq(50);
       expect(pi).to.match(/^pi_/);
     });
-    // B's card on file was not touched by the guest's purchase.
-    sql(`SELECT coalesce("savedPaymentMethodId", '') FROM clients WHERE id = ${w.clientB.clientId}`).should(
-      'match',
-      /^pm_store/,
-    );
+    // B's Stripe customer and card on file were not touched by the guest's purchase (the seed sets only the
+    // customer; B's card lives on that customer, so no saved-card id is recorded on the client).
+    sql(
+      `SELECT coalesce("stripeCustomerId", '') || '|' || coalesce("savedPaymentMethodId", '') FROM clients WHERE id = ${w.clientB.clientId}`,
+    ).should('eq', `cus_${w.tag}_b|`); // the seed names B's customer cus_<tag>_b
     cy.get('@typedEmailCards.all').should('have.length', 0);
     cy.get('@myCards.all').should('have.length', 0);
   });
