@@ -86,6 +86,7 @@ import {
   buildChartRowsFromMedicalRecord,
   mergeInHouseLabsIntoChart,
   chartRowsFromIdexxResults,
+  chartRowsFromEvetInHouse,
   chartRowsFromClientRoomLoaders,
   chartRowsFromMailOrders,
   chartRowsFromRemovedVaccinations,
@@ -205,6 +206,7 @@ import LabResultChip, { labResultsState } from '../labs/LabResultChip';
 import IdexxChip from '../idexx/IdexxChip';
 import IdexxResultView from '../idexx/IdexxResultView';
 import { listIdexxResults, type IdexxResultSummary } from '../../api/idexx';
+import { listEvetLabHistory, type EvetLabHistoryResult } from '../../api/evetLabHistory';
 import './detail/PimsDetailKit.css';
 import { ClientUploadedRecordsList } from '../ClientUploadedRecordsList';
 import './PimsPatientDetailView.css';
@@ -1267,6 +1269,26 @@ export default function PimsPatientDetailView({
   /** In-house lab forms (snap tests etc.), waiting or resulted, shown on the timeline. */
   const [labResults, setLabResults] = useState<LabResult[]>([]);
   const [idexxResults, setIdexxResults] = useState<IdexxResultSummary[]>([]);
+  /** Imported eVet in-house lab results, read only. A failed load shows none rather than blocking the chart. */
+  const [evetLabHistory, setEvetLabHistory] = useState<EvetLabHistoryResult[]>([]);
+  useEffect(() => {
+    const pid = Number(patientId);
+    if (!pid) {
+      setEvetLabHistory([]);
+      return;
+    }
+    let canceled = false;
+    void listEvetLabHistory(pid)
+      .then((rows) => {
+        if (!canceled) setEvetLabHistory(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!canceled) setEvetLabHistory([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [patientId]);
   useEffect(() => {
     const pid = Number(patientId);
     if (!pid) {
@@ -1585,11 +1607,12 @@ export default function PimsPatientDetailView({
     // alone while the bill is still open, so a WAITING lab shows from the chart.
     const withLabs = mergeInHouseLabsIntoChart(base, labResults);
     const idexxRows = chartRowsFromIdexxResults(idexxResults);
+    const evetLabRows = chartRowsFromEvetInHouse(evetLabHistory);
     const removedDoses = chartRowsFromRemovedVaccinations(removedVaccinations);
-    return [...withLabs, ...idexxRows, ...soaps, ...loaders, ...notes, ...mail, ...removedDoses].sort(
+    return [...withLabs, ...idexxRows, ...evetLabRows, ...soaps, ...loaders, ...notes, ...mail, ...removedDoses].sort(
       (a, b) => b.sortTime - a.sortTime
     );
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, idexxResults, patientId, removedVaccinations, soapNotes]);
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, idexxResults, evetLabHistory, patientId, removedVaccinations, soapNotes]);
 
   /** Removed entries (voided charges, removed files and doses) stay hidden unless asked for. */
   const chartRows = useMemo(
@@ -1798,6 +1821,7 @@ export default function PimsPatientDetailView({
           r.source === 'lab' ||
           r.source === 'inHouseLab' ||
           r.source === 'idexxLab' ||
+          r.source === 'evetInHouseLab' ||
           Boolean(r.labResults?.length)
       ),
     [chartRows]
