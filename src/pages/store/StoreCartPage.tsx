@@ -546,15 +546,9 @@ export default function StoreCartPage() {
         n += extraAfter * extraRate;
       }
     }
-    if (shipping > 0) {
-      n += shipping * storeTaxRateForLevel(1, {
-        level1: taxRates.level1,
-        level2: taxRates.level2,
-        level3: taxRates.level3,
-      });
-    }
+    // Q3 (owner, Nov 7, 2026): shipping is not taxed, the same as visit checkout.
     return roundStoreMoney(n);
-  }, [chargedUnits, couponOff, extrasByIndex, lines, shipping, subtotal, taxRates]);
+  }, [chargedUnits, couponOff, extrasByIndex, lines, subtotal, taxRates]);
   const total = Math.max(0, subtotal - couponOff + shipping + tax);
   const creditApplied =
     applyAccountCredit && accountCredit > 0.009 ? Math.min(accountCredit, total) : 0;
@@ -709,6 +703,8 @@ export default function StoreCartPage() {
                           )}
                           {rx ? ' · Prescription' : ''}
                         </div>
+                        {/* B2 (owner, Nov 7, 2026): auto-ship needs the portal login, so guests aren't offered it. */}
+                        {loggedIn || line.autoshipFrequency ? (
                         <div className="vayd-store__cart-purchase">
                           <div className="vayd-store__chips">
                             <button
@@ -814,6 +810,7 @@ export default function StoreCartPage() {
                             </>
                           ) : null}
                         </div>
+                        ) : null}
                         {needsPet && loggedIn ? (
                           <div className="vayd-store__cart-pets">
                             <span className="vayd-store__cart-pets-label">For</span>
