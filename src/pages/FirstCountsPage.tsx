@@ -19,6 +19,7 @@ import {
 } from '../api/branchInventory';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { appConfirm } from '../utils/appDialog';
+import { downloadCountSheetXlsx, readCountSheetFile, sortForSheet } from '../utils/countSheetFile';
 import './Settings.css';
 
 /** Matches the API's warning on a line whose weighed and counted mL disagree. */
@@ -59,16 +60,6 @@ function formatWhen(iso: string | null): string {
       });
 }
 
-function sortForSheet(items: FirstCountSheetItem[]): FirstCountSheetItem[] {
-  return items.slice().sort((a, b) => {
-    if (a.isControlled !== b.isControlled) return a.isControlled ? -1 : 1;
-    const ca = a.categoryName || 'Uncategorized';
-    const cb = b.categoryName || 'Uncategorized';
-    if (ca !== cb) return ca.localeCompare(cb);
-    return a.name.localeCompare(b.name);
-  });
-}
-
 /** Items set up for this shelf (par, min / max, controlled, or already here). */
 function listedItems(items: FirstCountSheetItem[]) {
   return items.filter((i) => i.onList !== false);
@@ -78,87 +69,6 @@ function scopeItems(items: FirstCountSheetItem[], scope: SheetScope) {
   if (scope === 'controlled') return listedItems(items).filter((i) => i.isControlled);
   if (scope === 'uncounted') return listedItems(items).filter((i) => !i.firstCountedAt);
   return items;
-}
-
-function csvCell(value: string | number | null | undefined): string {
-  const s = value == null ? '' : String(value);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Minimal RFC 4180 parser: quoted fields, doubled quotes, CRLF. */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let quoted = false;
-  const src = text.replace(/^\uFEFF/, '');
-  for (let i = 0; i < src.length; i += 1) {
-    const ch = src[i];
-    if (quoted) {
-      if (ch === '"' && src[i + 1] === '"') {
-        cell += '"';
-        i += 1;
-      } else if (ch === '"') {
-        quoted = false;
-      } else {
-        cell += ch;
-      }
-    } else if (ch === '"') {
-      quoted = true;
-    } else if (ch === ',') {
-      row.push(cell);
-      cell = '';
-    } else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && src[i + 1] === '\n') i += 1;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
-    } else {
-      cell += ch;
-    }
-  }
-  if (cell !== '' || row.length) {
-    row.push(cell);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((c) => c.trim() !== ''));
-}
-
-function rowsFromCsv(text: string): { rows: FirstCountRow[]; error: string | null } {
-  const table = parseCsv(text);
-  if (table.length < 2) return { rows: [], error: 'The file has no rows under the header.' };
-  const header = table[0].map((h) => h.trim().toLowerCase());
-  const find = (...names: RegExp[]) => header.findIndex((h) => names.some((n) => n.test(h)));
-  const col = {
-    code: find(/^code$/, /item code/, /^sku$/),
-    name: find(/^item$/, /^name$/, /item name/, /description/),
-    qty: find(/^count$/, /counted/, /^qty$/, /quantity/, /on ?hand/),
-    weight: find(/^weight/, /weighed/),
-    bottles: find(/bottle/),
-    lot: find(/lot/),
-    exp: find(/^exp/, /expiration/),
-    note: find(/note/),
-  };
-  if (col.qty < 0 && col.weight < 0) {
-    return { rows: [], error: 'Could not find a "Count" column in the header row.' };
-  }
-  if (col.code < 0 && col.name < 0) {
-    return { rows: [], error: 'Could not find a "Code" or "Item" column in the header row.' };
-  }
-  const get = (r: string[], i: number) => (i >= 0 ? (r[i] ?? '').trim() : '');
-  const rows = table.slice(1).map((r, i) => ({
-    rowNumber: i + 2,
-    code: get(r, col.code) || null,
-    name: get(r, col.name) || null,
-    quantity: get(r, col.qty),
-    weight: get(r, col.weight) || null,
-    bottles: get(r, col.bottles) || null,
-    lotNumber: get(r, col.lot) || null,
-    expirationDate: get(r, col.exp) || null,
-    note: get(r, col.note) || null,
-  }));
-  return { rows, error: null };
 }
 
 function escapeHtml(s: string | null | undefined): string {
@@ -181,13 +91,11 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
     else groups.push({ title, items: [item] });
   }
   const head =
-    '<tr><th class="code">Code</th><th>Item</th><th class="unit">Unit</th><th class="box">Count</th><th class="weight">Weight · bottles</th><th class="lot">Lot #</th><th class="exp">Exp</th><th class="notes">Notes</th></tr>';
-  const countCell = (i: FirstCountSheetItem) =>
-    i.measure === 'weight' ? '<td class="box na">weigh →</td>' : '<td class="box"></td>';
-  const weightCell = (i: FirstCountSheetItem) =>
-    i.measure === 'volume'
-      ? '<td class="weight na"></td>'
-      : `<td class="weight"><span class="u">${i.weightUnit}</span><span class="u b">× bottles</span></td>`;
+    '<tr><th class="code">Code</th><th>Item</th><th class="unit">Unit</th><th class="box">Count</th><th class="lot">Lot #</th><th class="exp">Exp</th><th class="notes">Notes</th></tr>';
+  const lotCell = (i: FirstCountSheetItem) =>
+    i.requireLotNumber ? '<td class="lot req"></td>' : '<td class="lot"></td>';
+  const expCell = (i: FirstCountSheetItem) =>
+    i.requireLotNumber ? '<td class="exp req"></td>' : '<td class="exp"></td>';
   const body = groups
     .map(
       (g) => `
@@ -196,7 +104,7 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
       ${g.items
         .map(
           (i) =>
-            `<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td>${countCell(i)}${weightCell(i)}<td class="lot"></td><td class="exp"></td><td class="notes"></td></tr>`
+            `<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="box"></td>${lotCell(i)}${expCell(i)}<td class="notes"></td></tr>`
         )
         .join('')}
       </tbody></table>`
@@ -205,7 +113,7 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
   const writeIns = Array.from({ length: WRITE_IN_LINES })
     .map(
       () =>
-        '<tr><td class="code"></td><td></td><td class="unit"></td><td class="box"></td><td class="weight"></td><td class="lot"></td><td class="exp"></td><td class="notes"></td></tr>'
+        '<tr><td class="code"></td><td></td><td class="unit"></td><td class="box"></td><td class="lot"></td><td class="exp"></td><td class="notes"></td></tr>'
     )
     .join('');
   const html = `<!doctype html><html><head><meta charset="utf-8" />
@@ -224,15 +132,14 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
     td { height: 18px; }
     .code { width: 70px; } .unit { width: 54px; } .box { width: 60px; }
     .lot { width: 80px; } .exp { width: 62px; } .notes { width: 110px; }
-    .weight { width: 96px; } .na { background: #f4f4f4; color: #888; font-size: 9px; }
-    .u { color: #888; font-size: 9px; float: right; margin-left: 4px; } .u.b { float: none; display: block; margin-top: 8px; }
+    .req { background: #fff7d6; }
     @media print { body { margin: 0; } thead { display: table-header-group; } }
   </style></head><body>
   <h1>${heading} — ${escapeHtml(sheet.branchName)} · ${escapeHtml(sheet.locationName)}</h1>
   <div class="meta"><span>Counted by:</span><span>Date &amp; time counted:</span></div>
   <p class="hint">Count what is physically on this shelf, in the unit shown (e.g. capsules, not bottles). Leave Count blank if you didn't count it; write 0 if there is none.
-  One lot per line — use a write-in line (same code) for each extra lot, and count every lot of an item at the same time. Exp can be 3/2027. Items not on the list go in Write-ins at the end.
-  Controlled liquids set up for weighing: weigh the bottles of a lot together and write the weight and how many bottles; Scout works out the mL.</p>
+  Controlled drugs are counted in mL. One lot per line — use a write-in line (same code) for each extra lot, and count every lot of an item at the same time.
+  Lot # and Exp are required on shaded lines (vaccines, injectables, controlled drugs). Exp can be 3/2027. Items not on the list go in Write-ins at the end.</p>
   ${body}
   <h2>Write-ins (not on the list, or extra lots)</h2>
   <table><thead>${head}</thead><tbody>${writeIns}</tbody></table>
@@ -244,57 +151,6 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
   win.document.write(html);
   win.document.close();
   return true;
-}
-
-function downloadCsv(sheet: FirstCountSheet, items: FirstCountSheetItem[]) {
-  const header = [
-    'Code',
-    'Item',
-    'Unit',
-    'Category',
-    'Controlled',
-    'Count',
-    'Weight',
-    'Weigh in',
-    'Bottles',
-    'Lot #',
-    'Expiration',
-    'Notes',
-  ];
-  const lines = [header.join(',')];
-  for (const i of sortForSheet(items)) {
-    const weighs = i.measure !== 'volume';
-    lines.push(
-      [
-        i.code,
-        i.name,
-        i.unit,
-        i.categoryName,
-        i.isControlled ? 'Yes' : '',
-        '',
-        '',
-        weighs ? i.weightUnit : '',
-        '',
-        '',
-        '',
-        '',
-      ]
-        .map(csvCell)
-        .join(',')
-    );
-  }
-  const blob = new Blob([`\uFEFF${lines.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const slug = `${sheet.branchName}-${sheet.locationName}`
-    .replace(/[^a-z0-9]+/gi, '-')
-    .toLowerCase();
-  a.href = url;
-  a.download = `count-sheet-${slug}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 export default function FirstCountsPage() {
@@ -572,8 +428,14 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
   }
 
   async function onFile(file: File) {
-    const text = await file.text();
-    const { rows, error: parseError } = rowsFromCsv(text);
+    let parsed: Awaited<ReturnType<typeof readCountSheetFile>>;
+    try {
+      parsed = await readCountSheetFile(file);
+    } catch {
+      setError(`${file.name}: could not read this file. Upload the .xlsx count sheet (or a .csv).`);
+      return;
+    }
+    const { rows, error: parseError } = parsed;
     if (parseError) {
       setError(`${file.name}: ${parseError}`);
       return;
@@ -617,8 +479,8 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
               <>
                 A full recount. Each counted item is set to what was counted, and any difference
                 from what Scout expected is booked as an adjustment and listed in the{' '}
-                <Link to="/schedule/analytics/inventory/counts">Count report</Link>. Blank counts are
-                left alone. Shelves that never had a first count still get an opening balance.
+                <Link to="/schedule/analytics/inventory/counts">Count report</Link>. Blank counts
+                are left alone. Shelves that never had a first count still get an opening balance.
               </>
             ) : (
               <>
@@ -809,9 +671,13 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
             type="button"
             className="btn secondary"
             disabled={!scoped.length}
-            onClick={() => downloadCsv(sheet, scoped)}
+            onClick={() => {
+              void downloadCountSheetXlsx(sheet, scoped).catch(() =>
+                setError('Could not build the count sheet file.')
+              );
+            }}
           >
-            Download CSV to fill in
+            Download Excel sheet to fill in
           </button>
           <button
             type="button"
@@ -819,12 +685,12 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
             disabled={busy}
             onClick={() => fileRef.current?.click()}
           >
-            Upload filled CSV…
+            Upload filled sheet…
           </button>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             style={{ display: 'none' }}
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -833,9 +699,10 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
             }}
           />
           <span className="settings-muted" style={{ fontSize: 12, flex: '1 1 220px' }}>
-            Paper sheets have no current quantities on them (blind count). In Excel, fill the Count
-            column, then <em>Save As → CSV</em>. For a second lot, copy the item’s row and change
-            the count, lot and exp — list every lot of an item in the same upload.
+            Paper sheets have no current quantities on them (blind count). The Excel sheet has a
+            Directions tab; staff fill in the Count sheet tab and save as .xlsx. For a second lot,
+            copy the item’s row and change the count, lot and exp — list every lot of an item in the
+            same upload.
           </span>
         </div>
       ) : null}
