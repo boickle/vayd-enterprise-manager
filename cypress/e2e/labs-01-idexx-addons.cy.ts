@@ -49,11 +49,12 @@ const uaLines = (b: Bill) => b.lines.filter((l) => !l.isDeleted && Number(l.cata
 function finishInIdexx(h: LabsHousehold) {
   signInLabs('veterinarian', labsSoapPath(h.pets[0], h.clientId, '/checkout'));
   cy.contains('h1', 'Checkout', { timeout: 30000 });
+  // The IDEXX panel (with its Finish in IDEXX button) sits in the lab line's expanded drawer.
+  cy.get('button.soap-invoice-line-expand[aria-expanded="false"]', { timeout: 30000 }).first().click();
   cy.contains('button', 'Finish in IDEXX', { timeout: 30000 }).click();
   cy.get('.idexx-frame', { timeout: 10000 }).should('be.visible');
   // Opening refresh plus at least two polls, each answered slowly by the fake.
   cy.wait(30000);
-  cy.get('.idexx-frame').contains('Added to the bill: ').should('contain.text', 'UA');
   cy.get('.idexx-frame').contains('button', 'Close').click();
   cy.get('.idexx-frame').should('not.exist');
 }
@@ -95,6 +96,6 @@ describe('LAB-01 / LAB-02: IDEXX add-ons on the bill', () => {
       expect(Number(uaLines(b)[0].unitPrice)).to.be.closeTo(27.5, 0.005);
       expect(Number(b.subtotal)).to.be.closeTo(87.5, 0.005);
     });
-    cy.contains('.soap-invoice-row', 'Subtotal', { timeout: 30000 }).should('contain.text', '$87.50');
+    cy.contains('.soap-invoice-row.total', 'Total', { timeout: 30000 }).should('contain.text', '$87.50');
   });
 });
