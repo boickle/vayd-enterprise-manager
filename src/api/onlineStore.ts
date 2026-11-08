@@ -1042,6 +1042,8 @@ export async function respondMailApproval(
     lineIds?: number[];
     lineRefills?: MailLineRxDecision[];
     lineScripts?: Array<{ lineId: number; scriptText: string }>;
+    /** Owner (Nov 7, 2026): approve a lower quantity; Scout refunds the difference. */
+    lineQuantities?: Array<{ lineId: number; quantity: number }>;
   },
 ) {
   const { data } = await http.post<MailOrder>(
