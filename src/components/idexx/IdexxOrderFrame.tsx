@@ -10,8 +10,12 @@ import {
 import '../../pages/Settings.css';
 import './Idexx.css';
 
-/** How often Scout asks IDEXX whether the order was submitted while the frame is open. */
-const CHECK_EVERY_MS = 10_000;
+/**
+ * How long Scout waits, after one check of the order finishes, before asking IDEXX again
+ * whether it was submitted. Checks never overlap (LAB-01): a slow IDEXX answer just
+ * pushes the next check back.
+ */
+export const CHECK_EVERY_MS = 10_000;
 
 type Props = {
   order: IdexxOrder;
@@ -42,6 +46,7 @@ export default function IdexxOrderFrame({
   const [order, setOrder] = useState(initial);
   const [url, setUrl] = useState<string | null>(fresh ? initial.uiUrl : null);
   const [added, setAdded] = useState<string[]>([]);
+  const [removed, setRemoved] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const syncRef = useRef(onSync);
   syncRef.current = onSync;
@@ -50,13 +55,30 @@ export default function IdexxOrderFrame({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const loads = useRef(0);
   const closing = useRef(false);
+  const inFlight = useRef<Promise<IdexxSyncResult> | null>(null);
+
+  /** One check of the order at a time: a caller while one runs shares its answer. */
+  const runSync = useCallback((): Promise<IdexxSyncResult> => {
+    if (inFlight.current) return inFlight.current;
+    const run = syncRef
+      .current(initial.id)
+      .then((res) => {
+        if (res.added?.length) setAdded((prev) => [...new Set([...prev, ...res.added])]);
+        if (res.removed?.length) setRemoved((prev) => [...new Set([...prev, ...res.removed!])]);
+        return res;
+      })
+      .finally(() => {
+        if (inFlight.current === run) inFlight.current = null;
+      });
+    inFlight.current = run;
+    return run;
+  }, [initial.id]);
 
   /** Re-read the order, then close if IDEXX has it (or `always`, for IDEXX's Done/Cancel). */
   const finish = useCallback(
     (always: boolean) => {
       if (closing.current) return;
-      void syncRef
-        .current(initial.id)
+      void runSync()
         .then((res) => {
           setOrder(res.order);
           return res.order.status !== 'CREATED';
@@ -69,15 +91,14 @@ export default function IdexxOrderFrame({
           }
         });
     },
-    [initial.id]
+    [runSync]
   );
 
   // An older link may have expired: reading the order from IDEXX hands back a new one.
   useEffect(() => {
     if (fresh) return;
     let canceled = false;
-    void syncRef
-      .current(initial.id)
+    void runSync()
       .then((res) => {
         if (canceled) return;
         setOrder(res.order);
@@ -91,7 +112,7 @@ export default function IdexxOrderFrame({
     return () => {
       canceled = true;
     };
-  }, [fresh, initial.id, initial.uiUrl]);
+  }, [fresh, initial.uiUrl, runSync]);
 
   const submitted = order.status === 'SUBMITTED';
   useEffect(() => {
@@ -101,19 +122,29 @@ export default function IdexxOrderFrame({
     }
   }, [submitted]);
 
+  // Poll while the doctor works in IDEXX: the next check is timed from when the last one
+  // finished, so a slow IDEXX never has two checks of this order running at once.
   useEffect(() => {
     if (submitted || !url) return;
-    const timer = window.setInterval(() => {
-      void syncRef
-        .current(initial.id)
-        .then((res) => {
-          setOrder(res.order);
-          if (res.added.length) setAdded((prev) => [...new Set([...prev, ...res.added])]);
-        })
-        .catch(() => undefined);
-    }, CHECK_EVERY_MS);
-    return () => window.clearInterval(timer);
-  }, [submitted, url, initial.id]);
+    let stopped = false;
+    let timer: number | undefined;
+    const next = () => {
+      if (stopped) return;
+      timer = window.setTimeout(() => {
+        void runSync()
+          .then((res) => {
+            if (!stopped) setOrder(res.order);
+          })
+          .catch(() => undefined)
+          .finally(next);
+      }, CHECK_EVERY_MS);
+    };
+    next();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [submitted, url, runSync]);
 
   useEffect(() => {
     if (!url) return;
@@ -174,6 +205,9 @@ export default function IdexxOrderFrame({
             )}
             {added.length ? (
               <span className="idexx-order__note--ok">Added to the bill: {added.join(', ')}</span>
+            ) : null}
+            {removed.length ? (
+              <span className="idexx-order__note--ok">Removed in IDEXX: {removed.join(', ')}</span>
             ) : null}
           </div>
           <div className="idexx-result__actions">

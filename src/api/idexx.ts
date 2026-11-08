@@ -154,6 +154,10 @@ export type IdexxSyncResult = {
   added: string[];
   /** Tests added inside IDEXX that could not be put on the bill. */
   uncaptured: Array<{ code: string; name: string | null; reason: string }>;
+  /** Tests removed inside IDEXX whose charge Scout took off the bill. */
+  removed?: string[];
+  /** Tests removed inside IDEXX whose charge stayed on the bill (a Billing task names each). */
+  stillCharged?: Array<{ code: string; name: string | null; reason: string }>;
 };
 
 /** Message from an API error, including IDEXX's own field errors. */
