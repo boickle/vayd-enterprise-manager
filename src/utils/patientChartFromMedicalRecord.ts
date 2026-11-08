@@ -1,5 +1,6 @@
 /** Build unified chart rows from GET /patients/:id/medical-record payload. */
 
+import type { EvetLabHistoryResult } from '../api/evetLabHistory';
 import type { RoomLoader } from '../api/roomLoader';
 import type { ScoutChartNote } from '../api/scoutChart';
 import type { TreatmentItem, TreatmentWithItems } from '../api/treatments';
@@ -188,6 +189,8 @@ export type ChartRow = {
    * and the forms are run right from the timeline.
    */
   labResults?: LabResult[];
+  /** Imported eVet in-house lab result (read only). */
+  evetInHouse?: EvetLabHistoryResult;
   /** IDEXX send-out result; the row expands into the results view. */
   idexxResult?: IdexxResultSummary;
   /** Visit charges: the invoice line billed, so lab forms can find their row. */
@@ -220,6 +223,7 @@ export type ChartRowSource =
   | 'mailOrder'
   | 'inHouseLab'
   | 'idexxLab'
+  | 'evetInHouseLab'
   | 'soapNote';
 
 export type MedicalRecordBundle = {
@@ -529,6 +533,28 @@ function visitChargeDetail(c: PostedVisitCharge, hint?: MedicationHint | null): 
   }
 
   return bits.join('\n');
+}
+
+/** Text of one eVet in-house value: "Anaplasma: POSITIVE mg/dL (comment)". Every value is kept. */
+export function evetValueLine(v: EvetLabHistoryResult['values'][number]): string {
+  const val = [v.value?.trim(), v.units?.trim()].filter(Boolean).join(' ');
+  return `${v.name}: ${val || '—'}${v.comments?.trim() ? ` (${v.comments.trim()})` : ''}`;
+}
+
+/** Imported eVet in-house lab results (4Dx, glucose, UA...), one read-only row each. */
+export function chartRowsFromEvetInHouse(results: EvetLabHistoryResult[] | null | undefined): ChartRow[] {
+  return (results ?? []).map((r) => ({
+    id: `evetInHouseLab:${r.id}`,
+    source: 'evetInHouseLab',
+    typeLabel: 'eVet lab result',
+    description: r.formName,
+    provider: '—',
+    serviceDateIso: r.date,
+    sortTime: parseSortTime(r.date),
+    detailText: [...r.values.map(evetValueLine), r.summary?.trim()].filter(Boolean).join('\n'),
+    evetInHouse: r,
+    hasResult: true,
+  }));
 }
 
 /** IDEXX results received through Scout, one timeline row each. */

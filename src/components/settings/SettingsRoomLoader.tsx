@@ -24,10 +24,8 @@ import {
 import type { RoomLoaderSpeciesSelection } from '../../utils/roomLoaderConfigTypes';
 import { ChevronDown, ChevronRight, ChevronUp, Eye, Plus, Trash2 } from 'lucide-react';
 import LabPanelsSection from '../../pages/roomLoader/LabPanelsSection';
-import {
-  medicalConcernPanelRules,
-  type EngineContext,
-} from '../../utils/roomLoaderOfferEngine';
+import RoomLoaderPreviewTab from './roomLoader/RoomLoaderPreviewTab';
+import { medicalConcernPanelRules, type EngineContext } from '../../utils/roomLoaderOfferEngine';
 import {
   emptyHistoryGate,
   ensureRoomLoaderConfigSeeded,
@@ -77,10 +75,7 @@ import {
 } from '../../utils/roomLoaderMembershipAlign';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
 import MessageTemplateHtmlEditor from '../messageTemplates/MessageTemplateHtmlEditor';
-import {
-  fetchCatalogListPrice,
-  itemRefsFromPanelRules,
-} from '../../utils/roomLoaderCatalogPrice';
+import { fetchCatalogListPrice, itemRefsFromPanelRules } from '../../utils/roomLoaderCatalogPrice';
 import { roomLoaderPriceLabel } from '../../pages/roomLoader/RoomLoaderPrice';
 import { fileToEmbeddedImageDataUrl } from '../../utils/embedImageDataUrl';
 import { appConfirm } from '../../utils/appDialog';
@@ -370,7 +365,11 @@ class RoomLoaderPaneBoundary extends Component<{ children: ReactNode }, { error:
     return (
       <div className="settings-message settings-error-message">
         That image could not be added. Refresh this tab and try a smaller PNG or JPEG.
-        <button type="button" className="btn secondary btn-sm" onClick={() => this.setState({ error: null })}>
+        <button
+          type="button"
+          className="btn secondary btn-sm"
+          onClick={() => this.setState({ error: null })}
+        >
           Try again
         </button>
       </div>
@@ -385,6 +384,7 @@ function SettingsRoomLoaderEditor({ practiceId, onMessage }: Props) {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [alignPlans, setAlignPlans] = useState<MembershipAlignPlan[]>([]);
+  const [tab, setTab] = useState<'preview' | 'advanced'>('preview');
   const speciesCatalog = useSpeciesCatalog(practiceId);
 
   const notify = useCallback(
@@ -593,558 +593,638 @@ function SettingsRoomLoaderEditor({ practiceId, onMessage }: Props) {
 
   return (
     <SpeciesCatalogContext.Provider value={speciesCatalog}>
-    <div className="rl-cfg">
-      <Section
-        title="Lab panels by age & species"
-        description={`${membershipCutoffHint()} A pet can match several rules; the lowest order asks first. Medical-concern overwrite is under Medical concern below.`}
-        meta={`${config.panelRules.length} rule${config.panelRules.length === 1 ? '' : 's'}`}
-        defaultOpen
-      >
-        {membershipAgeNote ? <p className="rl-cfg__warn">{membershipAgeNote}</p> : null}
-        {config.panelRules.length === 0 ? (
-          <p className="rl-cfg__empty">No panel rules yet.</p>
-        ) : null}
-        {config.panelRules.map((rule, index) => (
-          <PanelRuleEditor
-            key={rule.id}
-            practiceId={practiceId}
-            rule={rule}
-            allRules={config.panelRules}
-            labsPage={labsPage}
-            overwriteAgeBasedPanels={medicalConcern.overwriteAgeBasedPanels !== false}
-            index={index}
-            total={config.panelRules.length}
-            plans={alignPlans}
-            onChange={(patch) =>
-              setPanelRules((list) => list.map((r, i) => (i === index ? { ...r, ...patch } : r)))
-            }
-            onMove={(delta) => setPanelRules((list) => resequence(moveAt(list, index, delta)))}
-            onRemove={() => setPanelRules((list) => list.filter((_, i) => i !== index))}
-            onError={onError}
-          />
-        ))}
-        <AddButton
-          label="Add a panel rule"
-          onClick={() => setPanelRules((list) => [...list, newPanelRule(list.length)])}
-        />
-      </Section>
-
-      <Section
-        title="Offer to everyone"
-        description="Add-ons shown to every patient the species filter allows, whatever their age or history."
-        meta={`${config.universalOffers.length} offer${config.universalOffers.length === 1 ? '' : 's'}`}
-      >
-        {config.universalOffers.length === 0 ? (
-          <p className="rl-cfg__empty">No universal offers yet.</p>
-        ) : null}
-        {config.universalOffers.map((offer, index) => (
-          <UniversalOfferEditor
-            key={offer.id}
-            practiceId={practiceId}
-            offer={offer}
-            index={index}
-            total={config.universalOffers.length}
-            onChange={(patch) =>
-              setUniversalOffers((list) =>
-                list.map((o, i) => (i === index ? { ...o, ...patch } : o))
-              )
-            }
-            onMove={(delta) => setUniversalOffers((list) => resequence(moveAt(list, index, delta)))}
-            onRemove={() => setUniversalOffers((list) => list.filter((_, i) => i !== index))}
-          />
-        ))}
-        <AddButton
-          label="Add an offer"
-          onClick={() => setUniversalOffers((list) => [...list, newUniversalOffer(list.length)])}
-        />
-      </Section>
-
-      <Section
-        title="Species & age gated offers"
-        description="One item offered only to the pets that fit the species, age and history rules below."
-        meta={`${config.gatedOffers.length} offer${config.gatedOffers.length === 1 ? '' : 's'}`}
-      >
-        {config.gatedOffers.length === 0 ? (
-          <p className="rl-cfg__empty">No gated offers yet.</p>
-        ) : null}
-        {config.gatedOffers.map((offer, index) => (
-          <GatedOfferEditor
-            key={offer.id}
-            practiceId={practiceId}
-            offer={offer}
-            index={index}
-            total={config.gatedOffers.length}
-            onChange={(patch) =>
-              setGatedOffers((list) => list.map((o, i) => (i === index ? { ...o, ...patch } : o)))
-            }
-            onMove={(delta) => setGatedOffers((list) => resequence(moveAt(list, index, delta)))}
-            onRemove={() => setGatedOffers((list) => list.filter((_, i) => i !== index))}
-          />
-        ))}
-        <div className="rl-cfg__row-actions-inline">
-          <AddButton
-            label="Add a gated offer"
-            onClick={() => setGatedOffers((list) => [...list, newGatedOffer(list.length)])}
-          />
-          <AddButton
-            label="Add VAYD starter vaccines"
-            onClick={() =>
-              setGatedOffers((list) => resequence([...list, ...missingById(list, vaydVaccineGatedOffers())]))
-            }
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Questions about the estimate"
-        description="Asked because of a line staff already put on the estimate — which form of a vaccine the owner wants, whether to book the booster after a first dose. The answer goes to staff and the PDF; it does not change the estimate."
-        meta={`${(config.itemQuestions ?? []).length} question${
-          (config.itemQuestions ?? []).length === 1 ? '' : 's'
-        }`}
-      >
-        {(config.itemQuestions ?? []).length === 0 ? (
-          <p className="rl-cfg__empty">No questions yet.</p>
-        ) : null}
-        {(config.itemQuestions ?? []).map((question, index) => (
-          <ItemQuestionEditor
-            key={question.id}
-            practiceId={practiceId}
-            question={question}
-            index={index}
-            total={(config.itemQuestions ?? []).length}
-            onChange={(patch) =>
-              setItemQuestions((list) => list.map((q, i) => (i === index ? { ...q, ...patch } : q)))
-            }
-            onMove={(delta) => setItemQuestions((list) => resequence(moveAt(list, index, delta)))}
-            onRemove={() => setItemQuestions((list) => list.filter((_, i) => i !== index))}
-          />
-        ))}
-        <div className="rl-cfg__row-actions-inline">
-          <AddButton
-            label="Add a question"
-            onClick={() => setItemQuestions((list) => [...list, newItemQuestion(list.length)])}
-          />
-          <AddButton
-            label="Add VAYD starter questions"
-            onClick={() =>
-              setItemQuestions((list) => resequence([...list, ...missingById(list, vaydItemQuestions())]))
-            }
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Why we recommend this"
-        description="Shown under a care plan or summary line once the client unchecks it. Use it for vaccines and screenings staff put on the estimate, such as rabies or FVRCP."
-        meta={`${(config.declineReasons ?? []).length} explanation${
-          (config.declineReasons ?? []).length === 1 ? '' : 's'
-        }`}
-      >
-        {(config.declineReasons ?? []).length === 0 ? (
-          <p className="rl-cfg__empty">
-            No explanations yet. Rows fall back to the built-in vaccine and screening copy.
-          </p>
-        ) : null}
-        {(config.declineReasons ?? []).map((reason, index) => (
-          <DeclineReasonEditor
-            key={reason.id}
-            practiceId={practiceId}
-            reason={reason}
-            index={index}
-            total={(config.declineReasons ?? []).length}
-            onChange={(patch) =>
-              setDeclineReasons((list) => list.map((r, i) => (i === index ? { ...r, ...patch } : r)))
-            }
-            onMove={(delta) => setDeclineReasons((list) => moveAt(list, index, delta))}
-            onRemove={() => setDeclineReasons((list) => list.filter((_, i) => i !== index))}
-          />
-        ))}
-        <div className="rl-cfg__row-actions-inline">
-          <AddButton
-            label="Add an explanation"
-            onClick={() => setDeclineReasons((list) => [...list, newDeclineReason()])}
-          />
-          <AddButton
-            label="Add VAYD starter explanations"
-            onClick={() =>
-              setDeclineReasons((list) => [...list, ...missingById(list, vaydDeclineReasons())])
-            }
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Outdoor question"
-        description="Asked once per pet. Sub-asks and gated offers can wait on a yes."
-      >
-        <CheckField
-          label="Ask the outdoor-access question"
-          checked={outdoor.enabled}
-          onChange={(enabled) => patchOutdoor({ enabled })}
-        />
-        <div className="rl-cfg__grid">
-          <SpeciesFilterField
-            label="Ask for"
-            value={outdoor.species}
-            onChange={(species) => patchOutdoor({ species })}
-          />
-          <CheckField
-            label="An answer is required"
-            checked={outdoor.required}
-            onChange={(required) => patchOutdoor({ required })}
-          />
-        </div>
-        <TextField
-          label="Question"
-          wide
-          value={outdoor.questionText}
-          hint={PET_NAME_HINT}
-          onChange={(questionText) => patchOutdoor({ questionText })}
-        />
-        <HtmlField
-          label="Shown after a yes"
-          value={outdoor.pitchHtml}
-          placeholder="Why outdoor pets need this…"
-          hint={PET_NAME_HINT}
-          onChange={(pitchHtml) => patchOutdoor({ pitchHtml })}
-        />
-        <div className="rl-cfg__grid">
-          <ItemField
-            label="Item offered after a yes"
-            practiceId={practiceId}
-            value={outdoor.pitchItem}
-            onChange={(pitchItem) => patchOutdoor({ pitchItem })}
-          />
-          <TextField
-            label="Name the client sees"
-            value={outdoor.pitchDisplayName}
-            placeholder={itemLabel(outdoor.pitchItem)}
-            onChange={(pitchDisplayName) => patchOutdoor({ pitchDisplayName })}
-          />
-        </div>
-        <HtmlField
-          label="Shown if they cross it out"
-          value={outdoor.pitchCautionHtml}
-          onChange={(pitchCautionHtml) => patchOutdoor({ pitchCautionHtml })}
-        />
-        <ItemRefList
-          practiceId={practiceId}
-          title="Also counts as already covered"
-          note="Other FeLV products (1-year, 2-year, clinic codes). The pitch is skipped when one of these is on the estimate or in the pet's history."
-          items={outdoor.equivalentItems ?? []}
-          addLabel="Add an item"
-          onChange={(equivalentItems) => patchOutdoor({ equivalentItems })}
-        />
-        <HistoryGateEditor
-          value={outdoor.history}
-          onChange={(history) => patchOutdoor({ history })}
-        />
-      </Section>
-
-      <Section
-        title="Medical concern"
-        description="What happens when staff flag that the visit warrants lab work."
-      >
-        <CheckField
-          label="Replace the usual panel with this species’ two-panel choice"
-          checked={medicalConcern.overwriteAgeBasedPanels !== false}
-          hint="A sick puppy or adult sees Standard vs Extended at any age, not fecal-only or early detection. Uses the two-panel rule for that species. Turn off to keep the age-based ask and only add the extra panels below."
-          onChange={(overwriteAgeBasedPanels) =>
-            patchMedicalConcern({ overwriteAgeBasedPanels })
-          }
-        />
-        <CheckField
-          label="Also ask about these extra panels"
-          checked={medicalConcern.enabled}
-          hint="Adds the panels below on top of whatever rule the client is already seeing."
-          onChange={(enabled) => patchMedicalConcern({ enabled })}
-        />
-        <SpeciesFilterField
-          label="Ask for"
-          value={medicalConcern.species}
-          onChange={(species) => patchMedicalConcern({ species })}
-        />
-        <HtmlField
-          label="Shown above the panels"
-          value={medicalConcern.introHtml}
-          onChange={(introHtml) => patchMedicalConcern({ introHtml })}
-        />
-        <PanelOptionList
-          practiceId={practiceId}
-          options={medicalConcern.options}
-          species={medicalConcern.species}
-          plans={alignPlans}
-          onChange={(options) => patchMedicalConcern({ options })}
-          onError={onError}
-        />
-      </Section>
-
-      <Section title="Labs page copy" description="Headings the client reads above the panels.">
-        <TextField
-          label="Page title"
-          wide
-          value={labsPage.title}
-          onChange={(title) => patchLabsPage({ title })}
-        />
-        <HtmlField
-          label="Intro"
-          value={labsPage.introHtml}
-          onChange={(introHtml) => patchLabsPage({ introHtml })}
-        />
-        <HtmlField
-          label="Intro when a medical concern was flagged"
-          value={labsPage.medicalConcernIntroHtml}
-          onChange={(medicalConcernIntroHtml) => patchLabsPage({ medicalConcernIntroHtml })}
-        />
-        <ImageField
-          label="Sample results image"
-          imageUrl={labsPage.imageUrl}
-          imageCaption={labsPage.imageCaption}
-          onChange={patchLabsPage}
-          onError={onError}
-        />
-      </Section>
-
-      <Section
-        title="How to collect a sample"
-        description="Shown at the bottom of the labs page once the client accepts a test that needs the owner to collect something. List the panels that bundle a stool or urine test — a panel you leave off every card says nothing."
-        meta={`${(config.sampleInstructions ?? []).length} instruction${
-          (config.sampleInstructions ?? []).length === 1 ? '' : 's'
-        }`}
-      >
-        {(config.sampleInstructions ?? []).length === 0 ? (
-          <p className="rl-cfg__empty">No collection instructions yet.</p>
-        ) : null}
-        {(config.sampleInstructions ?? []).map((instruction, index) => (
-          <SampleInstructionEditor
-            key={instruction.id}
-            practiceId={practiceId}
-            instruction={instruction}
-            index={index}
-            total={(config.sampleInstructions ?? []).length}
-            onChange={(patch) =>
-              setSampleInstructions((list) =>
-                list.map((row, i) => (i === index ? { ...row, ...patch } : row))
-              )
-            }
-            onMove={(delta) =>
-              setSampleInstructions((list) => resequence(moveAt(list, index, delta)))
-            }
-            onRemove={() => setSampleInstructions((list) => list.filter((_, i) => i !== index))}
-          />
-        ))}
-        <div className="rl-cfg__row-actions-inline">
-          <AddButton
-            label="Add collection instructions"
-            onClick={() =>
-              setSampleInstructions((list) => [...list, newSampleInstruction(list.length)])
-            }
-          />
-          <AddButton
-            label="Add VAYD starter instructions"
-            onClick={() =>
-              setSampleInstructions((list) =>
-                resequence([...list, ...missingById(list, vaydSampleInstructions())])
-              )
-            }
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Prevention guide"
-        description="A collapsible comparison table on the summary page. Informational only — nothing here is added to the estimate; it tells the client what to search for in the store box."
-        meta={
-          productGuide.enabled
-            ? `${productGuide.tables.length} table${productGuide.tables.length === 1 ? '' : 's'}`
-            : 'Off'
-        }
-      >
-        <CheckField
-          label="Show the prevention guide"
-          checked={productGuide.enabled}
-          onChange={(enabled) => patchProductGuide({ enabled })}
-        />
-        <TextField
-          label="Text on the expander"
-          wide
-          placeholder="Learn more about the prevention we offer"
-          value={productGuide.summaryLabel}
-          onChange={(summaryLabel) => patchProductGuide({ summaryLabel })}
-        />
-        {productGuide.tables.length === 0 ? <p className="rl-cfg__empty">No tables yet.</p> : null}
-        {productGuide.tables.map((table, index) => (
-          <ProductGuideTableEditor
-            key={table.id}
-            table={table}
-            index={index}
-            total={productGuide.tables.length}
-            onChange={(patch) =>
-              patchProductGuide({
-                tables: productGuide.tables.map((t, i) => (i === index ? { ...t, ...patch } : t)),
-              })
-            }
-            onMove={(delta) =>
-              patchProductGuide({ tables: resequence(moveAt(productGuide.tables, index, delta)) })
-            }
-            onRemove={() =>
-              patchProductGuide({
-                tables: resequence(productGuide.tables.filter((_, i) => i !== index)),
-              })
-            }
-          />
-        ))}
-        <AddButton
-          label="Add a table"
-          onClick={() =>
-            patchProductGuide({
-              tables: [...productGuide.tables, newProductGuideTable(productGuide.tables.length)],
-            })
-          }
-        />
-      </Section>
-
-      <Section
-        title="Membership pitch"
-        description="The savings comparison shown on the summary page."
-      >
-        <CheckField
-          label="Show the membership pitch"
-          checked={membership.enabled}
-          onChange={(enabled) => patchMembership({ enabled })}
-        />
-        <div className="rl-cfg__grid">
-          <SelectField
-            label="Where it sits"
-            value={membership.placement}
-            options={PLACEMENT_OPTIONS}
-            onChange={(placement) => patchMembership({ placement })}
-          />
-          <NumberField
-            label="Savings rows shown before expanding"
-            value={membership.previewRowCount}
-            hint="0 shows the headline only."
-            onChange={(n) => patchMembership({ previewRowCount: n ?? 0 })}
-          />
-        </div>
-        <CheckField
-          label="Open the comparison straight away"
-          checked={membership.startExpanded}
-          onChange={(startExpanded) => patchMembership({ startExpanded })}
-        />
-        <TextField
-          label="Headline"
-          wide
-          value={membership.headline}
-          onChange={(headline) => patchMembership({ headline })}
-        />
-        <HtmlField
-          label="Subhead"
-          value={membership.subheadHtml}
-          onChange={(subheadHtml) => patchMembership({ subheadHtml })}
-        />
-        <div className="rl-cfg__grid">
-          <TextField
-            label="Expand button"
-            value={membership.expandLabel}
-            onChange={(expandLabel) => patchMembership({ expandLabel })}
-          />
-          <TextField
-            label="Collapse button"
-            value={membership.collapseLabel}
-            onChange={(collapseLabel) => patchMembership({ collapseLabel })}
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Chronic medication refills"
-        description="Replaces the pre-exam medication question with a refill ask."
-      >
-        <CheckField
-          label="Ask about refills"
-          checked={chronicMeds.enabled}
-          onChange={(enabled) => patchChronicMeds({ enabled })}
-        />
-        <TextField
-          label="Question"
-          wide
-          value={chronicMeds.questionText}
-          hint={PET_NAME_HINT}
-          onChange={(questionText) => patchChronicMeds({ questionText })}
-        />
-        <HtmlField
-          label="Intro"
-          value={chronicMeds.introHtml}
-          onChange={(introHtml) => patchChronicMeds({ introHtml })}
-        />
-        <div className="rl-cfg__grid">
-          <CheckField
-            label="Offer “bring it to the visit”"
-            checked={chronicMeds.allowBring}
-            onChange={(allowBring) => patchChronicMeds({ allowBring })}
-          />
-          <TextField
-            label="Bring-it label"
-            value={chronicMeds.bringLabel}
-            onChange={(bringLabel) => patchChronicMeds({ bringLabel })}
-          />
-          <CheckField
-            label="Offer “ship it to me”"
-            checked={chronicMeds.allowShip}
-            onChange={(allowShip) => patchChronicMeds({ allowShip })}
-          />
-          <TextField
-            label="Ship-it label"
-            value={chronicMeds.shipLabel}
-            onChange={(shipLabel) => patchChronicMeds({ shipLabel })}
-          />
-          <CheckField
-            label="Let them type a medication we have no record of"
-            checked={chronicMeds.allowFreeText}
-            onChange={(allowFreeText) => patchChronicMeds({ allowFreeText })}
-          />
-          <TextField
-            label="Free-text label"
-            value={chronicMeds.freeTextLabel}
-            onChange={(freeTextLabel) => patchChronicMeds({ freeTextLabel })}
-          />
-        </div>
-      </Section>
-
-      <Section
-        title="Default caution text"
-        description="Used whenever an offer has no caution of its own to show after the client crosses it out."
-      >
-        <HtmlField
-          label="Caution"
-          value={config.defaultDeclineCautionHtml}
-          onChange={(defaultDeclineCautionHtml) =>
-            setConfig((prev) => (prev ? { ...prev, defaultDeclineCautionHtml } : prev))
-          }
-        />
-      </Section>
-
-      <div className="settings-action-bar rl-cfg__actions">
-        <button className="btn" type="button" onClick={() => void save()} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Room Loader settings'}
-        </button>
-        <button
-          className="btn secondary"
-          type="button"
-          onClick={() => void load()}
-          disabled={saving || !dirty}
+      <div className="rl-cfg">
+        <div
+          className="settings-appt-type-subtabs rl-cfg__tabs"
+          role="tablist"
+          aria-label="Room Loader settings view"
         >
-          Discard changes
-        </button>
-        <button className="btn secondary" type="button" onClick={() => void loadStarter()} disabled={saving}>
-          Load VAYD starter settings
-        </button>
-        <span className={`rl-cfg__dirty${dirty ? ' is-dirty' : ''}`}>
-          {dirty ? 'Unsaved changes' : 'All changes saved'}
-        </span>
+          {(
+            [
+              ['preview', 'Preview & wording'],
+              ['advanced', 'Advanced: items, ages & rules'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              className={`settings-appt-type-subtab${tab === key ? ' settings-appt-type-subtab--active' : ''}`}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {tab === 'preview' ? (
+          <RoomLoaderPreviewTab
+            practiceId={practiceId}
+            config={config}
+            setConfig={setConfig}
+            onOpenAdvanced={() => setTab('advanced')}
+          />
+        ) : (
+          <>
+            <Section
+              title="Lab panels by age & species"
+              description={`${membershipCutoffHint()} A pet can match several rules; the lowest order asks first. Medical-concern overwrite is under Medical concern below.`}
+              meta={`${config.panelRules.length} rule${config.panelRules.length === 1 ? '' : 's'}`}
+              defaultOpen
+            >
+              {membershipAgeNote ? <p className="rl-cfg__warn">{membershipAgeNote}</p> : null}
+              {config.panelRules.length === 0 ? (
+                <p className="rl-cfg__empty">No panel rules yet.</p>
+              ) : null}
+              {config.panelRules.map((rule, index) => (
+                <PanelRuleEditor
+                  key={rule.id}
+                  practiceId={practiceId}
+                  rule={rule}
+                  allRules={config.panelRules}
+                  labsPage={labsPage}
+                  overwriteAgeBasedPanels={medicalConcern.overwriteAgeBasedPanels !== false}
+                  index={index}
+                  total={config.panelRules.length}
+                  plans={alignPlans}
+                  onChange={(patch) =>
+                    setPanelRules((list) =>
+                      list.map((r, i) => (i === index ? { ...r, ...patch } : r))
+                    )
+                  }
+                  onMove={(delta) =>
+                    setPanelRules((list) => resequence(moveAt(list, index, delta)))
+                  }
+                  onRemove={() => setPanelRules((list) => list.filter((_, i) => i !== index))}
+                  onError={onError}
+                />
+              ))}
+              <AddButton
+                label="Add a panel rule"
+                onClick={() => setPanelRules((list) => [...list, newPanelRule(list.length)])}
+              />
+            </Section>
+
+            <Section
+              title="Offer to everyone"
+              description="Add-ons shown to every patient the species filter allows, whatever their age or history."
+              meta={`${config.universalOffers.length} offer${config.universalOffers.length === 1 ? '' : 's'}`}
+            >
+              {config.universalOffers.length === 0 ? (
+                <p className="rl-cfg__empty">No universal offers yet.</p>
+              ) : null}
+              {config.universalOffers.map((offer, index) => (
+                <UniversalOfferEditor
+                  key={offer.id}
+                  practiceId={practiceId}
+                  offer={offer}
+                  index={index}
+                  total={config.universalOffers.length}
+                  onChange={(patch) =>
+                    setUniversalOffers((list) =>
+                      list.map((o, i) => (i === index ? { ...o, ...patch } : o))
+                    )
+                  }
+                  onMove={(delta) =>
+                    setUniversalOffers((list) => resequence(moveAt(list, index, delta)))
+                  }
+                  onRemove={() => setUniversalOffers((list) => list.filter((_, i) => i !== index))}
+                />
+              ))}
+              <AddButton
+                label="Add an offer"
+                onClick={() =>
+                  setUniversalOffers((list) => [...list, newUniversalOffer(list.length)])
+                }
+              />
+            </Section>
+
+            <Section
+              title="Species & age gated offers"
+              description="One item offered only to the pets that fit the species, age and history rules below."
+              meta={`${config.gatedOffers.length} offer${config.gatedOffers.length === 1 ? '' : 's'}`}
+            >
+              {config.gatedOffers.length === 0 ? (
+                <p className="rl-cfg__empty">No gated offers yet.</p>
+              ) : null}
+              {config.gatedOffers.map((offer, index) => (
+                <GatedOfferEditor
+                  key={offer.id}
+                  practiceId={practiceId}
+                  offer={offer}
+                  index={index}
+                  total={config.gatedOffers.length}
+                  onChange={(patch) =>
+                    setGatedOffers((list) =>
+                      list.map((o, i) => (i === index ? { ...o, ...patch } : o))
+                    )
+                  }
+                  onMove={(delta) =>
+                    setGatedOffers((list) => resequence(moveAt(list, index, delta)))
+                  }
+                  onRemove={() => setGatedOffers((list) => list.filter((_, i) => i !== index))}
+                />
+              ))}
+              <div className="rl-cfg__row-actions-inline">
+                <AddButton
+                  label="Add a gated offer"
+                  onClick={() => setGatedOffers((list) => [...list, newGatedOffer(list.length)])}
+                />
+                <AddButton
+                  label="Add VAYD starter vaccines"
+                  onClick={() =>
+                    setGatedOffers((list) =>
+                      resequence([...list, ...missingById(list, vaydVaccineGatedOffers())])
+                    )
+                  }
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Questions about the estimate"
+              description="Asked because of a line staff already put on the estimate — which form of a vaccine the owner wants, whether to book the booster after a first dose. The answer goes to staff and the PDF; it does not change the estimate."
+              meta={`${(config.itemQuestions ?? []).length} question${
+                (config.itemQuestions ?? []).length === 1 ? '' : 's'
+              }`}
+            >
+              {(config.itemQuestions ?? []).length === 0 ? (
+                <p className="rl-cfg__empty">No questions yet.</p>
+              ) : null}
+              {(config.itemQuestions ?? []).map((question, index) => (
+                <ItemQuestionEditor
+                  key={question.id}
+                  practiceId={practiceId}
+                  question={question}
+                  index={index}
+                  total={(config.itemQuestions ?? []).length}
+                  onChange={(patch) =>
+                    setItemQuestions((list) =>
+                      list.map((q, i) => (i === index ? { ...q, ...patch } : q))
+                    )
+                  }
+                  onMove={(delta) =>
+                    setItemQuestions((list) => resequence(moveAt(list, index, delta)))
+                  }
+                  onRemove={() => setItemQuestions((list) => list.filter((_, i) => i !== index))}
+                />
+              ))}
+              <div className="rl-cfg__row-actions-inline">
+                <AddButton
+                  label="Add a question"
+                  onClick={() =>
+                    setItemQuestions((list) => [...list, newItemQuestion(list.length)])
+                  }
+                />
+                <AddButton
+                  label="Add VAYD starter questions"
+                  onClick={() =>
+                    setItemQuestions((list) =>
+                      resequence([...list, ...missingById(list, vaydItemQuestions())])
+                    )
+                  }
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Why we recommend this"
+              description="Shown under a care plan or summary line once the client unchecks it. Use it for vaccines and screenings staff put on the estimate, such as rabies or FVRCP."
+              meta={`${(config.declineReasons ?? []).length} explanation${
+                (config.declineReasons ?? []).length === 1 ? '' : 's'
+              }`}
+            >
+              {(config.declineReasons ?? []).length === 0 ? (
+                <p className="rl-cfg__empty">
+                  No explanations yet. Rows fall back to the built-in vaccine and screening copy.
+                </p>
+              ) : null}
+              {(config.declineReasons ?? []).map((reason, index) => (
+                <DeclineReasonEditor
+                  key={reason.id}
+                  practiceId={practiceId}
+                  reason={reason}
+                  index={index}
+                  total={(config.declineReasons ?? []).length}
+                  onChange={(patch) =>
+                    setDeclineReasons((list) =>
+                      list.map((r, i) => (i === index ? { ...r, ...patch } : r))
+                    )
+                  }
+                  onMove={(delta) => setDeclineReasons((list) => moveAt(list, index, delta))}
+                  onRemove={() => setDeclineReasons((list) => list.filter((_, i) => i !== index))}
+                />
+              ))}
+              <div className="rl-cfg__row-actions-inline">
+                <AddButton
+                  label="Add an explanation"
+                  onClick={() => setDeclineReasons((list) => [...list, newDeclineReason()])}
+                />
+                <AddButton
+                  label="Add VAYD starter explanations"
+                  onClick={() =>
+                    setDeclineReasons((list) => [
+                      ...list,
+                      ...missingById(list, vaydDeclineReasons()),
+                    ])
+                  }
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Outdoor question"
+              description="Asked once per pet. Sub-asks and gated offers can wait on a yes."
+            >
+              <CheckField
+                label="Ask the outdoor-access question"
+                checked={outdoor.enabled}
+                onChange={(enabled) => patchOutdoor({ enabled })}
+              />
+              <div className="rl-cfg__grid">
+                <SpeciesFilterField
+                  label="Ask for"
+                  value={outdoor.species}
+                  onChange={(species) => patchOutdoor({ species })}
+                />
+                <CheckField
+                  label="An answer is required"
+                  checked={outdoor.required}
+                  onChange={(required) => patchOutdoor({ required })}
+                />
+              </div>
+              <TextField
+                label="Question"
+                wide
+                value={outdoor.questionText}
+                hint={PET_NAME_HINT}
+                onChange={(questionText) => patchOutdoor({ questionText })}
+              />
+              <HtmlField
+                label="Shown after a yes"
+                value={outdoor.pitchHtml}
+                placeholder="Why outdoor pets need this…"
+                hint={PET_NAME_HINT}
+                onChange={(pitchHtml) => patchOutdoor({ pitchHtml })}
+              />
+              <div className="rl-cfg__grid">
+                <ItemField
+                  label="Item offered after a yes"
+                  practiceId={practiceId}
+                  value={outdoor.pitchItem}
+                  onChange={(pitchItem) => patchOutdoor({ pitchItem })}
+                />
+                <TextField
+                  label="Name the client sees"
+                  value={outdoor.pitchDisplayName}
+                  placeholder={itemLabel(outdoor.pitchItem)}
+                  onChange={(pitchDisplayName) => patchOutdoor({ pitchDisplayName })}
+                />
+              </div>
+              <HtmlField
+                label="Shown if they cross it out"
+                value={outdoor.pitchCautionHtml}
+                onChange={(pitchCautionHtml) => patchOutdoor({ pitchCautionHtml })}
+              />
+              <ItemRefList
+                practiceId={practiceId}
+                title="Also counts as already covered"
+                note="Other FeLV products (1-year, 2-year, clinic codes). The pitch is skipped when one of these is on the estimate or in the pet's history."
+                items={outdoor.equivalentItems ?? []}
+                addLabel="Add an item"
+                onChange={(equivalentItems) => patchOutdoor({ equivalentItems })}
+              />
+              <HistoryGateEditor
+                value={outdoor.history}
+                onChange={(history) => patchOutdoor({ history })}
+              />
+            </Section>
+
+            <Section
+              title="Medical concern"
+              description="What happens when staff flag that the visit warrants lab work."
+            >
+              <CheckField
+                label="Replace the usual panel with this species’ two-panel choice"
+                checked={medicalConcern.overwriteAgeBasedPanels !== false}
+                hint="A sick puppy or adult sees Standard vs Extended at any age, not fecal-only or early detection. Uses the two-panel rule for that species. Turn off to keep the age-based ask and only add the extra panels below."
+                onChange={(overwriteAgeBasedPanels) =>
+                  patchMedicalConcern({ overwriteAgeBasedPanels })
+                }
+              />
+              <CheckField
+                label="Also ask about these extra panels"
+                checked={medicalConcern.enabled}
+                hint="Adds the panels below on top of whatever rule the client is already seeing."
+                onChange={(enabled) => patchMedicalConcern({ enabled })}
+              />
+              <SpeciesFilterField
+                label="Ask for"
+                value={medicalConcern.species}
+                onChange={(species) => patchMedicalConcern({ species })}
+              />
+              <HtmlField
+                label="Shown above the panels"
+                value={medicalConcern.introHtml}
+                onChange={(introHtml) => patchMedicalConcern({ introHtml })}
+              />
+              <PanelOptionList
+                practiceId={practiceId}
+                options={medicalConcern.options}
+                species={medicalConcern.species}
+                plans={alignPlans}
+                onChange={(options) => patchMedicalConcern({ options })}
+                onError={onError}
+              />
+            </Section>
+
+            <Section
+              title="Labs page copy"
+              description="Headings the client reads above the panels."
+            >
+              <TextField
+                label="Page title"
+                wide
+                value={labsPage.title}
+                onChange={(title) => patchLabsPage({ title })}
+              />
+              <HtmlField
+                label="Intro"
+                value={labsPage.introHtml}
+                onChange={(introHtml) => patchLabsPage({ introHtml })}
+              />
+              <HtmlField
+                label="Intro when a medical concern was flagged"
+                value={labsPage.medicalConcernIntroHtml}
+                onChange={(medicalConcernIntroHtml) => patchLabsPage({ medicalConcernIntroHtml })}
+              />
+              <ImageField
+                label="Sample results image"
+                imageUrl={labsPage.imageUrl}
+                imageCaption={labsPage.imageCaption}
+                onChange={patchLabsPage}
+                onError={onError}
+              />
+            </Section>
+
+            <Section
+              title="How to collect a sample"
+              description="Shown at the bottom of the labs page once the client accepts a test that needs the owner to collect something. List the panels that bundle a stool or urine test — a panel you leave off every card says nothing."
+              meta={`${(config.sampleInstructions ?? []).length} instruction${
+                (config.sampleInstructions ?? []).length === 1 ? '' : 's'
+              }`}
+            >
+              {(config.sampleInstructions ?? []).length === 0 ? (
+                <p className="rl-cfg__empty">No collection instructions yet.</p>
+              ) : null}
+              {(config.sampleInstructions ?? []).map((instruction, index) => (
+                <SampleInstructionEditor
+                  key={instruction.id}
+                  practiceId={practiceId}
+                  instruction={instruction}
+                  index={index}
+                  total={(config.sampleInstructions ?? []).length}
+                  onChange={(patch) =>
+                    setSampleInstructions((list) =>
+                      list.map((row, i) => (i === index ? { ...row, ...patch } : row))
+                    )
+                  }
+                  onMove={(delta) =>
+                    setSampleInstructions((list) => resequence(moveAt(list, index, delta)))
+                  }
+                  onRemove={() =>
+                    setSampleInstructions((list) => list.filter((_, i) => i !== index))
+                  }
+                />
+              ))}
+              <div className="rl-cfg__row-actions-inline">
+                <AddButton
+                  label="Add collection instructions"
+                  onClick={() =>
+                    setSampleInstructions((list) => [...list, newSampleInstruction(list.length)])
+                  }
+                />
+                <AddButton
+                  label="Add VAYD starter instructions"
+                  onClick={() =>
+                    setSampleInstructions((list) =>
+                      resequence([...list, ...missingById(list, vaydSampleInstructions())])
+                    )
+                  }
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Prevention guide"
+              description="A collapsible comparison table on the summary page. Informational only — nothing here is added to the estimate; it tells the client what to search for in the store box."
+              meta={
+                productGuide.enabled
+                  ? `${productGuide.tables.length} table${productGuide.tables.length === 1 ? '' : 's'}`
+                  : 'Off'
+              }
+            >
+              <CheckField
+                label="Show the prevention guide"
+                checked={productGuide.enabled}
+                onChange={(enabled) => patchProductGuide({ enabled })}
+              />
+              <TextField
+                label="Text on the expander"
+                wide
+                placeholder="Learn more about the prevention we offer"
+                value={productGuide.summaryLabel}
+                onChange={(summaryLabel) => patchProductGuide({ summaryLabel })}
+              />
+              {productGuide.tables.length === 0 ? (
+                <p className="rl-cfg__empty">No tables yet.</p>
+              ) : null}
+              {productGuide.tables.map((table, index) => (
+                <ProductGuideTableEditor
+                  key={table.id}
+                  table={table}
+                  index={index}
+                  total={productGuide.tables.length}
+                  onChange={(patch) =>
+                    patchProductGuide({
+                      tables: productGuide.tables.map((t, i) =>
+                        i === index ? { ...t, ...patch } : t
+                      ),
+                    })
+                  }
+                  onMove={(delta) =>
+                    patchProductGuide({
+                      tables: resequence(moveAt(productGuide.tables, index, delta)),
+                    })
+                  }
+                  onRemove={() =>
+                    patchProductGuide({
+                      tables: resequence(productGuide.tables.filter((_, i) => i !== index)),
+                    })
+                  }
+                />
+              ))}
+              <AddButton
+                label="Add a table"
+                onClick={() =>
+                  patchProductGuide({
+                    tables: [
+                      ...productGuide.tables,
+                      newProductGuideTable(productGuide.tables.length),
+                    ],
+                  })
+                }
+              />
+            </Section>
+
+            <Section
+              title="Membership pitch"
+              description="The savings comparison shown on the summary page."
+            >
+              <CheckField
+                label="Show the membership pitch"
+                checked={membership.enabled}
+                onChange={(enabled) => patchMembership({ enabled })}
+              />
+              <div className="rl-cfg__grid">
+                <SelectField
+                  label="Where it sits"
+                  value={membership.placement}
+                  options={PLACEMENT_OPTIONS}
+                  onChange={(placement) => patchMembership({ placement })}
+                />
+                <NumberField
+                  label="Savings rows shown before expanding"
+                  value={membership.previewRowCount}
+                  hint="0 shows the headline only."
+                  onChange={(n) => patchMembership({ previewRowCount: n ?? 0 })}
+                />
+              </div>
+              <CheckField
+                label="Open the comparison straight away"
+                checked={membership.startExpanded}
+                onChange={(startExpanded) => patchMembership({ startExpanded })}
+              />
+              <TextField
+                label="Headline"
+                wide
+                value={membership.headline}
+                onChange={(headline) => patchMembership({ headline })}
+              />
+              <HtmlField
+                label="Subhead"
+                value={membership.subheadHtml}
+                onChange={(subheadHtml) => patchMembership({ subheadHtml })}
+              />
+              <div className="rl-cfg__grid">
+                <TextField
+                  label="Expand button"
+                  value={membership.expandLabel}
+                  onChange={(expandLabel) => patchMembership({ expandLabel })}
+                />
+                <TextField
+                  label="Collapse button"
+                  value={membership.collapseLabel}
+                  onChange={(collapseLabel) => patchMembership({ collapseLabel })}
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Chronic medication refills"
+              description="Replaces the pre-exam medication question with a refill ask."
+            >
+              <CheckField
+                label="Ask about refills"
+                checked={chronicMeds.enabled}
+                onChange={(enabled) => patchChronicMeds({ enabled })}
+              />
+              <TextField
+                label="Question"
+                wide
+                value={chronicMeds.questionText}
+                hint={PET_NAME_HINT}
+                onChange={(questionText) => patchChronicMeds({ questionText })}
+              />
+              <HtmlField
+                label="Intro"
+                value={chronicMeds.introHtml}
+                onChange={(introHtml) => patchChronicMeds({ introHtml })}
+              />
+              <div className="rl-cfg__grid">
+                <CheckField
+                  label="Offer “bring it to the visit”"
+                  checked={chronicMeds.allowBring}
+                  onChange={(allowBring) => patchChronicMeds({ allowBring })}
+                />
+                <TextField
+                  label="Bring-it label"
+                  value={chronicMeds.bringLabel}
+                  onChange={(bringLabel) => patchChronicMeds({ bringLabel })}
+                />
+                <CheckField
+                  label="Offer “ship it to me”"
+                  checked={chronicMeds.allowShip}
+                  onChange={(allowShip) => patchChronicMeds({ allowShip })}
+                />
+                <TextField
+                  label="Ship-it label"
+                  value={chronicMeds.shipLabel}
+                  onChange={(shipLabel) => patchChronicMeds({ shipLabel })}
+                />
+                <CheckField
+                  label="Let them type a medication we have no record of"
+                  checked={chronicMeds.allowFreeText}
+                  onChange={(allowFreeText) => patchChronicMeds({ allowFreeText })}
+                />
+                <TextField
+                  label="Free-text label"
+                  value={chronicMeds.freeTextLabel}
+                  onChange={(freeTextLabel) => patchChronicMeds({ freeTextLabel })}
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Default caution text"
+              description="Used whenever an offer has no caution of its own to show after the client crosses it out."
+            >
+              <HtmlField
+                label="Caution"
+                value={config.defaultDeclineCautionHtml}
+                onChange={(defaultDeclineCautionHtml) =>
+                  setConfig((prev) => (prev ? { ...prev, defaultDeclineCautionHtml } : prev))
+                }
+              />
+            </Section>
+          </>
+        )}
+
+        <div className="settings-action-bar rl-cfg__actions">
+          <button className="btn" type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save Room Loader settings'}
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => void load()}
+            disabled={saving || !dirty}
+          >
+            Discard changes
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => void loadStarter()}
+            disabled={saving}
+          >
+            Load VAYD starter settings
+          </button>
+          <span className={`rl-cfg__dirty${dirty ? ' is-dirty' : ''}`}>
+            {dirty ? 'Unsaved changes' : 'All changes saved'}
+          </span>
+        </div>
       </div>
-    </div>
     </SpeciesCatalogContext.Provider>
   );
 }
@@ -1936,10 +2016,7 @@ function PanelOptionEditor({
   onError: (msg: string) => void;
 }) {
   const name = option.displayName || itemLabel(option.item) || 'New panel';
-  const coveredBy = coveringPlansLabel(
-    coveringFamiliesForItem(option.item, plans, species),
-    name
-  );
+  const coveredBy = coveringPlansLabel(coveringFamiliesForItem(option.item, plans, species), name);
   return (
     <div className="rl-cfg__card rl-cfg__card--nested">
       <header className="rl-cfg__card-head">
@@ -2201,8 +2278,8 @@ function PanelRuleEditor({
           ))}
           {overwriteAgeBasedPanels && rule.options.length <= 1 ? (
             <p className="rl-cfg__hint">
-              Medical concern is set to replace this ask with the two-panel rule for this
-              species. Change that under Medical concern.
+              Medical concern is set to replace this ask with the two-panel rule for this species.
+              Change that under Medical concern.
             </p>
           ) : null}
           <HtmlField
@@ -2261,7 +2338,7 @@ function previewEngineCtx(rule: RoomLoaderPanelRule, medicalConcern: boolean): E
   const sel = asSpeciesSelection(rule.species);
   const species = sel.includes('dog')
     ? 'dog'
-    : sel.find((slug) => slug !== ROOM_LOADER_ALL_SPECIES) ?? 'dog';
+    : (sel.find((slug) => slug !== ROOM_LOADER_ALL_SPECIES) ?? 'dog');
   return {
     species,
     ageMonths: 36,
@@ -2275,7 +2352,10 @@ function previewEngineCtx(rule: RoomLoaderPanelRule, medicalConcern: boolean): E
 
 function useCatalogListPrices(practiceId: number, rules: RoomLoaderPanelRule[], enabled: boolean) {
   const refs = useMemo(() => itemRefsFromPanelRules(rules), [rules]);
-  const refKey = refs.map((ref) => `${ref.itemType}:${ref.itemId}`).sort().join(',');
+  const refKey = refs
+    .map((ref) => `${ref.itemType}:${ref.itemId}`)
+    .sort()
+    .join(',');
   const refsRef = useRef(refs);
   refsRef.current = refs;
   const [prices, setPrices] = useState<Record<string, number>>({});
@@ -2356,10 +2436,10 @@ function PanelRuleClientPreview({
         <div className="rl-cfg__preview-body">
           <p className="rl-cfg__hint">
             This is the labs question as the client sees it. Sample names fill {'{petName}'} and{' '}
-            {'{doctorName}'} ({petName} and {doctorName}). Prices come from the catalog items
-            above (list price from the catalog fields). On the live form they also adjust for
-            membership and client discounts. Clients only see one pair of paragraphs at a time —
-            routine or medical concern, never all four together.
+            {'{doctorName}'} ({petName} and {doctorName}). Prices come from the catalog items above
+            (list price from the catalog fields). On the live form they also adjust for membership
+            and client discounts. Clients only see one pair of paragraphs at a time — routine or
+            medical concern, never all four together.
             {medicalSwitched
               ? ` A medical-concern visit uses “${medicalRules[0].label || 'the two-panel rule'}” at any age.`
               : ''}
@@ -2477,7 +2557,10 @@ function UniversalOfferEditor({
             onChange={(checked) =>
               onChange({
                 history: {
-                  ...(offer.history ?? { ...emptyHistoryGate(), showEvenIfPreviouslyDeclined: true }),
+                  ...(offer.history ?? {
+                    ...emptyHistoryGate(),
+                    showEvenIfPreviouslyDeclined: true,
+                  }),
                   neverOfferAgainOnceDone: checked,
                 },
               })
@@ -2632,7 +2715,8 @@ function ItemQuestionEditor({
   const [open, setOpen] = useState(false);
   const catalog = useEditorSpeciesCatalog();
   const choices = question.choices ?? [];
-  const name = question.label || itemLabel(question.triggerItems?.[0] ?? null) || 'Untitled question';
+  const name =
+    question.label || itemLabel(question.triggerItems?.[0] ?? null) || 'Untitled question';
   const patchChoice = (i: number, patch: Partial<RoomLoaderQuestionChoice>) =>
     onChange({ choices: choices.map((c, n) => (n === i ? { ...c, ...patch } : c)) });
 
@@ -2723,7 +2807,9 @@ function ItemQuestionEditor({
               <h4 className="rl-cfg__sub-title">Answers</h4>
             </div>
             {choices.length === 0 ? (
-              <p className="rl-cfg__empty">No answers yet. The question stays hidden until one exists.</p>
+              <p className="rl-cfg__empty">
+                No answers yet. The question stays hidden until one exists.
+              </p>
             ) : null}
             {choices.map((choice, i) => (
               <div className="rl-cfg__item-row" key={choice.id}>

@@ -244,7 +244,7 @@ export default function IdexxSendModal({
                 value={vetId}
                 onChange={(e) => setVetId(e.target.value ? Number(e.target.value) : '')}
               >
-                <option value="">Me</option>
+                <option value="">Appointment's doctor</option>
                 {vets.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name}

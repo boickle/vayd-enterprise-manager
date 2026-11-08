@@ -4,9 +4,9 @@ import type { LabFormElement } from './labValues';
 /**
  * The stock in-house lab forms, matching what staff used in the old PIMS.
  *
- * Seeds are matched on `seedKey`, so installing them twice refreshes the stock
- * forms instead of duplicating them. Anything staff add themselves has no
- * seedKey and is never touched.
+ * Seeds are matched on `seedKey`. "Add missing standard forms" only adds a seed
+ * the practice doesn't have yet; a form that already exists is never changed.
+ * Anything staff add themselves has no seedKey and is never touched.
  */
 
 export const IN_HOUSE_CATEGORY = 'In-house lab work';
@@ -26,21 +26,19 @@ function snap(name: string): LabFormElement {
   };
 }
 
-function numeric(
-  name: string,
-  min: number | null,
-  max: number | null,
-  units: string | null,
-  defaultValue?: string
-): LabFormElement {
+/**
+ * Numeric row. No reference range and no default: a range would flag (or print
+ * on a record) the same way for dogs and cats, and a default would be saved as a
+ * real result if staff clicked Save without typing (LAB-06, LAB-05).
+ */
+function numeric(name: string, units: string | null): LabFormElement {
   return {
     key: '',
     name,
     valueType: 'number',
-    min,
-    max,
+    min: null,
+    max: null,
     units,
-    ...(defaultValue != null ? { defaultValue } : {}),
   };
 }
 
@@ -50,13 +48,13 @@ function freeText(name: string): LabFormElement {
 
 /** Shared dipstick pad rows, reused by the plain and with-sediment forms. */
 const URINE_DIPSTICK_PADS: LabFormElement[] = [
-  numeric('Urobilinogen', 0.2, 8, 'mg/dl', '0.2'),
-  numeric('Protein', 0, 2000, 'mg/dl', '0'),
-  numeric('pH', 5, 8.5, 'pH', '5'),
-  numeric('Blood', 0, 6, null, '0'),
-  numeric('Ketone', 0, 160, 'mg/dl', '0'),
-  numeric('Bilirubin', 0, 4, null, '0'),
-  numeric('Glucose', 0, 2000, 'mg/dl', '0'),
+  numeric('Urobilinogen', 'mg/dl'),
+  numeric('Protein', 'mg/dl'),
+  numeric('pH', 'pH'),
+  numeric('Blood', null),
+  numeric('Ketone', 'mg/dl'),
+  numeric('Bilirubin', null),
+  numeric('Glucose', 'mg/dl'),
 ];
 
 export const LAB_FORM_SEEDS: UpsertLabFormTemplate[] = [
@@ -66,7 +64,7 @@ export const LAB_FORM_SEEDS: UpsertLabFormTemplate[] = [
     category: IN_HOUSE_CATEGORY,
     mode: 'analytes',
     sortOrder: 10,
-    elements: [numeric('BLOOD GLUCOSE', 0, 500, 'mg/dl', '0')],
+    elements: [numeric('BLOOD GLUCOSE', 'mg/dl')],
   },
   {
     seedKey: 'ear_cytology',
@@ -108,7 +106,7 @@ export const LAB_FORM_SEEDS: UpsertLabFormTemplate[] = [
     category: IN_HOUSE_CATEGORY,
     mode: 'analytes',
     sortOrder: 50,
-    elements: [numeric('OD', 0, 30, null, '0'), numeric('OS', 0, 30, null, '0')],
+    elements: [numeric('OD', null), numeric('OS', null)],
   },
   {
     seedKey: 'urinalysis',
@@ -150,10 +148,10 @@ export const LAB_FORM_SEEDS: UpsertLabFormTemplate[] = [
     mode: 'analytes',
     sortOrder: 90,
     elements: [
-      numeric('Parabasal cells', 0, 100, '%'),
-      numeric('Intermediate cells', 0, 100, '%'),
-      numeric('Superficial cells', 0, 100, '%'),
-      numeric('Anuclear squamous cells', 0, 100, '%'),
+      numeric('Parabasal cells', '%'),
+      numeric('Intermediate cells', '%'),
+      numeric('Superficial cells', '%'),
+      numeric('Anuclear squamous cells', '%'),
       freeText('Neutrophils'),
       freeText('Bacteria'),
       freeText('Stage'),

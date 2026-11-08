@@ -282,6 +282,8 @@ export type VisitInvoice = {
    */
   lotsCleared?: boolean;
   lotsClearedLineId?: string;
+  /** Only on the reply to a line edit that moved a lab to another pet: what stays with the first pet (LAB-07). */
+  labWarnings?: string[];
   /**
    * A line of this invoice has a return whose credit still stands: it can't be unlocked or
    * reopened (owner decision, Nov 1, 2026).
@@ -1676,6 +1678,7 @@ export async function updateCounterInvoiceLine(
   );
   // Every screen that edits a line hears about it, whichever field changed the quantity.
   if (data?.lotsCleared) void appAlert({ title: 'Lots cleared', message: LOTS_CLEARED_MESSAGE });
+  if (data?.labWarnings?.length) void appAlert({ title: 'Lab stays with the first pet', message: data.labWarnings.join('\n') });
   return data;
 }
 

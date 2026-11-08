@@ -1,0 +1,250 @@
+/* Settings → Room Loader → Preview & wording */
+.rl-cfg__tabs {
+  margin-bottom: 4px;
+}
+
+.rl-prev {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Sample pet bar */
+.rl-prev__pet {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  background: #f4f8f6;
+  border: 1px solid #d5e4dc;
+  border-radius: 10px;
+}
+.rl-prev__pet-title {
+  font-weight: 700;
+  color: #1a2f24;
+}
+.rl-prev__pet-hint {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: #5b6b63;
+}
+.rl-prev__seg {
+  display: inline-flex;
+  border: 1px solid #b9cfc3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.rl-prev__seg button {
+  padding: 6px 12px;
+  border: 0;
+  border-right: 1px solid #b9cfc3;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  color: #1a2f24;
+}
+.rl-prev__seg button:last-child {
+  border-right: 0;
+}
+.rl-prev__seg button.is-on {
+  background: #2f6b4f;
+  color: #fff;
+  font-weight: 600;
+}
+.rl-prev__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+/* Two columns: what is offered, then the client's pages */
+.rl-prev__layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .rl-prev__layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rl-prev__offered {
+  position: sticky;
+  top: 86px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #dde5e1;
+  border-radius: 10px;
+}
+.rl-prev__offered h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.rl-prev__offered h4 {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5b6b63;
+}
+.rl-prev__offered ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rl-prev__offered li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid #eef2f0;
+  font-size: 14px;
+}
+.rl-prev__price {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: #1a2f24;
+}
+.rl-prev__offered-total {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.rl-prev__pages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rl-prev__page {
+  margin: 10px 0 0;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #2f6b4f;
+}
+.rl-prev__page:first-child {
+  margin-top: 0;
+}
+
+/* One block of the client form */
+.rl-prev__block {
+  border: 1px solid #dde5e1;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.rl-prev__block.is-editing {
+  border-color: #2f6b4f;
+  box-shadow: 0 0 0 2px rgba(47, 107, 79, 0.15);
+}
+.rl-prev__block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f7faf8;
+  border-bottom: 1px solid #e6ece9;
+}
+.rl-prev__block-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a2f24;
+}
+.rl-prev__edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #2f6b4f;
+  border-radius: 6px;
+  background: #fff;
+  color: #2f6b4f;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rl-prev__block.is-editing .rl-prev__edit {
+  background: #2f6b4f;
+  color: #fff;
+}
+.rl-prev__note {
+  margin: 8px 12px 0;
+  font-size: 13px;
+  color: #5b6b63;
+}
+.rl-prev__offered .rl-prev__note {
+  margin: 0;
+}
+.rl-prev__client {
+  padding: 12px 14px;
+}
+.rl-prev__empty {
+  margin: 0;
+  font-size: 14px;
+  color: #6b7a72;
+  font-style: italic;
+}
+
+/* Wording editor under a block */
+.rl-prev__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  background: #f4f8f6;
+  border-top: 1px solid #d5e4dc;
+}
+.rl-prev__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rl-prev__field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a2f24;
+}
+.rl-prev__field-hint {
+  font-size: 12px;
+  color: #5b6b63;
+}
+.rl-prev__textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #b9cfc3;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  resize: vertical;
+  background: #fff;
+}
+
+.rl-prev__reasons {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rl-prev__reasons li {
+  padding: 8px 10px;
+  border-left: 3px solid #f0b429;
+  background: #fffbea;
+  border-radius: 4px;
+  font-size: 14px;
+}

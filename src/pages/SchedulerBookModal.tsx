@@ -278,6 +278,11 @@ export type SchedulerBookPrefill = {
   lockProvider?: boolean;
   /** Replaces the default “Book appointment” dialog title. */
   modalTitle?: string;
+  /**
+   * Start with no appointment type: the user must choose one (booking by hand on the calendar).
+   * Owner, Nov 7, 2026: a preset Medical Visit / 60 min was easy to book by mistake.
+   */
+  noDefaultType?: boolean;
   /** When true with `lockClient` false, show read-only client (routing: admin cannot search-change client here). */
   disableClientSearch?: boolean;
   /** Employee “add another pet” same-slot flow — ignores Role manual booking settings. */
@@ -1209,9 +1214,10 @@ export function SchedulerBookModal({
     if (!allDayBookSession) return;
     setTypeId((prev) => {
       if (prev && typesForActivePicker.some((t) => String(t.id) === prev)) return prev;
+      if (prefill?.noDefaultType) return '';
       return typesForActivePicker[0] ? String(typesForActivePicker[0].id) : '';
     });
-  }, [allDayBookSession, typesForActivePicker]);
+  }, [allDayBookSession, typesForActivePicker, prefill?.noDefaultType]);
 
   useEffect(() => {
     if (prefill?.allDay) return;
@@ -1249,6 +1255,7 @@ export function SchedulerBookModal({
         isRescheduleBook && prefill?.rescheduleVisitPatches?.length === 1
           ? prefill.rescheduleVisitPatches[0]?.appointmentTypeId
           : undefined;
+      if (prefill?.noDefaultType) return '';
       const id = resolveBookModalDefaultAppointmentTypeId({
         sortedPickerTypes: sortedPicker,
         allTypes: appointmentTypes,
@@ -1261,6 +1268,7 @@ export function SchedulerBookModal({
       appointmentTypes,
       isRescheduleBook,
       prefill?.appointmentTypeId,
+      prefill?.noDefaultType,
       prefill?.rescheduleVisitPatches,
       prefill?.routingStatsTypeKey,
     ]
@@ -1711,7 +1719,9 @@ export function SchedulerBookModal({
       instructions: defaultStaffNotes,
       needsPremeds: defaultPremeds,
     };
-    setRoutingBookVisitEdits([...patientRows, noPatientRow]);
+    // Owner, Nov 7, 2026 (training review, SR-03): offer "No patient" only when the household has no
+    // pets to book. With pets, the extra unticked section looked like something to fill in.
+    setRoutingBookVisitEdits(patientRows.length > 0 ? patientRows : [noPatientRow]);
   }, [
     open,
     prefill?.routingPreviewBook,
@@ -2227,7 +2237,11 @@ export function SchedulerBookModal({
     } else if (perVisitRoutingBook) {
       const selected = routingBookVisitEdits.filter((v) => v.selected);
       if (selected.length === 0) {
-        setFormError('Select at least one patient, or choose No patient.');
+        setFormError(
+          routingBookVisitEdits.some((v) => v.isNoPatient)
+            ? 'Select at least one patient, or choose No patient.'
+            : 'Select at least one patient.'
+        );
         return;
       }
       if (selected.some((v) => !v.appointmentTypeId.trim())) {
@@ -3547,7 +3561,7 @@ export function SchedulerBookModal({
                     onChange={(e) => setTypeId(e.target.value)}
                     required
                   >
-                    <option value="">Select…</option>
+                    <option value="">Choose…</option>
                     {typesForActivePicker.map((t) => (
                       <option key={t.id} value={String(t.id)}>
                         {t.name || t.prettyName}

@@ -994,7 +994,10 @@ export function CheckoutInvoiceRxFields({
         {dymoSource ? (
           <SendRxLabelButton
             className="client-fin__dymo"
-            disabled={!scriptApproved || saving}
+            disabled={saving}
+            blockedReason={
+              scriptApproved ? null : 'Save the sig and approve the Rx before printing the label.'
+            }
             source={{
               ...dymoSource,
               instructions,
@@ -1285,7 +1288,7 @@ export default function VisitCheckoutPanel({
   scrollToCurrentPet = true,
   showPayment = true,
   onCheckout,
-  paymentBlockedReason = null,
+  paymentBlockedReason: paymentBlockedReasonProp = null,
   clientId,
   patientId,
   roster = [],
@@ -1417,6 +1420,16 @@ export default function VisitCheckoutPanel({
     for (const o of currentPendingOrders) byId.set(o.id, o);
     return [...byId.values()].filter(isRoomLoaderPrevisitOrder);
   }, [siblingPendingOrders, currentPendingOrders]);
+
+  /** Pre-visit accepts nobody has accepted or declined yet (any pet in the household). */
+  const undecidedPrevisit = previsitOrders.filter((o) => o.state === 'proposed');
+  const previsitBlockReason =
+    undecidedPrevisit.length > 0
+      ? `Accept or decline ${undecidedPrevisit.length} pre-visit item${
+          undecidedPrevisit.length === 1 ? '' : 's'
+        } first.`
+      : null;
+  const paymentBlockedReason = paymentBlockedReasonProp ?? previsitBlockReason;
 
   const visitDeclinedOrders = useMemo(() => {
     const byId = new Map<string, EncounterOrder>();
@@ -3848,9 +3861,17 @@ export default function VisitCheckoutPanel({
               <button
                 type="button"
                 className="soap-btn"
-                disabled={disabled || busy != null || isVoid || outstandingLines.length > 0}
+                disabled={
+                  disabled ||
+                  busy != null ||
+                  isVoid ||
+                  outstandingLines.length > 0 ||
+                  undecidedPrevisit.length > 0
+                }
                 title={
-                  outstandingLines.length > 0
+                  previsitBlockReason
+                    ? previsitBlockReason
+                    : outstandingLines.length > 0
                     ? `Finish ${outstandingLines.length} item${outstandingLines.length === 1 ? '' : 's'} first: ${outstandingLines
                         .map((l) => l.description)
                         .join(', ')}`
@@ -3860,6 +3881,9 @@ export default function VisitCheckoutPanel({
               >
                 <Receipt size={14} /> {isPaid ? 'Open checkout' : 'Checkout'}
               </button>
+              {previsitBlockReason ? (
+                <p className="soap-hint soap-hint--warn">{previsitBlockReason}</p>
+              ) : null}
               <p className="soap-hint">
                 {outstandingLines.length > 0
                   ? `${outstandingLines.length} item${outstandingLines.length === 1 ? '' : 's'} still need doses, scripts, or a lot picked.`

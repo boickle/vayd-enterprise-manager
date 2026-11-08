@@ -788,7 +788,8 @@ export default function App() {
                     <Route path="jot" element={<BriefWorkspacePage />} />
                     <Route path="epiphany" element={<Navigate to="/schedule/jot" replace />} />
                     <Route path="brief" element={<Navigate to="/schedule/jot" replace />} />
-                    <Route path="chat" element={<PracticeChatPage />} />
+                    <Route path="help" element={<PracticeChatPage />} />
+                    <Route path="chat" element={<Navigate to="/schedule/help" replace />} />
                     <Route path="soap" element={<Navigate to="/schedule/home" replace />} />
                     <Route
                       path="soap/:appointmentId/:patientId"

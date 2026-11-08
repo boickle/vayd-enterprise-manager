@@ -97,7 +97,7 @@ function PanelFigure({
 
 function namesReplacedOnEstimate(option: RoomLoaderPanelOption, ctx: EngineContext): string[] {
   return estimateLinesReplacedByPanel(option, ctx.estimateLines).map((line) => {
-    const match = option.replacesItems.find(
+    const match = [option.item, ...(option.replacesItems ?? [])].find(
       (ref) =>
         (line.itemId != null &&
           ref.itemType === line.itemType &&

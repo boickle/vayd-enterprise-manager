@@ -15,6 +15,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import IdexxChip from '../components/idexx/IdexxChip';
+import { useIdexxAssignAccess } from '../components/idexx/useIdexxReviewAccess';
 import IdexxOrderFrame from '../components/idexx/IdexxOrderFrame';
 import IdexxResultView, { idexxResultStatusLabel } from '../components/idexx/IdexxResultView';
 import '../components/idexx/Idexx.css';
@@ -60,7 +61,8 @@ function petLabel(r: PatientSearchRow): string {
 }
 
 /** Match a result IDEXX could not tie to a pet (ordered on the VetConnect PLUS site, a paper form…). */
-function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+export function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+  const { canAssign } = useIdexxAssignAccess();
   const [term, setTerm] = useState(
     [result.patientName, result.clientLastName].filter(Boolean).join(' ')
   );
@@ -91,6 +93,9 @@ function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched
       setBusy(false);
     }
   }
+
+  // LAB-04: assigning needs lab_result.enter on the server; hide the control for everyone else.
+  if (!canAssign) return null;
 
   return (
     <div className="idexx-order" style={{ marginBottom: 8 }}>
@@ -324,6 +329,8 @@ export default function IdexxResultsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providerId, setProviderId] = useState<number | ''>('');
   const loadGen = useRef(0);
+  /** A check already running: a second click waits for it rather than syncing every order again. */
+  const checkingNow = useRef(false);
 
   useEffect(() => {
     void fetchPrimaryProviders()
@@ -402,6 +409,8 @@ export default function IdexxResultsPage() {
   }, [load]);
 
   async function checkNow() {
+    if (checkingNow.current) return;
+    checkingNow.current = true;
     setChecking(true);
     try {
       await syncIdexxResults();
@@ -414,6 +423,7 @@ export default function IdexxResultsPage() {
     } catch (e) {
       setError(idexxErrorMessage(e, 'IDEXX is unavailable. Try again in a minute.'));
     } finally {
+      checkingNow.current = false;
       setChecking(false);
     }
   }

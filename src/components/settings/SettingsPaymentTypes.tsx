@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, X } from 'lucide-react';
+import { Ban, Pencil, RotateCcw, X } from 'lucide-react';
 import {
   createPaymentType,
   listPaymentTypes,
@@ -207,25 +207,26 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
                 <td>{inactive ? 'Inactive' : 'Active'}</td>
                 <td>
                   {canManage ? (
-                    <>
+                    <div className="settings-row-actions" style={{ flexWrap: 'nowrap' }}>
                       <button
                         type="button"
-                        className="btn-link"
+                        className="btn secondary btn-sm"
                         onClick={() => openEdit(row)}
                         title="Edit payment option"
                       >
-                        <Pencil size={14} /> Edit
+                        <Pencil size={14} aria-hidden />
+                        Edit
                       </button>
-                      {' · '}
                       <button
                         type="button"
-                        className="btn-link"
+                        className="btn secondary btn-sm"
                         disabled={saving}
                         onClick={() => void setActive(row, inactive)}
                       >
+                        {inactive ? <RotateCcw size={14} aria-hidden /> : <Ban size={14} aria-hidden />}
                         {inactive ? 'Reactivate' : 'Inactivate'}
                       </button>
-                    </>
+                    </div>
                   ) : null}
                 </td>
               </tr>

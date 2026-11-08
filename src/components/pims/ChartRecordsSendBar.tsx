@@ -12,6 +12,7 @@ import {
   chartRecordRows,
   htmlToText,
   isFileRow,
+  labReportFromEvetInHouse,
   labReportFromIdexx,
   labReportFromInHouse,
   recordDetailText,
@@ -223,6 +224,10 @@ export default function ChartRecordsSendBar({
               ? { ...textEntry(row, ''), lab: labReportFromIdexx(result) }
               : textEntry(row, 'Results are on file at the practice.')
           );
+          continue;
+        }
+        if (row.evetInHouse) {
+          entries.push({ ...textEntry(row, ''), lab: labReportFromEvetInHouse(row.evetInHouse) });
           continue;
         }
         if (row.labResults?.length) {
