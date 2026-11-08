@@ -2,11 +2,15 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
 import {
-  publicAccountCredit,
+  myStoreAccount,
+  myStoreCards,
+  myStoreCheckout,
+  newStoreAttemptKey,
   publicCheckout,
   storeApiError,
+  storeAttemptMayRetry,
   publicPreviewCoupon,
-  publicStoreCardOnFile,
+  clientPreviewCoupon,
   publicStoreFulfillment,
   publicStoreProducts,
   publicStoreTax,
@@ -249,6 +253,12 @@ export default function StoreCartPage() {
   const [selectedCardId, setSelectedCardId] = useState('');
   const [enterNewCard, setEnterNewCard] = useState(false);
   const newCardRef = useRef<StoreCartCardEntryHandle>(null);
+  // OS-03: one checkout attempt = one key (the API charges at most once per key). Kept for a retry after no
+  // answer or a server error, with the same card; a definite answer (placed, declined, refused) ends it.
+  const attemptRef = useRef<{ key: string; paymentMethodId: string | null; newCard: boolean; saveCard: boolean } | null>(
+    null,
+  );
+  const placingRef = useRef(false);
   const [ship, setShip] = useState({
     customerName: '',
     email: '',
@@ -264,10 +274,17 @@ export default function StoreCartPage() {
   const [updateMailingOnFile, setUpdateMailingOnFile] = useState<'yes' | 'no' | ''>('');
   const [accountCredit, setAccountCredit] = useState(0);
   const [amountOwed, setAmountOwed] = useState(0);
+  // OS-06: old eVet bills can't be paid online while eVet sync is on; shown, not charged.
+  const [evetNotPayable, setEvetNotPayable] = useState(0);
   const [openInvoices, setOpenInvoices] = useState<StoreOpenInvoice[]>([]);
   const [applyAccountCredit, setApplyAccountCredit] = useState(false);
   const [payOutstanding, setPayOutstanding] = useState(false);
   const [showOpenInvoices, setShowOpenInvoices] = useState(false);
+
+  useEffect(() => {
+    // A changed cart (or how it is paid) is a new attempt.
+    attemptRef.current = null;
+  }, [lines, giftLines, coupon, giftCodes, applyAccountCredit, payOutstanding, fulfillmentId]);
 
   const persist = (next: StoreCartLine[]) => {
     writeStoreCart(next);
@@ -363,21 +380,22 @@ export default function StoreCartPage() {
     if (!loggedIn || !clientId) {
       setAccountCredit(0);
       setAmountOwed(0);
+      setEvetNotPayable(0);
       setOpenInvoices([]);
       setApplyAccountCredit(false);
       setPayOutstanding(false);
       return;
     }
-    const email = ship.email.trim();
-    if (!email) return;
+    // OS-01: the API finds the household from the login; the email field plays no part.
     let cancelled = false;
-    void publicAccountCredit(practiceId, clientId, email)
+    void myStoreAccount()
       .then((row) => {
         if (cancelled) return;
         const available = Number(row.available) || 0;
-        const owed = Number(row.owed) || 0;
+        const owed = Number(row.payableOwed) || 0;
         setAccountCredit(available);
         setAmountOwed(owed);
+        setEvetNotPayable(Number(row.evetNotPayable) || 0);
         setOpenInvoices(row.invoices || []);
         if (available < 0.01) setApplyAccountCredit(false);
         if (owed < 0.01) setPayOutstanding(false);
@@ -392,7 +410,7 @@ export default function StoreCartPage() {
     return () => {
       cancelled = true;
     };
-  }, [loggedIn, clientId, ship.email]);
+  }, [loggedIn, clientId]);
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
@@ -421,23 +439,39 @@ export default function StoreCartPage() {
   }, [auth.clientInfo, clientId, loggedIn]);
 
   useEffect(() => {
-    const email = ship.email.trim();
-    if (!email) {
+    // OS-01: saved cards only for a logged-in client, found from the login. Guests always enter a card,
+    // and the email typed on this page never looks anything up.
+    if (!loggedIn || !clientId) {
       setCards([]);
       setSelectedCardId('');
+      setEnterNewCard(true);
       return;
     }
-    void publicStoreCardOnFile(practiceId, email).then((row) => {
-      const next = row.hasCard ? row.cards ?? [] : [];
-      setCards(next);
-      const recommended = next.find((c) => c.recommended) ?? next[0];
-      setSelectedCardId(recommended?.paymentMethodId || '');
-      setEnterNewCard(!next.length);
-    });
-  }, [ship.email]);
+    let cancelled = false;
+    void myStoreCards()
+      .then((row) => {
+        if (cancelled) return;
+        const next = row.hasCard ? row.cards ?? [] : [];
+        setCards(next);
+        const recommended = next.find((c) => c.recommended) ?? next[0];
+        setSelectedCardId(recommended?.paymentMethodId || '');
+        setEnterNewCard(!next.length);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCards([]);
+        setSelectedCardId('');
+        setEnterNewCard(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, clientId]);
 
   const rxLines = lines.filter(lineNeedsPet);
-  const needsLogin = lines.length > 0 && !loggedIn;
+  // OS-A16 (owner, Nov 7, 2026): a guest buys one-time, non-prescription, no-pet items with a new card.
+  // Prescription, pet and auto-ship items keep the login prompt.
+  const needsLogin = lines.length > 0 && !loggedIn && lines.some((line) => lineNeedsPet(line));
   const petsMissing = loggedIn && rxLines.some((line) => !(line.patientIds || []).length);
   const hasAutoship = lines.some((line) => line.autoshipFrequency);
   const allAutoship = lines.length > 0 && lines.every((line) => line.autoshipFrequency);
@@ -887,9 +921,15 @@ export default function StoreCartPage() {
 
       {needsLogin ? <StoreCheckoutLogin /> : null}
 
-      {lines.length && loggedIn ? (
+      {lines.length && (loggedIn || !needsLogin) ? (
         <div className="vayd-store__cart-grid">
           <section>
+            {!loggedIn ? (
+              <p className="vayd-store__note vayd-store__guest-note">
+                Checking out as a guest with a new card. Prescription and auto-ship items need your client
+                portal login: <Link to="/login">log in</Link> to order those.
+              </p>
+            ) : null}
             <h2>Fulfillment</h2>
             <div className="vayd-store__chips">
               {allAutoship && autoshipOption ? (
@@ -1229,6 +1269,12 @@ export default function StoreCartPage() {
                 {showOpenInvoices ? <StoreOpenInvoicesPanel invoices={openInvoices} /> : null}
               </div>
             ) : null}
+            {evetNotPayable > 0.009 ? (
+              <p className="vayd-store__muted vayd-store__evet-held">
+                ${evetNotPayable.toFixed(2)} is on older bills from our previous system, which can’t be paid
+                online yet. Please call us to pay them.
+              </p>
+            ) : null}
             <label className="vayd-store__cart-coupon">
               Coupon
               <span>
@@ -1237,10 +1283,9 @@ export default function StoreCartPage() {
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    void publicPreviewCoupon(practiceId, coupon, subtotal, {
-                      clientId,
-                      member: hasMemberPricing,
-                    })
+                    void (loggedIn
+                      ? clientPreviewCoupon(coupon, subtotal)
+                      : publicPreviewCoupon(practiceId, coupon, subtotal, { email: ship.email }))
                       .then((p) => {
                         setCouponOff(p.discount);
                         setCouponFreeShip(Boolean(p.freeShipping));
@@ -1361,6 +1406,7 @@ export default function StoreCartPage() {
                   postal: ship.postal,
                 }}
                 onClose={cards.length ? () => setEnterNewCard(false) : undefined}
+                canSaveCard={loggedIn}
               />
             )}
             {petsMissing ? (
@@ -1381,31 +1427,48 @@ export default function StoreCartPage() {
                   setErr(placeBlocker);
                   return;
                 }
+                // OS-03: a second click while the first is still placing does nothing.
+                if (placingRef.current) return;
+                placingRef.current = true;
                 setBusy(true);
                 setErr(null);
+                const skipCard = creditCoversOrder && !hasAutoship;
+                const usingNewCard = !skipCard && (enterNewCard || !cards.length);
+                const savedCardId = skipCard || usingNewCard ? null : selectedCardId || null;
+                let attempt = attemptRef.current;
+                if (attempt && (attempt.newCard !== usingNewCard || (!usingNewCard && attempt.paymentMethodId !== savedCardId))) {
+                  attempt = null; // another card: a new attempt
+                }
+                if (!attempt) {
+                  attempt = { key: newStoreAttemptKey(), paymentMethodId: savedCardId, newCard: usingNewCard, saveCard: true };
+                }
+                attemptRef.current = attempt;
+                const current = attempt;
                 void (async () => {
-                  const skipCard = creditCoversOrder && !hasAutoship;
                   let paymentMethodId: string | null = null;
                   let saveCard = true;
-                  if (!skipCard) {
-                    if (enterNewCard || !cards.length) {
+                  if (usingNewCard) {
+                    // Retrying the same attempt reuses the card made for it, so Stripe sees the same request.
+                    if (!current.paymentMethodId) {
                       const created = await newCardRef.current?.createPaymentMethod();
-                      paymentMethodId = created?.paymentMethodId ?? null;
-                      saveCard = created?.saveCard !== false;
-                    } else {
-                      paymentMethodId = selectedCardId || null;
+                      current.paymentMethodId = created?.paymentMethodId ?? null;
+                      current.saveCard = created?.saveCard !== false;
                     }
+                    paymentMethodId = current.paymentMethodId;
+                    saveCard = current.saveCard;
+                  } else if (!skipCard) {
+                    paymentMethodId = savedCardId;
                   }
-                  const order = await publicCheckout(practiceId, {
+                  const body = {
                     customerName: ship.customerName,
                     customerEmail: ship.email,
                     couponCode: coupon || undefined,
                     applyAccountCredit,
                     payOutstanding,
-                    clientId,
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
-                    saveCard,
+                    // OS-A16: a guest's card is never saved.
+                    saveCard: loggedIn && saveCard,
                     updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,
@@ -1416,6 +1479,7 @@ export default function StoreCartPage() {
                       postal: ship.postal,
                     },
                     giftCardCodes: giftCodes.map((row) => row.code),
+                    attemptKey: current.key,
                     lines: [
                       ...lines.map((l) => ({
                         inventoryItemId: l.inventoryItemId,
@@ -1425,13 +1489,25 @@ export default function StoreCartPage() {
                       })),
                       ...giftCardCheckoutLines(giftLines),
                     ],
-                  });
+                  };
+                  // OS-01: a logged-in order goes to the household of the login, never one named in the body.
+                  const order = loggedIn
+                    ? await myStoreCheckout(body)
+                    : await publicCheckout(practiceId, body);
+                  attemptRef.current = null;
                   writeStoreCart([]);
                   writeStoreGiftCart([]);
                   nav(`/store/thanks/${order.id}`, { state: { order } });
                 })()
-                  .catch((e) => setErr(storeApiError(e)))
-                  .finally(() => setBusy(false));
+                  .catch((e) => {
+                    // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.
+                    if (!storeAttemptMayRetry(e) && attemptRef.current === current) attemptRef.current = null;
+                    setErr(storeApiError(e));
+                  })
+                  .finally(() => {
+                    placingRef.current = false;
+                    setBusy(false);
+                  });
               }}
             >
               {busy ? 'Placing order…' : 'Place order'}

@@ -587,6 +587,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const sharedStoreListing =
     storeListing && storeListing.variants.length > 1 ? storeListing : null;
 
+  const bundleLeaveGuardRef = useRef<(() => Promise<boolean>) | null>(null);
+
   function setTypeFilter(next: CatalogTypeFilter) {
     const nextParams = new URLSearchParams(searchParams);
     if (next === 'all') nextParams.delete('type');
@@ -2633,6 +2635,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     { value: 'bundle', label: 'Bundles' },
   ];
 
+  /** Ask the bundle editor first, so an unsaved bundle isn't lost by switching tabs. */
+  async function switchTypeFilter(next: CatalogTypeFilter) {
+    if (next === typeFilter) return;
+    const guard = bundleLeaveGuardRef.current;
+    if (typeFilter === 'bundle' && guard && !(await guard())) return;
+    setTypeFilter(next);
+  }
+
   const typeFilterBar = (
     <div className="inv-type-filters" role="tablist" aria-label="Item type">
       {typeFilterOptions.map((opt) => (
@@ -2642,7 +2652,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           role="tab"
           aria-selected={typeFilter === opt.value}
           className={`inv-type-filters__btn${typeFilter === opt.value ? ' inv-type-filters__btn--active' : ''}`}
-          onClick={() => setTypeFilter(opt.value)}
+          onClick={() => void switchTypeFilter(opt.value)}
         >
           {opt.label}
         </button>
@@ -2662,6 +2672,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           focusBundleId={focusBundleId}
           initialQuery={searchQuery}
           onFocusBundleConsumed={() => setFocusBundleId(null)}
+          leaveGuardRef={bundleLeaveGuardRef}
         />
       </div>
     );
