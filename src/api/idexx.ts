@@ -107,6 +107,10 @@ export type IdexxResultSummary = {
   receivedAt: string | null;
   reviewedAt: string | null;
   reviewedByEmployeeId: number | null;
+  /** Why someone who is not a vet marked it reviewed (LAB-04). */
+  reviewedReason?: string | null;
+  /** Filled on the single-result read and on the reviewed response. */
+  reviewedByName?: string | null;
   clientSummaryApprovedAt: string | null;
   /** IDEXX sent a newer copy after the client summary was written. */
   clientSummaryStale: boolean;
@@ -146,6 +150,8 @@ export type IdexxResultDetail = IdexxResultSummary & {
   delayNotificationAvailable: boolean;
   clientSummary: string | null;
   clientSummaryApprovedByEmployeeId: number | null;
+  clientSummaryApprovedReason?: string | null;
+  clientSummaryApprovedByName?: string | null;
 };
 
 export type IdexxSyncResult = {
@@ -295,18 +301,25 @@ export async function getIdexxResult(id: number) {
   return data;
 }
 
-export async function setIdexxResultReviewed(id: number, reviewed: boolean) {
+export async function setIdexxResultReviewed(id: number, reviewed: boolean, reason?: string) {
   const { data } = await http.patch<IdexxResultSummary>(`/idexx/results/${id}/reviewed`, {
     reviewed,
+    ...(reason ? { reason } : {}),
   });
   return data;
 }
 
 /** Saves the owner-facing write-up; `approved` signs off on exactly this wording. */
-export async function saveIdexxClientSummary(id: number, summary: string, approved: boolean) {
+export async function saveIdexxClientSummary(
+  id: number,
+  summary: string,
+  approved: boolean,
+  reason?: string
+) {
   const { data } = await http.put<IdexxResultDetail>(`/idexx/results/${id}/client-summary`, {
     summary,
     approved,
+    ...(approved && reason ? { reason } : {}),
   });
   return data;
 }

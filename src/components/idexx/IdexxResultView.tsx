@@ -33,6 +33,9 @@ import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
 import { idexxTestFlag, type IdexxFlag } from './idexxFlags';
 import { draftIdexxClientSummary } from './idexxClientSummaryDraft';
 import IdexxClientSummary from './IdexxClientSummary';
+import IdexxReasonPrompt from './IdexxReasonPrompt';
+import { idexxEmailRules } from './idexxEmailRules';
+import { useIdexxReviewAccess } from './useIdexxReviewAccess';
 import './Idexx.css';
 
 type Props = {
@@ -223,6 +226,8 @@ export default function IdexxResultView({
   const [emrPatientIds, setEmrPatientIds] = useState<number[]>([]);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const { canReview, mustGiveReason } = useIdexxReviewAccess();
 
   useEffect(() => {
     let canceled = false;
@@ -378,10 +383,7 @@ export default function IdexxResultView({
     setBusy('draft');
     setError(null);
     try {
-      const next = await draftIdexxClientSummary(
-        result,
-        result.patientName?.trim() || 'this pet'
-      );
+      const next = await draftIdexxClientSummary(result, result.patientName?.trim() || 'this pet');
       setResult(await saveIdexxClientSummary(result.id, next, false));
       setSummaryExpand((n) => n + 1);
     } catch (e) {
@@ -391,8 +393,21 @@ export default function IdexxResultView({
     }
   }
 
-  async function setReviewed(reviewed: boolean) {
+  async function setReviewed(reviewed: boolean, reason?: string) {
     if (!result) return;
+    if (reviewed && mustGiveReason && !reason) {
+      if (idexxResultIsPartial(result)) {
+        await appAlert({
+          title: "Results aren't complete",
+          message:
+            "These results aren't complete yet. Wait until all results are back before marking this reviewed.",
+        });
+        return;
+      }
+      setError(null);
+      setReasonOpen(true);
+      return;
+    }
     if (reviewed && idexxResultIsPartial(result)) {
       await appAlert({
         title: "Results aren't complete",
@@ -404,11 +419,14 @@ export default function IdexxResultView({
     setBusy('review');
     setError(null);
     try {
-      const saved = await setIdexxResultReviewed(resultId, reviewed);
+      const saved = await setIdexxResultReviewed(resultId, reviewed, reason);
+      setReasonOpen(false);
       setResult({
         ...result,
         reviewedAt: saved.reviewedAt,
         reviewedByEmployeeId: saved.reviewedByEmployeeId,
+        reviewedReason: saved.reviewedReason ?? null,
+        reviewedByName: saved.reviewedByName ?? null,
       });
       onReviewedChange?.(reviewed);
     } catch (e) {
@@ -431,6 +449,8 @@ export default function IdexxResultView({
   const noteSeed = medicalNoteSeed(result, flagged);
   const canAct = !readOnly && result.patientId != null;
   const hasSummary = Boolean(result.clientSummary?.trim());
+  const emailRules = idexxEmailRules(result);
+  const partial = idexxResultIsPartial(result);
   return (
     <div className="idexx-result">
       <div className="idexx-result__head">
@@ -484,28 +504,33 @@ export default function IdexxResultView({
           >
             <ExternalLink size={13} aria-hidden /> VetConnect PLUS
           </button>
-          {canAct && hasSummary ? (
+          {canAct ? (
             <button
               type="button"
               className="btn secondary btn-sm"
-              disabled={busy != null}
-              title="Email the generated summary, with the IDEXX PDF attached"
+              disabled={busy != null || !emailRules.withSummary.allowed}
+              title={
+                emailRules.withSummary.why ??
+                'Email the approved summary, with the IDEXX PDF attached'
+              }
               onClick={() => void openEmail(true)}
             >
               <Mail size={13} aria-hidden />{' '}
-              {busy === 'email-summary' ? 'Preparing…' : 'Email with summary'}
+              {busy === 'email-summary' ? 'Preparing…' : 'Email lab results'}
             </button>
           ) : null}
           {canAct ? (
             <button
               type="button"
               className="btn secondary btn-sm"
-              disabled={busy != null}
-              title="Email a short note with the IDEXX PDF attached, without the written summary"
+              disabled={busy != null || !emailRules.reportOnly.allowed}
+              title={
+                emailRules.reportOnly.why ??
+                'Email a short note with the IDEXX PDF attached, without the written summary'
+              }
               onClick={() => void openEmail(false)}
             >
-              <Mail size={13} aria-hidden />{' '}
-              {busy === 'email' ? 'Preparing…' : hasSummary ? 'Email without summary' : 'Email client'}
+              <Mail size={13} aria-hidden /> {busy === 'email' ? 'Preparing…' : 'Email lab report'}
             </button>
           ) : null}
           {canAct ? (
@@ -521,20 +546,24 @@ export default function IdexxResultView({
           ) : null}
           {readOnly ? null : result.reviewedAt ? (
             <>
-              <span className="idexx-result__reviewed">
+              <span className="idexx-result__reviewed" data-testid="idexx-reviewed-by">
                 <CheckCircle2 size={13} aria-hidden /> Reviewed {when(result.reviewedAt)}
+                {result.reviewedByName ? ` by ${result.reviewedByName}` : ''}
+                {result.reviewedReason ? ` — ${result.reviewedReason}` : ''}
               </span>
-              <button
-                type="button"
-                className="btn secondary btn-sm"
-                disabled={busy != null}
-                title="Mark as not reviewed"
-                onClick={() => void setReviewed(false)}
-              >
-                <RotateCcw size={13} aria-hidden />
-              </button>
+              {canReview ? (
+                <button
+                  type="button"
+                  className="btn secondary btn-sm"
+                  disabled={busy != null}
+                  title="Mark as not reviewed"
+                  onClick={() => void setReviewed(false)}
+                >
+                  <RotateCcw size={13} aria-hidden />
+                </button>
+              ) : null}
             </>
-          ) : (
+          ) : canReview ? (
             <button
               type="button"
               className="btn btn-sm"
@@ -543,10 +572,20 @@ export default function IdexxResultView({
             >
               <CheckCircle2 size={13} aria-hidden /> Mark reviewed
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
+      {canAct && (!emailRules.withSummary.allowed || !emailRules.reportOnly.allowed) ? (
+        <div className="idexx-order__note" data-testid="idexx-email-why">
+          {!emailRules.withSummary.allowed ? (
+            <div>Email lab results: {emailRules.withSummary.why}.</div>
+          ) : null}
+          {!emailRules.reportOnly.allowed ? (
+            <div>Email lab report: {emailRules.reportOnly.why}.</div>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <p className="idexx-order__error">{error}</p> : null}
       {noteSaved ? (
         <p className="idexx-order__note idexx-order__note--ok">Medical note saved on the chart.</p>
@@ -559,7 +598,10 @@ export default function IdexxResultView({
           readOnly={readOnly}
           onSaved={setResult}
           expandSignal={summaryExpand}
-          onEmail={canAct ? () => void openEmail(true) : undefined}
+          partial={partial}
+          onEmail={
+            canAct && emailRules.withSummary.allowed ? () => void openEmail(true) : undefined
+          }
           emailBusy={busy === 'email-summary'}
         />
       ) : null}
@@ -698,6 +740,16 @@ export default function IdexxResultView({
           onClose={() => setEmail(null)}
         />
       ) : null}
+
+      <IdexxReasonPrompt
+        open={reasonOpen}
+        title="Mark this result reviewed"
+        confirmLabel="Mark reviewed"
+        busy={busy === 'review'}
+        error={error}
+        onConfirm={(reason) => void setReviewed(true, reason)}
+        onCancel={() => setReasonOpen(false)}
+      />
 
       {noteOpen && result.patientId != null ? (
         <PimsChartNoteComposeModal
