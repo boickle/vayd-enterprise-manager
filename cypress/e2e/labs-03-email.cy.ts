@@ -85,6 +85,7 @@ describe('LABS-03: email lab results', () => {
         .should('not.be.disabled')
         .click();
 
+      cy.intercept('POST', '**/gmail/messages/send*').as('sendEmail');
       cy.get('[role="dialog"]', { timeout: 30000 }).within(() => {
         cy.contains('Email lab results').should('exist');
         cy.contains(/\.pdf/i).should('exist');
@@ -93,6 +94,8 @@ describe('LABS-03: email lab results', () => {
           .should('contain', 'Max is doing well');
         cy.contains('button', 'Send email').click();
       });
+      // The send goes through Gmail; the test stack captures it instead of reaching Google.
+      cy.wait('@sendEmail', { timeout: 60000 }).its('response.statusCode').should('be.lessThan', 300);
 
       cy.capturedEmails().should((mails: any[]) => {
         expect(mails, 'one email captured').to.have.length(1);
