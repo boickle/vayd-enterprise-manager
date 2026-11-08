@@ -1,0 +1,230 @@
+[
+ {
+  "id": "rl-01",
+  "text": "The Room Loader is the check-in we send before every visit. The family sees what each pet is due for, says yes or no ahead of time, and everything they accept is loaded into the visit. The doctor walks in ready, and there are no surprises at checkout."
+ },
+ {
+  "id": "rl-02",
+  "text": "Here's Maria Rivera's visit with Dr. Lane, for her dog Maple and her cat Juniper."
+ },
+ {
+  "id": "rl-03",
+  "text": "This small R L tag shows the Room Loader's status. Right now, it hasn't been sent."
+ },
+ {
+  "id": "rl-04",
+  "text": "Right-click the visit,"
+ },
+ {
+  "id": "rl-05",
+  "text": "go to Visit Prep,"
+ },
+ {
+  "id": "rl-06",
+  "text": "and choose Send Room Loader."
+ },
+ {
+  "id": "rl-07",
+  "text": "The pet's chart opens beside the Room Loader. Leave it open. You can check vaccine history, recent lab work and the doctor's notes while you fill this in."
+ },
+ {
+  "id": "rl-08",
+  "text": "Each pet has its own section. Maple is first."
+ },
+ {
+  "id": "rl-09",
+  "text": "Type the reason for the visit. Maria will read this exactly as you write it."
+ },
+ {
+  "id": "rl-10",
+  "text": "Answer the questions. No mobility concerns for Maple,"
+ },
+ {
+  "id": "rl-11",
+  "text": "and no medical concern."
+ },
+ {
+  "id": "rl-12",
+  "text": "Below are Maple's reminders that are due, each matched to an item and price. Her Lepto booster isn't due until spring, so it stays off."
+ },
+ {
+  "id": "rl-13",
+  "text": "A match that isn't confirmed yet blocks sending. Check it, then click Confirm match."
+ },
+ {
+  "id": "rl-14",
+  "text": "At least one pet needs a trip fee. Search for it under Add Item,"
+ },
+ {
+  "id": "rl-15",
+  "text": "and pick it."
+ },
+ {
+  "id": "rl-16",
+  "text": "Now Juniper. Maria mentioned Juniper is drinking more, so say so in the reason."
+ },
+ {
+  "id": "rl-17",
+  "text": "No mobility concerns,"
+ },
+ {
+  "id": "rl-18",
+  "text": "but yes to a medical concern. That asks Maria about lab work for Juniper."
+ },
+ {
+  "id": "rl-19",
+  "text": "Confirm Juniper's wellness visit match too."
+ },
+ {
+  "id": "rl-20",
+  "text": "When it's ready, click Send to Client."
+ },
+ {
+  "id": "rl-21",
+  "text": "Choose email or text,"
+ },
+ {
+  "id": "rl-21b",
+  "text": "and confirm."
+ },
+ {
+  "id": "rl-22",
+  "text": "Once it's sent, the Room Loader closes on its own."
+ },
+ {
+  "id": "rl-23",
+  "text": "The tag has changed color: sent, and waiting for Maria."
+ },
+ {
+  "id": "rl-24",
+  "text": "If she can't find the email, right-click again. The menu now says Re-send Room Loader."
+ },
+ {
+  "id": "rl-25",
+  "text": "Now, here's what Maria sees when she opens the link."
+ },
+ {
+  "id": "rl-26",
+  "text": "First, a quick check-in for each pet. Is Maple eating and drinking normally? Yes."
+ },
+ {
+  "id": "rl-27",
+  "text": "Next pet."
+ },
+ {
+  "id": "rl-28",
+  "text": "Juniper is drinking more than usual, so Maria answers No."
+ },
+ {
+  "id": "rl-29",
+  "text": "and describes it."
+ },
+ {
+  "id": "rl-30",
+  "text": "On to the care plan."
+ },
+ {
+  "id": "rl-31",
+  "text": "Everything that's due is already checked. Maria can uncheck anything she doesn't want."
+ },
+ {
+  "id": "rl-32",
+  "text": "Optional extras come with a short explanation of why we recommend them."
+ },
+ {
+  "id": "rl-33",
+  "text": "Next pet."
+ },
+ {
+  "id": "rl-34",
+  "text": "For cats, we ask about going outdoors. Juniper does,"
+ },
+ {
+  "id": "rl-35",
+  "text": "so the form explains the feline leukemia vaccine, and Maria adds it."
+ },
+ {
+  "id": "rl-36",
+  "text": "She also picks which rabies vaccine she'd like."
+ },
+ {
+  "id": "rl-37",
+  "text": "Next, lab work."
+ },
+ {
+  "id": "rl-38",
+  "text": "Maple is offered an Early Detection Panel. Maria says not this time."
+ },
+ {
+  "id": "rl-38b",
+  "text": "Next pet."
+ },
+ {
+  "id": "rl-38c",
+  "text": "Because we flagged a concern for Juniper, this page explains why the doctor may want blood work."
+ },
+ {
+  "id": "rl-38d",
+  "text": "Maria chooses the standard panel."
+ },
+ {
+  "id": "rl-39",
+  "text": "Then the summary."
+ },
+ {
+  "id": "rl-40",
+  "text": "Every item, with the estimated total, so there are no surprises. She can also add products to bring to the visit."
+ },
+ {
+  "id": "rl-40b",
+  "text": "Here's where membership comes in. Before she submits, Maria sees how much less this visit would cost if she joined today."
+ },
+ {
+  "id": "rl-40c",
+  "text": "She can open the comparison."
+ },
+ {
+  "id": "rl-40d",
+  "text": "It goes through today's care plan line by line. For Maple, the Foundations plan covers her wellness visit, her vaccines and the trip fee."
+ },
+ {
+  "id": "rl-40e",
+  "text": "Then it adds it up. For Maple, the plan covers this whole visit, so instead of about four hundred and forty dollars, she'd owe nothing at the visit, for sixty-nine dollars a month. Those are her real prices."
+ },
+ {
+  "id": "rl-40f",
+  "text": "And here's the why. Members get a dedicated One-Team who knows their pet, priority scheduling, seven-day support through the Client Portal, and ten percent off in our online store. The care we recommend becomes a monthly payment, so pets don't miss what they're due for."
+ },
+ {
+  "id": "rl-40g",
+  "text": "With more than one pet, each additional pet who joins earns a seventy-five dollar credit toward a future visit."
+ },
+ {
+  "id": "rl-40h",
+  "text": "She can join right here, or ask the doctor at the visit. Membership is a big focus for us this year, so be ready to answer her questions."
+ },
+ {
+  "id": "rl-41",
+  "text": "Then she submits."
+ },
+ {
+  "id": "rl-42",
+  "text": "Back on the calendar, the tag is green. Maria has answered."
+ },
+ {
+  "id": "rl-43",
+  "text": "Right-click, go to Visit Prep,"
+ },
+ {
+  "id": "rl-44",
+  "text": "and choose View Room Loader to see her answers."
+ },
+ {
+  "id": "rl-45",
+  "text": "Here are her answers, ready to download as a PDF. Everything she said yes to is already waiting in the visit when the doctor opens it."
+ },
+ {
+  "id": "rl-46",
+  "text": "The two most common slips are forgetting the trip fee and writing a reason you wouldn't want the family to read. Send the Room Loader early, so the family has time to answer before the visit."
+ }
+]

@@ -5,6 +5,7 @@
 #     spec name: emr-v6-wrap-up   (cypress/training/<name>.cy.ts + narration/<name>.json)
 #     voice:     "openai:nova" (normal; clips are cached by text, so re-takes only pay for changed lines)
 #                or a Mac voice such as "Samantha"
+# TRAINING_BROWSER=chrome records in Chrome instead of Cypress's Electron (default electron).
 #
 # Work files go to $TRAINING_WORK/<spec name> (default ~/.vayd-training). Frames for checking: frames/.
 # On failure it prints only the error and saves a small screenshot (fail.jpg). On success it prints how far
@@ -29,7 +30,7 @@ if ! env -u ELECTRON_RUN_AS_NODE TRAINING_NARRATION="$OUT/narration.json" TRAINI
   CYPRESS_BASE_URL=http://localhost:$TRAINING_APP_PORT CYPRESS_API_URL=http://localhost:$TRAINING_API_PORT \
   CYPRESS_SCHEDULING_WORLD="$(cat "$E/world.json")" CYPRESS_EMAIL_CAPTURE_PATH="$E/emails.jsonl" \
   CYPRESS_SCH_API_DIR="$API_DIR" CYPRESS_SCH_DB=$TRAINING_DB CYPRESS_SCH_SMS_CAPTURE="$E/sms.jsonl" \
-  npx cypress run --browser electron --config-file cypress.training.config.ts \
+  npx cypress run --browser "${TRAINING_BROWSER:-electron}" --config-file cypress.training.config.ts \
   --spec "cypress/training/$NAME.cy.ts" > "$OUT/run.log" 2>&1; then
   echo "FAILED. Error:"
   grep -m1 -A6 -E "AssertionError|CypressError|Error:" "$OUT/run.log" | grep -v "^\s*$" | head -8

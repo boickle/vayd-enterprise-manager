@@ -11,6 +11,7 @@
 import { defineConfig } from 'cypress';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import base from './cypress.config';
 
 const out = process.env.TRAINING_OUT || path.join(process.cwd(), 'cypress', 'training-out');
@@ -42,6 +43,17 @@ export default defineConfig({
       /** Stretches to cut out of the final video (a page reload, a slow save): [start, end] ms. */
       const cuts: [number, number][] = [];
       on('task', {
+        /**
+         * Runs a shell command from the Node side (bash, not the login shell). Training setup uses this instead of
+         * cy.exec, which can hang before running anything when the machine is short of memory.
+         */
+        trainingSh({ cmd, timeoutMs }: { cmd: string; timeoutMs?: number }) {
+          const res = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', timeout: timeoutMs ?? 300000 });
+          if (res.status !== 0) {
+            throw new Error(`trainingSh failed (${res.status ?? res.signal}): ${cmd}\n${(res.stderr || '').slice(-1500)}`);
+          }
+          return res.stdout;
+        },
         trainingNarration() {
           const file = process.env.TRAINING_NARRATION;
           if (!file) throw new Error('Set TRAINING_NARRATION to the narration.json file');
@@ -84,6 +96,10 @@ export default defineConfig({
         if (browser.name === 'electron') {
           launchOptions.preferences.width = 2300;
           launchOptions.preferences.height = 1150;
+        }
+        // TRAINING_BROWSER=chrome (record.sh): same window, same 2x pixels as Electron so the crop matches.
+        if (browser.family === 'chromium' && browser.name !== 'electron') {
+          launchOptions.args.push('--window-size=2300,1150', '--force-device-scale-factor=2');
         }
         return launchOptions;
       });
