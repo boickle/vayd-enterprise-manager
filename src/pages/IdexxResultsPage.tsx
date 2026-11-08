@@ -15,6 +15,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import IdexxChip from '../components/idexx/IdexxChip';
+import { useIdexxAssignAccess } from '../components/idexx/useIdexxReviewAccess';
 import IdexxOrderFrame from '../components/idexx/IdexxOrderFrame';
 import IdexxResultView, { idexxResultStatusLabel } from '../components/idexx/IdexxResultView';
 import '../components/idexx/Idexx.css';
@@ -60,7 +61,8 @@ function petLabel(r: PatientSearchRow): string {
 }
 
 /** Match a result IDEXX could not tie to a pet (ordered on the VetConnect PLUS site, a paper form…). */
-function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+export function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+  const { canAssign } = useIdexxAssignAccess();
   const [term, setTerm] = useState(
     [result.patientName, result.clientLastName].filter(Boolean).join(' ')
   );
@@ -91,6 +93,9 @@ function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched
       setBusy(false);
     }
   }
+
+  // LAB-04: assigning needs lab_result.enter on the server; hide the control for everyone else.
+  if (!canAssign) return null;
 
   return (
     <div className="idexx-order" style={{ marginBottom: 8 }}>

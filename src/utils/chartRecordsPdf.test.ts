@@ -285,3 +285,48 @@ describe('in-house lab forms on a printed record', () => {
     expect(text).toBe('Chem: out of range: T3 1 [0 - 2] H; other 9 values within range.');
   });
 });
+
+describe('LAB-06-3 printed range comes from the result snapshot', () => {
+  it('prints the range the result was taken with, not the form as it is now', () => {
+    // The builder only receives the saved result; the live form is never passed in, so the
+    // range printed here is whatever the snapshot stored. A later form edit cannot change it.
+    const snapshotRow = {
+      key: 'glu', name: 'Blood glucose', valueType: 'number', min: 0, max: 500, units: 'mg/dl',
+    };
+    const report = labReportFromInHouse([
+      {
+        id: 9,
+        patientId: 7,
+        status: 'complete',
+        templateName: 'Glucose',
+        templateMode: 'analytes',
+        summary: null,
+        resultedAt: '2026-11-01T15:00:00Z',
+        serviceDate: '2026-11-01',
+        elementsSnapshot: [snapshotRow],
+        values: { glu: { value: '550', comments: null } },
+      } as never,
+    ]);
+    expect(report.sections[0].rows).toEqual([
+      { test: 'Blood glucose', result: '550', units: 'mg/dl', range: '0 - 500', flag: 'H' },
+    ]);
+  });
+
+  it('prints no range for a row whose snapshot has no min or max', () => {
+    const report = labReportFromInHouse([
+      {
+        id: 10,
+        patientId: 7,
+        status: 'complete',
+        templateName: 'Glucose',
+        templateMode: 'analytes',
+        summary: null,
+        resultedAt: '2026-11-01T15:00:00Z',
+        serviceDate: '2026-11-01',
+        elementsSnapshot: [{ key: 'glu', name: 'Blood glucose', valueType: 'number', min: null, max: null, units: 'mg/dl' }],
+        values: { glu: { value: '450', comments: null } },
+      } as never,
+    ]);
+    expect(report.sections[0].rows[0]).toMatchObject({ range: '', flag: '' });
+  });
+});
