@@ -14,6 +14,9 @@ import {
 } from '../../api/inHouseLabs';
 import { IN_HOUSE_CATEGORY, LAB_FORM_SEEDS } from '../../utils/labFormSeeds';
 import { appConfirm } from '../../utils/appDialog';
+import { useAuth } from '../../auth/useAuth';
+import { isAnalyticsAdmin, normalizeAuthRoles } from '../../utils/analyticsAccess';
+import { usePermissions } from '../../permissions/PermissionContext';
 import './SettingsLabForms.css';
 
 type Props = {
@@ -153,6 +156,12 @@ function numOrNull(raw: string): number | null {
 }
 
 export default function SettingsLabForms({ onMessage }: Props) {
+  // LAB-A8: editing follows `lab_form_template.manage` (vets, lead techs, managers). Admin logins
+  // pass on the server, so they keep the controls. The server checks again.
+  const { role } = useAuth() as { role?: string | string[] };
+  const perms = usePermissions();
+  const canManage =
+    perms.can('lab_form_template.manage') || isAnalyticsAdmin(normalizeAuthRoles(role));
   const [templates, setTemplates] = useState<LabFormTemplate[]>([]);
   const [catalog, setCatalog] = useState<LabCatalogItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | 'new' | null>(null);
@@ -347,6 +356,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
         gets charted if it is run after the visit.
       </p>
 
+      {canManage ? (
       <div className="lab-forms__toolbar">
         <button type="button" className="btn" onClick={startNew}>
           <Plus size={14} aria-hidden /> New lab form
@@ -360,6 +370,11 @@ export default function SettingsLabForms({ onMessage }: Props) {
           {seeding ? 'Adding…' : 'Add missing standard forms'}
         </button>
       </div>
+      ) : (
+        <p className="settings-muted">
+          You can look at these forms. Changing them needs the lab form permission.
+        </p>
+      )}
 
       <div className="lab-forms__split">
         <div className="lab-forms__list-wrap">
@@ -427,7 +442,10 @@ export default function SettingsLabForms({ onMessage }: Props) {
               Pick a lab form to edit, or create a new one.
             </p>
           ) : (
-            <>
+            <fieldset
+              disabled={!canManage}
+              style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+            >
               <div className="lab-forms__field-row">
                 <label className="lab-forms__field">
                   <span>Form name</span>
@@ -681,6 +699,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 ) : null}
               </div>
 
+              {canManage ? (
               <div className="lab-forms__actions">
                 {selectedId !== 'new' && typeof selectedId === 'number' ? (
                   draft.isPublished ? (
@@ -721,7 +740,8 @@ export default function SettingsLabForms({ onMessage }: Props) {
                   {saving ? 'Saving…' : 'Save lab form'}
                 </button>
               </div>
-            </>
+              ) : null}
+            </fieldset>
           )}
         </div>
       </div>
