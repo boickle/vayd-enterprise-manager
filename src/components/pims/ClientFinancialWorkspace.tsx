@@ -6642,6 +6642,9 @@ export default function ClientFinancialWorkspace({
                                 catalogItemId: result.type.catalogItemId ?? null,
                                 catalogItemType: result.type.catalogItemType ?? 'procedure',
                                 patientId: mailedLine.patientId ?? selected.patientId ?? null,
+                                // B1 (owner, Nov 7, 2026): every invoice line needs a provider; the shipping line
+                                // takes the mailed item's, as visit checkout does.
+                                providerEmployeeId: mailedLine.providerEmployeeId ?? line.providerEmployeeId ?? null,
                                 miscCharge: true,
                               });
                               setSelected(invoice);
