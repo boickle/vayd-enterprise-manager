@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { membershipCoveredAmount, membershipCoveredLabel } from '../../utils/membershipCoveredRow';
 import { Mail, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
 import { checkItemPricing, searchItems, type SearchableItem } from '../../api/roomLoader';
@@ -736,8 +737,8 @@ export default function EstimateWorkspace({
       <div className="estimate-totals">
         {Number(estimate.membershipAdjustments) < 0 && (
           <div className="estimate-total-row">
-            <span>Membership savings</span>
-            <span>{money(Number(estimate.membershipAdjustments))}</span>
+            <span>{membershipCoveredLabel(lines)}</span>
+            <span>{membershipCoveredAmount(estimate.membershipAdjustments)}</span>
           </div>
         )}
         {Number(estimate.taxTotal) > 0 && (
