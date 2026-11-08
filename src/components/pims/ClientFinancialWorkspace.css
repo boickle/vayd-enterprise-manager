@@ -2182,3 +2182,37 @@
   align-items: flex-start;
   font-size: 13px;
 }
+
+/* Return items: the Return column gets its own width so the qty box and the
+   shelf choices stay inside the invoice pane instead of running off its edge.
+   The room comes from the number columns, which only show figures while returning. */
+.client-fin__invoice--returning .client-fin__col-provider {
+  width: 16%;
+}
+
+.client-fin__invoice--returning .client-fin__col-qty {
+  width: 3.5rem;
+}
+
+.client-fin__invoice--returning .client-fin__col-price,
+.client-fin__invoice--returning .client-fin__col-amount {
+  width: 5.25rem;
+}
+
+.client-fin__col-return {
+  width: 5.75rem;
+}
+
+.client-fin__return-qty {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 5rem;
+}
+
+.client-fin__invoice--returning td select {
+  max-width: 100%;
+}
+
+.client-fin__return-stock-row td {
+  padding-top: 0;
+}

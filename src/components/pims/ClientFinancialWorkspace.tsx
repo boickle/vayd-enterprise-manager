@@ -6259,7 +6259,11 @@ export default function ClientFinancialWorkspace({
                       }}
                     />
                   ) : null}
-                  <table className="client-fin__table client-fin__invoice client-fin__invoice--pets">
+                  <table
+                    className={`client-fin__table client-fin__invoice client-fin__invoice--pets${
+                      returning && canReturn ? ' client-fin__invoice--returning' : ''
+                    }`}
+                  >
                     <thead>
                       <tr>
                         <th className="client-fin__col-item">Item</th>
@@ -6267,7 +6271,7 @@ export default function ClientFinancialWorkspace({
                         <th className="client-fin__col-qty">Qty</th>
                         <th className="client-fin__col-price">Price</th>
                         <th className="client-fin__col-amount">Amt</th>
-                        {returning && canReturn ? <th>Return</th> : null}
+                        {returning && canReturn ? <th className="client-fin__col-return">Return</th> : null}
                         {canRemoveLines ? <th className="client-fin__row-action" /> : null}
                       </tr>
                     </thead>
@@ -6642,6 +6646,9 @@ export default function ClientFinancialWorkspace({
                                 catalogItemId: result.type.catalogItemId ?? null,
                                 catalogItemType: result.type.catalogItemType ?? 'procedure',
                                 patientId: mailedLine.patientId ?? selected.patientId ?? null,
+                                // B1 (owner, Nov 7, 2026): every invoice line needs a provider; the shipping line
+                                // takes the mailed item's, as visit checkout does.
+                                providerEmployeeId: mailedLine.providerEmployeeId ?? line.providerEmployeeId ?? null,
                                 miscCharge: true,
                               });
                               setSelected(invoice);
@@ -7013,35 +7020,9 @@ export default function ClientFinancialWorkspace({
                                 onChange={(e) =>
                                   setReturnQty((prev) => ({ ...prev, [line.id]: e.target.value }))
                                 }
+                                className="client-fin__return-qty"
                                 placeholder={`≤ ${returnableQty(line, returnOptions[line.id])}`}
                               />
-                              {line.catalogItemType === 'inventory' && Number(returnQty[line.id] || 0) > 0 ? (
-                                <ReturnLineStockFields
-                                  lineId={line.id}
-                                  qty={Number(returnQty[line.id] || 0)}
-                                  backOnShelf={
-                                    returnOptions[line.id]?.isControlled !== true &&
-                                    returnToShelf[line.id] !== false
-                                  }
-                                  onBackOnShelfChange={(on) =>
-                                    setReturnToShelf((prev) => ({ ...prev, [line.id]: on }))
-                                  }
-                                  shelfLocationId={returnShelfLoc[line.id] ?? ''}
-                                  onShelfChange={(id) =>
-                                    setReturnShelfLoc((prev) => ({ ...prev, [line.id]: id }))
-                                  }
-                                  locations={returnLocations}
-                                  options={returnOptions[line.id]}
-                                  detail={returnDetail[line.id]}
-                                  onDetailChange={(next) =>
-                                    setReturnDetail((prev) => ({ ...prev, [line.id]: next }))
-                                  }
-                                  reasons={returnWasteReasons}
-                                  methods={returnWasteMethods}
-                                  witnessOptions={returnWitnessOptions}
-                                  currentEmployeeId={cashierEmployeeId}
-                                />
-                              ) : null}
                             </td>
                           ) : null}
                           {canRemoveLines ? (
@@ -7063,6 +7044,42 @@ export default function ClientFinancialWorkspace({
                             </td>
                           ) : null}
                         </tr>
+                        {returning &&
+                        canReturn &&
+                        !unshippedMailForLine(line) &&
+                        returnableQty(line, returnOptions[line.id]) > 0 &&
+                        line.catalogItemType === 'inventory' &&
+                        Number(returnQty[line.id] || 0) > 0 ? (
+                          <tr className="client-fin__return-stock-row">
+                            <td colSpan={invoiceMetaCols + (canRemoveLines ? 1 : 0)}>
+                              <ReturnLineStockFields
+                                lineId={line.id}
+                                qty={Number(returnQty[line.id] || 0)}
+                                backOnShelf={
+                                  returnOptions[line.id]?.isControlled !== true &&
+                                  returnToShelf[line.id] !== false
+                                }
+                                onBackOnShelfChange={(on) =>
+                                  setReturnToShelf((prev) => ({ ...prev, [line.id]: on }))
+                                }
+                                shelfLocationId={returnShelfLoc[line.id] ?? ''}
+                                onShelfChange={(id) =>
+                                  setReturnShelfLoc((prev) => ({ ...prev, [line.id]: id }))
+                                }
+                                locations={returnLocations}
+                                options={returnOptions[line.id]}
+                                detail={returnDetail[line.id]}
+                                onDetailChange={(next) =>
+                                  setReturnDetail((prev) => ({ ...prev, [line.id]: next }))
+                                }
+                                reasons={returnWasteReasons}
+                                methods={returnWasteMethods}
+                                witnessOptions={returnWitnessOptions}
+                                currentEmployeeId={cashierEmployeeId}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
                         {showMeta && rxOpen ? (
                           isIdexxLine ? (
                           <tr className={`client-fin__line-meta ${lineStateClass}`}>
@@ -7720,6 +7737,7 @@ export default function ClientFinancialWorkspace({
                                 onChange={(e) =>
                                   setReturnQty((prev) => ({ ...prev, [ship.id]: e.target.value }))
                                 }
+                                className="client-fin__return-qty"
                                 placeholder={`≤ ${Math.abs(Number(ship.qty) || 0)}`}
                               />
                             </td>
@@ -7781,6 +7799,7 @@ export default function ClientFinancialWorkspace({
                                       [child.id]: e.target.value,
                                     }))
                                   }
+                                  className="client-fin__return-qty"
                                   placeholder={`≤ ${Math.abs(Number(child.qty) || 0)}`}
                                 />
                               </td>

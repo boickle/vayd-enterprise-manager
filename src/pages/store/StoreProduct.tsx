@@ -134,9 +134,14 @@ export default function StoreProduct() {
     );
   }, [item, strength, pack, optionNames, settledPicks]);
 
-  const canAutoship = Boolean(
-    selected?.inventoryItemId && (item?.variants || []).some((row) => row.inventoryItemId)
-  );
+  // B2 (owner, Nov 7, 2026): prescriptions and pet items need the portal login (guests buy one-time,
+  // non-prescription items only), so a guest gets "Log in to order" instead of Add to cart.
+  const guestNeedsLogin =
+    !loggedIn && (item?.approvalTag === 'needs_doctor_approval' || Boolean(item?.requiresPet));
+  // B2: auto-ship needs the portal login; guests buy once.
+  const canAutoship =
+    loggedIn &&
+    Boolean(selected?.inventoryItemId && (item?.variants || []).some((row) => row.inventoryItemId));
   const recommendedFreq = storeRecommendedFrequency(
     selected?.reminderCadence,
     selected?.recommendedFrequency,
@@ -315,8 +320,12 @@ export default function StoreProduct() {
         ) : null}
         {item.approvalTag === 'needs_doctor_approval' ? (
           <div className="vayd-store__note">
-            This is a prescription item. Anyone can order; we verify the record before we mail.
+            {loggedIn
+              ? 'This is a prescription item. A doctor checks every order before we mail it.'
+              : 'This is a prescription item. Log in to your client portal to order it — a doctor checks every order before we mail it.'}
           </div>
+        ) : !loggedIn && item.requiresPet ? (
+          <div className="vayd-store__note">This item is ordered for a pet. Log in to your client portal to order it.</div>
         ) : null}
         {item.description ? (
           <div
@@ -581,6 +590,11 @@ export default function StoreProduct() {
           </div>
         ) : null}
         <div className="vayd-store__actions">
+          {guestNeedsLogin ? (
+            <Link className="btn primary" to="/login" state={{ from: { pathname: location.pathname } }}>
+              Log in to order
+            </Link>
+          ) : (
           <button
             type="button"
             className="primary"
@@ -634,6 +648,7 @@ export default function StoreProduct() {
                   ? 'Add to cart (backorder)'
                   : 'Add to cart'}
           </button>
+          )}
         </div>
       </div>
     </div>
