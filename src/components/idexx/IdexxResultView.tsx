@@ -22,6 +22,7 @@ import {
   type IdexxResultTest,
 } from '../../api/idexx';
 import { fetchPatientByIdStaff } from '../../api/patients';
+import { patientInactiveBanner } from '../../utils/patientStatusDisplay';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -50,7 +51,7 @@ type Props = {
 type Flag = IdexxFlag;
 const testFlag = idexxTestFlag;
 
-type Owner = { patientId: number; clientId: number; clientLabel: string };
+type Owner = { patientId: number; clientId: number; clientLabel: string; deceased: boolean };
 
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -220,6 +221,7 @@ export default function IdexxResultView({
     body: string;
     bodyHtml: string;
     attachments: GmailComposeAttachment[];
+    notice: string | null;
   } | null>(null);
   const [summaryExpand, setSummaryExpand] = useState(0);
   const [includeInEmr, setIncludeInEmr] = useState(true);
@@ -265,6 +267,7 @@ export default function IdexxResultView({
           patientId,
           clientId,
           clientLabel: clientNameFromPatientRow(row) || result.clientLastName || 'Client',
+          deceased: Boolean(patientInactiveBanner(row)?.memorial),
         });
       })
       .catch(() => {
@@ -330,6 +333,8 @@ export default function IdexxResultView({
       patientId,
       clientId,
       clientLabel: clientNameFromPatientRow(row) || result?.clientLastName || 'Client',
+      // Euthanized, deceased or passed away: the same memorial state the patient chart banner uses.
+      deceased: Boolean(patientInactiveBanner(row)?.memorial),
     };
     setOwner(next);
     return next;
@@ -349,6 +354,7 @@ export default function IdexxResultView({
       const contentBase64 = await blobToBase64(pdf);
       if (!contentBase64) throw new Error('The IDEXX report was empty.');
       const pet = result.patientName?.trim() || 'Lab results';
+      const deceased = client.deceased;
       const wording = withSummary ? (result.clientSummary ?? '').trim() : '';
       const body = wording || coverNote(result, client.clientLabel);
       setIncludeInEmr(true);
@@ -358,12 +364,16 @@ export default function IdexxResultView({
         description: withSummary
           ? `${pet}'s summary is the message. The IDEXX PDF is attached.`
           : `${pet}'s IDEXX PDF is attached, without the written summary.`,
-        subject: `${pet}'s lab results`,
+        // A softer subject when the pet has died: no possessive "lab results" line.
+        subject: deceased ? `Lab results for ${pet}` : `${pet}'s lab results`,
         body,
         bodyHtml: clientSummaryToEmailHtml(body),
         attachments: [
           { filename: pdfFilename(result), mimeType: 'application/pdf', contentBase64 },
         ],
+        notice: deceased
+          ? `${pet} is marked deceased or euthanized in Scout. Read the email with that in mind before you send it.`
+          : null,
       });
     } catch (e) {
       setError(idexxErrorMessage(e, 'Could not prepare the email.'));
@@ -709,6 +719,7 @@ export default function IdexxResultView({
           clientLabel={owner.clientLabel}
           title={email.title}
           headerDescription={email.description}
+          notice={email.notice}
           initialSubject={email.subject}
           initialBodyText={email.body}
           initialBodyHtml={email.bodyHtml}

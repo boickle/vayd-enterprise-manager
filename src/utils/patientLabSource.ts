@@ -1,6 +1,7 @@
 import { getIdexxResult, listIdexxResults, type IdexxResultSummary } from '../api/idexx';
 import { listPatientLabResults, type LabResult } from '../api/inHouseLabs';
 import { labReportBriefText, labReportFromIdexx, labReportFromInHouse } from './chartRecordsPdf';
+import { practiceDateKey } from './practiceTimezone';
 
 /** One Scout lab result, as text for the AI case and household summaries. */
 export type LabSourceEntry = {
@@ -13,9 +14,7 @@ export type LabSourceEntry = {
 };
 
 function day(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  return practiceDateKey(iso);
 }
 
 function idexxWhen(r: IdexxResultSummary): string | null {
