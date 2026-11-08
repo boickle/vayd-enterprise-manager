@@ -153,6 +153,7 @@ import {
 import {
   readFinancialPrefill,
   scoutArFromInvoices,
+  evetBalanceWithoutAdopted,
   type FinancialRefillPrefill,
 } from '../../utils/clientFinancial';
 import {
@@ -2967,14 +2968,18 @@ export default function ClientFinancialWorkspace({
     return status === filter;
   });
 
-  const combinedBalance = (evetBalance ?? 0) + scoutArFromInvoices(scoutInvoices);
-  useEffect(() => {
-    onCombinedBalance?.(combinedBalance);
-  }, [combinedBalance, onCombinedBalance]);
   const adoptedEvetIds = useMemo(
     () => new Set(scoutInvoices.map((inv) => inv.evetInvoiceId).filter((id): id is number => id != null)),
     [scoutInvoices]
   );
+  // An eVet invoice taken over with "Edit in Scout" is still inside the balance this page loaded
+  // with, and is also a Scout invoice now: count it once, with no reload.
+  const combinedBalance =
+    evetBalanceWithoutAdopted(evetBalance, evetInvoices, adoptedEvetIds) +
+    scoutArFromInvoices(scoutInvoices);
+  useEffect(() => {
+    onCombinedBalance?.(combinedBalance);
+  }, [combinedBalance, onCombinedBalance]);
   const unpaidEvet = useMemo(
     () =>
       evetLedgerInvoices.filter((inv) => {
