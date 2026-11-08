@@ -35,7 +35,7 @@
 - **Approve here…** in the queue lets a manager approve with a reason (the task shows why it was closed).
 - **Re-send…** a task to someone else.
 - **Lower the quantity** only on online store orders. On an order that came from a visit or a direct invoice, change the quantity on that bill, then approve. To approve more than the family ordered, they place a new order.
-- **The refund for a lower quantity** is the item price × the units taken off, the same as rejecting an item. Sales tax isn't refunded on either (see the review file).
+- **The refund for a lower quantity** is the item price × the units taken off, plus the sales tax on them, the same as rejecting an item (owner, Nov 8). The demo thyroid tablets aren't taxed, so the demo refund is $76.00. Scout records the refunded units as a return on the order's bill, so they come off the Sales & Tax report.
 
 ## What other roles see
 
