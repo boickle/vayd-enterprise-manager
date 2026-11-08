@@ -21,7 +21,7 @@ describe('LAB-08: pending forms after the charge is removed', () => {
     const w = labsWorld();
     const hh = w.households.two;
     const max = hh.pets.find((p) => p.name === 'Max')!;
-    const form = labsItemName('HEARTWORM 4DX PLUS');
+    const form = 'HEARTWORM 4DX PLUS'; // form names aren't tagged per run; the row's pet name scopes it
 
     labsApi<Bill>('veterinarian', 'POST', '/visit-invoices/counter', {
       practiceId: w.practiceId,
@@ -35,6 +35,7 @@ describe('LAB-08: pending forms after the charge is removed', () => {
         qty: 1,
         unitPrice: 40,
         catalogItemType: 'lab',
+          providerEmployeeId: w.employees.veterinarian,
         catalogItemId: w.labs.heartworm4dxId,
       }).then((b) => {
         const line = b.lines.find((l) => !l.isDeleted && Number(l.catalogItemId) === w.labs.heartworm4dxId)!;
@@ -44,7 +45,10 @@ describe('LAB-08: pending forms after the charge is removed', () => {
         labsApi('veterinarian', 'DELETE', `/visit-invoices/${bill.id}/lines/${line.id}?practiceId=${w.practiceId}`);
         cy.reload();
         cy.get('.pending-labs', { timeout: 30000 }).should('exist');
-        cy.get('.pending-labs__row-btn').filter(`:contains("Max —")`).filter(`:contains("${form}")`).should('have.length', 0);
+        // None of Max's 4Dx rows may remain (the list may be empty, so look inside the page rather than for rows).
+        cy.get('.pending-labs').should(($page) => {
+          expect($page.find(`.pending-labs__row-btn:contains("Max —"):contains("${form}")`)).to.have.length(0);
+        });
       }),
     );
   });

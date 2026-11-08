@@ -22,7 +22,7 @@ describe('LAB-07: a lab line moved to another pet', () => {
     const hh = w.households.two;
     const max = hh.pets.find((p) => p.name === 'Max')!;
     const bella = hh.pets.find((p) => p.name === 'Bella')!;
-    const form = labsItemName('HEARTWORM 4DX PLUS');
+    const form = 'HEARTWORM 4DX PLUS'; // form names aren't tagged per run; the row's pet name scopes it
 
     labsApi<Bill>('veterinarian', 'POST', '/visit-invoices/counter', {
       practiceId: w.practiceId,
@@ -37,6 +37,7 @@ describe('LAB-07: a lab line moved to another pet', () => {
           qty: 1,
           unitPrice: 40,
           catalogItemType: 'lab',
+          providerEmployeeId: w.employees.veterinarian,
           catalogItemId: w.labs.heartworm4dxId,
         }).then((b) => ({ id: bill.id, line: b.lines.find((l) => !l.isDeleted && Number(l.catalogItemId) === w.labs.heartworm4dxId)! })),
       )
@@ -47,7 +48,10 @@ describe('LAB-07: a lab line moved to another pet', () => {
 
     signInLabs('technician', PENDING_LABS_PATH);
     cy.get('.pending-labs__row-btn', { timeout: 30000 }).filter(':contains("Bella —")').filter(`:contains("${form}")`).should('have.length.at.least', 1);
-    cy.get('.pending-labs__row-btn').filter(':contains("Max —")').filter(`:contains("${form}")`).should('have.length', 0);
+    // None of Max's 4Dx rows may remain (the list may be empty, so look inside the page rather than for rows).
+    cy.get('.pending-labs').should(($page) => {
+      expect($page.find(`.pending-labs__row-btn:contains("Max —"):contains("${form}")`)).to.have.length(0);
+    });
 
     // Enter the result on Bella's row; it saves on Bella.
     cy.get('.pending-labs__row-btn').filter(':contains("Bella —")').filter(`:contains("${form}")`).first().click();
