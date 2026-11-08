@@ -69,15 +69,23 @@ export default function IdexxSendModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // The pre-pick comes from the bill line's provider, who may be a tech. Only a vet in
+    // the list stays picked; anyone else falls back to the appointment's doctor (the
+    // select would otherwise show "Appointment's doctor" but send the tech).
+    const keepOnlyVets = (list: Array<{ id: number }>) =>
+      setVetId((current) => (current !== '' && !list.some((v) => v.id === current) ? '' : current));
     void fetchVeterinarians()
-      .then((res) =>
-        setVets(
-          (res.providers ?? [])
-            .map((p: { id: unknown; name: string }) => ({ id: Number(p.id), name: p.name }))
-            .filter((p: { id: number }) => Number.isFinite(p.id))
-        )
-      )
-      .catch(() => setVets([]));
+      .then((res) => {
+        const list = (res.providers ?? [])
+          .map((p: { id: unknown; name: string }) => ({ id: Number(p.id), name: p.name }))
+          .filter((p: { id: number }) => Number.isFinite(p.id));
+        setVets(list);
+        keepOnlyVets(list);
+      })
+      .catch(() => {
+        setVets([]);
+        keepOnlyVets([]);
+      });
     void getIdexxOrderPreview(patientId)
       .then((p) => {
         setMissing(p.missing ?? []);
