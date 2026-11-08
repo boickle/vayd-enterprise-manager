@@ -20,15 +20,21 @@
 | 5 | Gift card form | Click **Check balance** | "Check the balance." | — |
 | 6 | Gift card form | Point at "••••PUX8 has $50.00" and **Use $** | "It has $50. Use all of it, or type a smaller amount." | — |
 | 7 | Gift card form | Click **Apply gift card** | "Apply it." | — |
-| 8 | Checkout | Point at "Took $50.00 from gift card ••••PUX8. $0.00 left on the card." and **Paid** $50.00 | "Scout says how much it took and what's left on the card." | — |
-| 9 | Checkout | Click **Account credit** | "Next, their account credit." | Maria has $30 account credit |
-| 10 | Account credit form | Point at "Account credit: $30.00 available" and **Use $** | "Scout fills in what they have, up to what's owed." | — |
-| 11 | Account credit form | Click **Apply credit** | "Apply it." | — |
-| 12 | Checkout | Point at "Used $30.00 of account credit. $0.00 credit left." and **Paid** $80.00 | "The credit is used, and the balance drops." | — |
-| 13 | Checkout | Click **Card on file** | "The card takes only what's left: $82." | Maria's saved card (INV-03) |
-| 14 | Checkout | Point at "Charged the card on file." and **Paid** $162.00 | "Three payments, one bill, all paid." | — |
-| 15 | Clients, Maria Rivera, Ledger | Point at the invoice row: "Gift Card, Account credit, Visa •••• 4242" | "The ledger shows all three." | — |
-| 16 | Ledger, an open invoice | Wait for **Card on file** to appear in **Method**, choose **Cash**, and point at **Amount** and **Cash received** | "To take part of a bill in cash or by check, use the ledger. Pick the method and type the amount. Card payments always take the whole balance." | A second open Rivera bill |
+| 8 | Checkout | Point at "Took $50.00 from gift card ..." | "Scout says how much it took and what's left on the card." | — |
+| 9 | Checkout | Point at **Balance due** ($112.00) under **Paid** ($50.00) | "The bill shows $50 paid, and the balance due is now $112." | — |
+| 10 | Checkout | Point at the green **Account credit ($30.00)** button | "Account credit shows $30, and the button is green. Green means this household has credit." | Maria has $30 account credit |
+| 11 | Checkout | Click **Account credit** | "Click Account credit." | — |
+| 12 | Account credit form | Point at "Account credit: $30.00 available" and **Use $** | "Scout fills in what they have, up to what's owed." | — |
+| 13 | Account credit form | Click **Apply credit** | "Click Apply credit." | — |
+| 14 | Checkout | Point at **Balance due** ($82.00) | "The credit is used, and the balance due drops to $82." | — |
+| 15 | Checkout | Point at the green **Card on file · Visa •4242** button | "Card on file is green too, and it shows Maria's Visa." | Maria's saved card (INV-03) |
+| 16 | Checkout | Click **Card on file** | "Click Card on file." | — |
+| 17 | Checkout | Point at **Charge $82.00 to Visa •4242** (nothing is charged yet) | "Before it charges, Scout shows the amount: $82 to the Visa." | — |
+| 18 | Checkout | Click **Charge $82.00 to Visa •4242** | "Click Charge." | — |
+| 19 | Checkout | Point at the green **Paid in full** block | "The bill says Paid in full." | — |
+| 20 | Checkout | Point at its list: Gift card ••••, Account credit $30.00, Visa •4242 $82.00 | "And it lists every payment: the gift card, the account credit, and the Visa." | — |
+| 21 | Clients, Maria Rivera, Ledger | Point at the invoice row: "Gift Card, Account credit, Visa •••• 4242" | "The ledger shows all three." | — |
+| 22 | Ledger, an open invoice | Wait for **Card on file** to appear in **Method**, choose **Cash**, and point at **Amount** and **Cash received** | "To take part of a bill in cash or by check, use the ledger. Pick the method and type the amount. Card payments always take the whole balance." | A second open Rivera bill |
 
 ## What else you can do here
 

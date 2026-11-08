@@ -47,7 +47,6 @@ describe('Training: INV-04 split payment', () => {
     cy.wait(1500);
 
     const btn = (label: string) => cy.contains('.soap-checkout-actions button', label);
-    const row = (label: string) => cy.contains('.soap-invoice-row', label);
     startClock();
 
     line('inv04-01');
@@ -66,15 +65,22 @@ describe('Training: INV-04 split payment', () => {
     line('inv04-09', () => {
       pointAt(() => cy.contains('Took $50.00 from gift card'), 4500);
     });
-    line('inv04-10', () => pointAt(() => row('Paid'), 3000));
-    line('inv04-11', () => tap(() => btn('Account credit')));
-    line('inv04-12', () => pointAt(() => cy.contains('.account-credit-tender', 'available'), 4500));
+    line('inv04-10', () => pointAt(() => cy.get('[data-testid="checkout-balance-due"]'), 3500));
+    line('inv04-11', () => pointAt(() => btn('Account credit'), 4500));
+    line('inv04-12', () => tap(() => btn('Account credit')));
+    line('inv04-14', () => pointAt(() => cy.contains('.account-credit-tender', 'available'), 4500));
     line('inv04-13', () => tap(() => cy.contains('.account-credit-tender button', 'Apply credit')));
-    line('inv04-14', () => pointAt(() => cy.contains('Used $30.00 of account credit'), 4500));
-    line('inv04-15', () => tap(() => btn('Card on file')));
-    offCamera(() => cy.contains('Charged the card on file', { timeout: 90000 }).should('exist'));
-    line('inv04-16', () => pointAt(() => cy.contains('Charged the card on file'), 4000));
-    line('inv04-17', () => pointAt(() => row('Paid'), 3500));
+    line('inv04-15', () => {
+      cy.contains('Used $30.00 of account credit').should('exist');
+      pointAt(() => cy.get('[data-testid="checkout-balance-due"]'), 3500);
+    });
+    line('inv04-16', () => pointAt(() => btn('Card on file'), 4000));
+    line('inv04-17', () => tap(() => btn('Card on file')));
+    line('inv04-17b', () => pointAt(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/), 4500));
+    line('inv04-17c', () => tap(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/)));
+    offCamera(() => cy.get('[data-testid="checkout-paid-in-full"]', { timeout: 90000 }).should('exist'));
+    line('inv04-17d', () => pointAt(() => cy.get('.soap-invoice-paid-in-full-title'), 3000));
+    line('inv04-17e', () => pointAt(() => cy.get('[data-testid="checkout-paid-in-full"] ul'), 5000));
     // The ledger: the paid bill, then a second open bill.
     offCamera(() => {
       cy.then(() => cy.visit(`/schedule/clients?clientId=${client}&tab=financial&invoice=${invoiceId}`));

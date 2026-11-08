@@ -57,3 +57,7 @@
 - **Stack notes:** Stripe finds saved cards by email, and the shared Stripe test account already knows maria.rivera@example.com, so the spec gives Maria a fresh email for the take (the spec puts the demo email back afterwards). The card form needs `VITE_STRIPE_PUBLISHABLE_KEY` in the worktree's `.env` (it was missing; I copied only that test key and the payment-provider line from another worktree's `.env`; the file is git-ignored).
 - **Checked:** Card over phone with 4242, the tick box, the paid note, then Card on file on a second bill.
 - Spec: `cypress/training/inv-03-card-on-file.cy.ts`.
+
+## Pass 2 (Wave 11 checkout)
+
+On the second bill: **Card on file · Visa •4242** is green (a card is saved). Click it, point at the confirm button **Charge $22.50 to Visa •4242** ("Scout shows the amount and the card before it charges anything"), then click **Charge** to confirm. Nothing is charged until that click.

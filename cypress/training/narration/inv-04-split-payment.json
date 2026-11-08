@@ -1,23 +1,102 @@
 [
- {"id":"inv04-01","text":"When a family has a gift card or credit with us, they shouldn't pay the whole bill by card. Use what they have first."},
- {"id":"inv04-02","text":"The Riveras owe one hundred sixty two dollars today."},
- {"id":"inv04-03","text":"Gift card and credit first. The card takes what's left."},
- {"id":"inv04-04","text":"Start with the gift card. Click Gift card."},
- {"id":"inv04-05","text":"Type the sixteen letter code from the card."},
- {"id":"inv04-06","text":"Click Check balance."},
- {"id":"inv04-07","text":"It has fifty dollars. Use all of it, or type a smaller amount."},
- {"id":"inv04-08","text":"Click Apply gift card."},
- {"id":"inv04-09","text":"Scout says how much it took, and what's left on the card."},
- {"id":"inv04-10","text":"And the bill shows fifty dollars paid."},
- {"id":"inv04-11","text":"Next, their account credit. Click Account credit."},
- {"id":"inv04-12","text":"Scout fills in what they have, up to what's owed."},
- {"id":"inv04-13","text":"Click Apply credit."},
- {"id":"inv04-14","text":"The credit is used, and the balance drops."},
- {"id":"inv04-15","text":"Now click Card on file. The card takes only what's left, eighty two dollars."},
- {"id":"inv04-16","text":"Wait for this note."},
- {"id":"inv04-17","text":"Three payments, one bill, all paid."},
- {"id":"inv04-18","text":"In Maria's ledger, the invoice shows all three payments."},
- {"id":"inv04-19","text":"To take part of a bill in cash or by check, use the ledger. Pick the method."},
- {"id":"inv04-20","text":"Then type the amount, and the cash received. Card payments always take the whole balance."},
- {"id":"inv04-21","text":"The most common mistakes are charging the full bill to the card when the family has credit, and forgetting a gift card they brought. Remember: apply the gift card and credit first. The card takes only what's left."}
+ {
+  "id": "inv04-01",
+  "text": "When a family has a gift card or credit with us, they shouldn't pay the whole bill by card. Use what they have first."
+ },
+ {
+  "id": "inv04-02",
+  "text": "The Riveras owe one hundred sixty two dollars today."
+ },
+ {
+  "id": "inv04-03",
+  "text": "Gift card and credit first. The card takes what's left."
+ },
+ {
+  "id": "inv04-04",
+  "text": "Start with the gift card. Click Gift card."
+ },
+ {
+  "id": "inv04-05",
+  "text": "Type the sixteen letter code from the card."
+ },
+ {
+  "id": "inv04-06",
+  "text": "Click Check balance."
+ },
+ {
+  "id": "inv04-07",
+  "text": "It has fifty dollars. Use all of it, or type a smaller amount."
+ },
+ {
+  "id": "inv04-08",
+  "text": "Click Apply gift card."
+ },
+ {
+  "id": "inv04-09",
+  "text": "Scout says how much it took, and what's left on the card."
+ },
+ {
+  "id": "inv04-10",
+  "text": "The bill shows fifty dollars paid, and the balance due is now one hundred twelve dollars."
+ },
+ {
+  "id": "inv04-11",
+  "text": "Now look at Account credit. It shows thirty dollars, and the button is green. Green means this household has credit."
+ },
+ {
+  "id": "inv04-12",
+  "text": "Click Account credit."
+ },
+ {
+  "id": "inv04-14",
+  "text": "Scout fills in what they have, up to what's owed."
+ },
+ {
+  "id": "inv04-13",
+  "text": "Click Apply credit."
+ },
+ {
+  "id": "inv04-15",
+  "text": "The credit is used, and the balance due drops to eighty two dollars."
+ },
+ {
+  "id": "inv04-16",
+  "text": "Card on file is green too, and it shows Maria's Visa."
+ },
+ {
+  "id": "inv04-17",
+  "text": "Click Card on file."
+ },
+ {
+  "id": "inv04-17b",
+  "text": "Before it charges, Scout shows the amount: eighty two dollars to the Visa."
+ },
+ {
+  "id": "inv04-17c",
+  "text": "Click Charge."
+ },
+ {
+  "id": "inv04-17d",
+  "text": "The bill says Paid in full."
+ },
+ {
+  "id": "inv04-17e",
+  "text": "And it lists every payment: the gift card, the account credit, and the Visa."
+ },
+ {
+  "id": "inv04-18",
+  "text": "In Maria's ledger, the invoice shows all three payments."
+ },
+ {
+  "id": "inv04-19",
+  "text": "To take part of a bill in cash or by check, use the ledger. Pick the method."
+ },
+ {
+  "id": "inv04-20",
+  "text": "Then type the amount, and the cash received. Card payments always take the whole balance."
+ },
+ {
+  "id": "inv04-21",
+  "text": "The most common mistakes are charging the full bill to the card when the family has credit, and forgetting a gift card they brought. Remember: apply the gift card and credit first. The card takes only what's left."
+ }
 ]

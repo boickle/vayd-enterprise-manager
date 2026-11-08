@@ -59,10 +59,13 @@ describe('Training: INV-12 refund, void payment, void invoice', () => {
     line('inv12-10', () => {
       tap(() => dialogButton(/^Cancel$/));
       cy.contains('Reason for voiding this payment?').should('not.exist');
+      cy.get('.app-dialog').should('not.exist');
+      cy.wait(600, { log: false });
     });
     line('inv12-11', () => {
       tap(() => cy.contains('button', 'Void invoice'));
-      cy.contains('Void invoice?', { timeout: 30000 }).should('exist');
+      cy.contains('Void invoice?', { timeout: 30000 }).should('be.visible');
+      cy.get('.app-dialog textarea, .app-dialog input').first().should('be.visible');
     });
     line('inv12-12', () => typeSlowly(() => cy.get('.app-dialog textarea, .app-dialog input').first(), 'Training: voiding the bill'));
     line('inv12-13', () => tap(() => dialogButton(/^Void$/)));

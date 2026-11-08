@@ -69,11 +69,19 @@
  },
  {
   "id": "inv03-15",
-  "text": "Later, Maple has a second bill. Now Card on file is ready to click."
+  "text": "Later, Maple has a second bill. Card on file is green now, with the Visa on it, because a card is saved."
  },
  {
   "id": "inv03-16",
-  "text": "One click charges the whole balance."
+  "text": "Click Card on file."
+ },
+ {
+  "id": "inv03-16b",
+  "text": "Scout shows the amount and the card before it charges anything. Twenty two dollars and fifty cents, to the Visa."
+ },
+ {
+  "id": "inv03-16c",
+  "text": "Click Charge to confirm. That takes the whole balance, once."
  },
  {
   "id": "inv03-17",

@@ -125,3 +125,15 @@ Stack: `vayd_api_test_inv`, API on build-doctor-flow 882ed47f (rebuilt; migratio
 - Kit: `trainingKit.ts` `center()` waits 300 ms (was 450) before settling, so taps land slightly sooner.
 - App wording leftover: the consent box now starts unticked but still says "uncheck if they say no" (VisitCheckoutPanel.tsx).
 - **INV-10 (Pass 2):** recorded, 78 s, 2 clicks in sync. Adds the Edit in Scout click ("That takes the invoice over. Scout owns this bill now..."), pointing at Save invoice. Possible app bug: right after Edit in Scout the ledger Balance due reads $235.00 (was $155.00) and lists #48213 as a Scout invoice; it looks double-counted until a reload.
+
+## Pass 2, re-takes (Wave 11 checkout, sync fixes), Nov 7, 2026
+Each re-take was checked frame by line: one frame at every line start + 1 s, from marks.json with the offCamera cuts applied. Every frame matched its line, apart from the notes below.
+- **INV-02:** 82 s, no clicks. Price no longer overlaps QTY. Cosmetic: the narrower Item column wraps the "Normally hidden" chip on the Biohazard line.
+- **INV-03:** 123 s, 6 clicks in sync. Tap to Pay lines, tick the box, then Card on file, "Charge $22.50 to Visa •4242" (pointed at), Charge to confirm, "Paid in full".
+- **INV-04:** 130 s, 7 clicks, one 0.1 s late (the Method select, inv04-19). Rewritten one action per line: gift card, Balance due $112, green Account credit ($30.00), apply, Balance due $82, green Card on file, confirm button, Charge, Paid in full list. Script .md updated.
+- **INV-06:** 85 s, 7 clicks, one 0.0 s late (inv06-14 +2.0). Browser stub for the send; nothing emailed; Draft status shown; narration claims no delivery.
+- **INV-07:** 94 s, 7 clicks in sync, after merging f31a634 ("Which visit is this for?" one visit per line). The owner's "INV-07 FINAL" file was left alone; this take is a separate file.
+- **INV-08:** 64 s, 4 clicks, one late (inv08-07 +2.2 s). Browser stub; nothing emailed.
+- **INV-09:** 73 s, 4 clicks in sync, every line matched. Note: line inv09-11 (credit message) is not shown on screen.
+- **INV-12:** 92 s. The first re-take showed the picture 3 to 4 s behind the voice from the refund Cancel (about 34 s) on, so the Cancel was visible at 38 s. The marks, clicks and cuts were fine (the only cut was 0.3 s). The recording itself lagged, probably while the Mac was loaded (load average 40 to 130, other sessions' Cypress runs). The spec now waits for the Void payment dialog to close and for the Void invoice textarea to be visible. A second take at a lower load was in sync on every line.
+- **Process note:** `cy.exec('psql ...')` timed out (60 s) in the reset step of 8 runs while the Mac was overloaded. Runs were retried; the load gate in the recording wrapper waits for load under 30 first.

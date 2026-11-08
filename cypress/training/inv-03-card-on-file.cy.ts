@@ -87,6 +87,8 @@ describe('Training: INV-03 card on file', () => {
     });
     line('inv03-15', () => pointAt(() => btn('Card on file'), 4500));
     line('inv03-16', () => tap(() => btn('Card on file')));
+    line('inv03-16b', () => pointAt(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/), 4500));
+    line('inv03-16c', () => tap(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/)));
     offCamera(() => cy.contains('Charged the card on file', { timeout: 90000 }).should('exist'));
     line('inv03-17', () => pointAt(() => cy.contains('Charged the card on file'), 4500));
     line('inv03-18');
