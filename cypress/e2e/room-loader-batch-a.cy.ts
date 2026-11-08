@@ -26,6 +26,8 @@ type Seeded = {
   patients: SeededPet[];
   items: Record<string, number>;
   storeItems: Array<{ name: string; inventoryItemId: number }>;
+  /** Office of the seeded visit: where its stock is drawn. */
+  branchId: number;
   staff: { email: string; password: string };
 };
 
@@ -199,13 +201,14 @@ describe('RL-13-5: store line carries its catalog item (end to end)', () => {
       // 5.5% of $40.
       cy.contains('$2.20', { timeout: 30000 }).should('be.visible');
       // Payment is what closes the invoice (there is no Finalize step): pay it in cash.
-      // Checkout needs a provider on the line and a follow-up answer first.
-      cy.contains('label', /Not appropriate/i).click();
+      // Checkout needs a provider on the line. (The checkout follow-up question was removed Nov 3, 2026.)
       cy.get('.soap-invoice-line select, select').contains('option', /Dana|Doc|Provider/i);
       cy.contains('button', /Cash/).click();
       cy.contains('button', /^(OK|Confirm|Submit|Save)$/).click();
       cy.contains(/paid/i, { timeout: 30000 });
       cy.visit('/schedule/analytics/inventory/activity');
+      // The page opens on the first office; the draw is on the visit's office.
+      cy.contains('label', /^\s*Office/).find('select').should('contain.html', `value="${s.branchId}"`).select(String(s.branchId));
       cy.contains(/Oatmeal shampoo/i, { timeout: 30000 });
       cy.contains(/sold|visit use|drawn/i).should('be.visible');
     });
