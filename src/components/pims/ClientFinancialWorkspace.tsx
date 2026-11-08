@@ -1297,6 +1297,7 @@ function cardFingerprint(tender: {
 }
 
 function tenderPayLabel(tender: VisitInvoiceTender): string {
+  if (tender.method === 'gift_card' && tender.giftCardLast4) return `Gift card ••••${tender.giftCardLast4}`;
   return cardFingerprint(tender) ?? methodLabel(tender.method, tender.paymentTypeName);
 }
 

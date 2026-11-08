@@ -249,6 +249,8 @@ export type VisitInvoiceTender = {
   stripePaymentIntentId?: string | null;
   cardBrand?: string | null;
   cardLast4?: string | null;
+  /** Gift card tenders: the last four characters of the card's code, read from the card. */
+  giftCardLast4?: string | null;
   /** Dollars already refunded via Stripe against this tender. */
   refundedAmount?: number;
   receivedAt: string;

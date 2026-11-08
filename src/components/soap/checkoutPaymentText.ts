@@ -28,8 +28,8 @@ export type PaidTenderLine = { id: string; label: string; amount: number };
 
 /**
  * One line per tender that still counts: "Gift card ••••9PVM", "Account credit", "Visa •4242".
- * The API does not send a gift card's last characters on the tender, so the panel remembers the
- * ones it saw redeemed (`giftLast4ByTender`).
+ * The API sends a gift card's last characters on the tender (`giftCardLast4`); the ones the panel
+ * saw redeemed (`giftLast4ByTender`) only cover an older API answer.
  */
 export function paidTenderLines(
   tenders: VisitInvoiceTender[] | undefined,
@@ -43,7 +43,7 @@ export function paidTenderLines(
     let label: string;
     switch (t.method) {
       case 'gift_card': {
-        const last = giftLast4ByTender[t.id] || t.cardLast4;
+        const last = t.giftCardLast4 || giftLast4ByTender[t.id] || t.cardLast4;
         label = last ? `Gift card ••••${last}` : 'Gift card';
         break;
       }
