@@ -8,6 +8,7 @@ import {
 import { chatAboutChart } from '../../api/soapScribe';
 import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
 import { stripCitationTokens } from '../../utils/chartCitation';
+import { practiceDateKey } from '../../utils/practiceTimezone';
 import { loadPatientHistorySource } from '../../utils/patientHistorySource';
 import { idexxTestFlag } from './idexxFlags';
 
@@ -20,7 +21,7 @@ function resultDate(r: {
   receivedAt: string | null;
 }): string {
   const raw = r.specimenCollectionDate ?? r.idexxUpdatedAt ?? r.receivedAt;
-  return raw ? raw.slice(0, 10) : 'date unknown';
+  return practiceDateKey(raw) ?? 'date unknown';
 }
 
 function testKey(t: IdexxResultTest): string {
