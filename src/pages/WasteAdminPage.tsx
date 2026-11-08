@@ -12,6 +12,12 @@ import {
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
+/** Checkout and returns record waste under these, and the server refuses archived reasons. */
+const LOCKED_REASONS: Record<string, string> = {
+  drawn_not_given: 'Used by checkout',
+  returned_unsellable: 'Used by returns',
+};
+
 export default function WasteAdminPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
@@ -32,9 +38,7 @@ export default function WasteAdminPage() {
   }
 
   useEffect(() => {
-    void reload().catch((e) =>
-      setError(e instanceof Error ? e.message : 'Failed to load')
-    );
+    void reload().catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
   }, [practiceId]);
 
   async function saveConfig() {
@@ -72,6 +76,7 @@ export default function WasteAdminPage() {
       code,
       label: newReasonLabel.trim(),
       requiresDisposalMethod: 'optional',
+      isActive: true,
     });
     setNewReasonLabel('');
     await reload();
@@ -87,10 +92,40 @@ export default function WasteAdminPage() {
     await upsertDisposalMethod(practiceId, {
       code,
       label: newMethodLabel.trim(),
+      isActive: true,
     });
     setNewMethodLabel('');
     await reload();
   }
+
+  async function setReasonActive(r: WasteReason, isActive: boolean) {
+    setError(null);
+    try {
+      await upsertWasteReason(practiceId, { code: r.code, label: r.label, isActive });
+      await reload();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    }
+  }
+
+  async function setMethodActive(m: DisposalMethod, isActive: boolean) {
+    setError(null);
+    try {
+      await upsertDisposalMethod(practiceId, { code: m.code, label: m.label, isActive });
+      await reload();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    }
+  }
+
+  const rowStyle = (active: boolean) => ({
+    padding: '6px 0',
+    borderBottom: '1px solid #eee',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    opacity: active ? 1 : 0.55,
+  });
 
   if (!config) {
     return (
@@ -107,16 +142,30 @@ export default function WasteAdminPage() {
         Reasons, disposal methods, and waste alerts for Waste / Adjust.
       </p>
       {toast && <div className="settings-message">{toast}</div>}
-      {error && (
-        <div className="settings-message settings-error-message">{error}</div>
-      )}
+      {error && <div className="settings-message settings-error-message">{error}</div>}
 
       <h3>Waste / adjustment reasons</h3>
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {reasons.map((r) => (
-          <li key={r.id} style={{ padding: '6px 0', borderBottom: '1px solid #eee' }}>
-            <strong>{r.label}</strong>
-            <span className="settings-muted"> — disposal: {r.requiresDisposalMethod}</span>
+          <li key={r.id} style={rowStyle(r.isActive)}>
+            <span style={{ flex: 1 }}>
+              <strong>{r.label}</strong>
+              <span className="settings-muted"> — disposal: {r.requiresDisposalMethod}</span>
+              {!r.isActive && <span className="settings-muted"> · archived</span>}
+            </span>
+            {LOCKED_REASONS[r.code] && r.isActive ? (
+              <span className="settings-muted" style={{ fontSize: 12 }}>
+                {LOCKED_REASONS[r.code]}
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void setReasonActive(r, !r.isActive)}
+              >
+                {r.isActive ? 'Archive' : 'Restore'}
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -135,8 +184,18 @@ export default function WasteAdminPage() {
       <h3>Disposal methods</h3>
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {methods.map((m) => (
-          <li key={m.id} style={{ padding: '6px 0', borderBottom: '1px solid #eee' }}>
-            {m.label}
+          <li key={m.id} style={rowStyle(m.isActive)}>
+            <span style={{ flex: 1 }}>
+              {m.label}
+              {!m.isActive && <span className="settings-muted"> · archived</span>}
+            </span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void setMethodActive(m, !m.isActive)}
+            >
+              {m.isActive ? 'Archive' : 'Restore'}
+            </button>
           </li>
         ))}
       </ul>
@@ -167,9 +226,7 @@ export default function WasteAdminPage() {
         <input
           type="checkbox"
           checked={config.requireDisposalForVaccine}
-          onChange={(e) =>
-            setConfig({ ...config, requireDisposalForVaccine: e.target.checked })
-          }
+          onChange={(e) => setConfig({ ...config, requireDisposalForVaccine: e.target.checked })}
         />
         <span>Vaccines</span>
       </label>
@@ -191,9 +248,7 @@ export default function WasteAdminPage() {
           className="settings-input"
           type="number"
           value={String(config.alertSingleWasteUsd)}
-          onChange={(e) =>
-            setConfig({ ...config, alertSingleWasteUsd: e.target.value as any })
-          }
+          onChange={(e) => setConfig({ ...config, alertSingleWasteUsd: e.target.value as any })}
         />
       </label>
       <label className="settings-label">
@@ -202,18 +257,14 @@ export default function WasteAdminPage() {
           className="settings-input"
           type="number"
           value={String(config.alertMonthlyWasteUsd)}
-          onChange={(e) =>
-            setConfig({ ...config, alertMonthlyWasteUsd: e.target.value as any })
-          }
+          onChange={(e) => setConfig({ ...config, alertMonthlyWasteUsd: e.target.value as any })}
         />
       </label>
       <label className="settings-checkbox-item">
         <input
           type="checkbox"
           checked={config.managerNotification}
-          onChange={(e) =>
-            setConfig({ ...config, managerNotification: e.target.checked })
-          }
+          onChange={(e) => setConfig({ ...config, managerNotification: e.target.checked })}
         />
         <span>Manager notification</span>
       </label>
@@ -222,9 +273,7 @@ export default function WasteAdminPage() {
         <input
           className="settings-input"
           value={config.requireNotesForReasons ?? ''}
-          onChange={(e) =>
-            setConfig({ ...config, requireNotesForReasons: e.target.value })
-          }
+          onChange={(e) => setConfig({ ...config, requireNotesForReasons: e.target.value })}
         />
       </label>
 
