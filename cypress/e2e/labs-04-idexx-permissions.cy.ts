@@ -92,6 +92,7 @@ describe('LABS-04: IDEXX review permissions on screen', () => {
 
   it('LAB-04-7: a tech must pick a reason; afterwards the result shows who reviewed it and why', () => {
     storeMaxResult().then((resultId) => {
+      cy.intercept('PATCH', '**/idexx/results/*/reviewed').as('markReviewed');
       signInLabs('technician', RESULTS_PATH);
       openMax();
       cy.contains('button', 'Mark reviewed', { timeout: 30000 }).click();
@@ -101,7 +102,8 @@ describe('LABS-04: IDEXX review permissions on screen', () => {
         cy.contains('label', 'Vet reviewed verbally').find('input').check();
         cy.contains('button', 'Mark reviewed').should('not.be.disabled').click();
       });
-      // The API stored who and why.
+      // The API stored who and why (wait for the save before reading it back).
+      cy.wait('@markReviewed').its('response.statusCode').should('be.oneOf', [200, 201, 204]);
       labsApi<{
         reviewedAt: string | null;
         reviewedReason: string | null;
