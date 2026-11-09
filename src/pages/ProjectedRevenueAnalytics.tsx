@@ -90,6 +90,7 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import { useCan } from '../permissions/PermissionContext';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 dayjs.extend(isoWeek);
@@ -421,7 +422,12 @@ export default function ProjectedRevenueAnalyticsPage() {
     assignedDoctorIds?: string[];
   };
   const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsAnalyticsViewAll = useCan('analytics.view_all');
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(
+    normalizedRoles,
+    holdsAnalyticsViewAll
+  );
   const assignedDoctorIdSet = useMemo(
     () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
     [assignedDoctorIds]

@@ -27,7 +27,8 @@ export type RoleSlug =
   | 'observer'
   | 'controlled_substances_director'
   | 'mail_order_manager'
-  | 'mail_order_team';
+  | 'mail_order_team'
+  | 'executive';
 
 export const ROLE_LABELS: Record<RoleSlug, string> = {
   practice_admin: 'Practice Admin',
@@ -45,6 +46,7 @@ export const ROLE_LABELS: Record<RoleSlug, string> = {
   controlled_substances_director: 'Controlled Substances Director',
   mail_order_manager: 'Mail Order Manager',
   mail_order_team: 'Mail Order Team Member',
+  executive: 'Executive (read-only)',
 };
 
 export type EffectivePermissions = {
