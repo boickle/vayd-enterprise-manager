@@ -76,6 +76,8 @@ export type PermissionCatalogEntry = {
   grantable: boolean;
   /** Scout has no screen for this action yet. */
   unbuilt: boolean;
+  /** False when no API code checks this key yet, so switching it off changes nothing (RP-A7). Absent = enforced. */
+  enforced?: boolean;
   note: string | null;
 };
 
