@@ -3393,7 +3393,7 @@ export default function Settings() {
             <h2 className="settings-section-title">CL Seat Assignment</h2>
             <p className="settings-section-description">
               Assign each Client Liaison to Phones, Outreach, or Email for the week, set weekly seat par
-              targets, and add day overrides (OFF / one-day seat swaps) used by Analytics → CL Performance
+              targets, and add day overrides (OFF / one-day seat swaps) used by Analytics &amp; Reports → CL Performance
               (normalized score = points ÷ prorated par).
             </p>
             <SettingsClSeatAssignment

@@ -118,7 +118,7 @@ export default function SettingsDepositBankAccounts({ onMessage }: Props) {
         <div>
           <h3 className="settings-card-title">Deposit bank accounts</h3>
           <p className="settings-muted">
-            Banks available when grabbing cash/check tenders into a deposit on Analytics → Bank
+            Banks available when grabbing cash/check tenders into a deposit on Analytics &amp; Reports → Bank
             deposits.
           </p>
         </div>
