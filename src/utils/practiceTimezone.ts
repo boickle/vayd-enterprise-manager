@@ -63,3 +63,18 @@ export function isoFromSecondsSincePracticeMidnight(
   if (!d.isValid) return null;
   return d.startOf('day').plus({ seconds: Math.round(secFromMidnight) }).toISO()!;
 }
+
+/**
+ * Calendar date (YYYY-MM-DD) of an instant in the practice zone. A result stamped 9:30 pm Eastern
+ * is that evening's date, not the next UTC day. Date-only strings are returned as written.
+ */
+export function practiceDateKey(
+  value: string | null | undefined,
+  practiceTz?: string | null
+): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const dt = DateTime.fromISO(raw).setZone(practiceTimeZoneOrDefault(practiceTz));
+  return dt.isValid ? dt.toISODate() : null;
+}

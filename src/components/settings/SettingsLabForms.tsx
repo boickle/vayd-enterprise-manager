@@ -14,6 +14,9 @@ import {
 } from '../../api/inHouseLabs';
 import { IN_HOUSE_CATEGORY, LAB_FORM_SEEDS } from '../../utils/labFormSeeds';
 import { appConfirm } from '../../utils/appDialog';
+import { useAuth } from '../../auth/useAuth';
+import { isAnalyticsAdmin, normalizeAuthRoles } from '../../utils/analyticsAccess';
+import { usePermissions } from '../../permissions/PermissionContext';
 import './SettingsLabForms.css';
 
 type Props = {
@@ -24,6 +27,21 @@ type CatalogRef = {
   id: number;
   catalogItemType: 'lab' | 'procedure';
 };
+
+function linkedCount(t: LabFormTemplate): number {
+  return (t.labs?.length ?? 0) + (t.procedures?.length ?? 0);
+}
+
+function archiveMessage(t: LabFormTemplate): string {
+  const n = linkedCount(t);
+  const tests = n === 1 ? 'its linked test' : `its ${n} linked tests`;
+  const opens = n ? `, and charging ${tests} will no longer open it` : '';
+  return (
+    `Staff will no longer be able to pick this form${opens}. ` +
+    'Results already in a chart keep their own copy and stay readable. ' +
+    'You can restore it from Archived.'
+  );
+}
 
 type Draft = {
   name: string;
@@ -62,6 +80,21 @@ function toDraft(t: LabFormTemplate): Draft {
       })),
     ],
     isPublished: t.isPublished,
+  };
+}
+
+function bodyOf(draft: Draft) {
+  return {
+    name: draft.name.trim(),
+    category: draft.category.trim() || IN_HOUSE_CATEGORY,
+    description: draft.description.trim() || null,
+    mode: draft.mode,
+    elements: draft.mode === 'summary' ? [] : draft.elements.filter((el) => el.name.trim()),
+    labIds: draft.catalogItems.filter((i) => i.catalogItemType === 'lab').map((i) => i.id),
+    procedureIds: draft.catalogItems
+      .filter((i) => i.catalogItemType === 'procedure')
+      .map((i) => i.id),
+    isPublished: draft.isPublished,
   };
 }
 
@@ -116,13 +149,13 @@ function CommaListInput({
   );
 }
 
-function numOrNull(raw: string): number | null {
-  if (raw.trim() === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
 export default function SettingsLabForms({ onMessage }: Props) {
+  // LAB-A8: editing follows `lab_form_template.manage` (vets, lead techs, managers). Admin logins
+  // pass on the server, so they keep the controls. The server checks again.
+  const { role } = useAuth() as { role?: string | string[] };
+  const perms = usePermissions();
+  const canManage =
+    perms.can('lab_form_template.manage') || isAnalyticsAdmin(normalizeAuthRoles(role));
   const [templates, setTemplates] = useState<LabFormTemplate[]>([]);
   const [catalog, setCatalog] = useState<LabCatalogItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | 'new' | null>(null);
@@ -131,6 +164,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [labQuery, setLabQuery] = useState('');
+  const [view, setView] = useState<'active' | 'archived'>('active');
 
   function say(msg: string, kind: 'success' | 'error') {
     onMessage?.(msg, kind);
@@ -157,15 +191,19 @@ export default function SettingsLabForms({ onMessage }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const activeCount = templates.filter((t) => t.isPublished).length;
+  const archivedCount = templates.length - activeCount;
+
   const grouped = useMemo(() => {
     const map = new Map<string, LabFormTemplate[]>();
     for (const t of templates) {
+      if (t.isPublished !== (view === 'active')) continue;
       const key = t.category || IN_HOUSE_CATEGORY;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [templates]);
+  }, [templates, view]);
 
   const labMatches = useMemo(() => {
     const q = labQuery.trim().toLowerCase();
@@ -181,6 +219,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
   }
 
   function startNew() {
+    setView('active');
     setSelectedId('new');
     setDraft(newDraft());
   }
@@ -219,18 +258,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
     }
     setSaving(true);
     try {
-      const body = {
-        name: draft.name.trim(),
-        category: draft.category.trim() || IN_HOUSE_CATEGORY,
-        description: draft.description.trim() || null,
-        mode: draft.mode,
-        elements: draft.mode === 'summary' ? [] : draft.elements.filter((el) => el.name.trim()),
-        labIds: draft.catalogItems.filter((i) => i.catalogItemType === 'lab').map((i) => i.id),
-        procedureIds: draft.catalogItems
-          .filter((i) => i.catalogItemType === 'procedure')
-          .map((i) => i.id),
-        isPublished: draft.isPublished,
-      };
+      const body = bodyOf(draft);
       const saved =
         selectedId === 'new'
           ? await createLabFormTemplate(body)
@@ -249,8 +277,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
   async function archive(t: LabFormTemplate) {
     const ok = await appConfirm({
       title: `Archive ${t.name}?`,
-      message:
-        'Staff will no longer be able to pick this form. Results already in a chart keep their own copy and stay readable.',
+      message: archiveMessage(t),
       confirmLabel: 'Archive',
       danger: true,
     });
@@ -262,9 +289,22 @@ export default function SettingsLabForms({ onMessage }: Props) {
         setSelectedId(null);
         setDraft(null);
       }
-      say(`Archived ${t.name}.`, 'success');
+      say(`Archived ${t.name}. It's under Archived.`, 'success');
     } catch (err) {
       say(err instanceof Error ? err.message : 'Could not archive.', 'error');
+    }
+  }
+
+  async function restore(t: LabFormTemplate) {
+    try {
+      const saved = await updateLabFormTemplate(t.id, { ...bodyOf(toDraft(t)), isPublished: true });
+      await load();
+      setView('active');
+      setSelectedId(saved.id);
+      setDraft(toDraft(saved));
+      say(`Restored ${saved.name}. Staff can use it again.`, 'success');
+    } catch (err) {
+      say(err instanceof Error ? err.message : 'Could not restore.', 'error');
     }
   }
 
@@ -274,11 +314,11 @@ export default function SettingsLabForms({ onMessage }: Props) {
       const res = await seedLabFormTemplates(LAB_FORM_SEEDS);
       await load();
       say(
-        `Standard lab forms installed — ${res.created} added, ${res.updated} refreshed.`,
+        `${res.created} standard ${res.created === 1 ? 'form' : 'forms'} added. Existing forms were not changed.`,
         'success'
       );
     } catch (err) {
-      say(err instanceof Error ? err.message : 'Could not install the standard forms.', 'error');
+      say(err instanceof Error ? err.message : 'Could not add the standard forms.', 'error');
     } finally {
       setSeeding(false);
     }
@@ -310,6 +350,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
         gets charted if it is run after the visit.
       </p>
 
+      {canManage ? (
       <div className="lab-forms__toolbar">
         <button type="button" className="btn" onClick={startNew}>
           <Plus size={14} aria-hidden /> New lab form
@@ -320,17 +361,47 @@ export default function SettingsLabForms({ onMessage }: Props) {
           disabled={seeding}
           onClick={() => void installStandard()}
         >
-          {seeding ? 'Installing…' : 'Install standard forms'}
+          {seeding ? 'Adding…' : 'Add missing standard forms'}
         </button>
       </div>
+      ) : (
+        <p className="settings-muted">
+          You can look at these forms. Changing them needs the lab form permission.
+        </p>
+      )}
 
       <div className="lab-forms__split">
         <div className="lab-forms__list-wrap">
+          <div className="settings-appt-type-subtabs" role="tablist" aria-label="Lab form list">
+            {(['active', 'archived'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                className={`settings-appt-type-subtab${view === v ? ' settings-appt-type-subtab--active' : ''}`}
+                onClick={() => {
+                  setView(v);
+                  setSelectedId(null);
+                  setDraft(null);
+                }}
+              >
+                {v === 'active' ? 'Active' : 'Archived'}
+                <span className="settings-appt-type-subtab-count">
+                  {v === 'active' ? activeCount : archivedCount}
+                </span>
+              </button>
+            ))}
+          </div>
           {loading ? (
             <p className="settings-muted">Loading…</p>
-          ) : !templates.length ? (
+          ) : !grouped.length ? (
             <p className="settings-muted">
-              No lab forms yet. “Install standard forms” adds the usual in-house set.
+              {view === 'archived'
+                ? 'No archived lab forms.'
+                : templates.length
+                  ? 'No active lab forms. Restore one from Archived, or create a new one.'
+                  : 'No lab forms yet. “Add missing standard forms” adds the usual in-house set.'}
             </p>
           ) : (
             grouped.map(([category, rows]) => (
@@ -352,7 +423,6 @@ export default function SettingsLabForms({ onMessage }: Props) {
                           }`
                         : ''}
                     </span>
-                    {!t.isPublished ? <span className="lab-forms__badge">Archived</span> : null}
                   </button>
                 ))}
               </div>
@@ -366,7 +436,10 @@ export default function SettingsLabForms({ onMessage }: Props) {
               Pick a lab form to edit, or create a new one.
             </p>
           ) : (
-            <>
+            <fieldset
+              disabled={!canManage}
+              style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+            >
               <div className="lab-forms__field-row">
                 <label className="lab-forms__field">
                   <span>Form name</span>
@@ -399,14 +472,6 @@ export default function SettingsLabForms({ onMessage }: Props) {
                     <option value="analytes">Table of values</option>
                     <option value="summary">Written summary</option>
                   </select>
-                </label>
-                <label className="lab-forms__field lab-forms__field--check">
-                  <input
-                    type="checkbox"
-                    checked={draft.isPublished}
-                    onChange={(e) => patchDraft({ isPublished: e.target.checked })}
-                  />
-                  <span>Available to staff</span>
                 </label>
               </div>
 
@@ -463,20 +528,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
 
                       {el.valueType === 'number' ? (
                         <div className="lab-forms__element-range">
-                          <input
-                            className="settings-input"
-                            value={el.min ?? ''}
-                            placeholder="Min"
-                            aria-label={`Row ${idx + 1} minimum`}
-                            onChange={(e) => patchElement(idx, { min: numOrNull(e.target.value) })}
-                          />
-                          <input
-                            className="settings-input"
-                            value={el.max ?? ''}
-                            placeholder="Max"
-                            aria-label={`Row ${idx + 1} maximum`}
-                            onChange={(e) => patchElement(idx, { max: numOrNull(e.target.value) })}
-                          />
+                          {/* No number ranges (owner decision, Nov 8, 2026): units only. */}
                           <input
                             className="settings-input"
                             value={el.units ?? ''}
@@ -628,18 +680,32 @@ export default function SettingsLabForms({ onMessage }: Props) {
                 ) : null}
               </div>
 
+              {canManage ? (
               <div className="lab-forms__actions">
                 {selectedId !== 'new' && typeof selectedId === 'number' ? (
-                  <button
-                    type="button"
-                    className="btn-link lab-forms__danger"
-                    onClick={() => {
-                      const t = templates.find((x) => x.id === selectedId);
-                      if (t) void archive(t);
-                    }}
-                  >
-                    Archive
-                  </button>
+                  draft.isPublished ? (
+                    <button
+                      type="button"
+                      className="btn-link lab-forms__danger"
+                      onClick={() => {
+                        const t = templates.find((x) => x.id === selectedId);
+                        if (t) void archive(t);
+                      }}
+                    >
+                      Archive
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => {
+                        const t = templates.find((x) => x.id === selectedId);
+                        if (t) void restore(t);
+                      }}
+                    >
+                      Restore
+                    </button>
+                  )
                 ) : null}
                 <button
                   type="button"
@@ -655,7 +721,8 @@ export default function SettingsLabForms({ onMessage }: Props) {
                   {saving ? 'Saving…' : 'Save lab form'}
                 </button>
               </div>
-            </>
+              ) : null}
+            </fieldset>
           )}
         </div>
       </div>

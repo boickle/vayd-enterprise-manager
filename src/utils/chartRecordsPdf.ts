@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { IdexxResultDetail } from '../api/idexx';
+import type { EvetLabHistoryResult } from '../api/evetLabHistory';
 import type { LabResult } from '../api/inHouseLabs';
 import { isLabValueAbnormal, labSummaryHasText, type LabFormElement } from './labValues';
 import type { ChartRow } from './patientChartFromMedicalRecord';
@@ -358,20 +359,31 @@ export function labReportFromIdexx(detail: IdexxResultDetail): LabReport {
 }
 
 function inHouseFlag(el: LabFormElement, value: string): LabRow['flag'] {
-  if (!isLabValueAbnormal(el, value)) return '';
-  if (el.abnormalOptions?.length || el.valueType !== 'number') return 'A';
-  const n = Number(value);
-  if (el.min != null && n < el.min) return 'L';
-  return 'H';
+  // Only an abnormal choice flags; number rows have no ranges (owner decision, Nov 8, 2026).
+  return isLabValueAbnormal(el, value) ? 'A' : '';
 }
 
 function inHouseRange(el: LabFormElement): string {
-  if (el.min != null && el.max != null) return `${el.min} - ${el.max}`;
-  if (el.min != null) return `>= ${el.min}`;
-  if (el.max != null) return `<= ${el.max}`;
   return el.abnormalOptions?.length && el.options?.length
     ? el.options.filter((o) => !el.abnormalOptions!.includes(o)).join(' / ')
     : '';
+}
+
+/** An imported eVet in-house result as a printed table: names from the owner's eVet export, values kept. */
+export function labReportFromEvetInHouse(result: EvetLabHistoryResult): LabReport {
+  const notes: string[] = [];
+  const rows: LabRow[] = result.values.map((v) => {
+    if (v.comments?.trim()) notes.push(`${v.name}: ${v.comments.trim()}`);
+    return { test: v.name, result: v.value?.trim() ?? '', units: v.units ?? '', range: '', flag: '' };
+  });
+  if (result.summary?.trim()) notes.push(result.summary.trim());
+  return {
+    meta: ['Imported from eVet', result.date && `Resulted ${new Date(result.date).toLocaleDateString('en-US')}`]
+      .filter(Boolean)
+      .join('  |  '),
+    sections: [{ name: result.formName, rows, notes: [] }],
+    notes,
+  };
 }
 
 /** In-house lab forms as a results table: one section per form, analytes or a write-up. */

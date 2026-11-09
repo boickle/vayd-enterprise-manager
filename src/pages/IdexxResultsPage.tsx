@@ -15,11 +15,13 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import IdexxChip from '../components/idexx/IdexxChip';
+import { useIdexxAssignAccess } from '../components/idexx/useIdexxReviewAccess';
 import IdexxOrderFrame from '../components/idexx/IdexxOrderFrame';
 import IdexxResultView, { idexxResultStatusLabel } from '../components/idexx/IdexxResultView';
 import '../components/idexx/Idexx.css';
 import './PendingLabsPage.css';
 import { appConfirm } from '../utils/appDialog';
+import { clientNameFromPatientRow } from '../utils/briefDisplay';
 
 type Tab = 'review' | 'ordered' | 'waiting' | 'unmatched' | 'recent';
 
@@ -37,9 +39,11 @@ const TABS: Array<{ id: Tab; label: string; empty: string }> = [
 
 function query(tab: Tab, providerEmployeeId?: number) {
   const provider = providerEmployeeId ? { providerEmployeeId } : {};
-  if (tab === 'review') return { unreviewed: true, incomplete: false, limit: 200, ...provider };
+  // A result with no pet waits under Unmatched; once it's matched it moves to To review.
+  if (tab === 'review') return { unreviewed: true, incomplete: false, unmatched: false, limit: 200, ...provider };
   if (tab === 'waiting') return { incomplete: true, limit: 200, ...provider };
-  if (tab === 'unmatched') return { unmatched: true, limit: 200, ...provider };
+  // Unmatched results have no ordering doctor yet, so the provider filter doesn't apply.
+  if (tab === 'unmatched') return { unmatched: true, limit: 200 };
   return { limit: 100, ...provider };
 }
 
@@ -51,16 +55,19 @@ function when(raw: string | null): string {
     : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function petLabel(r: PatientSearchRow): string {
+/** "Bella (Maria Rivera)": the owner tells two pets with the same name apart. */
+export function petLabel(r: PatientSearchRow): string {
   const name = String(r.name ?? r.firstName ?? `Pet #${r.id}`);
-  const owner = [r.clientFirstName, r.clientLastName, r.ownerName].find(
-    (v) => typeof v === 'string' && v.trim()
-  );
+  const owner =
+    clientNameFromPatientRow(r) ??
+    [r.ownerName].find((v) => typeof v === 'string' && v.trim()) ??
+    null;
   return owner ? `${name} (${String(owner)})` : name;
 }
 
 /** Match a result IDEXX could not tie to a pet (ordered on the VetConnect PLUS site, a paper form…). */
-function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+export function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched: () => void }) {
+  const { canAssign } = useIdexxAssignAccess();
   const [term, setTerm] = useState(
     [result.patientName, result.clientLastName].filter(Boolean).join(' ')
   );
@@ -91,6 +98,9 @@ function MatchPet({ result, onMatched }: { result: IdexxResultSummary; onMatched
       setBusy(false);
     }
   }
+
+  // LAB-04: assigning needs lab_result.enter on the server; hide the control for everyone else.
+  if (!canAssign) return null;
 
   return (
     <div className="idexx-order" style={{ marginBottom: 8 }}>
@@ -320,10 +330,13 @@ export default function IdexxResultsPage() {
   const [openId, setOpenId] = useState<number | null>(null);
   const [orderedKey, setOrderedKey] = useState(0);
   const [reviewCount, setReviewCount] = useState(0);
+  const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [partialIds, setPartialIds] = useState<ReadonlySet<number>>(() => new Set());
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providerId, setProviderId] = useState<number | ''>('');
   const loadGen = useRef(0);
+  /** A check already running: a second click waits for it rather than syncing every order again. */
+  const checkingNow = useRef(false);
 
   useEffect(() => {
     void fetchPrimaryProviders()
@@ -345,13 +358,18 @@ export default function IdexxResultsPage() {
 
   const loadReviewCount = useCallback(async () => {
     try {
-      const res = await listIdexxResults({
-        unreviewed: true,
-        incomplete: false,
-        limit: 1,
-        ...(providerId === '' ? {} : { providerEmployeeId: providerId }),
-      });
-      setReviewCount(res.total ?? res.items?.length ?? 0);
+      const [review, unmatched] = await Promise.all([
+        listIdexxResults({
+          unreviewed: true,
+          incomplete: false,
+          unmatched: false,
+          limit: 1,
+          ...(providerId === '' ? {} : { providerEmployeeId: providerId }),
+        }),
+        listIdexxResults({ unmatched: true, limit: 1 }),
+      ]);
+      setReviewCount(review.total ?? review.items?.length ?? 0);
+      setUnmatchedCount(unmatched.total ?? unmatched.items?.length ?? 0);
     } catch {
       /* The tab still works; the count catches up on the next refresh. */
     }
@@ -359,7 +377,7 @@ export default function IdexxResultsPage() {
 
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
-    if (tab !== 'review') void loadReviewCount();
+    void loadReviewCount();
     if (tab === 'ordered') {
       setOrderedKey((k) => k + 1);
       setLoading(false);
@@ -381,7 +399,6 @@ export default function IdexxResultsPage() {
         )
       );
       setError(null);
-      if (tab === 'review') setReviewCount(res.total ?? res.items?.length ?? 0);
     } catch (e) {
       if (gen !== loadGen.current) return;
       setError(idexxErrorMessage(e, 'Could not load IDEXX results.'));
@@ -402,6 +419,8 @@ export default function IdexxResultsPage() {
   }, [load]);
 
   async function checkNow() {
+    if (checkingNow.current) return;
+    checkingNow.current = true;
     setChecking(true);
     try {
       await syncIdexxResults();
@@ -414,6 +433,7 @@ export default function IdexxResultsPage() {
     } catch (e) {
       setError(idexxErrorMessage(e, 'IDEXX is unavailable. Try again in a minute.'));
     } finally {
+      checkingNow.current = false;
       setChecking(false);
     }
   }
@@ -438,6 +458,9 @@ export default function IdexxResultsPage() {
               {t.label}
               {t.id === 'review' && reviewCount > 0 ? (
                 <span className="pending-labs__count">{reviewCount > 99 ? '99+' : reviewCount}</span>
+              ) : null}
+              {t.id === 'unmatched' && unmatchedCount > 0 ? (
+                <span className="pending-labs__count">{unmatchedCount > 99 ? '99+' : unmatchedCount}</span>
               ) : null}
             </button>
           ))}

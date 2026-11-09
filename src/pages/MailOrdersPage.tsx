@@ -1268,6 +1268,77 @@ const CANCEL_OUTCOME_LABEL: Record<MailCancelResolution, string> = {
  * The mail team decides what a cancellation request means for this order.
  * Only outcomes that fit its state are offered.
  */
+/**
+ * OS-A1 (D5): "Mark paid" records no payment, so it asks for a reason first and points staff to
+ * record the payment on the invoice instead. Who may use it is checked by the server.
+ */
+export function MarkPaidButton({ onConfirm }: { onConfirm: (reason: string) => void }) {
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const close = () => {
+    setAsking(false);
+    setReason('');
+  };
+  return (
+    <>
+      <button type="button" className="btn secondary" onClick={() => setAsking(true)}>
+        Mark paid
+      </button>
+      {asking ? (
+        <div className="settings-modal-overlay" role="presentation" onClick={close}>
+          <div
+            className="settings-modal"
+            role="dialog"
+            aria-labelledby="mark-paid-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settings-modal-header">
+              <h3 id="mark-paid-title">Mark this order paid?</h3>
+              <button type="button" className="settings-modal-close" onClick={close} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <div className="settings-modal-body">
+              <p style={{ marginTop: 0 }}>
+                Mark paid does not record a payment and the invoice stays open. Record the payment on the invoice
+                instead; the order then counts as paid by itself. Use Mark paid only for a payment that is already
+                recorded.
+              </p>
+              <label className="settings-label">
+                Reason (required)
+                <input
+                  className="settings-input"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Where the payment was recorded"
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="settings-modal-footer">
+              <button type="button" className="btn secondary" onClick={close}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!reason.trim()}
+                onClick={() => {
+                  const r = reason.trim();
+                  close();
+                  onConfirm(r);
+                }}
+              >
+                Mark paid
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function MailCancelDecision({
   order,
   paid,
@@ -1467,6 +1538,8 @@ function OrderDetail({
   const [taskNote, setTaskNote] = useState('');
   const [benchNote, setBenchNote] = useState('');
   const [checkNotes, setCheckNotes] = useState(open.checkNotes || '');
+  // Q4 (owner, Nov 7, 2026): the person who filled an order must say why they are checking it themselves.
+  const [selfCheckReason, setSelfCheckReason] = useState('');
   const [sameCheckConfirm, setSameCheckConfirm] = useState<{
     patientId: number | null;
     lineIds: number[];
@@ -2050,17 +2123,16 @@ function OrderDetail({
                 >
                   Text to pay
                 </button>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() =>
+                <MarkPaidButton
+                  onConfirm={(reason) =>
                     void onRun(() =>
-                      patchMailOrder(practiceId, open.id, { paymentStatus: 'paid' }),
+                      patchMailOrder(practiceId, open.id, {
+                        paymentStatus: 'paid',
+                        reason,
+                      } as Partial<MailOrder>),
                     )
                   }
-                >
-                  Mark paid
-                </button>
+                />
               </div>
               {paySent && (
                 <p className="settings-muted" style={{ margin: '6px 0 0' }}>
@@ -2252,23 +2324,38 @@ function OrderDetail({
                       someone else needs to check this.
                     </p>
                   ) : null}
+                  {canSelfCheck ? (
+                    <label className="settings-label">
+                      Why are you checking your own fill? (required)
+                      <textarea
+                        className="settings-input"
+                        rows={2}
+                        value={selfCheckReason}
+                        placeholder="For example: only one on shift today"
+                        onChange={(e) => setSelfCheckReason(e.target.value)}
+                      />
+                    </label>
+                  ) : null}
                   <div className="mail-queue__actions">
                     <button
                       type="button"
                       className="mail-queue__btn"
-                      onClick={() => setSameCheckConfirm(null)}
+                      onClick={() => {
+                        setSameCheckConfirm(null);
+                        setSelfCheckReason('');
+                      }}
                     >
                       Cancel
                     </button>
                     <button
                       type="button"
                       className="mail-queue__btn is-primary"
-                      disabled={!employeeId || !mailFillDone(open) || !canSelfCheck}
+                      disabled={!employeeId || !mailFillDone(open) || !canSelfCheck || !selfCheckReason.trim()}
                       onClick={() =>
                         void onRun(async () => {
                           const order = await pharmacyMailAction(practiceId, open.id, {
                             action: 'check_override',
-                            notes: `Self-check override: the person who filled this order also checked ${sameCheckConfirm.label} (no second person available).`,
+                            notes: `Self-check override (${sameCheckConfirm.label}): ${selfCheckReason.trim()}`,
                             patientId: sameCheckConfirm.patientId ?? undefined,
                             lineIds:
                               sameCheckConfirm.patientId == null
@@ -2276,6 +2363,7 @@ function OrderDetail({
                                 : undefined,
                           });
                           setSameCheckConfirm(null);
+                          setSelfCheckReason('');
                           if (mailCheckDone(order)) setViewStep('contacted');
                           return order;
                         })

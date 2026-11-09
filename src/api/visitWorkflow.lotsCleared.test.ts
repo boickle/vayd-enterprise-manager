@@ -33,4 +33,13 @@ describe('updateCounterInvoiceLine: lots cleared by a quantity change', () => {
     await updateCounterInvoiceLine('inv', 'l1', { qty: 25 });
     expect(appAlert).not.toHaveBeenCalled();
   });
+
+  it('LAB-07-3: tells staff when an IDEXX order stays with the first pet', async () => {
+    patch.mockResolvedValue({ data: { id: 'inv', lines: [], labWarnings: ['IDEXX order 9 stays with Max. Its results will arrive on that pet.'] } });
+    await updateCounterInvoiceLine('inv', 'l1', { patientId: 2 });
+    expect(appAlert).toHaveBeenCalledWith({
+      title: 'Lab stays with the first pet',
+      message: 'IDEXX order 9 stays with Max. Its results will arrive on that pet.',
+    });
+  });
 });

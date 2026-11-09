@@ -120,8 +120,10 @@ interface Props {
   visitPets?: RoutingVisitPetInput[];
   /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
   patientIds?: number[];
-  /** New client chose to upload records — calendar uses the existing-client lead time. */
+  /** New client's uploaded records passed the check — calendar uses the existing-client lead time. */
   clientUploadedRecords?: boolean;
+  /** Record check tokens; the server honors clientUploadedRecords only with these. */
+  recordCheckTokens?: string[];
   /** One search across every online-bookable doctor instead of the selected doctor. */
   searchAllDoctors?: boolean;
   /** Slot the client already chose. Highlighted until they submit the form. */
@@ -221,6 +223,7 @@ type MonthAvailabilityFetchArgs = {
   visitPets?: RoutingVisitPetInput[];
   patientIds?: number[];
   clientUploadedRecords?: boolean;
+  recordCheckTokens?: string[];
   doctorId: string | number;
   /** Search these doctors in one routing request. Falls back to doctorId. */
   doctorIds?: Array<string | number>;
@@ -288,7 +291,12 @@ async function fetchAvailabilityRange(
       : {}),
     ...(args.appointmentTypeId != null ? { appointmentTypeId: args.appointmentTypeId } : {}),
     ...(args.patientIds?.length ? { patientIds: args.patientIds } : {}),
-    ...(args.clientUploadedRecords ? { clientUploadedRecords: true } : {}),
+    ...(args.clientUploadedRecords
+      ? {
+          clientUploadedRecords: true,
+          ...(args.recordCheckTokens?.length ? { recordCheckTokens: args.recordCheckTokens } : {}),
+        }
+      : {}),
   });
 
   if (args.isNewPatientRequest && args.rawVeterinarians && args.rawVeterinarians.length > 0) {
@@ -766,6 +774,14 @@ function TimeSlotPill({
 }
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
+/** Returns the previous value while `value` has the same JSON contents, so effects keyed on it stay put. */
+export function useSameContents<T>(value: T): T {
+  const key = value === undefined ? 'undefined' : JSON.stringify(value);
+  const ref = useRef<{ key: string; value: T }>({ key, value });
+  if (ref.current.key !== key) ref.current = { key, value };
+  return ref.current.value;
+}
+
 export function SelfScheduleCalendarModal({
   practiceId,
   address,
@@ -780,23 +796,33 @@ export function SelfScheduleCalendarModal({
   isNewClient = false,
   newPatientCount = 0,
   isNewPatientRequest = false,
-  rawVeterinarians,
+  rawVeterinarians: rawVeterinariansProp,
   appointmentTypeId,
   appointmentType,
   practiceTz = DEFAULT_PRACTICE_TIMEZONE,
   initialDoctorId,
   preferredDoctorId,
   chartPrimaryProviderId,
-  preloadedDoctors,
-  requestOnlyDoctors,
+  preloadedDoctors: preloadedDoctorsProp,
+  requestOnlyDoctors: requestOnlyDoctorsProp,
   onRequestDoctor,
   slotPickerError,
-  visitPets,
-  patientIds,
+  visitPets: visitPetsProp,
+  patientIds: patientIdsProp,
   clientUploadedRecords = false,
+  recordCheckTokens,
   searchAllDoctors = false,
   selectedAppointmentStart,
 }: Props) {
+  // The form may hand over new copies of the same lists on any render. Keep the previous copy while
+  // the contents are the same, so the effects below (which fetch availability) don't run again.
+  // Without this the picker sent the same availability request about nine times a second until
+  // the API's rate limit refused it (429) and the calendar showed "Unable to load availability".
+  const rawVeterinarians = useSameContents(rawVeterinariansProp);
+  const preloadedDoctors = useSameContents(preloadedDoctorsProp);
+  const requestOnlyDoctors = useSameContents(requestOnlyDoctorsProp);
+  const visitPets = useSameContents(visitPetsProp);
+  const patientIds = useSameContents(patientIdsProp);
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth <= 600 : false,
   );
@@ -1100,6 +1126,8 @@ export function SelfScheduleCalendarModal({
     }
   }, [prioritizedDoctorId, requestDoctors, doctors]);
 
+  const recordCheckTokensKey = (recordCheckTokens ?? []).join(',');
+
   // Address / visit identity — drop cached months when the search itself changed.
   const availabilitySearchKey = [
     practiceId,
@@ -1109,6 +1137,7 @@ export function SelfScheduleCalendarModal({
     appointmentTypeId,
     isNewPatientRequest,
     clientUploadedRecords ? '1' : '0',
+    recordCheckTokensKey,
     (patientIds ?? []).join(','),
     (visitPets ?? []).map((p) => `${p.appointmentTypeId}:${p.isNewPatient ? 1 : 0}`).join(','),
   ].join('|');
@@ -1202,6 +1231,7 @@ export function SelfScheduleCalendarModal({
         visitPets,
         patientIds,
         clientUploadedRecords,
+        recordCheckTokens: recordCheckTokensKey ? recordCheckTokensKey.split(',') : undefined,
         doctorId,
         doctorIds: fleetIds && fleetIds.length > 1 ? fleetIds : undefined,
         appointmentTypeId,
@@ -1289,6 +1319,7 @@ export function SelfScheduleCalendarModal({
       visitPets,
       patientIds,
       clientUploadedRecords,
+      recordCheckTokensKey,
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,

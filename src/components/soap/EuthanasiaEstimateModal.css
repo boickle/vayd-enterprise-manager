@@ -220,3 +220,20 @@
   background: #dcfce7;
   color: #14532d;
 }
+
+/* "Which visit is this for?": one visit per line, so the choices read as a list (owner, Nov 7, 2026). */
+.estimate-visit-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.estimate-visit-pick__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.estimate-visit-pick__row input[type='radio'] {
+  margin-top: 3px;
+  flex: none;
+}

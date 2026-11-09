@@ -153,6 +153,7 @@ import {
 import {
   readFinancialPrefill,
   scoutArFromInvoices,
+  evetBalanceWithoutAdopted,
   type FinancialRefillPrefill,
 } from '../../utils/clientFinancial';
 import {
@@ -256,7 +257,7 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
-import IdexxChip from '../idexx/IdexxChip';
+import IdexxChip, { IdexxAddedTag } from '../idexx/IdexxChip';
 import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
 import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
 import IdexxSendModal from '../idexx/IdexxSendModal';
@@ -266,8 +267,9 @@ import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
+import ClientCardOnFileSection from './ClientCardOnFileSection';
 import './ClientFinancialWorkspace.css';
-import { membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
 import { isDuplicateItemSkipped } from '../../utils/duplicateItemWarning';
 
 export type FinancialPet = {
@@ -717,11 +719,25 @@ export function EvetVoidButton({ onClick, disabled }: { onClick: () => void; dis
 export function LineAmount({
   line,
 }: {
-  line: Pick<VisitInvoiceLine, 'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason'>;
+  line: Pick<
+    VisitInvoiceLine,
+    'isCovered' | 'amount' | 'listUnitPrice' | 'qty' | 'discountReason' | 'manualDiscountAmount'
+  >;
 }) {
   if (line.isCovered) return <>covered</>;
   const memberDiscount = membershipLineDiscount(line);
-  if (!memberDiscount) return <>{money(line.amount)}</>;
+  if (!memberDiscount) {
+    // A hand-discounted line: the regular price struck through, then what is charged.
+    const regular = handDiscountRegularAmount(line);
+    return regular == null ? (
+      <>{money(line.amount)}</>
+    ) : (
+      <>
+        <s className="client-fin__was" data-testid="line-regular-price">{money(regular)}</s>{' '}
+        {money(line.amount)}
+      </>
+    );
+  }
   return (
     <>
       <div>{money(line.amount)}</div>
@@ -1295,6 +1311,7 @@ function cardFingerprint(tender: {
 }
 
 function tenderPayLabel(tender: VisitInvoiceTender): string {
+  if (tender.method === 'gift_card' && tender.giftCardLast4) return `Gift card ••••${tender.giftCardLast4}`;
   return cardFingerprint(tender) ?? methodLabel(tender.method, tender.paymentTypeName);
 }
 
@@ -1703,7 +1720,7 @@ export default function ClientFinancialWorkspace({
   /** Counter lines (no visit order): the prescription written when the script was approved. */
   const [writtenRxById, setWrittenRxById] = useState<Record<number, OrderPrescription>>({});
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
-  const [printedLineId, setPrintedLineId] = useState<string | null>(null);
+  const [printed, setPrinted] = useState<{ lineId: string; viaDialog: boolean } | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
   const petLookupsTried = useRef<Set<number>>(new Set());
   const [staffById, setStaffById] = useState<Map<number, Employee>>(new Map());
@@ -2966,14 +2983,18 @@ export default function ClientFinancialWorkspace({
     return status === filter;
   });
 
-  const combinedBalance = (evetBalance ?? 0) + scoutArFromInvoices(scoutInvoices);
-  useEffect(() => {
-    onCombinedBalance?.(combinedBalance);
-  }, [combinedBalance, onCombinedBalance]);
   const adoptedEvetIds = useMemo(
     () => new Set(scoutInvoices.map((inv) => inv.evetInvoiceId).filter((id): id is number => id != null)),
     [scoutInvoices]
   );
+  // An eVet invoice taken over with "Edit in Scout" is still inside the balance this page loaded
+  // with, and is also a Scout invoice now: count it once, with no reload.
+  const combinedBalance =
+    evetBalanceWithoutAdopted(evetBalance, evetInvoices, adoptedEvetIds) +
+    scoutArFromInvoices(scoutInvoices);
+  useEffect(() => {
+    onCombinedBalance?.(combinedBalance);
+  }, [combinedBalance, onCombinedBalance]);
   const unpaidEvet = useMemo(
     () =>
       evetLedgerInvoices.filter((inv) => {
@@ -4092,6 +4113,25 @@ export default function ClientFinancialWorkspace({
   }
 
   /** Returns false when the edit was refused, so callers can put the field back. */
+  /**
+   * A lab charged to the wrong pet: the line moves to the other pet, and its in-house result
+   * (pending or entered) moves with it onto that pet's chart (LAB-07). An order already sent
+   * to IDEXX stays with the first pet, and the API says so.
+   */
+  async function moveLabLine(line: VisitInvoiceLine, toPatientId: number) {
+    const to = pets.find((p) => p.id === toPatientId);
+    if (!to) return;
+    const from = pets.find((p) => p.id === line.patientId)?.name ?? 'this pet';
+    const ok = await appConfirm({
+      title: `Move to ${to.name}?`,
+      message: `${line.description} moves from ${from} to ${to.name}, with its lab result. The result goes on ${to.name}'s chart.`,
+      confirmLabel: `Move to ${to.name}`,
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
+    await patchLine(line, { patientId: toPatientId });
+  }
+
   async function patchLine(
     line: VisitInvoiceLine,
     body: Parameters<typeof updateCounterInvoiceLine>[2],
@@ -4986,7 +5026,7 @@ export default function ClientFinancialWorkspace({
         mode === 'void'
           ? 'Invoice voided. Scout owns this bill now.'
           : mode === 'edit'
-            ? 'Scout owns this bill. Remove lines, then save.'
+            ? 'Scout owns this bill now. Edit it, then save.'
             : asReturn
               ? 'Taken over in Scout. Enter return quantities below.'
               : 'This invoice was never paid, so there is nothing to refund. Remove the charges you don’t want (with a reason), or void the invoice.'
@@ -5283,6 +5323,8 @@ export default function ClientFinancialWorkspace({
       {/* With an invoice open, its messages show on the invoice (owner request, Oct 30, 2026). */}
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
+
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
 
       <div
         ref={splitRef}
@@ -6209,7 +6251,7 @@ export default function ClientFinancialWorkspace({
                   Directions aren’t saved. Save or delete the line before leaving this client.
                 </p>
               ) : null}
-              {editing || hasUnsavedDeletes ? (
+              {hasUnsavedDeletes ? (
                 <p className="client-fin__muted">
                   Removed lines are not saved yet. Back or leave without saving to undo.
                 </p>
@@ -6236,7 +6278,11 @@ export default function ClientFinancialWorkspace({
                       }}
                     />
                   ) : null}
-                  <table className="client-fin__table client-fin__invoice client-fin__invoice--pets">
+                  <table
+                    className={`client-fin__table client-fin__invoice client-fin__invoice--pets${
+                      returning && canReturn ? ' client-fin__invoice--returning' : ''
+                    }`}
+                  >
                     <thead>
                       <tr>
                         <th className="client-fin__col-item">Item</th>
@@ -6244,7 +6290,7 @@ export default function ClientFinancialWorkspace({
                         <th className="client-fin__col-qty">Qty</th>
                         <th className="client-fin__col-price">Price</th>
                         <th className="client-fin__col-amount">Amt</th>
-                        {returning && canReturn ? <th>Return</th> : null}
+                        {returning && canReturn ? <th className="client-fin__col-return">Return</th> : null}
                         {canRemoveLines ? <th className="client-fin__row-action" /> : null}
                       </tr>
                     </thead>
@@ -6516,25 +6562,27 @@ export default function ClientFinancialWorkspace({
                           <>
                             <SendRxLabelButton
                               className="client-fin__dymo"
-                              direct
-                              disabled={!scriptApproved}
+                              blockedReason={
+                                scriptApproved
+                                  ? null
+                                  : 'Save the sig and approve the Rx before printing the label.'
+                              }
                               source={invoiceLabelSource(line)}
                               onError={(message) => {
-                                setError(
-                                  message ||
-                                    (!scriptApproved ? 'Approve the script before sending a label.' : null)
-                                );
+                                setError(message || null);
                                 if (message) {
                                   setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
                                 }
                               }}
-                              onSuccess={() => {
+                              onSuccess={(_printer, method) => {
                                 setError(null);
-                                setPrintedLineId(line.id);
+                                setPrinted({ lineId: line.id, viaDialog: method === 'system' });
                               }}
                             />
-                            {printedLineId === line.id ? (
-                              <span className="client-fin__entered">Sent to DYMO</span>
+                            {printed?.lineId === line.id ? (
+                              <span className="client-fin__entered">
+                                {printed.viaDialog ? 'Label sent to print dialog' : 'Label printed'}
+                              </span>
                             ) : null}
                           </>
                         );
@@ -6619,6 +6667,9 @@ export default function ClientFinancialWorkspace({
                                 catalogItemId: result.type.catalogItemId ?? null,
                                 catalogItemType: result.type.catalogItemType ?? 'procedure',
                                 patientId: mailedLine.patientId ?? selected.patientId ?? null,
+                                // B1 (owner, Nov 7, 2026): every invoice line needs a provider; the shipping line
+                                // takes the mailed item's, as visit checkout does.
+                                providerEmployeeId: mailedLine.providerEmployeeId ?? line.providerEmployeeId ?? null,
                                 miscCharge: true,
                               });
                               setSelected(invoice);
@@ -6734,6 +6785,7 @@ export default function ClientFinancialWorkspace({
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                   {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
                                   {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                                  {isIdexxLine && idexx.isAddedInIdexx(line.id) ? <IdexxAddedTag /> : null}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -6990,35 +7042,9 @@ export default function ClientFinancialWorkspace({
                                 onChange={(e) =>
                                   setReturnQty((prev) => ({ ...prev, [line.id]: e.target.value }))
                                 }
+                                className="client-fin__return-qty"
                                 placeholder={`≤ ${returnableQty(line, returnOptions[line.id])}`}
                               />
-                              {line.catalogItemType === 'inventory' && Number(returnQty[line.id] || 0) > 0 ? (
-                                <ReturnLineStockFields
-                                  lineId={line.id}
-                                  qty={Number(returnQty[line.id] || 0)}
-                                  backOnShelf={
-                                    returnOptions[line.id]?.isControlled !== true &&
-                                    returnToShelf[line.id] !== false
-                                  }
-                                  onBackOnShelfChange={(on) =>
-                                    setReturnToShelf((prev) => ({ ...prev, [line.id]: on }))
-                                  }
-                                  shelfLocationId={returnShelfLoc[line.id] ?? ''}
-                                  onShelfChange={(id) =>
-                                    setReturnShelfLoc((prev) => ({ ...prev, [line.id]: id }))
-                                  }
-                                  locations={returnLocations}
-                                  options={returnOptions[line.id]}
-                                  detail={returnDetail[line.id]}
-                                  onDetailChange={(next) =>
-                                    setReturnDetail((prev) => ({ ...prev, [line.id]: next }))
-                                  }
-                                  reasons={returnWasteReasons}
-                                  methods={returnWasteMethods}
-                                  witnessOptions={returnWitnessOptions}
-                                  currentEmployeeId={cashierEmployeeId}
-                                />
-                              ) : null}
                             </td>
                           ) : null}
                           {canRemoveLines ? (
@@ -7040,6 +7066,42 @@ export default function ClientFinancialWorkspace({
                             </td>
                           ) : null}
                         </tr>
+                        {returning &&
+                        canReturn &&
+                        !unshippedMailForLine(line) &&
+                        returnableQty(line, returnOptions[line.id]) > 0 &&
+                        line.catalogItemType === 'inventory' &&
+                        Number(returnQty[line.id] || 0) > 0 ? (
+                          <tr className="client-fin__return-stock-row">
+                            <td colSpan={invoiceMetaCols + (canRemoveLines ? 1 : 0)}>
+                              <ReturnLineStockFields
+                                lineId={line.id}
+                                qty={Number(returnQty[line.id] || 0)}
+                                backOnShelf={
+                                  returnOptions[line.id]?.isControlled !== true &&
+                                  returnToShelf[line.id] !== false
+                                }
+                                onBackOnShelfChange={(on) =>
+                                  setReturnToShelf((prev) => ({ ...prev, [line.id]: on }))
+                                }
+                                shelfLocationId={returnShelfLoc[line.id] ?? ''}
+                                onShelfChange={(id) =>
+                                  setReturnShelfLoc((prev) => ({ ...prev, [line.id]: id }))
+                                }
+                                locations={returnLocations}
+                                options={returnOptions[line.id]}
+                                detail={returnDetail[line.id]}
+                                onDetailChange={(next) =>
+                                  setReturnDetail((prev) => ({ ...prev, [line.id]: next }))
+                                }
+                                reasons={returnWasteReasons}
+                                methods={returnWasteMethods}
+                                witnessOptions={returnWitnessOptions}
+                                currentEmployeeId={cashierEmployeeId}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
                         {showMeta && rxOpen ? (
                           isIdexxLine ? (
                           <tr className={`client-fin__line-meta ${lineStateClass}`}>
@@ -7108,6 +7170,29 @@ export default function ClientFinancialWorkspace({
                                     )}
                                   />
                                 </div>
+                              ) : null}
+                              {canEdit && pets.some((p) => p.id !== line.patientId && isFinancialPetActive(p)) ? (
+                                <label className="client-fin__lab-move">
+                                  Charged to the wrong pet?
+                                  <select
+                                    aria-label="Move to another pet"
+                                    value=""
+                                    disabled={busy}
+                                    onChange={(e) => {
+                                      const to = Number(e.target.value);
+                                      if (to) void moveLabLine(line, to);
+                                    }}
+                                  >
+                                    <option value="">Move to another pet…</option>
+                                    {pets
+                                      .filter((p) => p.id !== line.patientId && isFinancialPetActive(p))
+                                      .map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
                               ) : null}
                               <InvoiceLineLabResults
                                 results={lineLabResults ?? []}
@@ -7697,6 +7782,7 @@ export default function ClientFinancialWorkspace({
                                 onChange={(e) =>
                                   setReturnQty((prev) => ({ ...prev, [ship.id]: e.target.value }))
                                 }
+                                className="client-fin__return-qty"
                                 placeholder={`≤ ${Math.abs(Number(ship.qty) || 0)}`}
                               />
                             </td>
@@ -7758,6 +7844,7 @@ export default function ClientFinancialWorkspace({
                                       [child.id]: e.target.value,
                                     }))
                                   }
+                                  className="client-fin__return-qty"
                                   placeholder={`≤ ${Math.abs(Number(child.qty) || 0)}`}
                                 />
                               </td>

@@ -151,6 +151,8 @@ describe('EMR-A10-2: charge while offline', () => {
         if (offline) req.destroy();
       }).as('offlineCharge');
       cy.contains('button', 'Card on file', { timeout: 30000 }).should('not.be.disabled').click();
+      // Wave 11: Card on file opens a confirm that names the amount; this click charges.
+      cy.contains('button', /^Charge \$[\d,.]+ to /, { timeout: 30000 }).click();
       cy.wait('@offlineCharge');
       cy.contains('Not charged — check the connection and try again. If the card was charged, it will show here when the connection returns.');
       cy.get('[data-testid="offline-banner"]').should('exist');
@@ -166,6 +168,8 @@ describe('EMR-A10-2: charge while offline', () => {
       });
       cy.window().then((win) => win.dispatchEvent(new win.Event('online')));
       cy.contains('button', 'Card on file').should('not.be.disabled').click();
+      // Wave 11: Card on file opens a confirm that names the amount; this click charges.
+      cy.contains('button', /^Charge \$[\d,.]+ to /, { timeout: 30000 }).click();
       cy.contains(/Charged the card on file|Paid/i, { timeout: 30000 });
       cy.wrap(null).should(() => expect(stub.calls()).to.deep.eq(['saved']));
       visitInvoice(dog).then((inv) => {
