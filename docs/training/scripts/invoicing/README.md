@@ -37,7 +37,7 @@ These videos are new. They build on these EMR videos, which are already recorded
 | [INV-13](INV-13-account-credit.md) | Account credit: where it comes from and how it's used | Lead CLs, billing | Must |
 | [INV-14](INV-14-reprice.md) | Reprice a bill after a membership signup or price change | All visit staff | Must |
 | [INV-15](INV-15-manual-discounts.md) | Manual discounts and promotions | Managers | Nice |
-| [INV-16](INV-16-end-of-day.md) | End of day: today's payments, and the bank deposit | Managers, billing, field staff with checks | Must |
+| [INV-16](INV-16-end-of-day.md) | End of day: today's payments, and the bank deposit | Techs, doctors, managers, billing, lead CLs (not plain CLs) | Must |
 | [INV-17](INV-17-common-money-mistakes.md) | The most common money mistakes | All | Nice |
 
 **Status (Nov 7, 2026):** checked in the app on build-doctor-flow (frontend 5a13205, API 221ea76a) in Stripe test mode. Each script ends with "Notes from the check in the app" listing what was confirmed and any bugs.

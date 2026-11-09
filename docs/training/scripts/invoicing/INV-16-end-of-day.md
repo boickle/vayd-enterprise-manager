@@ -1,6 +1,6 @@
 # INV-16. End of day: today's payments, and the bank deposit
 
-- **Audience:** managers and billing, plus field staff who bring back checks or cash.
+- **Audience:** techs, doctors and managers (video name: Tech, DVM, Manager), plus billing and lead CLs. Plain CLs can't create a deposit (owner, Nov 9, 2026).
 - **Length:** 2 to 3 minutes.
 - **Watch first:** EMR V5.
 - **The one thing to remember:** every check and cash payment goes into a deposit the same day.
