@@ -1,4 +1,4 @@
-import { Check, Clock } from 'lucide-react';
+import { AlertTriangle, Check, Clock } from 'lucide-react';
 import { isLabValueAbnormal, type LabResult } from '../../api/inHouseLabs';
 import './LabResultChip.css';
 
@@ -9,17 +9,28 @@ export function labAbnormalCount(result: LabResult): number {
   ).length;
 }
 
+/** Rows a result can be judged on: choice rows with abnormal answers (e.g. a 4Dx). */
+function judgedRows(result: LabResult) {
+  if (result.templateMode === 'summary') return [];
+  return (result.elementsSnapshot ?? []).filter((el) => (el.abnormalOptions ?? []).length > 0);
+}
+
 /**
- * Rolled-up state for every form on one lab charge: not run yet, or complete. The chip
- * doesn't judge the result (owner decision, Nov 8, 2026); an abnormal choice is flagged
- * inside the form itself.
+ * Rolled-up state for every form on one lab charge (owner decisions, Nov 8, 2026): numbers aren't
+ * judged (no ranges), so a form with only numbers, text or a write-up is just Complete. A form
+ * with choice rows (Negative / Positive) is Abnormal when an abnormal answer was picked, and
+ * Normal when it has answers and none is abnormal.
  */
-export type LabResultsState = 'none' | 'waiting' | 'complete';
+export type LabResultsState = 'none' | 'waiting' | 'abnormal' | 'normal' | 'complete';
 
 export function labResultsState(results: LabResult[] | null | undefined): LabResultsState {
   if (!results?.length) return 'none';
   if (results.some((r) => r.status === 'pending')) return 'waiting';
-  return 'complete';
+  if (results.some((r) => labAbnormalCount(r) > 0)) return 'abnormal';
+  const answeredChoice = results.some((r) =>
+    judgedRows(r).some((el) => Boolean(r.values?.[el.key]?.value)),
+  );
+  return answeredChoice ? 'normal' : 'complete';
 }
 
 type Props = {
@@ -30,7 +41,7 @@ type Props = {
 };
 
 /**
- * Not run / Complete, for a lab charge wherever it appears — the
+ * Not run / N abnormal / Normal / Complete, for a lab charge wherever it appears — the
  * invoice line, the SOAP checkout, or the chart timeline.
  */
 export default function LabResultChip({ results, waitingLabel = 'Not run', className }: Props) {
@@ -44,9 +55,17 @@ export default function LabResultChip({ results, waitingLabel = 'Not run', class
       </span>
     );
   }
+  if (state === 'abnormal') {
+    const flagged = (results ?? []).reduce((n, r) => n + labAbnormalCount(r), 0);
+    return (
+      <span className={cls}>
+        <AlertTriangle size={11} aria-hidden /> {flagged} abnormal
+      </span>
+    );
+  }
   return (
     <span className={cls}>
-      <Check size={11} aria-hidden /> Complete
+      <Check size={11} aria-hidden /> {state === 'normal' ? 'Normal' : 'Complete'}
     </span>
   );
 }
