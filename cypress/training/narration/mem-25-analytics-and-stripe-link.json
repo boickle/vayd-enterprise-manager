@@ -1,0 +1,15 @@
+[
+ {"id": "m25-01", "text": "Analytics, Memberships shows how the program is growing. And when a membership on a chart isn't linked to Stripe, you can fix it by hand."},
+ {"id": "m25-02", "text": "Remember: fix an unlinked membership with Link, never by starting a new subscription."},
+ {"id": "m25-03", "text": "Total memberships, how many households have a member, and the split by plan."},
+ {"id": "m25-04", "text": "Where signups came from: online, at the visit, or after it."},
+ {"id": "m25-05", "text": "How many families who were given a sign-up card went on to join."},
+ {"id": "m25-06", "text": "And signups over time, by day, week or month."},
+ {"id": "m25-07", "text": "On a pet's chart, a membership that isn't connected to its Stripe subscription shows Not linked."},
+ {"id": "m25-08", "text": "Click Link."},
+ {"id": "m25-09", "text": "Find the subscription in Stripe, or in the task Scout opens for unmatched subscriptions, and copy its id."},
+ {"id": "m25-10", "text": "Paste it here."},
+ {"id": "m25-11", "text": "Click Link. Scout checks it's still billing and not linked to another pet, then connects it."},
+ {"id": "m25-12", "text": "Now the chart links straight to the subscription in Stripe."},
+ {"id": "m25-13", "text": "The most common mistake is starting a second subscription to fix a missing link, which bills the family twice. Remember: fix an unlinked membership with Link, never by starting a new subscription."}
+]

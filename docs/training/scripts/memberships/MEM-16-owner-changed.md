@@ -1,8 +1,6 @@
 # MEM-16. Pet changed owners: "Owner changed"
 
-> **Dry run:** pending (shared recording queue). Scripted from `PatientMembershipPanel.tsx` and
-> `membership-owner-change.service.ts`. The flag is set by a scheduled check, which is off on the test stack, so the
-> spec sets `ownerChangeFlaggedAt`/`ownerChangeDetail` directly.
+> **Dry run:** passed Nov 9, 2026 (`mem-16-owner-changed.cy.ts`). Change: **Mark handled** first asks what you decided (a note for the audit trail); the video types one.
 
 - **Audience:** lead CLs and billing. Filmed as Robin Hale (manager).
 - **Length:** about 1 minute.

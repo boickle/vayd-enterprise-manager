@@ -1,7 +1,6 @@
 # MEM-11. Add or edit a benefit for one pet
 
-> **Dry run:** pending (shared recording queue). Scripted from `PatientMembershipPanel.tsx` (Add benefit, Benefit
-> details & edits).
+> **Dry run:** passed Nov 9, 2026 (`cypress/training/mem-11-add-or-edit-a-benefit.cy.ts`; its narration file is the final wording). Changes from this draft: the catalog pick is its own line; demo item is Ear cytology (the test catalog has no nail trim).
 
 - **Audience:** lead CLs and managers (medical director and billing for their own patients). Filmed as Robin Hale.
 - **Length:** about 1¼ minutes.

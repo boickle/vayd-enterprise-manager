@@ -1,8 +1,6 @@
 # MEM-21. Membership staff tasks
 
-> **Dry run:** pending (shared recording queue). Scripted from `membership-renewal-task.service.ts`,
-> `online-signup-membership.service.ts` and `post-visit-signup.service.ts`. These tasks come from scheduled jobs and
-> Stripe webhooks, which are off on the test stack, so the spec creates matching tasks through the tasks API.
+> **Dry run:** passed Nov 9, 2026 (`mem-21-staff-tasks.cy.ts`). Changes: Tasks is at **Tasks** in the top menu; queue tasks are on the **Unassigned** tab; the online-refund task goes to the **Client Liaison** queue, not Lead CL; the video points at the pet link instead of opening the chart.
 
 - **Audience:** lead CLs (practice managers watch the same tasks). Filmed as Robin Hale (manager); the demo world has
   no lead CL login.

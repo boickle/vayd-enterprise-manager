@@ -17,7 +17,7 @@
 | Step | Screen | Mistake | Do instead (narration) |
 |---|---|---|---|
 | 1 | — | — | Why line, then the remember line |
-| 2 | Juniper's chart, "Membership fee not collected yet" | Enrolling without collecting the fee | "Finish the fee on the counter invoice (MEM-02)." |
+| 2 | **Enroll & charge $59.00** confirm | Clicking Enroll before the owner has heard the amount | "Read the amount to the owner first: Enroll charges the card today and every month after (MEM-02)." |
 | 3 | Post-visit signup button with the hours badge | Waiting past the signup window, or refunding by hand on top | "Use Post-appointment sign-up within the window (MEM-03)." |
 | 4 | "Owner paid — refund visit" | Enrolling again after an online signup | "Refund the visit only (MEM-05)." |
 | 5 | Coverage picker | Closing the benefit question | "Pick a benefit (MEM-08)." |

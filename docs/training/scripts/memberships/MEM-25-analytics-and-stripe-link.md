@@ -1,7 +1,6 @@
 # MEM-25. Membership analytics, and linking a Stripe subscription by hand
 
-> **Dry run:** pending (shared recording queue). Scripted from `MembershipPurchasesAnalytics.tsx` (Analytics →
-> Memberships) and the panel's **Stripe subscription · Not linked · Link**.
+> **Dry run:** passed Nov 9, 2026 (`mem-25-analytics-and-stripe-link.cy.ts`). Change: **Link** asks for the `sub_` id copied from Stripe (or the unmatched-subscriptions task); it doesn't search Stripe itself.
 
 - **Audience:** managers (lead CLs for the Link part). Filmed as Robin Hale.
 - **Length:** about 1½ minutes.

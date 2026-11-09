@@ -1,6 +1,6 @@
 # MEM-19. Renewals: the 14-day notice and what the client can choose
 
-> **Dry run:** spec written (`mem-19-renewals.cy.ts`); one take reached the end but failed in assembly under load. A
+> **Dry run:** passed Nov 9, 2026 (`mem-19-renewals.cy.ts`); two late clicks fixed by scrolling during the line before.
 > clean dry run is pending a free turn in the shared recording queue.
 
 - **Audience:** CLs. Filmed on the owner's renewal page (opened from the link in the renewal email).

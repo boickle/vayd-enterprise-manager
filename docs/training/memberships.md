@@ -11,28 +11,28 @@ Videos marked **Blocked** wait on a fix or a decision first.
 
 | ID | Title | Priority | Pass-1 dry run | Blocked by | Approved |
 |---|---|---|---|---|---|
-| MEM-01 | Is this pet a member? Reading the Membership section | Must | Passed | — | |
-| MEM-02 | Enroll a pet at the visit | Must | Passed | — (fixed Nov 9) | |
-| MEM-03 | Post-appointment sign-up (owner here, or email the agreement) | Must | Passed | — | |
-| MEM-05 | Owner signed up online: refund the visit | Must | Passed | — | |
-| MEM-06 | Walk a client through online signup in the portal | Must | Passed | — | |
-| MEM-07 | Second pet: the $75 credit | Must | Passed | — | |
-| MEM-08 | Covered services during the visit | Must | Passed | — | |
-| MEM-09 | Check a member's invoice before checkout | Must | Passed | — | |
-| MEM-10 | How many exams are left? Benefits and the audit trail | Must | Passed | Q-10a (Golden trip fee) for one sentence only | |
-| MEM-13 | Change a pet's plan | Must | Passed | — | |
-| MEM-14 | Cancel a membership and settle paid vs used | Must | Passed (no-visit case) | — (fixed Nov 9) | |
-| MEM-15 | When a pet passes: estimate and death wrap-up | Must | Passed | — (fixed Nov 9) | |
-| MEM-17 | Paused benefits: failed payments and card disputes | Must | Passed | — | |
-| MEM-19 | Renewals: the 14-day notice and what the client can choose | Must | Ran once; assembly failed under load. Re-run pending | — | |
-| MEM-20 | What members see in the portal | Must | Scripted; dry run pending (shared queue) | — | |
-| MEM-21 | Membership staff tasks | Must | Scripted; dry run pending (shared queue) | — | |
-| MEM-24 | The most common membership mistakes | Must | Scripted; dry run pending (shared queue) | Best made last | |
-| MEM-11 | Add or edit a benefit for one pet | Nice | Scripted; dry run pending (shared queue) | — | |
-| MEM-16 | Pet changed owners: "Owner changed" | Nice | Scripted; dry run pending (shared queue) | — | |
-| MEM-22 | Settings → Memberships | Nice | Scripted; dry run pending (shared queue) | — | |
-| MEM-23 | Discount codes and share links | Nice | Scripted; dry run pending (shared queue) | — | |
-| MEM-25 | Membership analytics, and linking a Stripe subscription by hand | Nice | Scripted; dry run pending (shared queue) | — | |
+| MEM-01 | Is this pet a member? Reading the Membership section | Must | Passed | — | yes (Nov 9) |
+| MEM-02 | Enroll a pet at the visit | Must | Passed | — (fixed Nov 9) | yes (Nov 9) |
+| MEM-03 | Post-appointment sign-up (owner here, or email the agreement) | Must | Passed | — | yes (Nov 9) |
+| MEM-05 | Owner signed up online: refund the visit | Must | Passed | — | yes (Nov 9) |
+| MEM-06 | Walk a client through online signup in the portal | Must | Passed | P-06 (fix approved Nov 9; re-take after) | yes (Nov 9) |
+| MEM-07 | Second pet: the $75 credit | Must | Passed | — | yes (Nov 9) |
+| MEM-08 | Covered services during the visit | Must | Passed | — | yes (Nov 9) |
+| MEM-09 | Check a member's invoice before checkout | Must | Passed | — | yes (Nov 9) |
+| MEM-10 | How many exams are left? Benefits and the audit trail | Must | Passed | Q-10a (Golden trip fee) for one sentence only | yes (Nov 9) |
+| MEM-13 | Change a pet's plan | Must | Passed | — | yes (Nov 9) |
+| MEM-14 | Cancel a membership and settle paid vs used | Must | Passed (no-visit case) | — (fixed Nov 9) | yes (Nov 9) |
+| MEM-15 | When a pet passes: estimate and death wrap-up | Must | Passed | — (fixed Nov 9) | yes (Nov 9) |
+| MEM-17 | Paused benefits: failed payments and card disputes | Must | Passed | — | yes (Nov 9) |
+| MEM-19 | Renewals: the 14-day notice and what the client can choose | Must | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-20 | What members see in the portal | Must | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-21 | Membership staff tasks | Must | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-24 | The most common membership mistakes | Must | Not run | — (Q-24: clips of the finished videos, owner decision Nov 9) | yes, as clips (Nov 9) |
+| MEM-11 | Add or edit a benefit for one pet | Nice | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-16 | Pet changed owners: "Owner changed" | Nice | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-22 | Settings → Memberships | Nice | Passed (Nov 9) | — | yes (Nov 9) |
+| MEM-23 | Discount codes and share links | Nice | Blocked | P-23 (promotion create fails; fix approved Nov 9) | yes, after the fix (Nov 9) |
+| MEM-25 | Membership analytics, and linking a Stripe subscription by hand | Nice | Passed (Nov 9) | — | yes (Nov 9) |
 
 ## Before any final take
 

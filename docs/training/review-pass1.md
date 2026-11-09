@@ -12,6 +12,67 @@ Pass 1 = steps 1 to 8 for each video: script checked against the code, Cypress d
 - **Plans:** the practice's 12 live membership plans and their benefits, copied read-only from `vayd_api_local`
   (`cypress/training/setup/mem-plans.py`). No client data was copied.
 
+## Update: Nov 9, 2026, afternoon (pass 2 and the rest of pass 1)
+
+**Pass 2 (final takes, Nova, 1.25x):** the 13 approved videos are recorded in `~/Movies/VAYD Training/`, on the
+fixed code (API `fix/membership-findings` = `build-doctor-flow` + the Nov 9 fixes). MEM-03 was taken twice: the
+first take showed "Refund FAILED" because a fresh test database reused a membership id, so Stripe saw a refund key
+it had already used that day (a test-stack artefact; ids never repeat in production). Membership ids on the test
+database now start at 700000+.
+
+**Pass 1 results for the rest:**
+
+| ID | Dry run | Notes |
+|---|---|---|
+| MEM-19 | Passed (re-run) | Two late clicks fixed (scroll moved to the line before) |
+| MEM-20 | Passed (one late click fixed after) | Script corrected: button is "What's included & what's left"; savings page is for non-members |
+| MEM-21 | Passed (after 6 runs) | Tasks page is `/schedule/tasks`; queue tasks are on **Unassigned**, not Watching |
+| MEM-11 | Passed (re-run) | Catalog pick split into its own line; four late clicks fixed |
+| MEM-16 | Passed | Mark handled asks for a note (added to the script) |
+| MEM-22 | Passed (one late click fixed after) | No Stripe prices on this screen; store discount field only shows when the online store is on |
+| MEM-23 | **Blocked: bug P-23** | Promotions are under Marketing → Membership promotions, not Admin |
+| MEM-25 | Passed | Link takes a pasted `sub_` id; it doesn't search Stripe |
+| MEM-24 | Not run | Question Q-24 below |
+
+**Possible bugs found this session (none fixed: product code waits for your OK):**
+
+- **P-23 (blocks MEM-23, affects production):** creating a membership promotion attaches *every* Stripe product
+  with an active recurring price to the coupon (`stripeCatalog.service.ts` `getMembershipProductIds`). That includes
+  online-store autoship products, so a membership code also discounts autoship. Stripe allows at most 100 products
+  on a coupon; the test account has 134 and every create fails ("applies_to[products] exceeded maximum 100").
+  Production will hit the same limit as autoship products grow. **Recommended:** limit it to the Stripe products of
+  membership plans (`packages.stripeMonthlyPriceId` / `stripeAnnualPriceId`).
+- **P-06 (my Q-06a fix doesn't work):** the online signup payment page should pre-fill the cardholder and address
+  for client logins, but it checks `role !== 'client'` while `role` is a list (`['client']`), so it never runs.
+  One-line fix (`role.includes('client')`) plus a test. MEM-06 then needs a re-take (Maria would no longer type her
+  address).
+- **P-03:** when the post-visit refund fails, the receipt still shows **Balance $0.00** although the owner is owed the
+  refund (seen in MEM-03's first take).
+- **P-15:** after a pet is marked passed away, the Membership section still offers **Enroll in a plan** and
+  **Post-appointment sign-up**.
+- **P-20:** the portal savings page says "We don't have a recent wellness visit with vaccines for Juniper" on the
+  day of a paid wellness visit with a vaccine.
+- **P-25a:** Analytics → Memberships "by type" shows "Canine Foundations - Monthly Monthly" (same slip I fixed on
+  the chart).
+- **P-21:** on the Tasks page, after **Assign to me** on a queue task, the Active tab count goes up but its list stays
+  empty until the page is reloaded. MEM-21 reloads off camera.
+- **P-25b:** after **Link** connects a Stripe subscription, the chart still says Billing card "Not on Stripe yet" /
+  "Enter a card".
+
+**Small things on camera (kept):** MEM-05 shows a "Tasks 1" badge from MEM-03's failed-refund task (since removed);
+MEM-14 flashes "Loading client…" for a moment after confirming; MEM-22 shows the testing-server-only "Test
+renewals" box.
+
+**Plan data for you (not filmed around):** MEM-19's renewal card for Canine Foundations reads "Annual Membership
+Plan" on the monthly plan (plan tag line); Feline Foundations shows no online store discount; Golden's trip fee
+(Q-10a).
+
+**Questions:**
+- **Q-24:** MEM-24 shows eight screens. Build it from short clips of the finished videos with new narration
+  (recommended: faster, no extra queue turns), or as its own Cypress recording?
+- **Q-06:** fix P-06 and re-take MEM-06?
+- **Q-23:** fix P-23 (membership products only), then record MEM-23?
+
 ## Summary (Nov 9, 2026, early morning)
 
 - **Dry runs passed:** 13 of 23: MEM-01, 02, 03, 05, 06, 07, 08, 09, 10, 13, 14, 15, 17. All clicks are in sync

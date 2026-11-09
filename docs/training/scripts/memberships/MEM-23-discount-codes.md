@@ -1,7 +1,6 @@
 # MEM-23. Discount codes and share links
 
-> **Dry run:** pending (shared recording queue). Scripted from `MembershipStripeDiscountsPanel.tsx` (Admin →
-> Promotions). Creating a code makes a Stripe test-mode coupon.
+> **Dry run:** blocked Nov 9, 2026: creating a promotion fails (bug P-23 in `review-pass1.md`). Change: promotions are under **Marketing → Membership promotions**; a First month off type has no Duration.
 
 - **Audience:** managers and admins. Filmed as Robin Hale.
 - **Length:** about 1½ minutes.

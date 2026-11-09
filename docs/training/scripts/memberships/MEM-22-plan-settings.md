@@ -1,7 +1,6 @@
 # MEM-22. Settings → Memberships
 
-> **Dry run:** pending (shared recording queue). Scripted from `SettingsMemberships.tsx`. Review its field list on
-> the first dry run; this screen is large and may change before launch.
+> **Dry run:** passed Nov 9, 2026 (`mem-22-plan-settings.cy.ts`). Changes: the signup window is shown first (it's at the top); the plan screen shows no Stripe prices; the online store discount field only appears when the online store is on.
 
 - **Audience:** managers and admins. Filmed as Robin Hale (manager); **Apply to existing members** is admin-only.
 - **Length:** about 2½ minutes.

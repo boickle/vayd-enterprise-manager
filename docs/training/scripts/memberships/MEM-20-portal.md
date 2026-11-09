@@ -1,8 +1,6 @@
 # MEM-20. What members see in the portal
 
-> **Dry run:** pending (shared recording queue). Scripted from the code (`ClientPortal.tsx`,
-> `MembershipBenefitsModal.tsx`, `MembershipSavings.tsx`, `RenewalBanner.tsx`, `PostVisitSignupBanner.tsx`).
-> Confirm labels on the first dry run.
+> **Dry run:** passed Nov 9, 2026 (`mem-20-portal.cy.ts`). Changes: the button is **What's included & what's left** (not View benefits); the savings page (**See my membership savings**) is for pets that aren't members and shows what a membership would cover, so it's filmed on Juniper; the benefits window also holds the card change.
 
 - **Audience:** CLs. Filmed on Maria's portal login.
 - **Length:** about 1½ minutes.

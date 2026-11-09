@@ -31,13 +31,15 @@ describe('Training: MEM-19 renewals', () => {
       tap(() => cy.get('.renewal-review__change-plan'));
       cy.contains('h2', 'Choose a plan for next year').should('exist');
     });
-    trace('m19-06'); line('m19-06', () => pointAt(() => cy.contains('h2', 'Choose a plan for next year').next(), 4500));
-    trace('m19-07'); line('m19-07', () => {
+    trace('m19-06'); line('m19-06', () => {
+      pointAt(() => cy.contains('h2', 'Choose a plan for next year').next(), 4500);
       settle(() => cy.get('.renewal-review__interval-yearly'));
+    });
+    trace('m19-07'); line('m19-07', () => {
       tap(() => cy.get('.renewal-review__interval-yearly'));
+      settle(() => cy.contains('.renewal-review__primary', 'Save my choice'));
     });
     trace('m19-08'); line('m19-08', () => {
-      settle(() => cy.contains('.renewal-review__primary', 'Save my choice'));
       tap(() => cy.contains('.renewal-review__primary', 'Save my choice'));
     });
     offCamera(() => cy.contains('.renewal-review__stay', 'Saved.', { timeout: 60000 }).should('exist'));
