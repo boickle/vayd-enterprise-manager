@@ -25,7 +25,7 @@ import {
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../../api/branchInventory';
-import { appConfirm } from '../../utils/appDialog';
+import { appAlert, appConfirm } from '../../utils/appDialog';
 import {
   cancelOffboarding,
   fetchDeactivatedStaff,
@@ -798,7 +798,7 @@ export default function SettingsEmployeeDirectory({
   const removeRow = async (emp: Employee) => {
     const ok = await appConfirm({
       title: 'Delete employee?',
-      message: `Permanently delete employee #${emp.id} from the database? This cannot be undone.`,
+      message: `Permanently delete employee #${emp.id}? Only for a duplicate added by mistake. For anyone who worked here, use Offboard.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -808,7 +808,8 @@ export default function SettingsEmployeeDirectory({
       onMessage?.('Employee deleted.', 'success');
       await load();
     } catch (err) {
-      onMessage?.(extractErr(err), 'error');
+      // RP-A6: a person with records on file is refused (409); say so in a dialog, not a passing banner.
+      await appAlert({ title: "Can't delete this person", message: extractErr(err) });
     }
   };
 
