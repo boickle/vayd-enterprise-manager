@@ -48,6 +48,7 @@ import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { apiErrorMessage, http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { fetchDepartedDoctorsWithVisits } from '../api/offboarding';
 import {
   fetchEmployeeGoals,
   formatPointsAgainstGoal,
@@ -5308,10 +5309,30 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   useEffect(() => {
     let on = true;
-    Promise.all([fetchPrimaryProviders(), fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: true })])
-      .then(([providerRows, typeRows]) => {
+    Promise.all([
+      fetchPrimaryProviders(),
+      fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: true }),
+      // RP-03: a departed doctor's calendar stays openable while they still have visits booked,
+      // so client liaisons can move them. Labelled "(Deactivated)"; they have no free time.
+      fetchDepartedDoctorsWithVisits().catch(() => []),
+    ])
+      .then(([providerRows, typeRows, departedRows]) => {
         if (!on) return;
-        setProviders(Array.isArray(providerRows) ? providerRows : []);
+        const active = Array.isArray(providerRows) ? providerRows : [];
+        const departed: Provider[] = departedRows
+          .filter((d) => !active.some((p) => Number(p.id) === d.id))
+          .map((d) => ({
+            id: d.id,
+            pimsId: d.pimsId ?? d.id,
+            email: '',
+            firstName: d.firstName,
+            lastName: d.lastName,
+            designation: d.designation,
+            title: d.title,
+            name: `${[d.title, d.firstName, d.lastName].filter(Boolean).join(' ') || `Provider ${d.id}`} (Deactivated)`,
+            isActive: false,
+          }));
+        setProviders([...active, ...departed]);
         setTypeList(Array.isArray(typeRows) ? typeRows : []);
       })
       .catch(() => {

@@ -446,6 +446,8 @@ export type ScoutRoleAssignment = {
   branchId: number | null;
   employeeName: string;
   branchName: string | null;
+  /** False for a deactivated employee. Older API builds omit it (treat as active). */
+  isActive?: boolean;
 };
 
 export type ScoutRoleAssignmentsResponse = {

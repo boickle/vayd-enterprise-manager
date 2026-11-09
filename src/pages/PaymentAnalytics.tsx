@@ -123,7 +123,7 @@ const PRESETS: Record<string, () => DateRange> = {
 
 /**
  * "All payments" and "View payments" read the reconciliation list, which needs
- * `report.square_reconciliation` (practice manager, billing, admin). Others don't see a button that 403s.
+ * `report.square_reconciliation` (practice manager, billing, admin, observer). Others don't see a button that 403s.
  */
 export function PaymentsListActions({ onAll, onView }: { onAll: () => void; onView: () => void }) {
   const mayList = useCanOrAdminLogin('report.square_reconciliation');

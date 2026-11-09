@@ -33,11 +33,14 @@ import {
   listEmailCampaigns,
 } from '../../api/emailCampaigns';
 import { formatDateTime, percent, StatusChip } from './campaignFormat';
+import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
 
 export const MARKETING_BASE_PATH = '/schedule/marketing';
 
 export default function EmailCampaignsPage() {
   const navigate = useNavigate();
+  // RP-08: Executives see campaigns without changing them; marketing.manage (or an admin login) edits.
+  const canManage = useCanOrAdminLogin('marketing.manage');
   const [rows, setRows] = useState<EmailCampaignListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -114,14 +117,16 @@ export default function EmailCampaignsPage() {
           }
           label="Show archived"
         />
-        <Button
-          variant="contained"
-          startIcon={<Plus size={18} />}
-          onClick={create}
-          disabled={creating}
-        >
-          New campaign
-        </Button>
+        {canManage ? (
+          <Button
+            variant="contained"
+            startIcon={<Plus size={18} />}
+            onClick={create}
+            disabled={creating}
+          >
+            New campaign
+          </Button>
+        ) : null}
       </Box>
 
       {error ? (
@@ -155,7 +160,9 @@ export default function EmailCampaignsPage() {
               <TableRow>
                 <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
                   <Typography color="text.secondary">
-                    No campaigns yet. Create one to get started.
+                    {canManage
+                      ? 'No campaigns yet. Create one to get started.'
+                      : 'No campaigns yet.'}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -231,25 +238,30 @@ export default function EmailCampaignsPage() {
                           </IconButton>
                         </Tooltip>
                       ) : null}
-                      <Tooltip title="Duplicate">
-                        <IconButton
-                          size="small"
-                          onClick={() =>
-                            void runAction(async () => {
-                              const copy = await duplicateEmailCampaign(row.id);
-                              navigate(`${MARKETING_BASE_PATH}/${copy.id}`);
-                            })
-                          }
-                        >
-                          <Copy size={18} />
-                        </IconButton>
-                      </Tooltip>
-                      <IconButton
-                        size="small"
-                        onClick={(e) => setMenu({ anchor: e.currentTarget, row })}
-                      >
-                        <MoreVertical size={18} />
-                      </IconButton>
+                      {canManage ? (
+                        <>
+                          <Tooltip title="Duplicate">
+                            <IconButton
+                              size="small"
+                              onClick={() =>
+                                void runAction(async () => {
+                                  const copy = await duplicateEmailCampaign(row.id);
+                                  navigate(`${MARKETING_BASE_PATH}/${copy.id}`);
+                                })
+                              }
+                            >
+                              <Copy size={18} />
+                            </IconButton>
+                          </Tooltip>
+                          <IconButton
+                            size="small"
+                            aria-label="More actions"
+                            onClick={(e) => setMenu({ anchor: e.currentTarget, row })}
+                          >
+                            <MoreVertical size={18} />
+                          </IconButton>
+                        </>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 );
