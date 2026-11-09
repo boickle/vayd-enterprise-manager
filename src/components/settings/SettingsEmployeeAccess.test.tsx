@@ -3,11 +3,29 @@
  * hint), someone else's is not; the license hint names a practice admin or the medical director; and the
  * "recent changes" list at the bottom shows role, license and grant changes with a link to the audit log.
  */
-import { render, screen, waitFor } from '@testing-library/react';
-import { vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, vi } from 'vitest';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 
-const state = vi.hoisted(() => ({ myEmployeeId: 5, platform: false, canLicense: true }));
+const DEFAULT_GRANTS = [
+  {
+    id: 1,
+    permissionKey: 'invoice.void',
+    scope: 'all',
+    reason: 'cover',
+    grantedByName: 'Pat',
+    expiresAt: null,
+    created: '2026-11-01T00:00:00Z',
+  },
+];
+
+const state = vi.hoisted(() => ({
+  myEmployeeId: 5,
+  platform: false,
+  canLicense: true,
+  grants: [] as Array<Record<string, unknown>>,
+  addCalls: [] as Array<{ permissionKey: string; reason: string; expiresAt?: string | null }>,
+}));
 
 vi.mock('../../utils/practiceIdFromToken', () => ({ currentPracticeId: () => 1 }));
 vi.mock('../../permissions/PermissionContext', () => ({
@@ -25,6 +43,26 @@ vi.mock('../../api/permissions', async (orig) => {
   const actual = await orig<typeof import('../../api/permissions')>();
   return {
     ...actual,
+    addEmployeePermissionGrant: async (
+      _practiceId: number,
+      _employeeId: number,
+      body: { permissionKey: string; reason: string; expiresAt?: string | null },
+    ) => {
+      state.addCalls.push(body);
+      state.grants = [
+        ...state.grants,
+        {
+          id: 100 + state.addCalls.length,
+          permissionKey: body.permissionKey,
+          scope: 'all',
+          reason: body.reason,
+          grantedByName: 'Me',
+          expiresAt: body.expiresAt ?? null,
+          created: '2026-11-09T00:00:00Z',
+        },
+      ];
+      return {};
+    },
     fetchEmployeePermissions: async () => ({
       effective: {
         employeeId: 5,
@@ -35,17 +73,7 @@ vi.mock('../../api/permissions', async (orig) => {
         permissions: {},
         sources: {},
       },
-      grants: [
-        {
-          id: 1,
-          permissionKey: 'invoice.void',
-          scope: 'all',
-          reason: 'cover',
-          grantedByName: 'Pat',
-          expiresAt: null,
-          created: '2026-11-01T00:00:00Z',
-        },
-      ],
+      grants: state.grants,
     }),
     fetchPermissionCatalog: async () => ({
       sections: { billing: 'Billing' },
@@ -84,6 +112,11 @@ vi.mock('../../api/permissions', async (orig) => {
       },
     ],
   };
+});
+
+beforeEach(() => {
+  state.grants = DEFAULT_GRANTS.map((g) => ({ ...g }));
+  state.addCalls = [];
 });
 
 describe('SettingsEmployeeAccess own-tab lock (RP-04-6)', () => {
@@ -129,6 +162,78 @@ describe('SettingsEmployeeAccess wording (RP-A8-1)', () => {
       "Only a practice admin or the medical director can set someone's license"
     );
     state.canLicense = true;
+  });
+
+  it('describes signing and prescription directions the way EMR-07 and EMR-07b allow', async () => {
+    state.myEmployeeId = 9;
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    await screen.findByText('License');
+    const intro = container.querySelector('.settings-card .settings-card-subtitle');
+    expect(intro).toHaveTextContent(
+      'Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and medical notes, and may enter prescription directions for the vet. No role or grant substitutes for a license.'
+    );
+    expect(intro).not.toHaveTextContent('Prescriptions and refill authorizations additionally');
+    expect(intro).not.toHaveTextContent('no role or grant substitutes for either');
+  });
+});
+
+describe('SettingsEmployeeAccess grant end date (RP-A4-1)', () => {
+  /** Picks a permission and an end day, then confirms the grant with a reason. */
+  async function grantUntil(day: string) {
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    await screen.findByText('License');
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'invoice.discount' } });
+    fireEvent.change(container.querySelector('input[type="date"]') as HTMLInputElement, {
+      target: { value: day },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Grant' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('Reason'), {
+      target: { value: 'Covering the front desk' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant' }));
+    await waitFor(() => expect(state.addCalls).toHaveLength(1));
+    return container;
+  }
+
+  it('saves the last instant of a daylight-time day in Eastern (July 15 ends 23:59:59.999 EDT)', async () => {
+    state.myEmployeeId = 9;
+    const container = await grantUntil('2026-07-15');
+
+    expect(state.addCalls[0].expiresAt).toBe('2026-07-15T23:59:59.999-04:00');
+    expect(new Date(state.addCalls[0].expiresAt as string).toISOString()).toBe(
+      '2026-07-16T03:59:59.999Z'
+    );
+    await waitFor(() => expect(container).toHaveTextContent('ends 7/15/2026'));
+  });
+
+  it('saves the last instant of a standard-time day in Eastern (Nov 30 ends 23:59:59.999 EST)', async () => {
+    state.myEmployeeId = 9;
+    const container = await grantUntil('2026-11-30');
+
+    expect(state.addCalls[0].expiresAt).toBe('2026-11-30T23:59:59.999-05:00');
+    expect(new Date(state.addCalls[0].expiresAt as string).toISOString()).toBe(
+      '2026-12-01T04:59:59.999Z'
+    );
+    await waitFor(() => expect(container).toHaveTextContent('ends 11/30/2026'));
+  });
+
+  it('shows a stored end date as the Eastern day it was picked for, not the UTC day', async () => {
+    state.myEmployeeId = 9;
+    state.grants = [
+      { ...DEFAULT_GRANTS[0], expiresAt: '2026-11-30T23:59:59.999-05:00' },
+      {
+        ...DEFAULT_GRANTS[0],
+        id: 2,
+        permissionKey: 'invoice.discount',
+        expiresAt: '2026-07-16T03:59:59.999Z',
+      },
+    ];
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    await screen.findByText('License');
+    expect(container).toHaveTextContent('ends 11/30/2026');
+    expect(container).toHaveTextContent('ends 7/15/2026');
+    expect(container).not.toHaveTextContent('ends 7/16/2026');
   });
 });
 
