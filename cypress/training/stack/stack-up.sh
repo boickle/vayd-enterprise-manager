@@ -32,13 +32,26 @@ fi
 # Texts: off (no key) unless TRAINING_SMS_CAPTURE=1, which records every OpenPhone send in sms.jsonl instead of sending.
 SMS_KEY=; SMS_FROM=; SMS_PRELOAD=
 if [ "${TRAINING_SMS_CAPTURE:-0}" = 1 ]; then SMS_KEY=captured-not-real; SMS_FROM=+19195550100; SMS_PRELOAD=" --require $HERE/sms-capture-preload.cjs"; fi
-(redis-cli -n $TRAINING_REDIS_DB flushdb >/dev/null; PORT=$TRAINING_API_PORT REDIS_URL=redis://127.0.0.1:6379/$TRAINING_REDIS_DB OSRM_URL=http://127.0.0.1:$TRAINING_OSRM_PORT ROUTING_PROVIDER=osrm \
+# IDEXX: off by default. TRAINING_IDEXX=sandbox uses IDEXX's sandbox practice (a demo, not live; owner, Nov 8, 2026),
+# from the commented "# IDEXX_..." lines in $API/.env. The API only honours it on a test database with the control
+# database off (vayd-api src/idexx/idexx-test-sandbox.ts). Values are read here, never printed.
+IDEXX_ENV=()
+if [ "${TRAINING_IDEXX:-off}" = sandbox ]; then
+  for k in IDEXX_PIMS_ID IDEXX_PIMS_VERSION IDEXX_VCP_USERNAME IDEXX_VCP_PASSWORD IDEXX_ORDERING_BASE_URL IDEXX_RESULTS_BASE_URL; do
+    v="$(sed -n "s/^#[[:space:]]*$k=//p" "$API/.env" | head -1)"; [ -z "$v" ] && v="$(sed -n "s/^$k=//p" "$API/.env" | head -1)"
+    [ -n "$v" ] && IDEXX_ENV+=("$k=$v")
+  done
+  IDEXX_ENV+=("IDEXX_TEST_SANDBOX=true" "IDEXX_RESULTS_SYNC_ENABLED=false")
+fi
+# CONTROL_DB_ENABLED=false: the shared control database would otherwise hand this stack the real Gmail, OpenPhone,
+# Stripe and IDEXX secrets. GMAIL_POLL_INTERVAL_MS=0: no mailbox polling.
+(redis-cli -n $TRAINING_REDIS_DB flushdb >/dev/null; env "${IDEXX_ENV[@]}" CONTROL_DB_ENABLED=false GMAIL_POLL_INTERVAL_MS=0 PORT=$TRAINING_API_PORT REDIS_URL=redis://127.0.0.1:6379/$TRAINING_REDIS_DB OSRM_URL=http://127.0.0.1:$TRAINING_OSRM_PORT ROUTING_PROVIDER=osrm \
   DB_DATABASE=$DB MIGRATION_DB_NAME=$DB DISABLE_SCHEDULED_JOBS=true STRIPE_API_BASE=$STRIPE_BASE \
   E2E_API_DIR="$API" EMAIL_CAPTURE_PATH="$S/emails.jsonl" APPOINTMENT_REQUEST_TEST_EMAIL=deirdre@vetatyourdoor.com \
   APPOINTMENT_REQUEST_TEST_SMS= ROOM_LOADER_TEST_SMS= OPENPHONE_API_KEY=$SMS_KEY OPENPHONE_FROM=$SMS_FROM SMS_REMINDERS_FROM=$SMS_FROM SMS_TEST_NUMBER=9195550199 \
   SMS_CAPTURE_PATH="$S/sms.jsonl" GMAIL_SMTP_PASS= GMAIL_SMTP_USER= GMAIL_OAUTH_CLIENT_SECRET= GMAIL_OAUTH_CLIENT_ID= GMAIL_TOKEN_ENCRYPTION_KEY= GMAIL_PUBSUB_TOPIC= \
   NODE_OPTIONS="--require $API/test/scripts/e2e-capture-preload.js$SMS_PRELOAD" nohup node dist/main.js > "$S/api.log" 2>&1 & echo $! > "$S/api.pid")
 cd "$FE"
-(VITE_API_BASE_URL=http://localhost:$TRAINING_API_PORT nohup npx vite --port $TRAINING_APP_PORT --strictPort > "$S/vite.log" 2>&1 & echo $! > "$S/vite.pid")
+(VITE_API_BASE_URL=http://localhost:$TRAINING_API_PORT nohup npx vite ${TRAINING_VITE_CONFIG:+--config $TRAINING_VITE_CONFIG} --port $TRAINING_APP_PORT --strictPort > "$S/vite.log" 2>&1 & echo $! > "$S/vite.pid")
 for i in $(seq 1 90); do curl -s -o /dev/null http://localhost:$TRAINING_API_PORT/health && curl -s -o /dev/null http://localhost:$TRAINING_APP_PORT && break; sleep 2; done
 echo "up: API :$TRAINING_API_PORT (DB $DB), app :$TRAINING_APP_PORT. Work files: $S"

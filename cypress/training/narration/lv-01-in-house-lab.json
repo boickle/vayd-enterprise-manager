@@ -1,0 +1,82 @@
+[
+  {
+    "id": "lv01-01",
+    "text": "An in-house lab started in the visit lands on the chart and on the bill together. Nothing is filled in for you, so what's charted is what you actually saw."
+  },
+  {
+    "id": "lv01-02",
+    "text": "Maple Rivera is drinking a lot. Dr. Lane wants a blood glucose and a heartworm test."
+  },
+  {
+    "id": "lv01-03",
+    "text": "Remember: type what you measured. Number rows start blank."
+  },
+  {
+    "id": "lv01-04",
+    "text": "In Checkout, add the lab as a charge."
+  },
+  {
+    "id": "lv01-05",
+    "text": "Pick Blood glucose."
+  },
+  {
+    "id": "lv01-06",
+    "text": "The line says Not run: ordered, but not done yet."
+  },
+  {
+    "id": "lv01-07",
+    "text": "Click the arrow to open the form."
+  },
+  {
+    "id": "lv01-08",
+    "text": "The value is blank. It never starts at zero."
+  },
+  {
+    "id": "lv01-09",
+    "text": "Type the reading."
+  },
+  {
+    "id": "lv01-10",
+    "text": "And Save results."
+  },
+  {
+    "id": "lv01-11",
+    "text": "It says Complete, and it's on Maple's chart. Scout doesn't judge the number. Dr. Lane does."
+  },
+  {
+    "id": "lv01-12",
+    "text": "Now the heartworm test. Add it the same way."
+  },
+  {
+    "id": "lv01-12b",
+    "text": "Pick Heartworm 4Dx."
+  },
+  {
+    "id": "lv01-13",
+    "text": "Open its form."
+  },
+  {
+    "id": "lv01-14",
+    "text": "Fill normal values sets every choice row to its normal answer, here Negative."
+  },
+  {
+    "id": "lv01-15",
+    "text": "Maple's heartworm is positive, so change that row."
+  },
+  {
+    "id": "lv01-16",
+    "text": "An abnormal answer is flagged, so the doctor sees it."
+  },
+  {
+    "id": "lv01-17",
+    "text": "Save results."
+  },
+  {
+    "id": "lv01-18",
+    "text": "On a form with numbers, like the urine dipstick, Fill normal values leaves the numbers blank. Type each one."
+  },
+  {
+    "id": "lv01-19",
+    "text": "The most common mistake: clicking Fill normal values and saving without typing the numbers. Remember: type what you measured. Number rows start blank."
+  }
+]
