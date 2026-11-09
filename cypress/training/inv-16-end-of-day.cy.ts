@@ -48,7 +48,8 @@ describe('Training: INV-16 end of day', () => {
       tap(() => cy.contains('button', /^Create deposit$/));
       cy.contains('Deposit posted to Skowhegan Savings', { timeout: 30000 }).should('exist');
     });
-    line('inv16-18', () => pointAt(() => cy.contains('Deposit posted to Skowhegan Savings'), 4000));
+    // Point at the slip itself; the "Deposit posted" banner sits behind the slip dialog.
+    line('inv16-18', () => pointAt(() => cy.get('[role="dialog"] .deposit-slip').first(), 4000));
     // Printing opens a system dialog that would freeze the recording, so the browser's print is a no-op here.
     offCamera(() => cy.window().then((win) => { win.print = () => undefined; }));
     line('inv16-19', () => tap(() => cy.contains('button', 'Print deposit slip')));
