@@ -9,7 +9,12 @@ import {
 } from '../analytics-tabs';
 import { usePermissions } from '../permissions/PermissionContext';
 import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
-import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import {
+  canOpenAnalytics,
+  isAnalyticsAdmin,
+  isEmployeeAnalyticsRestricted,
+  normalizeAuthRoles,
+} from '../utils/analyticsAccess';
 import './Settings.css';
 
 function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
@@ -32,8 +37,10 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const navigate = useNavigate();
   const normalizedRoles = normalizeAuthRoles(role);
   const isAdmin = isAnalyticsAdmin(normalizedRoles);
-  const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
-  const canAccessAnalytics = isAdmin || isEmployeeAnalytics;
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsViewAll = can('analytics.view_all');
+  const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles, holdsViewAll);
+  const canAccessAnalytics = canOpenAnalytics(normalizedRoles, holdsViewAll);
   const permissionsReady = Boolean(effective) || !permissionsLoading;
 
   const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
