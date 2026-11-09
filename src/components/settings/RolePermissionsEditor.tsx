@@ -211,6 +211,14 @@ export default function RolePermissionsEditor({ practiceId, role, onMessage }: P
                           {entry.requiresLicense === 'veterinarian' ? 'DVM license' : 'license'}
                         </span>
                       )}
+                      {entry.enforced === false && (
+                        <span
+                          className="emp-access-tag"
+                          title="The server does not check this permission yet, so turning it off here changes nothing. Screens may still hide the control."
+                        >
+                          Not enforced yet
+                        </span>
+                      )}
                       {entry.note && <div className="perm-editor-note">{entry.note}</div>}
                     </div>
                     <div className="perm-editor-control">

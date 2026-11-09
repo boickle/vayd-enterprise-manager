@@ -14,7 +14,7 @@ import {
 } from '../api/users';
 import { fetchAllEmployees, fetchEmployee, type Employee } from '../api/appointmentSettings';
 import { saveEmployees, type EmployeeDto } from '../api/employeesMutations';
-import { listTasks, reassignFromEmployee } from '../api/tasks';
+import OffboardDialog from '../components/settings/OffboardDialog';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Settings.css';
 import { appConfirm } from '../utils/appDialog';
@@ -87,9 +87,8 @@ export default function AdminUsers() {
   const [editEmployeeId, setEditEmployeeId] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
   const [editEmail, setEditEmail] = useState('');
-  const [deactivateToEmployeeId, setDeactivateToEmployeeId] = useState('');
-  const [openTaskCount, setOpenTaskCount] = useState<number | null>(null);
-  const [openTaskCountLoading, setOpenTaskCountLoading] = useState(false);
+  /** RP-03: turning off the login of someone still employed opens the Offboard dialog. */
+  const [offboarding, setOffboarding] = useState<AdminManagedUser | null>(null);
   const [saving, setSaving] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [resettingId, setResettingId] = useState<number | null>(null);
@@ -214,45 +213,18 @@ export default function AdminUsers() {
     setEditEmployeeId(user.employeeId != null ? String(user.employeeId) : '');
     setEditIsActive(user.isActive !== false);
     setEditEmail(user.email ?? '');
-    setDeactivateToEmployeeId('');
-    setOpenTaskCount(null);
     setMessage(null);
   };
 
   const closeEdit = () => {
     if (saving) return;
     setEditing(null);
-    setDeactivateToEmployeeId('');
-    setOpenTaskCount(null);
   };
 
-  useEffect(() => {
-    const employeeId = editing?.employeeId;
-    if (!editing || editIsActive || employeeId == null) {
-      setOpenTaskCount(null);
-      setOpenTaskCountLoading(false);
-      return;
-    }
-    let on = true;
-    setOpenTaskCountLoading(true);
-    void listTasks({
-      assignedToEmployeeId: employeeId,
-      includeDone: false,
-      limit: 1,
-    })
-      .then((res) => {
-        if (on) setOpenTaskCount(res.total);
-      })
-      .catch(() => {
-        if (on) setOpenTaskCount(null);
-      })
-      .finally(() => {
-        if (on) setOpenTaskCountLoading(false);
-      });
-    return () => {
-      on = false;
-    };
-  }, [editing, editIsActive]);
+  /** The login's employee is still active (listed), so letting them go is the Offboard step. */
+  const linkedActiveEmployee = (user: AdminManagedUser | null) =>
+    user?.employeeId != null &&
+    employees.some((e) => e.id === user.employeeId && e.isActive !== false);
 
   const openCreate = () => {
     setCreating(true);
@@ -329,40 +301,10 @@ export default function AdminUsers() {
         payload.isActive = editIsActive;
       }
 
-      const deactivatingEmployeeId =
-        editing.isActive !== false && editIsActive === false
-          ? (editing.employeeId ?? null)
-          : null;
       const reactivatingEmployeeId =
         editing.isActive === false && editIsActive === true
           ? (editing.employeeId ?? null)
           : null;
-      let movedCount = 0;
-      if (deactivatingEmployeeId != null) {
-        if (!deactivateToEmployeeId) {
-          setMessage({
-            text: 'Pick who should receive this person’s incomplete and future automatic tasks.',
-            kind: 'error',
-          });
-          setSaving(false);
-          return;
-        }
-        const toId = Number(deactivateToEmployeeId);
-        if (!Number.isFinite(toId) || toId === deactivatingEmployeeId) {
-          setMessage({
-            text: 'Pick a different person to receive the incomplete tasks.',
-            kind: 'error',
-          });
-          setSaving(false);
-          return;
-        }
-        const moved = await reassignFromEmployee({
-          fromEmployeeId: deactivatingEmployeeId,
-          toEmployeeId: toId,
-          persistAsTaskForwarder: true,
-        });
-        movedCount = moved.reassigned;
-      }
       if (reactivatingEmployeeId != null) {
         const full = await fetchEmployee(reactivatingEmployeeId);
         await saveEmployees({
@@ -383,17 +325,7 @@ export default function AdminUsers() {
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
       setEditing(null);
       const who = updated.email ?? `user #${updated.id}`;
-      setMessage({
-        text:
-          movedCount > 0
-            ? `Updated ${who}. Reassigned ${movedCount} incomplete task${
-                movedCount === 1 ? '' : 's'
-              } and set their task forwarder.`
-            : deactivatingEmployeeId != null
-              ? `Updated ${who}. Future automatic tasks will go to the task forwarder.`
-              : `Updated ${who}.`,
-        kind: 'success',
-      });
+      setMessage({ text: `Updated ${who}.`, kind: 'success' });
     } catch (err) {
       setMessage({ text: extractErr(err), kind: 'error' });
     } finally {
@@ -641,6 +573,35 @@ export default function AdminUsers() {
         </table>
       </div>
 
+      {offboarding && offboarding.employeeId != null ? (
+        <OffboardDialog
+          employeeId={offboarding.employeeId}
+          employeeName={
+            offboarding.employeeName || offboarding.email || `Employee #${offboarding.employeeId}`
+          }
+          colleagues={employees
+            .filter((emp) => emp.isActive !== false)
+            .map((emp) => ({
+              id: emp.id,
+              name: employeeOptionLabel(emp),
+              isProvider: emp.isProvider === true,
+            }))}
+          onClose={() => setOffboarding(null)}
+          onDone={(result) => {
+            const who = offboarding.email ?? `user #${offboarding.id}`;
+            setOffboarding(null);
+            setEditing(null);
+            setMessage({
+              text: result.completedAt
+                ? `Offboarded ${who}. The login is off and every session has ended.`
+                : `Offboarded ${who}. Their last day is ${result.lastDay}; the login ends at midnight that night.`,
+              kind: 'success',
+            });
+            void loadUsers();
+          }}
+        />
+      ) : null}
+
       {editing && (
         <div className="settings-modal-overlay" onClick={closeEdit}>
           <div
@@ -743,43 +704,29 @@ export default function AdminUsers() {
                     <input
                       type="checkbox"
                       checked={editIsActive}
-                      onChange={(e) => setEditIsActive(e.target.checked)}
+                      onChange={(e) => {
+                        // RP-03: someone still employed is let go with Offboard (one step), not by
+                        // switching the login off on its own. Cancelling the dialog changes nothing.
+                        if (
+                          !e.target.checked &&
+                          editing.isActive !== false &&
+                          linkedActiveEmployee(editing)
+                        ) {
+                          setOffboarding(editing);
+                          return;
+                        }
+                        setEditIsActive(e.target.checked);
+                      }}
                     />
                     Active
                   </label>
-                </Field>
-                {!editIsActive && editing.employeeId != null && editing.isActive !== false && (
-                  <Field label="Task forwarder">
-                    <select
-                      className="input"
-                      value={deactivateToEmployeeId}
-                      onChange={(e) => setDeactivateToEmployeeId(e.target.value)}
-                      required
-                      disabled={lookupsLoading || openTaskCountLoading}
-                    >
-                      <option value="">
-                        {openTaskCountLoading
-                          ? 'Checking their tasks…'
-                          : openTaskCount != null && openTaskCount > 0
-                            ? `Select a person (${openTaskCount} open)…`
-                            : 'Select a person…'}
-                      </option>
-                      {employees
-                        .filter(
-                          (emp) => emp.id !== editing.employeeId && emp.isActive !== false,
-                        )
-                        .map((emp) => (
-                          <option key={emp.id} value={String(emp.id)}>
-                            {employeeOptionLabel(emp)}
-                          </option>
-                        ))}
-                    </select>
+                  {editing.isActive !== false && linkedActiveEmployee(editing) ? (
                     <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
-                      Incomplete tasks move to this person. Any automatic work that
-                      would later have gone to them goes here too.
+                      Turning this login off opens Offboard for{' '}
+                      {editing.employeeName || 'their employee record'}.
                     </p>
-                  </Field>
-                )}
+                  ) : null}
+                </Field>
               </div>
               <div className="settings-modal-actions">
                 <button

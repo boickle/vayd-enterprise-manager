@@ -293,6 +293,8 @@ export type PatientMembership = {
   groups: MembershipGroup[];
   /** Covered services given this term, newest first. */
   usage?: MembershipUsage[];
+  /** After a card change on a past-due membership: whether the missed payment was taken and benefits resumed. */
+  cardRetry?: { chargedNow: boolean; amountPaid: number; error: string | null; benefitsResumed: boolean } | null;
 };
 
 export type MembershipUsage = {
@@ -686,6 +688,10 @@ export async function createPatientMembership(input: {
   agreementSignatureData?: string;
   agreementSignedAt?: string;
   agreementText?: string;
+  /** Start Stripe billing now (first period charged today) on the entered card or the client's card on file. */
+  startBilling?: boolean;
+  clientId?: number;
+  paymentMethodId?: string;
 }): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>('/memberships/patient-memberships', {
     practiceId: currentPracticeId(),
@@ -905,7 +911,10 @@ export type MembershipCancelPreview = {
   paidThisTerm: number;
   usedThisTerm: number;
   chargeAmount: number;
+  /** $0 unless staff refund the unused part as an exception. */
   refundAmount: number;
+  /** Paid this year minus used. The agreement gives no partial refund, so it's kept unless staff refund it. */
+  unusedAmount?: number;
   hasCard: boolean;
   /** No payment record was found, so the amount paid is estimated from the listed price. */
   paymentUnknown?: boolean;
@@ -944,7 +953,14 @@ export async function previewMembershipCancel(
 export async function cancelMembership(
   membershipId: number,
   reason: string,
-  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean }
+  confirm?: {
+    chargeAmount?: number;
+    refundAmount?: number;
+    skipMoney?: boolean;
+    /** Refund the unused part as an exception to the agreement; needs a reason. */
+    refundUnused?: boolean;
+    refundReason?: string;
+  }
 ): Promise<MembershipCancelResult> {
   const { data } = await http.post<MembershipCancelResult>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
@@ -954,6 +970,7 @@ export async function cancelMembership(
       ...(confirm?.chargeAmount != null ? { confirmChargeAmount: confirm.chargeAmount } : {}),
       ...(confirm?.refundAmount != null ? { confirmRefundAmount: confirm.refundAmount } : {}),
       ...(confirm?.skipMoney ? { skipMoney: true } : {}),
+      ...(confirm?.refundUnused ? { refundUnused: true, refundReason: confirm.refundReason ?? '' } : {}),
     }
   );
   return data;

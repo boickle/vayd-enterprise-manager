@@ -31,7 +31,7 @@ import {
   SCHEDULE_OUTLET_EXTRA_SEGMENTS,
   scoutTabPermissionOk,
 } from '../scout-tabs';
-import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted } from '../utils/analyticsAccess';
+import { canOpenAnalytics } from '../utils/analyticsAccess';
 import {
   useRoutingCalendarPreviewActive,
   useRoutingCalendarPreviewNavigationGuard,
@@ -101,7 +101,7 @@ export default function ScheduleLayout() {
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
 
   const canAccessScheduleAnalytics = useMemo(
-    () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
+    () => canOpenAnalytics(roles),
     [roles],
   );
   const inventoryAttention = useInventoryAttention(canAccessScheduleAnalytics);

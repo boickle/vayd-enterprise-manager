@@ -204,6 +204,10 @@ export function membershipCancelMoneyLabel(
   if (preview.refundAmount > 0.009) {
     return `Will refund ${money(preview.refundAmount)} on cancel`;
   }
+  if ((preview.unusedAmount ?? 0) > 0.009) {
+    // No partial refund under the agreement. An exception refund is made from the pet's Membership panel first.
+    return `No refund: the unused ${money(preview.unusedAmount ?? 0)} is kept under the agreement`;
+  }
   return 'No extra charge or credit';
 }
 
