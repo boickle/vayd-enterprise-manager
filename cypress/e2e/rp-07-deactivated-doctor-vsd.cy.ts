@@ -39,10 +39,11 @@ describe('RP-07: deactivated doctor stays in VSD', () => {
     });
     cy.visit('/analytics/vsd');
 
-    cy.contains(`${w.departedDoctorName} (Deactivated)`, { timeout: 30000 }).should('be.visible');
-    cy.contains(`${w.departedDoctorName} (Deactivated)`)
-      .closest('li')
-      .should('contain.text', usd(w.departedTotal));
+    // The name also appears in the chart legend (a hidden button), so target the doctor's list row.
+    cy.contains('li', `${w.departedDoctorName} (Deactivated)`, { timeout: 30000 })
+      .scrollIntoView()
+      .should('be.visible')
+      .and('contain.text', usd(w.departedTotal));
     cy.contains('Practice total:', { timeout: 30000 }).should('contain.text', usd(w.seededTotal));
   });
 });
