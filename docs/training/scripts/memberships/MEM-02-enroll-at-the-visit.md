@@ -15,7 +15,7 @@
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
 | 1 | Juniper's chart, **Membership** section | — | Why line (above) | Juniper (cat, 6 y), no plan. Signed in as Casey Morgan (CL). Stripe test mode |
-| 2 | Same | — | "Remember: enrollment isn't finished until the membership fee is paid on the counter invoice." | — |
+| 2 | Same | — | "Remember: Enroll charges the card today and bills it every month after, so read the amount to the owner before you click." | — |
 | 3 | **Membership** | Click **Enroll in a plan** | "On Juniper's chart, in the Membership section, click Enroll in a plan." | — |
 | 4 | **Membership agreement — client must sign** | Point at the title and hint | "Hand the screen to the owner. They read the agreement first." | — |
 | 5 | Agreement | Scroll the agreement text | "It covers each plan, the twelve-month commitment, and what happens if they cancel early." | — |

@@ -36,22 +36,15 @@ Videos marked **Blocked** wait on a fix or a decision first.
 
 ## Before any final take
 
-- **Merge `build-doctor-flow` into `training/membership-scripts`** (AGENTS.md: before recording, so videos show what
-  ships). That's a commit, so it waits for your OK. Today the branch is 46 commits behind, but none of those
-  commits touch the membership screens.
-- **File names:** your brief says `<ID> <Title>.mp4`. The README (updated tonight on every training branch) says to
-  start with the audience, e.g. `CL - MEM-03 Post-appointment sign-up.mp4`. Which do you want?
-  **Recommended:** audience first, then the ID: `CL - MEM-03 …`.
-- **Speed:** finished videos play at 1.25× (README default, also from tonight). The lengths above are at that speed.
+- `build-doctor-flow` (with the Nov 9 membership fixes) is merged into `training/membership-scripts`.
+- **File names:** `MEM-03 - CL - Post-appointment sign-up.mp4` (ID, roles, description; owner decision Nov 9).
+- **Speed:** finished videos play at 1.25×. The lengths above are at that speed.
 
 ## Screens likely to change before launch
 
-- **Post-visit signup** closes before showing its receipt (MEM-03 and MEM-05). If that's fixed, the end of both
-  videos changes.
 - **The staff "New Membership Signup" email** still gives eVet/Pulse steps (MEM-07 notes). Not filmed, but staff
   read it.
-- MEM-02, 03, 05, 09, 14, 15 and 17 were re-scripted for the Nov 9 fixes and pass on the fixed code. Record them
-  only after the fixes are merged into `build-doctor-flow` and that is merged into this branch.
+- MEM-02, 03, 05, 09, 14, 15 and 17 were re-scripted for the Nov 9 fixes and pass on the fixed code.
 - **The client signup page** has hardcoded plan cards and promises ("10% off in our online store", "24-48
   business hours") that don't match the plan settings (MEM-06 notes).
 
