@@ -48,10 +48,15 @@ describe('Training: LV-13 lab forms', () => {
       tap(() => cy.contains('button', 'Save lab form'));
       cy.contains(/Saved Fecal float/, { timeout: 30000 }).should('exist');
     });
-    line('lv13-14', () => {
-      pointAt(() => cy.contains('button', 'Archive').first(), 1800);
+    line('lv13-14', () => pointAt(() => cy.contains('button', 'Archive').first(), 3000));
+    line('lv13-14b', () => {
       tap(() => tab(/^Archived/));
-      pointAt(() => cy.contains('button', 'Restore').first(), 1800);
+      cy.contains('Glucose curve (old)', { timeout: 30000 }).should('exist');
+    });
+    line('lv13-14c', () => {
+      tap(() => cy.contains('button, li, a', 'Glucose curve (old)').first());
+      cy.contains('button', 'Restore', { timeout: 30000 }).should('exist');
+      pointAt(() => cy.contains('button', 'Restore').first(), 2000);
     });
     line('lv13-15');
     line('lv13-16');

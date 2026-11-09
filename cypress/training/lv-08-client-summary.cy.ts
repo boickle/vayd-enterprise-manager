@@ -1,14 +1,14 @@
 /// <reference types="cypress" />
 /**
  * Training video LV-08: client summary and emailing results (docs/training/scripts/labs/LV-08-client-summary-and-email.md).
- * TEST stack; Juniper's CBC came from IDEXX's sandbox before the video and is reviewed in the setup. The draft is
+ * TEST stack; Juniper's CBC came from IDEXX's sandbox before the video. The draft is
  * written by the AI with demo data only (owner, Nov 8, 2026). Nothing is sent. Demo names: Maria Rivera's cat
  * Juniper, Dr. Avery Lane.
  */
 import '../support/e2e';
 import { schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
 import { finish, line, loadNarration, offCamera, pointAt, startClock, tap, typeSlowly } from './trainingKit';
-import { freshResults, labsApi, labsSetup, newestCompleteResult } from './labsTraining';
+import { freshResults, labsSetup, newestCompleteResult } from './labsTraining';
 
 describe('Training: LV-08 client summary', () => {
   it('LV-08', () => {
@@ -16,12 +16,9 @@ describe('Training: LV-08 client summary', () => {
     const juniper = w.households.A.activePetIds[1];
     loadNarration();
     labsSetup([juniper]);
-    newestCompleteResult(juniper).then((id) => {
-      freshResults([id]);
-      labsApi('doctorA', 'PATCH', `/idexx/results/${id}/reviewed`, { reviewed: true });
-    });
+    // Only this result is under To review (others are marked reviewed), so its row is the one opened.
+    newestCompleteResult(juniper).then((id) => freshResults([id]));
     signInAsScheduling('doctorA', '/schedule/idexx-results');
-    cy.contains('[role="tab"]', 'All recent', { timeout: 120000 }).click();
     const row = () => cy.get('button[aria-label="Expand Juniper"], button[aria-label="Collapse Juniper"]', { timeout: 60000 }).first();
     row().should('exist');
     cy.wait(2000);

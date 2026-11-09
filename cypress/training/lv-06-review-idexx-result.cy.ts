@@ -43,9 +43,17 @@ describe('Training: LV-06 review an IDEXX result', () => {
     line('lv06-11', () => pointAt(() => cy.contains('button', 'Medical note'), 3000));
     line('lv06-12', () => {
       tap(() => cy.contains('button', 'Mark reviewed'));
-      cy.get('[data-testid="idexx-reviewed-by"]', { timeout: 30000 }).should('exist');
+      cy.contains('No complete results are waiting for review.', { timeout: 30000 }).should('exist');
     });
-    line('lv06-13', () => pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 3500));
+    line('lv06-13', () => {
+      tap(() => tab('All recent'));
+      row().should('exist');
+    });
+    line('lv06-13b', () => {
+      tap(row);
+      cy.get('[data-testid="idexx-reviewed-by"]', { timeout: 30000 }).should('exist');
+      pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 2500);
+    });
     line('lv06-14');
     line('lv06-15');
     finish();

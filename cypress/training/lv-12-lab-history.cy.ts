@@ -35,6 +35,8 @@ describe('Training: LV-12 lab history', () => {
     cy.contains('h2', 'Timeline', { timeout: 120000 }).should('exist');
     cy.wait(2000);
     const evetRow = () => cy.get('[data-chart-row-id^="evetInHouseLab:"]', { timeout: 30000 }).first();
+    // The Labs tab's table has no row ids; its eVet row is found by its text.
+    const evetLabsRow = () => cy.contains('tr', 'eVet lab result', { timeout: 30000 }).first();
 
     startClock();
     line('lv12-01');
@@ -50,14 +52,14 @@ describe('Training: LV-12 lab history', () => {
     });
     line('lv12-06', () => {
       tap(() => cy.contains('[role="tab"]', /^Labs \(/));
-      evetRow().should('exist');
+      evetLabsRow().should('exist');
     });
     line('lv12-07', () => {
-      tap(evetRow);
+      tap(evetLabsRow);
       cy.contains('Anaplasma: POSITIVE', { timeout: 30000 }).should('exist');
     });
     line('lv12-08', () => pointAt(() => cy.contains('Anaplasma: POSITIVE'), 3500));
-    line('lv12-09', () => pointAt(() => cy.get('[aria-label="Print all records"]'), 3000));
+    line('lv12-09');
     line('lv12-10');
     finish();
   });

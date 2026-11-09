@@ -17,7 +17,8 @@ describe('Training: LV-05 track IDEXX orders', () => {
     loadNarration();
     labsSetup([pepper]);
     // Earlier takes' unfinished orders for Pepper are cancelled, so only today's shows.
-    cy.exec(`psql -q -d ${labsDb()} -c "UPDATE idexx_orders SET status='CANCELLED' WHERE \\"patientId\\"=${pepper} AND status='CREATED'"`);
+    // Earlier takes' unfinished orders (any pet) are cancelled, so only today's Pepper order shows.
+    cy.exec(`psql -q -d ${labsDb()} -c "UPDATE idexx_orders SET status='CANCELLED' WHERE status='CREATED'"`);
     cy.exec(`psql -q -d ${labsDb()} -c "UPDATE patients SET dob=COALESCE(dob,'2018-03-01') WHERE id=${pepper}"`);
     labId('cbc').then((cbc) =>
       visitToday({ household: 'A', petId: pepper, reason: 'Recheck bloodwork.', startsMinutesAgo: 90 }).then((v) => {

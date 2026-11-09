@@ -41,9 +41,17 @@ describe('Training: LV-07 tech releases a result', () => {
     });
     line('lv07-08', () => {
       tap(() => prompt().contains('button', 'Mark reviewed'));
-      cy.get('[data-testid="idexx-reviewed-by"]', { timeout: 30000 }).should('contain.text', 'Vet reviewed verbally');
+      prompt().should('not.exist');
     });
-    line('lv07-09', () => pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 3500));
+    line('lv07-09', () => {
+      tap(() => cy.contains('[role="tab"]', 'All recent'));
+      row().should('exist');
+    });
+    line('lv07-09b', () => {
+      tap(row);
+      cy.get('[data-testid="idexx-reviewed-by"]', { timeout: 30000 }).should('contain.text', 'Vet reviewed verbally');
+      pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 2500);
+    });
     offCamera(() => {
       cy.visit(`/schedule/patients?patientId=${biscuit}`);
       cy.contains('[role="tab"]', /^History$/, { timeout: 120000 }).click();

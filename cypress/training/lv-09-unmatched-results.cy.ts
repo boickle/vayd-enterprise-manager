@@ -27,8 +27,8 @@ describe('Training: LV-09 unmatched results', () => {
     startClock();
     line('lv09-01');
     line('lv09-02');
-    line('lv09-03', () => {
-      pointAt(() => tab('Unmatched').find('.pending-labs__count'), 1600);
+    line('lv09-03', () => pointAt(() => tab('Unmatched').find('.pending-labs__count'), 2500));
+    line('lv09-03b', () => {
       tap(() => tab('Unmatched'));
       row().should('exist');
     });
@@ -46,8 +46,8 @@ describe('Training: LV-09 unmatched results', () => {
       tap(() => cy.contains('button', 'Search'));
       cy.contains('button', /Biscuit \(Tom Chen\)/, { timeout: 30000 }).should('exist');
     });
-    line('lv09-09', () => {
-      pointAt(() => cy.contains('button', /Biscuit \(Tom Chen\)/), 1800);
+    line('lv09-09', () => pointAt(() => cy.contains('button', /Biscuit \(Tom Chen\)/), 2500));
+    line('lv09-09b', () => {
       tap(() => cy.contains('button', /Biscuit \(Tom Chen\)/));
       cy.contains('.idexx-result-list__row', 'Chen-Lee').should('not.exist');
     });

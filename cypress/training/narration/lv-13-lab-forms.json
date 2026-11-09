@@ -1,18 +1,74 @@
 [
-  {"id": "lv13-01", "text": "Lab forms decide what staff fill in for each in-house test. Attached to a test, the form opens by itself when the test is charged."},
-  {"id": "lv13-02", "text": "Remember: attach every form to the labs or procedures that use it."},
-  {"id": "lv13-03", "text": "This is Settings, In-House Lab Forms. Active forms are in use. Archived ones are kept, out of the way."},
-  {"id": "lv13-04", "text": "Click New lab form."},
-  {"id": "lv13-05", "text": "Name it."},
-  {"id": "lv13-06", "text": "Table of values is for rows of results. Written summary is for write-ups, like cytology."},
-  {"id": "lv13-07", "text": "Name the first row."},
-  {"id": "lv13-08", "text": "Choices, for answers like Negative or Positive."},
-  {"id": "lv13-09", "text": "List the choices."},
-  {"id": "lv13-10", "text": "And which ones are abnormal, so they're flagged."},
-  {"id": "lv13-11", "text": "Now the important part: attach it to the catalog lab."},
-  {"id": "lv13-12", "text": "Pick Fecal float."},
-  {"id": "lv13-13", "text": "Save lab form."},
-  {"id": "lv13-14", "text": "To retire a form, Archive it. Results already charted stay readable, and Restore brings it back."},
-  {"id": "lv13-15", "text": "Number rows have units, and no ranges. Scout doesn't judge numbers."},
-  {"id": "lv13-16", "text": "The most common mistake: saving a form without attaching it. Remember: attach every form to the labs or procedures that use it."}
+  {
+    "id": "lv13-01",
+    "text": "Lab forms decide what staff fill in for each in-house test. Attached to a test, the form opens by itself when the test is charged."
+  },
+  {
+    "id": "lv13-02",
+    "text": "Remember: attach every form to the labs or procedures that use it."
+  },
+  {
+    "id": "lv13-03",
+    "text": "This is Settings, In-House Lab Forms. Active forms are in use. Archived ones are kept, out of the way."
+  },
+  {
+    "id": "lv13-04",
+    "text": "Click New lab form."
+  },
+  {
+    "id": "lv13-05",
+    "text": "Name it."
+  },
+  {
+    "id": "lv13-06",
+    "text": "Table of values is for rows of results. Written summary is for write-ups, like cytology."
+  },
+  {
+    "id": "lv13-07",
+    "text": "Name the first row."
+  },
+  {
+    "id": "lv13-08",
+    "text": "Choices, for answers like Negative or Positive."
+  },
+  {
+    "id": "lv13-09",
+    "text": "List the choices."
+  },
+  {
+    "id": "lv13-10",
+    "text": "And which ones are abnormal, so they're flagged."
+  },
+  {
+    "id": "lv13-11",
+    "text": "Now the important part: attach it to the catalog lab."
+  },
+  {
+    "id": "lv13-12",
+    "text": "Pick Fecal float."
+  },
+  {
+    "id": "lv13-13",
+    "text": "Save lab form."
+  },
+  {
+    "id": "lv13-14",
+    "text": "To retire a form, Archive it. Results already charted stay readable."
+  },
+  {
+    "id": "lv13-14b",
+    "text": "Archived forms are kept here."
+  },
+  {
+    "id": "lv13-14c",
+    "text": "Open one, and Restore brings it back."
+  },
+  {
+    "id": "lv13-15",
+    "text": "Number rows have units, and no ranges. Scout doesn't judge numbers."
+  },
+  {
+    "id": "lv13-16",
+    "text": "The most common mistake: saving a form without attaching it. Remember: attach every form to the labs or procedures that use it."
+  }
 ]

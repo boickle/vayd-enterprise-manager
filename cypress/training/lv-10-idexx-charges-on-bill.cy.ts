@@ -28,6 +28,10 @@ describe('Training: LV-10 IDEXX charges on the bill', () => {
     ).then((r) => {
       const invoiceId = r.stdout.trim();
       expect(invoiceId, "Juniper's bill from LV-04").to.have.length.greaterThan(10);
+      // Earlier takes left other test bills on the Riveras' ledger; hide them so the ledger shows a normal day.
+      cy.exec(
+        `psql -q -d ${labsDb()} -c "UPDATE visit_invoices SET \\"isDeleted\\"=true WHERE \\"clientId\\"=${client} AND id<>'${invoiceId}' AND status='open' AND created > now() - interval '2 days'"`
+      );
       signInAsScheduling('cl', `/schedule/clients?clientId=${client}&tab=financial&invoice=${invoiceId}`);
     });
     const lineRow = (text: string) => cy.contains('tr', text, { timeout: 120000 });

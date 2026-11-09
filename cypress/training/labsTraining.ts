@@ -96,7 +96,9 @@ const sqlRun = (sql: string) => cy.exec(`psql -qAt -d ${labsDb()} -c "${sql.repl
 /** The newest complete IDEXX result for a pet (from IDEXX's sandbox, made before the video). */
 export function newestCompleteResult(petId: number): Cypress.Chainable<number> {
   return sqlRun(
-    `SELECT id FROM idexx_results WHERE "patientId"=${petId} AND status='COMPLETE' AND "isDeleted"=false ORDER BY id DESC LIMIT 1`
+    `SELECT r.id FROM idexx_results r WHERE r."patientId"=${petId} AND r.status='COMPLETE' AND r."isDeleted"=false ` +
+      `AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(r.payload->'categories','[]'::jsonb)) c, ` +
+      `jsonb_array_elements(COALESCE(c->'tests','[]'::jsonb)) t WHERE lower(btrim(t->>'result'))='pending') ORDER BY r.id DESC LIMIT 1`
   ).then((r) => {
     const id = Number(r.stdout.trim());
     expect(id, `a complete IDEXX sandbox result for pet ${petId} (run the prep order first)`).to.be.greaterThan(0);

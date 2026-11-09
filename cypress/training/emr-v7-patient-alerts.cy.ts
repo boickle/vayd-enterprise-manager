@@ -35,6 +35,10 @@ describe('Training: EMR V7 patient alerts', () => {
     });
     line('a7-06', () => {
       tap(() => alertBox().find('button').first());
+      cy.contains('h3, h2, div', /^Patient alerts$/).should('exist');
+    });
+    line('a7-06b', () => {
+      tap(() => cy.contains('button', /^\s*Edit\s*$/).filter(':visible').first());
       cy.get('textarea').filter(':visible').first().should('exist');
     });
     line('a7-07', () => typeSlowly(() => cy.get('textarea').filter(':visible').first(), '{moveToEnd} Prefers the exam in the car.'));

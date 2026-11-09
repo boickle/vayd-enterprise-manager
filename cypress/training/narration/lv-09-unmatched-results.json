@@ -1,14 +1,58 @@
 [
-  {"id": "lv09-01", "text": "Scout matches most IDEXX results by itself. The ones it can't, like tests ordered in eVet or on IDEXX's website, wait in Unmatched. No doctor gets a task until they're matched."},
-  {"id": "lv09-02", "text": "Remember: check Unmatched every day, and match each result to the right pet."},
-  {"id": "lv09-03", "text": "The Unmatched tab shows how many results are waiting for a pet. Open it."},
-  {"id": "lv09-04", "text": "IDEXX tells us the name it was sent under: Biscuit, Chen-Lee."},
-  {"id": "lv09-05", "text": "Open it."},
-  {"id": "lv09-06", "text": "Scout tells you what IDEXX sent, and reminds you to check the bill."},
-  {"id": "lv09-07", "text": "Search the pet and owner."},
-  {"id": "lv09-08", "text": "Search."},
-  {"id": "lv09-09", "text": "Each pet is listed with its owner. Match it to the right one: Biscuit, Tom Chen."},
-  {"id": "lv09-10", "text": "It moves to To review, on Biscuit's chart, and his doctor gets the review task."},
-  {"id": "lv09-11", "text": "If the test isn't on Biscuit's bill, add the charge. It was ordered outside Scout."},
-  {"id": "lv09-12", "text": "The most common mistake: matching to the first pet with the right name. Check the owner. Remember: check Unmatched every day, and match each result to the right pet."}
+  {
+    "id": "lv09-01",
+    "text": "Scout matches most IDEXX results by itself. The ones it can't, like tests ordered in eVet or on IDEXX's website, wait in Unmatched. No doctor gets a task until they're matched."
+  },
+  {
+    "id": "lv09-02",
+    "text": "Remember: check Unmatched every day, and match each result to the right pet."
+  },
+  {
+    "id": "lv09-03",
+    "text": "The Unmatched tab shows how many results are waiting for a pet."
+  },
+  {
+    "id": "lv09-03b",
+    "text": "Open it."
+  },
+  {
+    "id": "lv09-04",
+    "text": "IDEXX tells us the name it was sent under: Biscuit, Chen-Lee."
+  },
+  {
+    "id": "lv09-05",
+    "text": "Open it."
+  },
+  {
+    "id": "lv09-06",
+    "text": "Scout tells you what IDEXX sent, and reminds you to check the bill."
+  },
+  {
+    "id": "lv09-07",
+    "text": "Search the pet and owner."
+  },
+  {
+    "id": "lv09-08",
+    "text": "Search."
+  },
+  {
+    "id": "lv09-09",
+    "text": "Each pet is listed with its owner, so check the owner."
+  },
+  {
+    "id": "lv09-09b",
+    "text": "Match it to Biscuit, Tom Chen."
+  },
+  {
+    "id": "lv09-10",
+    "text": "It moves to To review, on Biscuit's chart, and his doctor gets the review task."
+  },
+  {
+    "id": "lv09-11",
+    "text": "If the test isn't on Biscuit's bill, add the charge. It was ordered outside Scout."
+  },
+  {
+    "id": "lv09-12",
+    "text": "The most common mistake: matching to the first pet with the right name. Check the owner. Remember: check Unmatched every day, and match each result to the right pet."
+  }
 ]

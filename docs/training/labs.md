@@ -1,5 +1,26 @@
 # Labs training videos: review (Nov 8, 2026)
 
+## Owner answers (Nov 8, 2026)
+
+- Possible bug 1 (Settings admin-only): fine as it is; LV-13 is recorded as an admin.
+- Possible bugs 2, 4, 5, 6, 7: fixed on build-doctor-flow (owner names in the match list; no approval with "[doctor to add]"; email window wording; greeting by first name; unmatched results stay out of To review until matched, and Unmatched shows a count). Bug 3 was my probe's mistake.
+- Number ranges: ignored everywhere. Chip: number-only forms say Complete; choice forms say Normal or N abnormal.
+- Wrong pet: "Move to another pet" added on lab lines; the result moves to the other pet's chart (test LAB-07-4).
+- Dropping an IDEXX test: teach removing the charge from the bill.
+- "Added in IDEXX" tag on charges Scout added for tests added inside IDEXX.
+- End-of-day lab task: stays at 8 pm.
+- EMR V7: re-recorded as alerts only.
+- IDEXX: recorded with IDEXX's sandbox practice (a demo, not live). The voice says IDEXX as "eye-dex".
+
+## New possible bugs from the recordings
+
+8. **"Added in IDEXX" appears only after a reload.** After ordering in IDEXX's page, the add-on line is on the bill but has no IDEXX chip or tag until the page is reloaded (the API already reports it). LV-04 reloads off camera. Not fixed.
+10. **The client summary's edit box is narrow.** In edit mode the text box takes about a third of the result panel's width, so a doctor edits a long summary in a thin column (LV-08). Not fixed.
+11. **The chart's AI case summary shows a raw citation token.** On Pepper's chart the summary read "recheck [ref:soap-58e59f5-…]" (seen in the LV-11 recording, out of the main action). Not a Labs screen; not fixed.
+12. **On the client's bill, the IDEXX status chip is partly hidden** under the line's provider dropdown ("Not at IDEXX yet" is cut off at 1600 px wide; LV-10). Not fixed.
+9. **Cancel order is offered on a submitted order.** Labs → IDEXX results → Ordered shows **Cancel order** on an order IDEXX already has (submitted, waiting for the sample); IDEXX refuses, and Scout then says to call IDEXX. Not fixed.
+
+
 Thirteen scripts are in `docs/training/scripts/labs/` (LV-01 to LV-13, list in its README). Each was walked on a private test stack: build-doctor-flow code, test database `vayd_api_test_labs_e2e`, fake IDEXX, fake Stripe, no scheduled jobs, email captured, and the shared control database off. Each script ends with "Notes from the check in the app": what was checked, what changed, and what wasn't checked.
 
 Nothing has been recorded. The training branch (`training/videos`) is 42 commits behind build-doctor-flow and has none of the Labs fixes, so it needs build-doctor-flow merged in before any recording. Another session is recording from that branch right now, so I didn't merge.

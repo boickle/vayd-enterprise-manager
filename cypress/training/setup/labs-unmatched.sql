@@ -4,7 +4,7 @@
 DO $$ BEGIN
   IF current_database() NOT LIKE 'vayd_api_test%' THEN RAISE EXCEPTION 'labs-unmatched.sql runs only on a vayd_api_test* database'; END IF;
 END $$;
-DELETE FROM task_link WHERE "entityType"='idexx_result' AND "entityId" IN (SELECT id::text FROM idexx_results WHERE "idexxResultId" LIKE 'labs-train-unmatched-%');
+DELETE FROM task_link WHERE "entityType"='idexx_result' AND "entityId" IN (SELECT id FROM idexx_results WHERE "idexxResultId" LIKE 'labs-train-unmatched-%');
 DELETE FROM idexx_results WHERE "idexxResultId" LIKE 'labs-train-unmatched-%';
 INSERT INTO idexx_results ("isActive","isDeleted","practiceId","idexxResultId","patientId","orderId","idexxOrderId","requisitionId",
   "accessionId","status","modality","veterinarian","patientName","clientLastName","hasOutOfRange","hasCritical","delayed","payload",
