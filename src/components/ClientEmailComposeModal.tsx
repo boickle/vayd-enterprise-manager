@@ -76,6 +76,8 @@ type Props = {
   onBeforeSend?: () => Promise<void>;
   /** Replaces the default subtitle under the title when set. */
   headerDescription?: string;
+  /** Warning shown under the header (e.g. the pet is deceased). */
+  notice?: string | null;
   onAfterSend?: (sent: {
     subject: string;
     bodyText: string;
@@ -116,6 +118,7 @@ export function ClientEmailComposeModal({
   staffOnlyNoteRequired = false,
   onBeforeSend,
   headerDescription,
+  notice,
   onAfterSend,
   onClose,
   onOpenEmailHistory,
@@ -400,6 +403,23 @@ export function ClientEmailComposeModal({
               {headerDescription ??
                 `Review and edit the email before sending to ${recipient?.label ?? (recipientChoices?.length && to.trim() ? to.trim() : clientLabel)}.`}
             </p>
+            {notice ? (
+              <p
+                role="alert"
+                data-testid="client-email-notice"
+                style={{
+                  margin: '10px 0 0',
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  background: '#fff7ed',
+                  border: '1px solid #fdba74',
+                  color: '#9a3412',
+                  fontSize: 13,
+                }}
+              >
+                {notice}
+              </p>
+            ) : null}
             {mailbox && sharedInboxes.length === 1 ? (
               <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
                 Through {mailboxDisplayLabel(sharedInboxes[0])} · {mailbox}
@@ -605,8 +625,8 @@ export function ClientEmailComposeModal({
                       Put on these patient charts
                     </legend>
                     <p style={{ margin: '0 0 8px', color: '#6b7280', fontSize: 13 }}>
-                      Choose every pet this invoice or receipt belongs on. One household visit can
-                      include more than one.
+                      Choose every pet this email is about. One household visit can include more
+                      than one.
                     </p>
                     {regardingPatients.map((p) => {
                       const checked = (regardingPatientIds ?? []).includes(p.id);

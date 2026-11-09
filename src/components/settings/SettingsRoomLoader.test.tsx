@@ -33,7 +33,13 @@ vi.mock('../catalog/CatalogItemPicker', () => ({
       <button
         type="button"
         onClick={() =>
-          onChange({ itemType: 'inventory', catalogItemId: 4444, name: 'FeLV Test Equivalent', code: 'FELVTEST', price: null })
+          onChange({
+            itemType: 'inventory',
+            catalogItemId: 4444,
+            name: 'FeLV Test Equivalent',
+            code: 'FELVTEST',
+            price: null,
+          })
         }
       >
         pick-test-item
@@ -51,8 +57,14 @@ beforeEach(() => {
   saveMock.mockClear();
 });
 
-async function openOutdoor() {
+/** Items, ages and rules sit on the Advanced tab; the page opens on Preview & wording. */
+async function renderAdvanced() {
   render(<SettingsRoomLoader practiceId={1} />);
+  fireEvent.click(await screen.findByRole('tab', { name: /advanced: items, ages & rules/i }));
+}
+
+async function openOutdoor() {
+  await renderAdvanced();
   const heading = await screen.findByText('Outdoor question');
   fireEvent.click(heading);
   return heading.closest('section')!;
@@ -67,7 +79,9 @@ describe('SettingsRoomLoader outdoor equivalents (RL-06-5)', () => {
     fireEvent.click(within(rows[rows.length - 1] as HTMLElement).getByText('pick-test-item'));
     fireEvent.click(screen.getByRole('button', { name: /save room loader settings/i }));
     await waitFor(() => expect(saveMock).toHaveBeenCalled());
-    expect(saveMock.mock.calls[0][0].outdoor.equivalentItems?.map((i) => i.code)).toEqual(['FELVTEST']);
+    expect(saveMock.mock.calls[0][0].outdoor.equivalentItems?.map((i) => i.code)).toEqual([
+      'FELVTEST',
+    ]);
 
     // Reload: a fresh mount reads the saved document.
     document.body.innerHTML = '';
@@ -76,15 +90,20 @@ describe('SettingsRoomLoader outdoor equivalents (RL-06-5)', () => {
 
     const asOf = DateTime.fromISO('2026-10-30T00:00:00');
     const plan = resolvePetPlan(stored, {
-      species: 'cat', ageMonths: 48, outdoorAccess: true, medicalConcern: false, asOf,
-      reminders: [], estimateLines: [],
+      species: 'cat',
+      ageMonths: 48,
+      outdoorAccess: true,
+      medicalConcern: false,
+      asOf,
+      reminders: [],
+      estimateLines: [],
       history: [{ itemType: 'inventory', itemId: 4444, code: 'FELVTEST', date: '2026-08-01' }],
     });
     expect(plan.outdoorPitch).toBeNull();
   });
 
   it('shows and edits the panel "done within N months" setting', async () => {
-    render(<SettingsRoomLoader practiceId={1} />);
+    await renderAdvanced();
     fireEvent.click(await screen.findByText('Adult dog early detection'));
     const inputs = await screen.findAllByLabelText(/this panel was done in the last/i);
     expect(inputs.length).toBeGreaterThan(0);

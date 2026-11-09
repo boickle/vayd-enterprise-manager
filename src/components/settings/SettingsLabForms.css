@@ -65,15 +65,6 @@
   font-size: 11px;
   color: #6b7280;
 }
-.lab-forms__badge {
-  margin-top: 3px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 700;
-}
 
 .lab-forms__editor {
   display: flex;

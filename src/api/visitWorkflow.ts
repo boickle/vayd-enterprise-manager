@@ -249,6 +249,8 @@ export type VisitInvoiceTender = {
   stripePaymentIntentId?: string | null;
   cardBrand?: string | null;
   cardLast4?: string | null;
+  /** Gift card tenders: the last four characters of the card's code, read from the card. */
+  giftCardLast4?: string | null;
   /** Dollars already refunded via Stripe against this tender. */
   refundedAmount?: number;
   receivedAt: string;
@@ -280,6 +282,8 @@ export type VisitInvoice = {
    */
   lotsCleared?: boolean;
   lotsClearedLineId?: string;
+  /** Only on the reply to a line edit that moved a lab to another pet: what stays with the first pet (LAB-07). */
+  labWarnings?: string[];
   /**
    * A line of this invoice has a return whose credit still stands: it can't be unlocked or
    * reopened (owner decision, Nov 1, 2026).
@@ -1674,6 +1678,7 @@ export async function updateCounterInvoiceLine(
   );
   // Every screen that edits a line hears about it, whichever field changed the quantity.
   if (data?.lotsCleared) void appAlert({ title: 'Lots cleared', message: LOTS_CLEARED_MESSAGE });
+  if (data?.labWarnings?.length) void appAlert({ title: 'Lab stays with the first pet', message: data.labWarnings.join('\n') });
   return data;
 }
 
@@ -2218,5 +2223,64 @@ export async function markVisitCompleted(appointmentId: number): Promise<VisitCo
   const { data } = await http.post<VisitCompletedResult>(`/visits/${appointmentId}/completed`, {
     practiceId: pid(),
   });
+  return data;
+}
+
+/* ---------------------------------------------- client card on file (Financial tab) */
+
+export type ClientCardOnFile = {
+  card: {
+    brand: string | null;
+    last4: string | null;
+    expMonth: number | null;
+    expYear: number | null;
+    expired: boolean;
+  } | null;
+  consentAt: string | null;
+  consentSource: string | null;
+  agreementVersion: string | null;
+  currentAgreementVersion: string;
+  declinedAt: string | null;
+};
+
+export async function getClientCardOnFile(clientId: number): Promise<ClientCardOnFile> {
+  const { data } = await http.get<ClientCardOnFile>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/card-on-file`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
+/** Replace card, step 1: a SetupIntent to enter the new card against. Nothing is charged. */
+export async function startClientCardReplacement(
+  clientId: number,
+): Promise<{ setupIntentId: string; clientSecret: string }> {
+  const { data } = await http.post<{ setupIntentId: string; clientSecret: string }>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/card-on-file/setup-intent`,
+    { practiceId: pid() },
+  );
+  return data;
+}
+
+/** Replace card, step 2: keep the card Stripe confirmed, with the owner's agreement as of now. */
+export async function saveClientCardOnFile(
+  clientId: number,
+  body: { setupIntentId: string; consent: boolean },
+): Promise<ClientCardOnFile> {
+  const { data } = await http.post<ClientCardOnFile>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/card-on-file`,
+    { practiceId: pid(), ...body },
+  );
+  return data;
+}
+
+export async function removeClientCardOnFile(
+  clientId: number,
+  reason: string,
+): Promise<ClientCardOnFile> {
+  const { data } = await http.post<ClientCardOnFile>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/card-on-file/remove`,
+    { practiceId: pid(), reason },
+  );
   return data;
 }

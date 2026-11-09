@@ -327,3 +327,10 @@
     grid-column: auto;
   }
 }
+
+/* Shown beside "Print label" when the Rx isn't approved yet. */
+.rx-label-blocked {
+  color: #c62828;
+  font-size: 12px;
+  margin-left: 6px;
+}

@@ -120,8 +120,10 @@ interface Props {
   visitPets?: RoutingVisitPetInput[];
   /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
   patientIds?: number[];
-  /** New client chose to upload records — calendar uses the existing-client lead time. */
+  /** New client's uploaded records passed the check — calendar uses the existing-client lead time. */
   clientUploadedRecords?: boolean;
+  /** Record check tokens; the server honors clientUploadedRecords only with these. */
+  recordCheckTokens?: string[];
   /** One search across every online-bookable doctor instead of the selected doctor. */
   searchAllDoctors?: boolean;
   /** Slot the client already chose. Highlighted until they submit the form. */
@@ -221,6 +223,7 @@ type MonthAvailabilityFetchArgs = {
   visitPets?: RoutingVisitPetInput[];
   patientIds?: number[];
   clientUploadedRecords?: boolean;
+  recordCheckTokens?: string[];
   doctorId: string | number;
   /** Search these doctors in one routing request. Falls back to doctorId. */
   doctorIds?: Array<string | number>;
@@ -288,7 +291,12 @@ async function fetchAvailabilityRange(
       : {}),
     ...(args.appointmentTypeId != null ? { appointmentTypeId: args.appointmentTypeId } : {}),
     ...(args.patientIds?.length ? { patientIds: args.patientIds } : {}),
-    ...(args.clientUploadedRecords ? { clientUploadedRecords: true } : {}),
+    ...(args.clientUploadedRecords
+      ? {
+          clientUploadedRecords: true,
+          ...(args.recordCheckTokens?.length ? { recordCheckTokens: args.recordCheckTokens } : {}),
+        }
+      : {}),
   });
 
   if (args.isNewPatientRequest && args.rawVeterinarians && args.rawVeterinarians.length > 0) {
@@ -794,6 +802,7 @@ export function SelfScheduleCalendarModal({
   visitPets,
   patientIds,
   clientUploadedRecords = false,
+  recordCheckTokens,
   searchAllDoctors = false,
   selectedAppointmentStart,
 }: Props) {
@@ -1100,6 +1109,8 @@ export function SelfScheduleCalendarModal({
     }
   }, [prioritizedDoctorId, requestDoctors, doctors]);
 
+  const recordCheckTokensKey = (recordCheckTokens ?? []).join(',');
+
   // Address / visit identity — drop cached months when the search itself changed.
   const availabilitySearchKey = [
     practiceId,
@@ -1109,6 +1120,7 @@ export function SelfScheduleCalendarModal({
     appointmentTypeId,
     isNewPatientRequest,
     clientUploadedRecords ? '1' : '0',
+    recordCheckTokensKey,
     (patientIds ?? []).join(','),
     (visitPets ?? []).map((p) => `${p.appointmentTypeId}:${p.isNewPatient ? 1 : 0}`).join(','),
   ].join('|');
@@ -1202,6 +1214,7 @@ export function SelfScheduleCalendarModal({
         visitPets,
         patientIds,
         clientUploadedRecords,
+        recordCheckTokens: recordCheckTokensKey ? recordCheckTokensKey.split(',') : undefined,
         doctorId,
         doctorIds: fleetIds && fleetIds.length > 1 ? fleetIds : undefined,
         appointmentTypeId,
@@ -1289,6 +1302,7 @@ export function SelfScheduleCalendarModal({
       visitPets,
       patientIds,
       clientUploadedRecords,
+      recordCheckTokensKey,
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,

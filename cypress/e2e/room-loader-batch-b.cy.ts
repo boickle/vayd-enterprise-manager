@@ -369,9 +369,10 @@ describe('RL-11-3: store item is charged at the visit price, with no ship wordin
     toSummary();
     cy.get('input[placeholder="Type to search products..."]').type('Bravecto Chew');
     cy.contains('li', /Bravecto Chew/i, { timeout: 15000 }).scrollIntoView().click();
-    cy.contains(/Bring to the visit \(clinic price\)/).should('be.visible');
+    // The product modal (Nov 2) shows one clinic price and an "Add to visit" button; nothing ships.
+    cy.get('.rl-store-modal__price', { timeout: 15000 }).should('be.visible').invoke('text').should('match', /\$\d/);
     cy.contains(/ship to me/i).should('not.exist');
-    cy.contains('button', /^Add/i).click();
+    cy.contains('button.rl-store-modal__add', /Add to visit/i).click();
     cy.contains('button', /Submit Form/i).click();
     cy.wait('@submit').its('request.body.formData.summaryForPdf').then((summary) => {
       expect(JSON.stringify(summary)).not.to.match(/ship/i);

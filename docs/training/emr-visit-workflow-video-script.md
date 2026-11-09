@@ -351,7 +351,7 @@ Goal: get Biscuit's ear medication written, approved and labelled. **Everyone ex
 | 2 | Read **Directions (sig)**, add to them, click **Save sig** | The item's default directions; then "Entered by Avery Lane" | "The directions start from the item's default. Read them, and fit them to this pet." |
 | 3 | Type **# Refills** (0 if none), pick **Acute or chronic**, check **Discard after**. Then **Approve** saves them with the script (two clicks: **Save sig**, **Approve**; owner, Nov 6, 2026. Save Rx only shows for staff who can't approve) | Refill expiration appears only when refills are above 0 | "Discard after is filled in for you. Change it if the medication expires sooner." |
 | 4 | Click **Approve** | The line closes with a check mark; Checkout says "Everything is recorded" | "It means the script is checked, and ready to dispense." |
-| 5 | Open the line again, click **Send label to DYMO** | **Print prescription label**: practice letterhead, pet and owner, the doctor and license, then **Print on DYMO** | "Review it first." |
+| 5 | Open the line again, click **Print label** | **Print prescription label**: practice letterhead, pet and owner, the doctor and license, then **Print on DYMO** (or **Use system print dialog** for a Bluetooth or Wi-Fi printer) | "Review it first." |
 | 6 | Click **History** on the line | "Directions entered by Avery Lane (vet) for Dr. Avery Lane: …" and "Approved for dispensing by … Rx #…" | "It's for staff only, and never printed." |
 
 **Doctors and techs:** "Doctors are the prescriber. Techs can enter directions and approve too, and Scout saves them for the visit's doctor."

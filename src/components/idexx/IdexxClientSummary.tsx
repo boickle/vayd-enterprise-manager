@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, Copy, Mail, Pencil } from 'lucide-react';
 import { idexxErrorMessage, saveIdexxClientSummary, type IdexxResultDetail } from '../../api/idexx';
+import IdexxReasonPrompt from './IdexxReasonPrompt';
+import { summaryPlaceholder } from './idexxClientSummaryDraft';
+import { useIdexxReviewAccess } from './useIdexxReviewAccess';
 import './Idexx.css';
 
 type Props = {
@@ -12,6 +15,8 @@ type Props = {
   /** Opens the email compose modal with this summary. */
   onEmail?: () => void;
   emailBusy?: boolean;
+  /** The result is not complete: the wording cannot be approved yet (LAB-03). */
+  partial?: boolean;
 };
 
 function when(raw: string | null): string {
@@ -38,14 +43,19 @@ export default function IdexxClientSummary({
   expandSignal = 0,
   onEmail,
   emailBusy,
+  partial = false,
 }: Props) {
   const saved = result.clientSummary ?? '';
   const [text, setText] = useState(saved);
+  /** "[doctor to add]" or another bracketed gap the draft left for the doctor. */
+  const placeholder = summaryPlaceholder(text);
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(expandSignal > 0);
   const [busy, setBusy] = useState<'save' | 'approve' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const { canReview, mustGiveReason } = useIdexxReviewAccess();
 
   useEffect(() => {
     setText(result.clientSummary ?? '');
@@ -64,11 +74,17 @@ export default function IdexxClientSummary({
   const approved = Boolean(result.clientSummaryApprovedAt) && !editing;
   const dirty = text.trim() !== saved.trim();
 
-  async function save(approve: boolean) {
+  async function save(approve: boolean, reason?: string) {
+    if (approve && mustGiveReason && !reason) {
+      setError(null);
+      setReasonOpen(true);
+      return;
+    }
     setBusy(approve ? 'approve' : 'save');
     setError(null);
     try {
-      onSaved(await saveIdexxClientSummary(result.id, text, approve));
+      onSaved(await saveIdexxClientSummary(result.id, text, approve, reason));
+      setReasonOpen(false);
       if (approve) setEditing(false);
     } catch (e) {
       setError(idexxErrorMessage(e, 'Could not save.'));
@@ -104,6 +120,8 @@ export default function IdexxClientSummary({
         {approved ? (
           <span className="idexx-result__reviewed">
             <CheckCircle2 size={13} aria-hidden /> Approved {when(result.clientSummaryApprovedAt)}
+            {result.clientSummaryApprovedByName ? ` by ${result.clientSummaryApprovedByName}` : ''}
+            {result.clientSummaryApprovedReason ? ` — ${result.clientSummaryApprovedReason}` : ''}
           </span>
         ) : (
           <span className="idexx-order__meta">Draft, not approved</span>
@@ -134,6 +152,12 @@ export default function IdexxClientSummary({
         )
       ) : null}
 
+      {open && editing && !readOnly && placeholder ? (
+        <p className="idexx-order__note idexx-order__note--warn" data-testid="idexx-summary-placeholder">
+          Replace {placeholder} with your own words before approving.
+        </p>
+      ) : null}
+
       {open && error ? <p className="idexx-order__error">{error}</p> : null}
 
       {open ? (
@@ -162,15 +186,24 @@ export default function IdexxClientSummary({
                       {busy === 'save' ? 'Saving…' : 'Save draft'}
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={busy != null || !text.trim()}
-                    onClick={() => void save(true)}
-                  >
-                    <CheckCircle2 size={13} aria-hidden />{' '}
-                    {busy === 'approve' ? 'Approving…' : 'Approve wording'}
-                  </button>
+                  {canReview ? (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy != null || !text.trim() || partial || placeholder != null}
+                      title={
+                        partial
+                          ? "The results aren't complete yet. Approve the wording once all results are back."
+                          : placeholder
+                            ? `Replace ${placeholder} before approving.`
+                            : undefined
+                      }
+                      onClick={() => void save(true)}
+                    >
+                      <CheckCircle2 size={13} aria-hidden />{' '}
+                      {busy === 'approve' ? 'Approving…' : 'Approve wording'}
+                    </button>
+                  ) : null}
                 </>
               ) : null}
             </>
@@ -196,6 +229,15 @@ export default function IdexxClientSummary({
           </button>
         </div>
       ) : null}
+      <IdexxReasonPrompt
+        open={reasonOpen}
+        title="Approve this client summary"
+        confirmLabel="Approve wording"
+        busy={busy === 'approve'}
+        error={error}
+        onConfirm={(reason) => void save(true, reason)}
+        onCancel={() => setReasonOpen(false)}
+      />
     </div>
   );
 }

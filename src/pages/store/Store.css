@@ -4,6 +4,12 @@
   color: #103b2e;
   font-family: 'Open Sans', ui-sans-serif, system-ui, sans-serif;
 }
+/* Store styles reused inside another page (the portal's Pay now panel and Open invoices):
+   size to the content instead of filling the screen like the store page does. */
+.vayd-store--embedded {
+  min-height: 0;
+  background: none;
+}
 .vayd-store h1,
 .vayd-store h2,
 .vayd-store h3,

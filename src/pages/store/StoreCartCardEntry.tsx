@@ -19,10 +19,12 @@ export type StoreCardBillingPrefill = {
 type Props = {
   billingPrefill: StoreCardBillingPrefill;
   onClose?: () => void;
+  /** OS-A16: false for a guest, who has no account to keep a card on: the option is hidden and nothing is saved. */
+  canSaveCard?: boolean;
 };
 
 const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function StoreCartCardEntry(
-  { billingPrefill, onClose },
+  { billingPrefill, onClose, canSaveCard = true },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -32,17 +34,25 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
   const [error, setError] = useState<string | null>(null);
   const [saveCard, setSaveCard] = useState(true);
   const [billing, setBilling] = useState(billingPrefill);
+  // Fields the buyer typed in this card form. Every other field follows the page (name, email, address on
+  // file) as it changes, so a name or email typed on the page after this form appeared is not cut to its
+  // first letter (OS-A17: the gift card page sent Stripe "s" as the billing email).
+  const edited = useRef<Set<keyof StoreCardBillingPrefill>>(new Set());
 
   useEffect(() => {
-    setBilling((prev) => ({
-      name: prev.name || billingPrefill.name,
-      email: prev.email || billingPrefill.email,
-      line1: prev.line1 || billingPrefill.line1,
-      line2: prev.line2 || billingPrefill.line2,
-      city: prev.city || billingPrefill.city,
-      state: prev.state || billingPrefill.state,
-      postal: prev.postal || billingPrefill.postal,
-    }));
+    setBilling((prev) => {
+      const pick = (key: keyof StoreCardBillingPrefill): string =>
+        (edited.current.has(key) ? prev[key] : billingPrefill[key] || prev[key]) ?? '';
+      return {
+        name: pick('name'),
+        email: pick('email'),
+        line1: pick('line1'),
+        line2: pick('line2'),
+        city: pick('city'),
+        state: pick('state'),
+        postal: pick('postal'),
+      };
+    });
   }, [billingPrefill]);
 
   useEffect(() => {
@@ -108,11 +118,12 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
       if (result.error) throw new Error(result.error.message || 'Card was declined.');
       const id = result.paymentMethod?.id;
       if (!id) throw new Error('Could not save that card.');
-      return { paymentMethodId: id, saveCard };
+      return { paymentMethodId: id, saveCard: canSaveCard && saveCard };
     },
   }));
 
   const setField = (key: keyof StoreCardBillingPrefill, value: string) => {
+    edited.current.add(key);
     setBilling((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -173,14 +184,16 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
           autoComplete="billing postal-code"
         />
       </label>
-      <label className="vayd-store__card-save">
-        <input
-          type="checkbox"
-          checked={saveCard}
-          onChange={(e) => setSaveCard(e.target.checked)}
-        />
-        <span>Save my card on file to make future purchases easier</span>
-      </label>
+      {canSaveCard ? (
+        <label className="vayd-store__card-save">
+          <input
+            type="checkbox"
+            checked={saveCard}
+            onChange={(e) => setSaveCard(e.target.checked)}
+          />
+          <span>Save my card on file to make future purchases easier</span>
+        </label>
+      ) : null}
       {onClose ? (
         <button type="button" className="vayd-store__card-link" onClick={onClose}>
           Use a card on file instead

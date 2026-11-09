@@ -36,6 +36,10 @@ import {
 } from '../components/ClientRecordUploadFields';
 import { uploadAppointmentRequestRecord } from '../api/clientRecordUploads';
 import {
+  clientRecordCheckTokens,
+  clientRecordsVerified,
+} from '../utils/clientRecordFiles';
+import {
   PetHandlingNeedsPicker,
   hasHandlingNeedsAnswer,
   hasSpecialHandlingNeeds,
@@ -1855,6 +1859,26 @@ export default function AppointmentRequestForm() {
 
   const isNewPatientRequest = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
 
+  /** New pets that need a checked record before earlier booking opens (same ids as the record pet picker). */
+  const recordNewPetIds = useMemo(
+    () =>
+      (isLoggedIn
+        ? filterCompletedAppointmentRequestPets(formData.existingClientNewPets ?? [])
+        : formData.newClientPets ?? []
+      ).map((pet) => pet.id),
+    [isLoggedIn, formData.existingClientNewPets, formData.newClientPets],
+  );
+  const recordCheckTokens = useMemo(
+    () =>
+      formData.recordsDelivery === 'upload' ? clientRecordCheckTokens(pendingRecordFiles) : [],
+    [formData.recordsDelivery, pendingRecordFiles],
+  );
+  const recordCheckTokensKey = recordCheckTokens.join(',');
+  /** Earlier booking opens only when the uploaded records passed the check for every new pet. */
+  const recordsVerified =
+    formData.recordsDelivery === 'upload' &&
+    clientRecordsVerified(pendingRecordFiles, recordNewPetIds);
+
   const petsInVisitWithHandlingQuestion = useMemo(
     () => [...(formData.newClientPets ?? []), ...(formData.existingClientNewPets ?? [])],
     [formData.newClientPets, formData.existingClientNewPets],
@@ -2182,22 +2206,20 @@ export default function AppointmentRequestForm() {
     }
   }, [onlineBookingOffered]);
 
-  const recordsDeliveryForBookingRef = useRef(formData.recordsDelivery);
+  // A slot picked with verified records may be inside the new-client lead time.
+  // Drop it when the records stop qualifying (file removed or upload deselected).
+  const recordsVerifiedForBookingRef = useRef(recordsVerified);
   useEffect(() => {
-    const previous = recordsDeliveryForBookingRef.current;
-    recordsDeliveryForBookingRef.current = formData.recordsDelivery;
-    if (
-      previous !== 'upload' ||
-      formData.recordsDelivery === 'upload' ||
-      !isNewPatientRequest
-    ) {
+    const previous = recordsVerifiedForBookingRef.current;
+    recordsVerifiedForBookingRef.current = recordsVerified;
+    if (!previous || recordsVerified || !isNewPatientRequest) {
       return;
     }
     setFormData((prev) => {
       if (!prev.selfScheduledSlot) return prev;
       return { ...prev, selfScheduledSlot: null };
     });
-  }, [formData.recordsDelivery, isNewPatientRequest]);
+  }, [recordsVerified, isNewPatientRequest]);
 
   // Convert raw veterinarian data to PublicProvider format
   const mapRawVeterinarianToPublicProvider = (vet: any): PublicProvider => {
@@ -2377,7 +2399,7 @@ export default function AppointmentRequestForm() {
         autoBookSettings,
         routingVisitPets,
         isNewPatientRequest,
-        { clientUploadedRecords: formData.recordsDelivery === 'upload' },
+        { clientUploadedRecords: recordsVerified },
       );
       startDate = bumpStartDateForLeadTime(startDate, leadTimeHours, DEFAULT_PRACTICE_TIMEZONE);
       const earliestBookable = computeEarliestOnlineBookingDateTime(
@@ -2511,8 +2533,9 @@ export default function AppointmentRequestForm() {
         if (primaryAppointmentTypeId != null) {
           availabilityRequest.appointmentTypeId = primaryAppointmentTypeId;
         }
-        if (formData.recordsDelivery === 'upload') {
+        if (recordsVerified) {
           availabilityRequest.clientUploadedRecords = true;
+          availabilityRequest.recordCheckTokens = recordCheckTokens;
         }
 
         console.log('[AppointmentForm] Calling /public/appointments/availability with payload:', availabilityRequest);
@@ -2693,7 +2716,7 @@ export default function AppointmentRequestForm() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.howSoon, formData.petSpecificData, formData.newClientPets]);
+  }, [currentPage, formData.preferredDoctorExisting, formData.preferredDoctor, providers.length, formData.selectedPetIds.length, formData.howSoon, formData.petSpecificData, formData.newClientPets, recordsVerified, recordCheckTokensKey]);
 
   // Check email when entered (for new clients)
   useEffect(() => {
@@ -4295,13 +4318,21 @@ export default function AppointmentRequestForm() {
         const key = pickedHospitalKey(pick);
         return (
           byPractice[key] === 'upload' &&
-          !pendingRecordFiles.some((file) => file.practiceKey === key)
+          !pendingRecordFiles.some(
+            (file) => file.practiceKey === key && file.check.state !== 'rejected',
+          )
         );
       });
+      const wantsUpload = picks.some((pick) => byPractice[pickedHospitalKey(pick)] === 'upload');
       if (missingFiles.length) {
         newErrors.recordFiles = `Add a photo or PDF of the records from ${missingFiles
           .map((pick) => pick.name)
           .join(', ')}`;
+      } else if (wantsUpload && pendingRecordFiles.some((f) => f.check.state === 'checking')) {
+        newErrors.recordFiles = 'Wait for your records to finish checking.';
+      } else if (wantsUpload && clientRecordCheckTokens(pendingRecordFiles).length === 0) {
+        newErrors.recordFiles =
+          'None of these files can be used. Add records from your vet, or choose "Please request them".';
       }
       return;
     }
@@ -4310,8 +4341,15 @@ export default function AppointmentRequestForm() {
       newErrors.recordsDelivery = 'Please choose how we should get records';
       return;
     }
-    if (delivery === 'upload' && pendingRecordFiles.length === 0) {
-      newErrors.recordFiles = 'Add a photo or PDF of the records';
+    if (delivery === 'upload') {
+      if (pendingRecordFiles.length === 0) {
+        newErrors.recordFiles = 'Add a photo or PDF of the records';
+      } else if (pendingRecordFiles.some((f) => f.check.state === 'checking')) {
+        newErrors.recordFiles = 'Wait for your records to finish checking.';
+      } else if (clientRecordCheckTokens(pendingRecordFiles).length === 0) {
+        newErrors.recordFiles =
+          'None of these files can be used. Add records from your vet, or choose "Please request them".';
+      }
     }
   };
 
@@ -4694,6 +4732,15 @@ export default function AppointmentRequestForm() {
     return [...selected, ...added];
   };
 
+  /** formPetId -> chart patient id for existing pets, so checked records link to the chart. */
+  const recordPatientIdsByFormPetId = (): Record<string, number> => {
+    const ids: Record<string, number> = {};
+    for (const option of buildRecordPetOptions(isLoggedIn ? 'existing' : 'new')) {
+      if (option.patientId != null) ids[option.id] = option.patientId;
+    }
+    return ids;
+  };
+
   const recordsDeliveryChoice = (): 'upload' | 'request' | 'holdoff' | '' => {
     if (formData.recordsDelivery === 'holdoff') return 'holdoff';
     if (
@@ -4832,9 +4879,9 @@ export default function AppointmentRequestForm() {
       practiceDelivery={formData.recordsDeliveryByPractice}
       onPracticeDeliveryChange={(key, value) => setPracticeRecordsDelivery(source, key, value)}
       files={pendingRecordFiles}
-      onFilesChange={(files) => {
-        setPendingRecordFiles(files);
-        if (files.length > 0 && errors.recordFiles) {
+      onFilesChange={(update) => {
+        setPendingRecordFiles(update);
+        if (errors.recordFiles) {
           setErrors((prev) => {
             const next = { ...prev };
             delete next.recordFiles;
@@ -4843,6 +4890,8 @@ export default function AppointmentRequestForm() {
         }
       }}
       pets={buildRecordPetOptions(source)}
+      newPetIds={recordNewPetIds}
+      practiceId={practiceId}
       deliveryError={errors.recordsDelivery}
       filesError={errors.recordFiles}
     />
@@ -5188,6 +5237,13 @@ export default function AppointmentRequestForm() {
           formData.recordsDelivery === 'upload' || formData.recordsDelivery === 'request'
             ? formData.recordsDelivery
             : undefined,
+        // Checked records attach to the request on submit; the server re-checks coverage.
+        ...(recordCheckTokens.length > 0
+          ? {
+              recordCheckTokens,
+              recordCheckPatientIds: recordPatientIdsByFormPetId(),
+            }
+          : {}),
         
         // Pet Behavior & Handling - keep legacy fields for backward compatibility
         petBehaviorAtPreviousVisits: formData.petBehaviorAtPreviousVisits || formData.petBehaviorAtPreviousVisitsExisting || undefined,
@@ -5434,7 +5490,10 @@ export default function AppointmentRequestForm() {
               ? formData.previousVeterinaryHospitalsPicked
               : formData.previousVeterinaryPracticesPicked) ?? [];
           let failed = 0;
-          for (const item of pendingRecordFiles) {
+          const filesToAttach = pendingRecordFiles.filter(
+            (item) => item.check.state === 'qualifies' || item.check.state === 'accepted',
+          );
+          for (const item of filesToAttach) {
             const pet = petOptions.find((option) => option.id === item.formPetId) ?? petOptions[0];
             const practice =
               recordPicks.find((pick) => pickedHospitalKey(pick) === item.practiceKey) ??
@@ -5453,9 +5512,9 @@ export default function AppointmentRequestForm() {
               failed += 1;
             }
           }
-          if (failed === 0) {
+          if (filesToAttach.length > 0 && failed === 0) {
             setRecordUploadNotice('We received the records you uploaded.');
-          } else if (failed === pendingRecordFiles.length) {
+          } else if (filesToAttach.length === 0 || failed === filesToAttach.length) {
             setRecordUploadNotice(
               'Your request was sent, but the records did not upload. Please reply to your confirmation with the files.',
             );
@@ -8999,7 +9058,8 @@ export default function AppointmentRequestForm() {
                     newPatientCount={newPatientCount}
                     isNewPatientRequest={isNewPatientRequest}
                     visitPets={routingVisitPets}
-                    clientUploadedRecords={formData.recordsDelivery === 'upload'}
+                    clientUploadedRecords={recordsVerified}
+                    recordCheckTokens={recordsVerified ? recordCheckTokens : undefined}
                     patientIds={
                       onlineBookingPatientIds.length > 0
                         ? onlineBookingPatientIds

@@ -19,13 +19,13 @@ afterEach(() => {
   loginRole = undefined;
 });
 
-it('an observer or client liaison (no report.square_reconciliation) sees neither button', () => {
+it('a client liaison or any role without report.square_reconciliation sees neither button', () => {
   render(<PaymentsListActions onAll={() => undefined} onView={() => undefined} />);
   expect(screen.queryByRole('button', { name: /all payments/i })).toBeNull();
   expect(screen.queryByRole('button', { name: /view payments/i })).toBeNull();
 });
 
-it('a practice manager or billing sees both buttons', () => {
+it('a practice manager, billing or the observer sees both buttons', () => {
   granted.add('report.square_reconciliation');
   render(<PaymentsListActions onAll={() => undefined} onView={() => undefined} />);
   expect(screen.getByRole('button', { name: /all payments/i })).toBeTruthy();

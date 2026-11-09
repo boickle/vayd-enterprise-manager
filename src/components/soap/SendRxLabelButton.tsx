@@ -1,6 +1,7 @@
-import { useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { Printer } from 'lucide-react';
-import RxLabelModal, { type RxLabelPrescriptionInput } from './RxLabelModal';
+import RxLabelModal, { type RxLabelPrescriptionInput, type RxLabelPrintMethod } from './RxLabelModal';
+import type { MailOrderBagLabelData } from '../../utils/dymoPrescriptionLabel';
 import { addCalendarYear, dateForInput, printRxLabelDirect, toDateInput } from '../../utils/printRxLabel';
 import './RxLabelModal.css';
 
@@ -33,11 +34,13 @@ function quantityOf(value: number | string | null | undefined): number {
 
 export default function SendRxLabelButton({
   source,
-  label = 'Send label to DYMO',
+  label = 'Print label',
   className = 'rx-label-dymo',
   disabled,
+  blockedReason,
   stopClickPropagation = false,
   direct = false,
+  bagLabel,
   onError,
   onSuccess,
 }: {
@@ -45,14 +48,36 @@ export default function SendRxLabelButton({
   label?: string;
   className?: string;
   disabled?: boolean;
+  /**
+   * Not ready to print yet (e.g. script not approved). The button stays clickable and
+   * shows this in red instead of silently doing nothing.
+   */
+  blockedReason?: string | null;
   stopClickPropagation?: boolean;
-  /** Print immediately from the current fields — no review modal. */
+  /** Print immediately to a USB DYMO from the current fields — no review modal. */
   direct?: boolean;
+  /** Mail order: print the bag label too. */
+  bagLabel?: MailOrderBagLabelData | null;
   onError?: (message: string) => void;
-  onSuccess?: (printerName: string) => void;
+  onSuccess?: (printerName: string, method: RxLabelPrintMethod) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showBlocked, setShowBlocked] = useState(false);
+  useEffect(() => {
+    if (!blockedReason) setShowBlocked(false);
+  }, [blockedReason]);
+
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (blockedReason) {
+      if (stopClickPropagation) event.stopPropagation();
+      setShowBlocked(true);
+      return;
+    }
+    setShowBlocked(false);
+    if (direct) void printNow(event);
+    else openModal(event);
+  };
 
   const openModal = (event: MouseEvent<HTMLButtonElement>) => {
     if (stopClickPropagation) event.stopPropagation();
@@ -85,7 +110,7 @@ export default function SendRxLabelButton({
         mailOrderNumber: source.mailOrderNumber,
         onSavePrescription: source.onSavePrescription,
       });
-      onSuccess?.(printerName);
+      onSuccess?.(printerName, 'dymo');
     } catch (e) {
       onError?.(e instanceof Error ? e.message : 'Could not print the prescription label.');
     } finally {
@@ -99,10 +124,16 @@ export default function SendRxLabelButton({
         type="button"
         className={className}
         disabled={disabled || printing}
-        onClick={direct ? (event) => void printNow(event) : openModal}
+        aria-disabled={blockedReason ? true : undefined}
+        onClick={handleClick}
       >
         <Printer size={12} /> {printing ? 'Printing…' : label}
       </button>
+      {showBlocked && blockedReason ? (
+        <span className="rx-label-blocked" role="alert">
+          {blockedReason}
+        </span>
+      ) : null}
       {!direct && open && (
         <RxLabelModal
           patientId={source.patientId ?? undefined}
@@ -125,6 +156,8 @@ export default function SendRxLabelButton({
           }}
           onSavePrescription={source.onSavePrescription}
           mailOrderNumber={source.mailOrderNumber}
+          discardAfter={source.discardAfter}
+          bagLabel={bagLabel}
           onPrinted={onSuccess}
           onClose={() => setOpen(false)}
         />

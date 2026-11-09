@@ -2114,3 +2114,118 @@
   font-size: 12px;
   white-space: normal;
 }
+
+/* Card on file (Wave 12) */
+.client-card {
+  border: 1px solid #d8e2dc;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.client-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.client-card__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.client-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.client-card__card {
+  margin: 6px 0 2px;
+  font-weight: 600;
+}
+.client-card__muted {
+  margin: 2px 0;
+  font-size: 13px;
+  color: #5d6b64;
+}
+.client-card__warn {
+  color: #b91c1c;
+}
+.client-card__note {
+  margin: 8px 0 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fff8e6;
+  border: 1px solid #f1dca0;
+  font-size: 13px;
+}
+.client-card__form {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  max-width: 460px;
+}
+.client-card__field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.client-card__box {
+  border: 1px solid #c9d5ce;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+.client-card__consent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+
+/* Return items: the Return column gets its own width so the qty box and the
+   shelf choices stay inside the invoice pane instead of running off its edge.
+   The room comes from the number columns, which only show figures while returning. */
+.client-fin__invoice--returning .client-fin__col-provider {
+  width: 16%;
+}
+
+.client-fin__invoice--returning .client-fin__col-qty {
+  width: 3.5rem;
+}
+
+.client-fin__invoice--returning .client-fin__col-price,
+.client-fin__invoice--returning .client-fin__col-amount {
+  width: 5.25rem;
+}
+
+.client-fin__col-return {
+  width: 5.75rem;
+}
+
+.client-fin__return-qty {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 5rem;
+}
+
+.client-fin__invoice--returning td select {
+  max-width: 100%;
+}
+
+.client-fin__return-stock-row td {
+  padding-top: 0;
+}
+
+/* "Charged to the wrong pet?" on a lab line: moves the line and its result to another pet. */
+.client-fin__lab-move {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: #4b5563;
+  font-size: 13px;
+}
+.client-fin__lab-move select {
+  max-width: 220px;
+}
