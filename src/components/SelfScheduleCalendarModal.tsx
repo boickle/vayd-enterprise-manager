@@ -774,6 +774,14 @@ function TimeSlotPill({
 }
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
+/** Returns the previous value while `value` has the same JSON contents, so effects keyed on it stay put. */
+export function useSameContents<T>(value: T): T {
+  const key = value === undefined ? 'undefined' : JSON.stringify(value);
+  const ref = useRef<{ key: string; value: T }>({ key, value });
+  if (ref.current.key !== key) ref.current = { key, value };
+  return ref.current.value;
+}
+
 export function SelfScheduleCalendarModal({
   practiceId,
   address,
@@ -788,24 +796,33 @@ export function SelfScheduleCalendarModal({
   isNewClient = false,
   newPatientCount = 0,
   isNewPatientRequest = false,
-  rawVeterinarians,
+  rawVeterinarians: rawVeterinariansProp,
   appointmentTypeId,
   appointmentType,
   practiceTz = DEFAULT_PRACTICE_TIMEZONE,
   initialDoctorId,
   preferredDoctorId,
   chartPrimaryProviderId,
-  preloadedDoctors,
-  requestOnlyDoctors,
+  preloadedDoctors: preloadedDoctorsProp,
+  requestOnlyDoctors: requestOnlyDoctorsProp,
   onRequestDoctor,
   slotPickerError,
-  visitPets,
-  patientIds,
+  visitPets: visitPetsProp,
+  patientIds: patientIdsProp,
   clientUploadedRecords = false,
   recordCheckTokens,
   searchAllDoctors = false,
   selectedAppointmentStart,
 }: Props) {
+  // The form may hand over new copies of the same lists on any render. Keep the previous copy while
+  // the contents are the same, so the effects below (which fetch availability) don't run again.
+  // Without this the picker sent the same availability request about nine times a second until
+  // the API's rate limit refused it (429) and the calendar showed "Unable to load availability".
+  const rawVeterinarians = useSameContents(rawVeterinariansProp);
+  const preloadedDoctors = useSameContents(preloadedDoctorsProp);
+  const requestOnlyDoctors = useSameContents(requestOnlyDoctorsProp);
+  const visitPets = useSameContents(visitPetsProp);
+  const patientIds = useSameContents(patientIdsProp);
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth <= 600 : false,
   );
