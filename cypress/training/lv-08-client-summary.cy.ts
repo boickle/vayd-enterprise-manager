@@ -23,6 +23,7 @@ describe('Training: LV-08 client summary', () => {
     row().should('exist');
     cy.wait(2000);
     const summary = () => cy.get('.idexx-client-summary').first();
+    const editor = () => cy.get('[data-testid="idexx-summary-editor"] [contenteditable="true"]').first();
 
     startClock();
     line('lv08-01');
@@ -44,23 +45,32 @@ describe('Training: LV-08 client summary', () => {
     });
     line('lv08-07', () => {
       tap(() => summary().contains('button', 'Edit'));
-      summary().find('textarea').should('exist');
+      editor().should('exist');
     });
     line('lv08-08', () => {
       pointAt(() => cy.get('[data-testid="idexx-summary-placeholder"]'), 1800);
       pointAt(() => summary().contains('button', 'Approve wording'), 1800);
     });
     line('lv08-09', () => {
-      summary()
-        .find('textarea')
-        .then(($t) => {
-          // Put the cursor right after the placeholder so the doctor's words replace it on camera.
-          const el = $t[0] as HTMLTextAreaElement;
-          const at = el.value.lastIndexOf(']');
-          el.focus();
-          el.setSelectionRange(at + 1, at + 1);
-        });
-      typeSlowly(() => summary().find('textarea'), '{backspace}'.repeat(15) + 'Recheck her glucose and urine in two weeks.');
+      // Select "[doctor to add]" in the editor so the doctor's words replace it on camera.
+      editor().then(($ed) => {
+        const el = $ed[0];
+        const doc = el.ownerDocument;
+        const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node: Node | null = walker.nextNode();
+        while (node && !(node.textContent ?? '').includes('[doctor to add]')) node = walker.nextNode();
+        expect(node, 'the [doctor to add] placeholder').to.exist;
+        const at = (node!.textContent ?? '').indexOf('[doctor to add]');
+        el.focus();
+        const range = doc.createRange();
+        range.setStart(node!, at);
+        range.setEnd(node!, at + '[doctor to add]'.length);
+        const sel = doc.getSelection()!;
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+      cy.wait(500);
+      editor().type('Recheck her glucose and urine in two weeks.', { delay: 45 });
     });
     line('lv08-10', () => {
       tap(() => summary().contains('button', 'Approve wording'));

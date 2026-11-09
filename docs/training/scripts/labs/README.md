@@ -21,6 +21,6 @@ Demo world (same as every training series):
 | LV-10 | IDEXX lab charges on the bill | CLs | Must-have |
 | LV-11 | Wrong pet or removed lab charge | Techs, CLs | Nice to have |
 | LV-12 | Lab history on the chart, including eVet | Doctors, techs | Nice to have (must once eVet forms are loaded) |
-| LV-13 | Set up a lab form | Doctors, lead techs | Nice to have (after LAB-06 and LAB-09) |
+| LV-13 | Set up a lab form | Management (MD, PM, admin) | Nice to have (after LAB-06 and LAB-09) |
 
 LV-01 and LV-02 replace the lab half of "EMR V7 – Patient alerts and in-house labs", which shows pre-filled forms.

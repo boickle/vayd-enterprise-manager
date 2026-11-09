@@ -1,6 +1,6 @@
 # LV-13. Set up a lab form
 
-- **Audience:** whoever manages lab forms (today: admins; see the review file).
+- **Audience:** management only: the medical director, practice managers and admins (owner, Nov 9, 2026).
 - **Length:** 3 minutes.
 - **Watch first:** LV-01.
 - **The one thing to remember:** attach every form to the labs or procedures that use it, so ordering the test opens the form.
@@ -8,8 +8,6 @@
 ## Why (opening)
 
 "Lab forms decide what staff fill in for each in-house test. Attached to a test, the form opens by itself when the test is charged."
-
-> **Waiting on a fix or an answer** (review file, possible bug 1): Settings is admin-only, so vets and lead techs can't reach this screen, though they're allowed to edit forms.
 
 ## Steps
 
@@ -38,7 +36,7 @@
 
 ## What other roles see
 
-- Techs and client liaisons: no Settings.
+- Vets, lead techs, techs and client liaisons can't edit lab forms (owner, Nov 9, 2026).
 
 ## Closing
 
