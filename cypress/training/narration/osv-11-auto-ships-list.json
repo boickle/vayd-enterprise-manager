@@ -1,0 +1,22 @@
+[
+  { "id": "s01-why", "text": "Every auto-ship in the practice is on one list. A failing card shows up here before a pet runs out." },
+  { "id": "s02-rows", "text": "Each one shows who it's for, the item, the price and how often it ships." },
+  { "id": "s03-remember", "text": "Check payment problems every week. Only managers change the price, quantity or item." },
+  { "id": "s04-problems", "text": "Payment problems shows failing cards, auto-ships Stripe ended, and cancels Stripe hasn't confirmed." },
+  { "id": "s05-failing", "text": "Payment failing: the client needs to update the card. Call them." },
+  { "id": "s06-active", "text": "Back to active." },
+  { "id": "s07-pause", "text": "Pause holds an auto-ship, for a trip, for example." },
+  { "id": "s08-resume", "text": "Pick when it starts again." },
+  { "id": "s08b-confirm", "text": "Pause it." },
+  { "id": "s08c-paused", "text": "It moves to paused, with the date it starts again." },
+  { "id": "s09-edit", "text": "Riley, on the mail order team, opens Edit." },
+  { "id": "s10-locked", "text": "Item and quantity are locked for the team. If they look wrong, don't ship it as is: send a prescription back to the doctor, or ask a manager." },
+  { "id": "s10b-often", "text": "Riley can change how often it ships." },
+  { "id": "s11-close", "text": "Close without changing." },
+  { "id": "s12-robin", "text": "Robin, a manager, opens the same auto-ship." },
+  { "id": "s13-price", "text": "Robin can change the item and quantity. A change in price charges or refunds the difference." },
+  { "id": "s14-cancel", "text": "Close without changing." },
+  { "id": "s15-card", "text": "Card shows the card it charges. Cancel stops it for good." },
+  { "id": "s16-mistakes", "text": "The most common mistakes: cancelling when the card failed, instead of calling the client, and changing a price as a team member." },
+  { "id": "s17-remember", "text": "Remember: check payment problems every week. Only managers change an auto-ship's price, quantity or item." }
+]

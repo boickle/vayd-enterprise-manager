@@ -1,0 +1,15 @@
+[
+  { "id": "r01-why", "text": "Sometimes an order can't go out: the doctor declines it, or the family changes their mind. Scout refunds the card, stops any auto-ship, and tells the family, all from the order." },
+  { "id": "r02-search", "text": "Maria asks us to cancel Maple's heartworm order. Find it by its number." },
+  { "id": "r03-order", "text": "Open it." },
+  { "id": "r04-remember", "text": "Refund through the order in Scout, never in the Stripe dashboard." },
+  { "id": "r05-reject", "text": "Reject, refund and email, in one step." },
+  { "id": "r06-what", "text": "It refunds the card, cancels the auto-ship, then sends the email." },
+  { "id": "r07-reason", "text": "Say why, for staff only." },
+  { "id": "r08-email", "text": "The email to Maria is written for you. Read it over." },
+  { "id": "r09-send", "text": "Send email." },
+  { "id": "r10-rejected", "text": "The order moves to rejected. The card is refunded and the auto-ship is cancelled." },
+  { "id": "r11-cancel-requests", "text": "When a doctor or tech asks to cancel from a visit bill, the request lands under cancel requests." },
+  { "id": "r12-mistakes", "text": "The most common mistakes: refunding in the Stripe dashboard, which leaves the order and the auto-ship running, and cancelling without telling the family." },
+  { "id": "r13-remember", "text": "Remember: refund through the order in Scout, never in the Stripe dashboard." }
+]

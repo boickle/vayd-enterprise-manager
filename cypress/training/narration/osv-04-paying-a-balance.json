@@ -1,0 +1,17 @@
+[
+  { "id": "b01-why", "text": "Families see their balance in the client portal. Some old bills from eVet can't be paid there yet, and the portal tells them so." },
+  { "id": "b02-tom", "text": "This is Tom Chen's portal." },
+  { "id": "b03-balance", "text": "Tom owes eighty-five dollars." },
+  { "id": "b04-held", "text": "All of it is on an old eVet bill, so there's no pay button. The portal asks him to call us." },
+  { "id": "b05-remember", "text": "Old eVet bills can't be paid in the portal yet. Take those payments by phone, or send a pay link." },
+  { "id": "b06-scout", "text": "On our side, the old eVet bill is on Tom's Financial tab in Scout." },
+  { "id": "b07-take", "text": "When he calls, take the payment here, like any other bill. The invoicing videos show how." },
+  { "id": "b07b-link", "text": "Or send him a pay link by email or text, so he can pay it himself." },
+  { "id": "b08-maria", "text": "A Scout bill is different. Maria owes for Maple's exam." },
+  { "id": "b09-paynow", "text": "She clicks pay now." },
+  { "id": "b10-card", "text": "Her saved card is already picked. She could use a different card here." },
+  { "id": "b11-pay", "text": "Pay." },
+  { "id": "b12-paid", "text": "It's paid, and the payment shows on the bill in Scout." },
+  { "id": "b13-mistakes", "text": "The most common mistakes: telling a family to pay an old eVet bill in the portal, and taking a phone payment without recording it on the bill." },
+  { "id": "b14-remember", "text": "Remember: old eVet bills can't be paid in the portal yet. Take those payments by phone, or send a pay link." }
+]

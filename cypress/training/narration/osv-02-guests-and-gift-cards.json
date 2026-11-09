@@ -1,0 +1,138 @@
+[
+ {
+  "id": "g01-why",
+  "text": "Not everyone who visits the store has a portal login, like a friend buying a gift card. Here's what a guest can and can't do."
+ },
+ {
+  "id": "g02-guest",
+  "text": "This is the store with nobody logged in."
+ },
+ {
+  "id": "g03-remember",
+  "text": "A guest pays with a new card. Gift cards and one-time items are fine. Prescriptions, pets and auto-ship need the portal login."
+ },
+ {
+  "id": "g04-tab",
+  "text": "Gift cards first. This opens the gift card page."
+ },
+ {
+  "id": "g06-amount",
+  "text": "Pick the amount. There's also an other amount button."
+ },
+ {
+  "id": "g07-who",
+  "text": "It can go to someone else, or to the buyer."
+ },
+ {
+  "id": "g08-name",
+  "text": "Who it's for,"
+ },
+ {
+  "id": "g09-email",
+  "text": "their email,"
+ },
+ {
+  "id": "g10-from",
+  "text": "who it's from,"
+ },
+ {
+  "id": "g11-message",
+  "text": "and a short note."
+ },
+ {
+  "id": "g12-when",
+  "text": "It can be emailed right away, or on a date, like a birthday."
+ },
+ {
+  "id": "g13-add",
+  "text": "Add it to the cart."
+ },
+ {
+  "id": "g14-cart",
+  "text": "Open the cart."
+ },
+ {
+  "id": "g15-details",
+  "text": "The guest types their own name and email. The receipt goes there."
+ },
+ {
+  "id": "g16-card",
+  "text": "And a new card."
+ },
+ {
+  "id": "g17-no-tax",
+  "text": "There's no tax or shipping on a gift card."
+ },
+ {
+  "id": "g18-pay",
+  "text": "Pay."
+ },
+ {
+  "id": "g19-thanks",
+  "text": "The guest gets a receipt, and the gift card email to Tom is on its way."
+ },
+ {
+  "id": "g20-shop",
+  "text": "A guest can also buy a one-time item."
+ },
+ {
+  "id": "g21-dental",
+  "text": "Dental chews."
+ },
+ {
+  "id": "g22-add",
+  "text": "Add to cart."
+ },
+ {
+  "id": "g23-cart",
+  "text": "Open the cart."
+ },
+ {
+  "id": "g24-banner",
+  "text": "The cart tells the guest what needs a login."
+ },
+ {
+  "id": "g25-total",
+  "text": "Shipping and tax are added here."
+ },
+ {
+  "id": "g26-rx",
+  "text": "A prescription is different."
+ },
+ {
+  "id": "g27-rx-tab",
+  "text": "Prescriptions."
+ },
+ {
+  "id": "g28-rx-item",
+  "text": "Heartworm and flea chewable."
+ },
+ {
+  "id": "g29-rx-login",
+  "text": "A guest is asked to log in. There's no add to cart."
+ },
+ {
+  "id": "g30-balance",
+  "text": "Anyone with a code can check a gift card's balance."
+ },
+ {
+  "id": "g31-code",
+  "text": "Type the code,"
+ },
+ {
+  "id": "g32-check",
+  "text": "and check."
+ },
+ {
+  "id": "g33-result",
+  "text": "It shows what's left, and it works in the store, at a visit, or on a bill in the portal."
+ },
+ {
+  "id": "g34-mistakes",
+  "text": "The most common mistakes: telling a family with a portal login to check out as a guest, so they lose their saved card and member price, and promising a guest a prescription without a login."
+ },
+ {
+  "id": "g35-remember",
+  "text": "Remember: a guest pays with a new card and can buy gift cards and one-time items. Prescriptions, pets and auto-ship need the portal login."
+ }
+]

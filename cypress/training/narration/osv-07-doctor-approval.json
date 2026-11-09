@@ -1,0 +1,22 @@
+[
+  { "id": "d01-why", "text": "When a family orders a prescription and there's no refill left, a doctor decides. That decision happens on a task, not in the mail queue." },
+  { "id": "d02-filter", "text": "In the mail order queue, Robin opens Needs approval." },
+  { "id": "d03-order", "text": "Maria ordered three bottles of Juniper's thyroid tablets. There are no refills left, so it needs a doctor." },
+  { "id": "d04-not-here", "text": "The queue doesn't approve it. It sends a task." },
+  { "id": "d05-send-to", "text": "Choose the doctor," },
+  { "id": "d06-send", "text": "and send the task." },
+  { "id": "d07-task", "text": "Dr. Lane opens the task from her task list." },
+  { "id": "d08-remember", "text": "Nothing prescription ships until a doctor approves it, here on the task." },
+  { "id": "d09-what", "text": "Here's what was ordered." },
+  { "id": "d10-summary", "text": "If she needs it, Summarize case gives a short summary of Juniper's record." },
+  { "id": "d10b-summary", "text": "Here it is, to read before you decide." },
+  { "id": "d11-directions", "text": "Check the directions, filled in from the last script." },
+  { "id": "d12-chronic", "text": "This one's ongoing, so chronic." },
+  { "id": "d13-qty", "text": "Juniper's recheck is due, so she approves one bottle now, not three." },
+  { "id": "d14-refund", "text": "Scout refunds the other two to Maria's card. You can lower the quantity, never raise it." },
+  { "id": "d15-other", "text": "She could also send it back for changes, or reject it with a note." },
+  { "id": "d16-approve", "text": "Approve sends it to the mail team to fill." },
+  { "id": "d17-refund-note", "text": "In the queue, the refund is noted on the order." },
+  { "id": "d18-mistakes", "text": "The most common mistakes: approving without checking the directions, and approving in the queue instead of on the task." },
+  { "id": "d19-remember", "text": "Remember: nothing prescription ships until a doctor approves it, on the approval task." }
+]

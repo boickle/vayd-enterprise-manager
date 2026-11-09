@@ -1,0 +1,19 @@
+[
+  { "id": "g01-why", "text": "Gift cards are sold online and given out by the clinic. They're all on one page, with what's still owed on them." },
+  { "id": "g02-list", "text": "Every card, sold or issued, with its balance." },
+  { "id": "g03-totals", "text": "What was bought this year, what's been used, and what's still owed." },
+  { "id": "g04-remember", "text": "A gift card is money we owe until it's spent. Issue one only with a reason." },
+  { "id": "g05-search", "text": "Find a card by its code, a name or an email." },
+  { "id": "g06-open", "text": "Open Maria's card." },
+  { "id": "g07-card", "text": "It shows the balance, who it's for, and its history." },
+  { "id": "g08-actions", "text": "From here you can email or print the card, adjust the balance, refund the buyer, or void it." },
+  { "id": "g09-issue", "text": "To give one, for a service recovery or a raffle, click Issue gift card." },
+  { "id": "g10-amount", "text": "The amount," },
+  { "id": "g11-reason", "text": "the reason, which shows on the bookkeeping report," },
+  { "id": "g12-who", "text": "and who it's for." },
+  { "id": "g13-print", "text": "Add their email to send it, or leave it blank to print it." },
+  { "id": "g14-send", "text": "Issue it." },
+  { "id": "g15-issued", "text": "Issued, with the reason on the card." },
+  { "id": "g16-mistakes", "text": "The most common mistakes: issuing a card with no reason, and voiding a card the client already used." },
+  { "id": "g17-remember", "text": "Remember: a gift card is money the practice owes until it's spent. Issue one only with a reason." }
+]

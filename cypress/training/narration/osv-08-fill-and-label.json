@@ -1,0 +1,102 @@
+[
+ {
+  "id": "f01-why",
+  "text": "Filling is where the right medicine gets into the right bag. The label comes next, and then a second person checks it."
+ },
+ {
+  "id": "f02-fill",
+  "text": "Fill shows what's ready to pack."
+ },
+ {
+  "id": "f03-order",
+  "text": "Open the order. Juniper's thyroid tablets are paid and approved."
+ },
+ {
+  "id": "f04-steps",
+  "text": "The steps are written right here."
+ },
+ {
+  "id": "f05-office",
+  "text": "Choose the office you're filling from,"
+ },
+ {
+  "id": "f06-location",
+  "text": "and the location you took it from."
+ },
+ {
+  "id": "f07-remember",
+  "text": "Fill from the office and location you actually took it from. That's what comes off the shelf count."
+ },
+ {
+  "id": "f08-item",
+  "text": "Then work down each item."
+ },
+ {
+  "id": "f09-lot",
+  "text": "This medicine tracks lots. With one lot on the shelf, it's picked for you. It's printed on the label, and comes off that lot's count."
+ },
+ {
+  "id": "f10-labels",
+  "text": "Print the prescription and bag labels."
+ },
+ {
+  "id": "f11-wrong",
+  "text": "If anything looks wrong, don't fill it. A prescription goes back to the doctor with re-send, and a note."
+ },
+ {
+  "id": "f12-pending",
+  "text": "Anything else, mark it pending and ask a manager."
+ },
+ {
+  "id": "f13-notes",
+  "text": "Add anything the checker should know."
+ },
+ {
+  "id": "f14-filled",
+  "text": "Mark filled."
+ },
+ {
+  "id": "f15-done",
+  "text": "The order moves to ship or pickup."
+ },
+ {
+  "id": "f15b-open",
+  "text": "Open the order."
+ },
+ {
+  "id": "f15c-filled",
+  "text": "It's marked filled."
+ },
+ {
+  "id": "f16-weight",
+  "text": "Weigh the package."
+ },
+ {
+  "id": "f17-rates",
+  "text": "Get rates."
+ },
+ {
+  "id": "f18-print",
+  "text": "Print the cheapest label, once."
+ },
+ {
+  "id": "f19-printed",
+  "text": "With the label printed, the order moves to check."
+ },
+ {
+  "id": "f19b-chip",
+  "text": "Open it. The label is printed."
+ },
+ {
+  "id": "f20-void",
+  "text": "One label per order. If it's wrong, void it. Don't buy another."
+ },
+ {
+  "id": "f21-mistakes",
+  "text": "The most common mistakes: filling from the wrong office or location, so the counts go off, and buying a second label instead of voiding the first."
+ },
+ {
+  "id": "f22-remember",
+  "text": "Remember: fill from the office and location you actually took it from, then buy one label per order."
+ }
+]

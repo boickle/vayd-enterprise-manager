@@ -1,0 +1,58 @@
+[
+ {
+  "id": "p01-why",
+  "text": "When a family calls to order a refill, put it on a bill and send it to the mail queue. It's packed only after it's paid."
+ },
+ {
+  "id": "p02-new",
+  "text": "Maria calls for joint chews for Juniper. Start a new bill on her Financial tab."
+ },
+ {
+  "id": "p03-add",
+  "text": "Search for the item,"
+ },
+ {
+  "id": "p03b-pick",
+  "text": "and add it."
+ },
+ {
+  "id": "p04-remember",
+  "text": "A phone order is a bill with the item on it, sent by Mail order, then paid."
+ },
+ {
+  "id": "p05-mail",
+  "text": "Choose Mail order."
+ },
+ {
+  "id": "p06-ship",
+  "text": "Ship it,"
+ },
+ {
+  "id": "p07-pay-now",
+  "text": "and take payment now."
+ },
+ {
+  "id": "p08-add",
+  "text": "Add it to the mail queue."
+ },
+ {
+  "id": "p09-card",
+  "text": "Then charge her saved card. You could also text her a pay link."
+ },
+ {
+  "id": "p10-charge",
+  "text": "Charge card on file."
+ },
+ {
+  "id": "p11-paid",
+  "text": "It's paid, so the mail team can fill it."
+ },
+ {
+  "id": "p12-mistakes",
+  "text": "The most common mistakes: using New mail order in the queue for medicine, and promising a ship date before the payment goes through."
+ },
+ {
+  "id": "p13-remember",
+  "text": "Remember: a phone order is a bill with the item on it, sent by Mail order, then paid."
+ }
+]

@@ -8,6 +8,8 @@
  * - Maple: heartworm Rx with 3 refills (Dr. Avery Lane). Juniper: thyroid Rx with no refills left.
  * - Tom Chen: an old eVet invoice ($85 open) and a portal login. A $50 gift card for the balance check.
  * - Riley Brooks, mail order team (and a login); Robin Hale also gets mail_order_manager.
+ * - Morgan Ellis, Billing / AR (and a login), so store Billing tasks land in the billing queue (Q12a). The role is
+ *   added when the test database lacks it, as the scout-permissions migration defines it.
  * Tokens for the new logins go to <out.json> (outside the repo). Nothing is printed except ids.
  */
 const fs = require('fs');
@@ -115,7 +117,8 @@ async function login(email, role, ids) {
   // Only the demo office in office pickers (other test seeds leave offices behind).
   await q(`UPDATE practice_branch SET "isActive" = false WHERE "practiceId" = $1 AND id <> $2`, [P, w.branchId]);
   // Only the demo households in the mail queue and on the Auto-ships list (other test seeds leave orders behind).
-  await q(`UPDATE mail_orders SET status = 'cancelled' WHERE "practiceId" = $1 AND ("clientId" IS NULL OR "clientId" NOT IN ($2, $3))`, [P, A.clientId, B.clientId]);
+  // Deleted, not cancelled: the queue counts cancelled orders as rejected ones still waiting for a call.
+  await q(`DELETE FROM mail_orders WHERE "practiceId" = $1 AND ("clientId" IS NULL OR "clientId" NOT IN ($2, $3))`, [P, A.clientId, B.clientId]);
   await q(`UPDATE online_store_subscriptions SET active = false WHERE "practiceId" = $1 AND ("clientId" IS NULL OR "clientId" NOT IN ($2, $3))`, [P, A.clientId, B.clientId]);
   const maple = A.activePetIds[0], juniper = A.activePetIds[1], biscuit = B.petId;
   const lane = w.doctors.A;
@@ -169,11 +172,30 @@ async function login(email, role, ids) {
   await q(`INSERT INTO employee_role_assignments ("employeeId","roleId","branchId") SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM employee_role_assignments WHERE "employeeId"=$1 AND "roleId"=$2)`, [robin, mom, w.branchId]);
   await q(`DELETE FROM users WHERE email IN ('riley.brooks@example.com','tom.chen@example.com') AND "practiceId" = $1`, [P]);
   const mailteam = await login('riley.brooks@example.com', 'employee', { employeeId: riley.id });
+  // Q12a: Billing / AR, held practice-wide (no branch), which is how the Unassigned queue matches it.
+  let billingRole = await one(`SELECT id FROM employee_role WHERE slug = 'billing_ar' AND "pimsType" = 'SCOUT'`);
+  if (!billingRole) {
+    billingRole = await one(
+      `INSERT INTO employee_role (name, slug, "roleValue", "isBranchSpecific", "pimsType", description, "isActive", "isDeleted")
+       VALUES ('Billing / AR', 'billing_ar', 12, false, 'SCOUT', 'Payments, statements and collections without clinical access.', true, false) RETURNING id`,
+    );
+  }
+  let morgan = await one(`SELECT id FROM employees WHERE email = 'morgan.ellis@example.com'`);
+  if (!morgan) {
+    morgan = await one(`INSERT INTO employees ("practiceId","firstName","lastName",email) VALUES ($1,'Morgan','Ellis','morgan.ellis@example.com') RETURNING id`, [P]);
+    await q(`INSERT INTO employee_branch ("employeeId","branchId","isPrimary") VALUES ($1,$2,true)`, [morgan.id, w.branchId]).catch(() => undefined);
+  }
+  await q(
+    `INSERT INTO employee_role_assignments ("employeeId","roleId","branchId") SELECT $1,$2,NULL WHERE NOT EXISTS (SELECT 1 FROM employee_role_assignments WHERE "employeeId"=$1 AND "roleId"=$2)`,
+    [morgan.id, billingRole.id],
+  );
+  await q(`DELETE FROM users WHERE email = 'morgan.ellis@example.com' AND "practiceId" = $1`, [P]);
+  const billing = await login('morgan.ellis@example.com', 'employee', { employeeId: morgan.id });
   const chen = await login('tom.chen@example.com', 'client', { clientId: B.clientId });
 
   // Q8: Juniper's thyroid tablets are lot-tracked, with one lot on the shelf in Raleigh office (Main).
   await q(`UPDATE inventory_items SET "trackLots" = true WHERE id = $1`, [thyroid]);
-  let loc = await one(`SELECT id FROM inventory_branch_location WHERE "branchId" = $1 AND "isActive" = true ORDER BY "isDefault" DESC, id LIMIT 1`, [w.branchId]);
+  let loc = await one(`SELECT id FROM inventory_branch_location WHERE "branchId" = $1 AND "isActive" = true ORDER BY (code = 'MAIN') DESC, "isDefault" DESC, id LIMIT 1`, [w.branchId]);
   if (!loc) loc = await one(`INSERT INTO inventory_branch_location ("branchId", code, name, "sortOrder", "isDefault", "isActive") VALUES ($1, 'MAIN', 'Main', 0, true, true) RETURNING id`, [w.branchId]);
   await q(
     `INSERT INTO inventory_lot_balances ("practiceId","pimsType","pimsId","inventoryItemId","branchId","branchLocationId","lotNumber","expirationDate","quantityOnHand","isActive","isDeleted")
@@ -186,7 +208,7 @@ async function login(email, role, ids) {
     [thyroid, loc.id],
   ).catch((e) => console.error('location balance:', e.message));
   // Only the demo staff in staff pickers (Send to, Choose staff): other test seeds leave dozens behind.
-  const demoStaff = [...Object.values(w.employees), riley.id].map(Number);
+  const demoStaff = [...Object.values(w.employees), riley.id, morgan.id].map(Number);
   await q(`UPDATE employees SET "isActive" = false WHERE "practiceId" = $1 AND NOT (id = ANY($2))`, [P, demoStaff]);
 
   fs.writeFileSync(
@@ -195,9 +217,9 @@ async function login(email, role, ids) {
       items: { chews, joint, hw, thyroid, gaba, giftItem },
       pets: { maple, juniper, biscuit },
       clients: { rivera: A.clientId, chen: B.clientId },
-      employees: { riley: riley.id, robin, lane },
+      employees: { riley: riley.id, robin, lane, morgan: morgan.id },
       giftCard: { code: 'RVRAGKCDHMNP2345', balance: 50 },
-      auth: { mailteam, chen },
+      auth: { mailteam, chen, billing },
     }),
   );
   console.log(`online store demo ready in ${database}: items ${[chews, joint, hw, thyroid, gaba].join(',')}, Riley ${riley.id}`);

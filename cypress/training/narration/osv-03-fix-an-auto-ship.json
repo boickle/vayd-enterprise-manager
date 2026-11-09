@@ -1,0 +1,22 @@
+[
+  { "id": "a01-why", "text": "Auto-ships keep pets on their medicine without a phone call. When a family calls about one, walk them through the same window they see." },
+  { "id": "a02-maple", "text": "In Maria's portal, she picks Maple." },
+  { "id": "a03-med", "text": "Maple's heartworm chewable is on auto-ship. See the tag." },
+  { "id": "a04-manage", "text": "Manage opens it." },
+  { "id": "a05-next", "text": "Here's when it ships next, and what it costs." },
+  { "id": "a06-often", "text": "She can change how often," },
+  { "id": "a07-qty", "text": "or how many come in each shipment," },
+  { "id": "a08-date", "text": "or move the next date. It has to be at least two days out, because we bill and pack on that day." },
+  { "id": "a09-pause", "text": "She can pause it for a while," },
+  { "id": "a10-cancel", "text": "or cancel it." },
+  { "id": "a11-extra", "text": "And she can order one extra right now." },
+  { "id": "a12-done", "text": "Done closes the window." },
+  { "id": "a13-banner", "text": "If her card is declined, she sees this red banner: payment failing." },
+  { "id": "a14-remember", "text": "Payment failing means one thing: she updates her card here. Nothing else fixes it." },
+  { "id": "a15-update", "text": "Update card." },
+  { "id": "a16-card", "text": "She enters the new card right here, for this auto-ship." },
+  { "id": "a17-all", "text": "In the store, Auto-ship at the top lists all of her auto-ships." },
+  { "id": "a18-row", "text": "Each one can be changed, paused or cancelled here too." },
+  { "id": "a19-mistakes", "text": "The most common mistakes: cancelling an auto-ship because the card failed, and taking a new card number over the phone instead of having the client update it." },
+  { "id": "a20-remember", "text": "Remember: payment failing means the client updates the card in the portal. Nothing else fixes it." }
+]

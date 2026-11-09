@@ -1,0 +1,66 @@
+[
+ {
+  "id": "c01-why",
+  "text": "The second check catches the wrong pet, the wrong strength or the wrong count, before it reaches the family."
+ },
+ {
+  "id": "c02-check",
+  "text": "Check lists the orders that are filled and labelled."
+ },
+ {
+  "id": "c03-order",
+  "text": "Open the order."
+ },
+ {
+  "id": "c04-filler",
+  "text": "Riley filled it, so Robin checks it."
+ },
+ {
+  "id": "c05-remember",
+  "text": "A second person checks each pet's items against the label before it leaves."
+ },
+ {
+  "id": "c06-slip",
+  "text": "Print the check slip if you'd like it on paper."
+ },
+ {
+  "id": "c07-checked",
+  "text": "Check Juniper's items against the label, then click I checked Juniper."
+ },
+ {
+  "id": "c08-done",
+  "text": "Checked. The order moves to contacted, the last step."
+ },
+ {
+  "id": "c08b-open",
+  "text": "Open it."
+ },
+ {
+  "id": "c09-tell",
+  "text": "Then tell Maria it's on the way: by email, by text, or not at all if she asked us not to."
+ },
+ {
+  "id": "c10-email",
+  "text": "Email her."
+ },
+ {
+  "id": "c11-sent",
+  "text": "The shipped email is already written for her. Read it over,"
+ },
+ {
+  "id": "c11b-send",
+  "text": "then send it."
+ },
+ {
+  "id": "c11c-emailed",
+  "text": "Emailed, and the order is done."
+ },
+ {
+  "id": "c12-mistakes",
+  "text": "The most common mistakes: checking your own fill, and telling the client before the check."
+ },
+ {
+  "id": "c13-remember",
+  "text": "Remember: a second person checks each pet's items against the label before it leaves."
+ }
+]

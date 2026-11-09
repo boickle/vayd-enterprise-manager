@@ -1,0 +1,15 @@
+[
+  { "id": "b01-why", "text": "When something goes wrong with store money, Scout doesn't stay silent. It opens a Billing task, so a person follows up." },
+  { "id": "b02-unassigned", "text": "Store problems land in the billing queue, under Unassigned." },
+  { "id": "b03-task", "text": "Here's one about Tom Chen." },
+  { "id": "b04-remember", "text": "Every store money problem is a Billing task. Work it the same day." },
+  { "id": "b05-open", "text": "Open it." },
+  { "id": "b06-why", "text": "Tom's card kept failing, and Stripe ended his auto-ship. Call the family about a new card." },
+  { "id": "b07-claim", "text": "Assign it to yourself, so nobody else calls too." },
+  { "id": "b07b-mine", "text": "It's yours now." },
+  { "id": "b08-list", "text": "On the auto-ships list, payment problems shows the same auto-ship," },
+  { "id": "b09-ended", "text": "ended because the card failed." },
+  { "id": "b10-others", "text": "Other store tasks work the same way: a charge Scout refunded, an auto-ship that didn't start, or a cancel Stripe hasn't confirmed. Each one says what happened and what to do." },
+  { "id": "b11-mistakes", "text": "The most common mistakes: leaving these tasks until the end of the week, and refunding again in Stripe when Scout already refunded." },
+  { "id": "b12-remember", "text": "Remember: every store money problem lands as a Billing task. Work it the same day." }
+]

@@ -1,0 +1,19 @@
+[
+  { "id": "k01-why", "text": "A coupon is a code families type in the cart for money off. Set its limits before you share it, or it can be used again and again." },
+  { "id": "k02-tab", "text": "Coupons are on their own tab in the store." },
+  { "id": "k03-list", "text": "Every coupon, its limits, and how often it's been used." },
+  { "id": "k04-remember", "text": "Set the limits before you share a code." },
+  { "id": "k05-add", "text": "Add a coupon." },
+  { "id": "k06-code", "text": "The code families type," },
+  { "id": "k07-name", "text": "a name for us," },
+  { "id": "k08-discount", "text": "and how much off: ten percent." },
+  { "id": "k09-uses", "text": "Once per customer." },
+  { "id": "k10-min", "text": "And a minimum order." },
+  { "id": "k11-save", "text": "Save it." },
+  { "id": "k12-saved", "text": "It's on the list, with its limits." },
+  { "id": "k13-cart", "text": "Maria types it in her cart," },
+  { "id": "k14-apply", "text": "and applies it." },
+  { "id": "k15-off", "text": "Ten percent comes off her order." },
+  { "id": "k16-mistakes", "text": "The most common mistakes: sharing a code with no limits, and making a new code instead of ending an old one." },
+  { "id": "k17-remember", "text": "Remember: set the limits, once per customer or single use, before you share a code." }
+]

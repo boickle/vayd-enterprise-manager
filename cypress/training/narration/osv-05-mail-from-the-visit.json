@@ -1,0 +1,82 @@
+[
+ {
+  "id": "v01-why",
+  "text": "When a family wants a medicine mailed instead of handed over, set it up right on the visit's checkout. Nobody re-types the order."
+ },
+ {
+  "id": "v02-checkout",
+  "text": "We're at checkout for Juniper's visit."
+ },
+ {
+  "id": "v03-remember",
+  "text": "To mail a medicine, choose Mail order on its line. The mail queue does the rest."
+ },
+ {
+  "id": "v04-add",
+  "text": "Add the medicine as usual."
+ },
+ {
+  "id": "v04b-pick",
+  "text": "Here, Juniper's heartworm chewable."
+ },
+ {
+  "id": "v05-needs-sig",
+  "text": "The line opens, and a prescription needs directions first."
+ },
+ {
+  "id": "v07-sig",
+  "text": "The doctor writes the directions,"
+ },
+ {
+  "id": "v08-refills",
+  "text": "the refills,"
+ },
+ {
+  "id": "v09-chronic",
+  "text": "and whether it's acute or chronic."
+ },
+ {
+  "id": "v10-approve",
+  "text": "Then approves the script. The line closes when it's ready."
+ },
+ {
+  "id": "v10b-open",
+  "text": "Open it again."
+ },
+ {
+  "id": "v11-mail",
+  "text": "Instead of dispense at visit, choose Mail order."
+ },
+ {
+  "id": "v12-ship",
+  "text": "Ship it, or pick it up at an office."
+ },
+ {
+  "id": "v13-pay",
+  "text": "Usually, take payment now with the rest of the visit. The doctor can also approve first, or it can go without payment."
+ },
+ {
+  "id": "v14-add",
+  "text": "Add it to the mail queue."
+ },
+ {
+  "id": "v15-tag",
+  "text": "The line is tagged Mail order, and shipping is on the bill."
+ },
+ {
+  "id": "v16-lot",
+  "text": "You don't pick a lot. The mail team picks it when they fill the order."
+ },
+ {
+  "id": "v17-total",
+  "text": "Then check out as usual."
+ },
+ {
+  "id": "v18-mistakes",
+  "text": "The most common mistakes: dispensing at the visit and then mailing a second one, and picking a lot for a mailed item."
+ },
+ {
+  "id": "v19-remember",
+  "text": "Remember: in the medicine's line on checkout, choose Mail order, and the mail queue does the rest."
+ }
+]
