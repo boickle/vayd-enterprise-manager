@@ -52,8 +52,12 @@
   "text": "Ship it, or pick it up at an office."
  },
  {
+  "id": "v12b-approved",
+  "text": "The doctor approved the script on this bill, so Approved by the doctor is already ticked. It goes straight to the mail team to fill."
+ },
+ {
   "id": "v13-pay",
-  "text": "Usually, take payment now with the rest of the visit. The doctor can also approve first, or it can go without payment."
+  "text": "Usually, take payment now with the rest of the visit. It can also go without payment."
  },
  {
   "id": "v14-add",

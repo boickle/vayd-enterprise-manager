@@ -6,6 +6,15 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = async function (url, init) {
   const u = typeof url === 'string' ? url : (url && url.url) || String(url);
   if (u.startsWith('https://api.openphone.com')) {
+    const method = String((init && init.method) || 'GET').toUpperCase();
+    const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
+    // Lookups (no message is sent): one made-up training line, and empty lists for message and call history.
+    if (method === 'GET') {
+      if (u.includes('/v1/phone-numbers')) {
+        return json({ data: [{ id: 'PNtraining', number: process.env.OPENPHONE_FROM || '+19195550100', name: 'Pharmacy RX (training)' }] });
+      }
+      return json({ data: [], totalItems: 0 });
+    }
     let body = {};
     try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}
     fs.appendFileSync(FILE, JSON.stringify({ at: new Date().toISOString(), url: u, to: body.to, from: body.from, content: body.content }) + '\n');

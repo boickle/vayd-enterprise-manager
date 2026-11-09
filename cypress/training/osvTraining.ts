@@ -99,7 +99,8 @@ export function enterTestCard(number = '4242424242424242', nameOnCard?: string) 
 export function resetStoreData() {
   const o = osv();
   const clients = `${o.clients.rivera},${o.clients.chen}`;
-  sql(`UPDATE online_store_subscriptions SET active=false WHERE "clientId" IN (${clients})`);
+  // "paymentStatus" too: an auto-ship marked failing in one video showed under Payment problems in OSV-12.
+  sql(`UPDATE online_store_subscriptions SET active=false, "paymentStatus"=NULL WHERE "clientId" IN (${clients})`);
   // Deleted, not cancelled: the queue counts cancelled orders as rejected ones still waiting for a call (TEST database only).
   sql(`DELETE FROM mail_orders WHERE "clientId" IN (${clients}) OR "clientId" IS NULL`);
   sql(`UPDATE clients SET "stripeCustomerId"=NULL, "savedPaymentMethodId"=NULL WHERE id IN (${clients})`);

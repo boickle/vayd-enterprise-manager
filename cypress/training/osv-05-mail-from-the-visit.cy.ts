@@ -60,6 +60,10 @@ describe('Training: OSV-05 mail an item from the visit', () => {
       cy.contains('h3', 'Send to mail queue', { timeout: 15000 });
       choose(() => cy.contains('label', 'Shipping / pick-up type').find('select'), 'ship-499');
     });
+    // B10 (owner, Nov 9): the sig was approved on this bill, so "Approved by Dr. …" is already ticked.
+    line('v12b-approved', () =>
+      look(() => cy.contains('label.mail-order-prompt__check', /^Approved by /, { timeout: 15000 }).should('have.class', 'is-on'), 5000)
+    );
     line('v13-pay', () => look(() => cy.contains('.mail-order-prompt__check', 'Take payment now').parent(), 4500));
     line('v14-add', () => tap(() => cy.contains('button', /^Add to mail queue$/)));
     line('v15-tag', () => look(() => cy.get('.mail-mode__stage, .mail-mode', { timeout: 20000 }).first(), 4000));
