@@ -3402,6 +3402,22 @@ export default function VisitCheckoutPanel({
                                 paymentStatus={invoiceMailPaymentStatus(invoice)}
                                 doctorEmployeeId={effectiveProviderId}
                                 approvalReason={mailApprovalReason}
+                                isPrescription={showRxLabel}
+                                doctorName={(() => {
+                                  const emp = providers.find(
+                                    (e) => Number(e.id) === effectiveProviderId,
+                                  );
+                                  if (emp) {
+                                    return shortProviderName(emp.name, emp.firstName, emp.lastName);
+                                  }
+                                  if (
+                                    rxLabel &&
+                                    rxLabel.veterinarianEmployeeId === effectiveProviderId
+                                  ) {
+                                    return shortProviderName(rxLabel.veterinarianName);
+                                  }
+                                  return null;
+                                })()}
                                 onQueueChange={(mailedLine, queued) => {
                                   void (async () => {
                                     setMailOrders(await listMailOrders(VISIT_WORKFLOW_PRACTICE_ID));
