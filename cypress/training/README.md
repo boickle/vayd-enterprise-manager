@@ -26,13 +26,14 @@ export API_DIR=~/worktrees/<vayd-api checkout on build-doctor-flow>
 bash cypress/training/stack/stack-up.sh       # fresh DB, demo names, API :3210, app :5210
 
 # Record straight to the final file. Fix and repeat until it passes and the clicks are in sync.
-bash cypress/training/record.sh emr-v6-wrap-up openai:nova "$HOME/Movies/VAYD Training/Tech, DVM - EMR V6 - Wrap-up, recap and signing.mp4"
+bash cypress/training/record.sh emr-v6-wrap-up openai:nova "$HOME/Movies/VAYD Training/EMR V6 - Tech, DVM - Wrap-up, recap and signing.mp4"
 
 bash cypress/training/stack/stack-down.sh
 ```
 
-Finished videos play at **1.25×** (the voice keeps its pitch); set `TRAINING_SPEED=1` for normal speed. Start the
-file name with who should watch it: `CL`, `Tech`, `DVM`, or a list such as `CL, Tech, DVM - `.
+Finished videos play at **1.25×** (the voice keeps its pitch); set `TRAINING_SPEED=1` for normal speed. Name the
+file: video number, then who should watch it (`CL`, `Tech`, `DVM`, or a list such as `CL, Tech, DVM`), then
+the description. For example: `LV-01 - Tech, DVM - Run an in-house lab in the visit.mp4`.
 
 Each video is one spec plus one narration file with the same name:
 - `<name>.cy.ts`: the setup before `startClock()`, then one `line()` per narration line;
