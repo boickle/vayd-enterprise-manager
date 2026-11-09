@@ -133,3 +133,4 @@ Dry runs use the free Mac voice (Samantha) on my own test stack: database vayd_a
 - **Texted offers:** owner confirmed a family's confirmation should go to To review, so CLs check the slot still works. SR-08 is correct as recorded.
 - **SR-09** re-recorded: the search line is now covered by narration (no silent stretch).
 - **SR-16** re-recorded in the daytime, with the visit at the current half hour (scheduled 10:00–10:45, actual start 10:11).
+- **SR-06 re-recorded (Nov 9):** new step after the booking: "One exception: if you book a request as a HOLD type… it shows On hold, and you follow it up on the Holds board, under Scheduling, Holds." The pointer rests on Scheduling in the top bar. Checked in the code: a request whose linked visit is a hold type is On hold, and the On hold view sends you to the Holds board. 108.7 s.

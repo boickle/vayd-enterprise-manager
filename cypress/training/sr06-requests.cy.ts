@@ -107,6 +107,20 @@ describe('Training: SR-06 online requests', () => {
         cy.contains('.appt-request-row', 'Juniper', { timeout: 60000 }).should('be.visible');
       });
       line('sr06-15', () => pointAt(() => cy.contains('button, [role="tab"]', /^New/).first(), 3000));
+      line('sr06-15b', () =>
+        pointAt(
+          () =>
+            cy
+              .get('body *')
+              .filter((_, el) => el.children.length === 0 && el.textContent?.trim() === 'Scheduling')
+              .filter((_, el) => {
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.top >= 0 && r.top < 160;
+              })
+              .first(),
+          4000
+        )
+      );
       line('sr06-16', () => {
         tap(() => row('Juniper').contains('button', /^Not booked$/));
         cy.contains('Mark as not booked', { timeout: 20000 }).should('be.visible');
