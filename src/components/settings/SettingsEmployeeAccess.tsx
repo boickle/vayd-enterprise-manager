@@ -25,6 +25,7 @@ import { usePermissions } from '../../permissions/PermissionContext';
 import { PermissionGate } from '../../permissions/PermissionGate';
 import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { endOfPracticeDayIso, formatPracticeDate } from '../../utils/practiceTimezone';
 import './SettingsEmployeeAccess.css';
 
 type Props = {
@@ -165,7 +166,8 @@ export default function SettingsEmployeeAccess({
       await addEmployeePermissionGrant(practiceId, employeeId, {
         permissionKey: grantKey,
         reason,
-        expiresAt: grantExpiry ? new Date(grantExpiry).toISOString() : null,
+        // The date input gives a calendar day; the grant runs to its last instant in Eastern time.
+        expiresAt: endOfPracticeDayIso(grantExpiry),
       });
       setReasonOpen(false);
       setGrantKey('');
@@ -210,9 +212,9 @@ export default function SettingsEmployeeAccess({
       <div className="settings-card">
         <h3 className="settings-card-title">License</h3>
         <p className="settings-card-subtitle">
-          Signing and locking a medical record requires a license, so a licensed technician can sign
-          and a veterinary assistant cannot. Prescriptions and refill authorizations additionally
-          require a veterinary license — no role or grant substitutes for either.
+          Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and
+          medical notes, and may enter prescription directions for the vet. No role or grant
+          substitutes for a license.
         </p>
         <PermissionGate
           permission="staff.license.manage"
@@ -269,7 +271,7 @@ export default function SettingsEmployeeAccess({
                       {grant.reason}
                       {grant.grantedByName ? ` · ${grant.grantedByName}` : ''}
                       {grant.expiresAt
-                        ? ` · ends ${new Date(grant.expiresAt).toLocaleDateString()}`
+                        ? ` · ends ${formatPracticeDate(grant.expiresAt)}`
                         : ' · no end date'}
                     </div>
                   </div>
