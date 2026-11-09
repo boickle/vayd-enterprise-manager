@@ -59,13 +59,21 @@ const noWriteButtons = () => {
 };
 
 describe('RP-08-5: Executive and Practice Manager in Marketing', () => {
+  // Wide enough that the top nav doesn't fold Marketing into "More" (as other specs do).
+  beforeEach(() => cy.viewport(1920, 1080));
+
   it('the executive sees VSD and Email campaigns with data and no save buttons', () => {
     const w = world();
     signIn(w.executiveToken);
 
-    cy.visit('/schedule/analytics/vsd');
-    cy.contains(w.doctorName, { timeout: 30000 }).should('be.visible');
-    cy.contains(w.doctorName).closest('li').should('contain.text', usd(w.doctorTotal));
+    // /schedule/analytics opens on Payments; VSD is the "Veterinary Services Delivered" chip.
+    cy.visit('/schedule/analytics');
+    cy.contains('Veterinary Services Delivered', { timeout: 30000 }).click();
+    // The name also appears in the chart legend (a hidden button), so target the doctor's list row.
+    cy.contains('li', w.doctorName, { timeout: 30000 })
+      .scrollIntoView()
+      .should('be.visible')
+      .and('contain.text', usd(w.doctorTotal));
     cy.contains('doctor-level detail is limited').should('not.exist');
     noWriteButtons();
 
