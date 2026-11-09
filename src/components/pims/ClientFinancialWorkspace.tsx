@@ -257,7 +257,7 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
-import IdexxChip from '../idexx/IdexxChip';
+import IdexxChip, { IdexxAddedTag } from '../idexx/IdexxChip';
 import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
 import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
 import IdexxSendModal from '../idexx/IdexxSendModal';
@@ -4113,6 +4113,25 @@ export default function ClientFinancialWorkspace({
   }
 
   /** Returns false when the edit was refused, so callers can put the field back. */
+  /**
+   * A lab charged to the wrong pet: the line moves to the other pet, and its in-house result
+   * (pending or entered) moves with it onto that pet's chart (LAB-07). An order already sent
+   * to IDEXX stays with the first pet, and the API says so.
+   */
+  async function moveLabLine(line: VisitInvoiceLine, toPatientId: number) {
+    const to = pets.find((p) => p.id === toPatientId);
+    if (!to) return;
+    const from = pets.find((p) => p.id === line.patientId)?.name ?? 'this pet';
+    const ok = await appConfirm({
+      title: `Move to ${to.name}?`,
+      message: `${line.description} moves from ${from} to ${to.name}, with its lab result. The result goes on ${to.name}'s chart.`,
+      confirmLabel: `Move to ${to.name}`,
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
+    await patchLine(line, { patientId: toPatientId });
+  }
+
   async function patchLine(
     line: VisitInvoiceLine,
     body: Parameters<typeof updateCounterInvoiceLine>[2],
@@ -6766,6 +6785,7 @@ export default function ClientFinancialWorkspace({
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                   {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
                                   {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                                  {isIdexxLine && idexx.isAddedInIdexx(line.id) ? <IdexxAddedTag /> : null}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -7150,6 +7170,29 @@ export default function ClientFinancialWorkspace({
                                     )}
                                   />
                                 </div>
+                              ) : null}
+                              {canEdit && pets.some((p) => p.id !== line.patientId && isFinancialPetActive(p)) ? (
+                                <label className="client-fin__lab-move">
+                                  Charged to the wrong pet?
+                                  <select
+                                    aria-label="Move to another pet"
+                                    value=""
+                                    disabled={busy}
+                                    onChange={(e) => {
+                                      const to = Number(e.target.value);
+                                      if (to) void moveLabLine(line, to);
+                                    }}
+                                  >
+                                    <option value="">Move to another pet…</option>
+                                    {pets
+                                      .filter((p) => p.id !== line.patientId && isFinancialPetActive(p))
+                                      .map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
                               ) : null}
                               <InvoiceLineLabResults
                                 results={lineLabResults ?? []}

@@ -573,7 +573,8 @@ export default function IdexxResultView({
                 </button>
               ) : null}
             </>
-          ) : canReview ? (
+          ) : canReview && result.patientId != null ? (
+            // An unmatched result is reviewed once it's on a pet's chart (it then moves to To review).
             <button
               type="button"
               className="btn btn-sm"

@@ -199,7 +199,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               <tr>
                 <th scope="col">Name</th>
                 <th scope="col">Value</th>
-                <th scope="col">Reference</th>
+                <th scope="col">Units</th>
                 <th scope="col">Comments</th>
               </tr>
             </thead>
@@ -250,9 +250,8 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                       )}
                       {abnormal ? (
                         <span className="lab-result-form__abnormal">
-                          {/* A snap test flags on the choice itself, so "out of range" would read wrong. */}
                           <AlertTriangle size={12} aria-hidden />{' '}
-                          {el.abnormalOptions?.length ? 'abnormal' : 'out of range'}
+                          abnormal
                         </span>
                       ) : null}
                     </td>

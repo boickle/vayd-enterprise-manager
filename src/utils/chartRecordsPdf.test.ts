@@ -249,14 +249,16 @@ describe('in-house lab forms on a printed record', () => {
       ...o,
     }) as never;
 
-  it('prints each value with its range and flags high, low and abnormal', () => {
+  // Owner decision, Nov 8, 2026: number ranges aren't printed or flagged, even where the
+  // form held them; an abnormal choice is still flagged.
+  it('prints each value, with no number ranges, and flags an abnormal choice', () => {
     const report = labReportFromInHouse([result()]);
     expect(report.meta).toContain('Resulted by Abby Messina');
     const [sec] = report.sections;
     expect(sec.name).toBe('CBC');
     expect(sec.rows).toEqual([
-      { test: 'WBC', result: '22.1', units: 'K/uL', range: '5.5 - 16.9', flag: 'H' },
-      { test: 'HCT', result: '30', units: '%', range: '37 - 55', flag: 'L' },
+      { test: 'WBC', result: '22.1', units: 'K/uL', range: '', flag: '' },
+      { test: 'HCT', result: '30', units: '%', range: '', flag: '' },
       { test: 'Heartworm', result: 'Positive', units: '', range: 'Negative', flag: 'A' },
     ]);
     expect(sec.notes).toContain('HCT: mild hemolysis');
@@ -273,7 +275,7 @@ describe('in-house lab forms on a printed record', () => {
 
   it('gives the AI summaries a short line per panel', () => {
     const text = labReportBriefText(labReportFromInHouse([result()]));
-    expect(text).toContain('CBC: WBC 22.1 K/uL [5.5 - 16.9] H; HCT 30 % [37 - 55] L; Heartworm Positive [Negative] A.');
+    expect(text).toContain('CBC: WBC 22.1 K/uL; HCT 30 %; Heartworm Positive [Negative] A.');
     expect(text).toContain('CBC note: HCT: mild hemolysis');
   });
 
@@ -287,7 +289,7 @@ describe('in-house lab forms on a printed record', () => {
 });
 
 describe('LAB-06-3 printed range comes from the result snapshot', () => {
-  it('prints the range the result was taken with, not the form as it is now', () => {
+  it('prints no number range or flag even when the snapshot held one (owner decision, Nov 8, 2026)', () => {
     // The builder only receives the saved result; the live form is never passed in, so the
     // range printed here is whatever the snapshot stored. A later form edit cannot change it.
     const snapshotRow = {
@@ -308,7 +310,7 @@ describe('LAB-06-3 printed range comes from the result snapshot', () => {
       } as never,
     ]);
     expect(report.sections[0].rows).toEqual([
-      { test: 'Blood glucose', result: '550', units: 'mg/dl', range: '0 - 500', flag: 'H' },
+      { test: 'Blood glucose', result: '550', units: 'mg/dl', range: '', flag: '' },
     ]);
   });
 

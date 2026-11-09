@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, Copy, Mail, Pencil } from 'lucide-react';
 import { idexxErrorMessage, saveIdexxClientSummary, type IdexxResultDetail } from '../../api/idexx';
 import IdexxReasonPrompt from './IdexxReasonPrompt';
+import { summaryPlaceholder } from './idexxClientSummaryDraft';
 import { useIdexxReviewAccess } from './useIdexxReviewAccess';
 import './Idexx.css';
 
@@ -46,6 +47,8 @@ export default function IdexxClientSummary({
 }: Props) {
   const saved = result.clientSummary ?? '';
   const [text, setText] = useState(saved);
+  /** "[doctor to add]" or another bracketed gap the draft left for the doctor. */
+  const placeholder = summaryPlaceholder(text);
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(expandSignal > 0);
   const [busy, setBusy] = useState<'save' | 'approve' | null>(null);
@@ -149,6 +152,12 @@ export default function IdexxClientSummary({
         )
       ) : null}
 
+      {open && editing && !readOnly && placeholder ? (
+        <p className="idexx-order__note idexx-order__note--warn" data-testid="idexx-summary-placeholder">
+          Replace {placeholder} with your own words before approving.
+        </p>
+      ) : null}
+
       {open && error ? <p className="idexx-order__error">{error}</p> : null}
 
       {open ? (
@@ -181,11 +190,13 @@ export default function IdexxClientSummary({
                     <button
                       type="button"
                       className="btn btn-sm"
-                      disabled={busy != null || !text.trim() || partial}
+                      disabled={busy != null || !text.trim() || partial || placeholder != null}
                       title={
                         partial
                           ? "The results aren't complete yet. Approve the wording once all results are back."
-                          : undefined
+                          : placeholder
+                            ? `Replace ${placeholder} before approving.`
+                            : undefined
                       }
                       onClick={() => void save(true)}
                     >
