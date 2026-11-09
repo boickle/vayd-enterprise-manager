@@ -13,6 +13,7 @@ const KIND_LABEL: Record<string, string> = {
   lab_result: 'Lab result',
   encounter: 'Visit record',
   problem: 'Problem list',
+  idexx_result: 'IDEXX result',
 };
 
 /**

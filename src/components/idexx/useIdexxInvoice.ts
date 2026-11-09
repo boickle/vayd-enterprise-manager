@@ -12,6 +12,8 @@ export type IdexxSyncNote = {
   orderId: number;
   added: string[];
   uncaptured: IdexxSyncResult['uncaptured'];
+  removed?: IdexxSyncResult['removed'];
+  stillCharged?: IdexxSyncResult['stillCharged'];
 };
 
 /**
@@ -48,10 +50,15 @@ export function useIdexxInvoice(
   const sync = useCallback(
     async (orderId: number) => {
       const res = await syncIdexxOrder(orderId);
-      if (res.added.length || res.uncaptured.length) {
+      if (
+        res.added.length ||
+        res.uncaptured.length ||
+        res.removed?.length ||
+        res.stillCharged?.length
+      ) {
         setNotes((prev) => [...prev.filter((n) => n.orderId !== orderId), { orderId, ...res }]);
       }
-      if (res.added.length) chargesAdded.current?.();
+      if (res.added.length || res.removed?.length) chargesAdded.current?.();
       await reload();
       return res;
     },
@@ -150,6 +157,8 @@ export function useIdexxInvoice(
     confirmRemove,
     configured: state?.configured ?? false,
     isIdexxLine: (lineId: string) => lineById.has(lineId),
+    /** Charged by Scout for a test the doctor added inside IDEXX. */
+    isAddedInIdexx: (lineId: string) => lineById.get(lineId)?.addedInIdexx === true,
     lineOrder,
     unsentFor,
     notes,

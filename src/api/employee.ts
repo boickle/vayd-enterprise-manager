@@ -22,6 +22,8 @@ export type Provider = {
   acceptsSelectedAppointmentType?: boolean;
   /** Doctor Quo/OpenPhone inbox line for outbound call/text (`from` deep link param). */
   quoLinePhone?: string | null;
+  /** False for a deactivated doctor (only returned to report pages, RP-07). */
+  isActive?: boolean;
   /** Profile image URL stored on the employee record. */
   imageUrl?: string | null;
   /** VAYD-managed profile copy (when included on vet payloads). */
@@ -143,8 +145,20 @@ function buildProviderName(r: any): string {
   return r.name || `Provider ${r.id ?? ''}`;
 }
 
-export async function fetchPrimaryProviders(): Promise<Provider[]> {
-  const { data } = await http.get('/employees/providers');
+/**
+ * `reportRange` (RP-07): report pages also list deactivated doctors who have production in
+ * these dates, so a departed doctor stays in their row and the practice total.
+ */
+export async function fetchPrimaryProviders(reportRange?: {
+  from: string;
+  to: string;
+}): Promise<Provider[]> {
+  const { data } = await http.get(
+    '/employees/providers',
+    reportRange
+      ? { params: { includeInactive: 'true', from: reportRange.from, to: reportRange.to } }
+      : undefined
+  );
   const rows: any[] = Array.isArray(data) ? data : (data?.items ?? []);
 
   return rows.map((r) => {
@@ -169,6 +183,7 @@ export async function fetchPrimaryProviders(): Promise<Provider[]> {
       dailyPointGoal: r?.dailyPointGoal ?? null,
       weeklyPointGoal: r?.weeklyPointGoal ?? null,
       quoLinePhone: typeof quoLinePhone === 'string' ? quoLinePhone : null,
+      isActive: r?.isActive === false ? false : undefined,
     };
   });
 }

@@ -476,13 +476,13 @@ export default function App() {
       out.push({ label: 'Catalog', to: CATALOG_HOME });
       out.push({ label: 'Pharmacy', to: INVENTORY_HOME });
       out.push({ label: '🎉 Pet Snapshots', to: '/schedule/patient-snapshots' });
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/schedule/analytics' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/schedule/analytics' });
       out.push({ label: 'Settings', to: '/schedule/settings' });
       if (roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()))) {
         out.push({ label: 'Admin', to: '/schedule/admin' });
       }
     } else {
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/analytics' });
       if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     }
     return out;

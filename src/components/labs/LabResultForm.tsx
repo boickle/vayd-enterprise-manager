@@ -8,17 +8,18 @@ import {
   type LabResult,
 } from '../../api/inHouseLabs';
 import { labSummaryHasText, missingLabResultRows } from '../../utils/labValues';
+import { useLabResultEnterAccess } from './useLabResultEnterAccess';
 import './LabResultForm.css';
 
 type Draft = Record<string, { value: string; comments: string }>;
 
-/** Seed the grid from saved answers, falling back to the template defaults. */
+/** Seed the grid from saved answers only. Template defaults are never pre-filled (LAB-05). */
 function toDraft(result: LabResult): Draft {
   const draft: Draft = {};
   for (const el of result.elementsSnapshot ?? []) {
     const saved = result.values?.[el.key];
     draft[el.key] = {
-      value: saved?.value ?? (result.status === 'pending' ? (el.defaultValue ?? '') : ''),
+      value: saved?.value ?? '',
       comments: saved?.comments ?? '',
     };
   }
@@ -40,6 +41,12 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
   const [error, setError] = useState<string | null>(null);
   const [missingKeys, setMissingKeys] = useState<string[]>([]);
 
+  const { canEnter } = useLabResultEnterAccess();
+  // LAB-A9: without lab_result.enter the form is read-only (front desk, client liaisons).
+  const editable = !readOnly && canEnter;
+  // LAB-A6: a completed result cannot be set back to pending; only "Save results" stays.
+  const isComplete = result.status === 'complete';
+
   const elements = useMemo(() => result.elementsSnapshot ?? [], [result.elementsSnapshot]);
   const isSummary = result.templateMode === 'summary';
 
@@ -53,6 +60,38 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
       ...draft,
       [key]: { ...(draft[key] ?? { value: '', comments: '' }), [field]: next },
     };
+    setDraft(nextDraft);
+    if (!missingKeys.length) return;
+    const missing = missingLabResultRows(elements, nextDraft);
+    setMissingKeys(missing.map((el) => el.key));
+    setError(
+      missing.length
+        ? `Enter a value or a comment on each row. Still blank: ${missing.map((el) => el.name).join(', ')}.`
+        : null,
+    );
+  }
+
+  /** Choice rows that have a normal answer and are still blank. Numeric rows are never offered. */
+  const fillableKeys = useMemo(
+    () =>
+      elements
+        .filter(
+          (el) =>
+            el.valueType === 'select' &&
+            !!el.defaultValue &&
+            (el.options ?? []).includes(el.defaultValue) &&
+            !draft[el.key]?.value,
+        )
+        .map((el) => el.key),
+    [elements, draft],
+  );
+
+  function fillNormalValues() {
+    const nextDraft: Draft = { ...draft };
+    for (const el of elements) {
+      if (!fillableKeys.includes(el.key)) continue;
+      nextDraft[el.key] = { ...(draft[el.key] ?? { comments: '' }), value: el.defaultValue ?? '' };
+    }
     setDraft(nextDraft);
     if (!missingKeys.length) return;
     const missing = missingLabResultRows(elements, nextDraft);
@@ -148,7 +187,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               setError(null);
             }}
             onBlur={setSummary}
-            disabled={readOnly}
+            disabled={!editable}
             minHeightPx={220}
             placeholder="Describe what you saw."
           />
@@ -160,7 +199,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
               <tr>
                 <th scope="col">Name</th>
                 <th scope="col">Value</th>
-                <th scope="col">Reference</th>
+                <th scope="col">Units</th>
                 <th scope="col">Comments</th>
               </tr>
             </thead>
@@ -185,7 +224,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                         <select
                           className="lab-result-form__input"
                           value={cell.value}
-                          disabled={readOnly}
+                          disabled={!editable}
                           aria-label={`${el.name} value`}
                           aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
@@ -203,7 +242,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                           type="text"
                           inputMode={el.valueType === 'number' ? 'decimal' : 'text'}
                           value={cell.value}
-                          disabled={readOnly}
+                          disabled={!editable}
                           aria-label={`${el.name} value`}
                           aria-invalid={missing || undefined}
                           onChange={(e) => setCell(el.key, 'value', e.target.value)}
@@ -211,9 +250,8 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                       )}
                       {abnormal ? (
                         <span className="lab-result-form__abnormal">
-                          {/* A snap test flags on the choice itself, so "out of range" would read wrong. */}
                           <AlertTriangle size={12} aria-hidden />{' '}
-                          {el.abnormalOptions?.length ? 'abnormal' : 'out of range'}
+                          abnormal
                         </span>
                       ) : null}
                     </td>
@@ -223,7 +261,7 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
                         className="lab-result-form__notes"
                         rows={2}
                         value={cell.comments}
-                        disabled={readOnly}
+                        disabled={!editable}
                         aria-label={`${el.name} comments`}
                         aria-invalid={missing || undefined}
                         onChange={(e) => setCell(el.key, 'comments', e.target.value)}
@@ -250,29 +288,47 @@ export default function LabResultForm({ result, onSaved, onCancel, readOnly }: P
         </p>
       ) : null}
 
+      {!canEnter && !readOnly ? (
+        <p className="lab-result-form__readonly">A tech or doctor enters results</p>
+      ) : null}
+
       {!readOnly ? (
         <div className="lab-result-form__actions">
+          {editable && !isSummary && elements.some((el) => el.valueType === 'select' && el.defaultValue) ? (
+            <button
+              type="button"
+              className="brief-btn"
+              disabled={saving !== null || !fillableKeys.length}
+              onClick={fillNormalValues}
+            >
+              Fill normal values
+            </button>
+          ) : null}
           {onCancel ? (
             <button type="button" className="brief-btn" onClick={onCancel}>
               Cancel
             </button>
           ) : null}
-          <button
-            type="button"
-            className="brief-btn"
-            disabled={saving !== null}
-            onClick={() => void save('pending')}
-          >
-            {saving === 'pending' ? 'Saving…' : 'Save, finish later'}
-          </button>
-          <button
-            type="button"
-            className="brief-btn brief-btn--primary"
-            disabled={saving !== null}
-            onClick={() => void save('complete')}
-          >
-            {saving === 'complete' ? 'Saving…' : 'Save results'}
-          </button>
+          {editable && !isComplete ? (
+            <button
+              type="button"
+              className="brief-btn"
+              disabled={saving !== null}
+              onClick={() => void save('pending')}
+            >
+              {saving === 'pending' ? 'Saving…' : 'Save, finish later'}
+            </button>
+          ) : null}
+          {editable ? (
+            <button
+              type="button"
+              className="brief-btn brief-btn--primary"
+              disabled={saving !== null}
+              onClick={() => void save('complete')}
+            >
+              {saving === 'complete' ? 'Saving…' : 'Save results'}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

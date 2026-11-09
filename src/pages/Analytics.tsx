@@ -129,7 +129,7 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   return (
     <div className="container">
       <div className="settings-page">
-        <h1 className="settings-title">Analytics</h1>
+        <h1 className="settings-title">Analytics &amp; Reports</h1>
         {isEmployeeAnalytics ? (
           <p className="settings-section-description" style={{ marginBottom: 12 }}>
             Practice-wide totals and metrics for your role; doctor-level detail is limited to

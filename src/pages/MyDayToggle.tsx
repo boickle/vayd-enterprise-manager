@@ -1,10 +1,13 @@
 // src/pages/MyDayToggle.tsx
-import { useState, useRef } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import DoctorDay, { type DoctorDayProps } from './DoctorDay';
 import DoctorDayVisual from './DoctorDayVisual';
 import { MYWEEK_STORAGE_KEY, weekStartSunday } from './MyWeek';
+import { useAuth } from '../auth/useAuth';
+import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import VetSnapDownload from '../components/inventory/VetSnapDownload';
 
 type Mode = 'list' | 'visual';
 
@@ -13,6 +16,8 @@ const SHOW_LEGACY_MY_WEEK_NAV = false;
 
 export default function MyDayToggle(props: DoctorDayProps) {
   const navigate = useNavigate();
+  const { token } = useAuth() as { token: string | null };
+  const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [mode, setMode] = useState<Mode>('visual');
   // Track the selected doctor ID from each view
   const listDoctorIdRef = useRef<string>(props.initialDoctorId || '');
@@ -174,6 +179,8 @@ export default function MyDayToggle(props: DoctorDayProps) {
         <p className="muted" style={{ marginTop: 6 }}>
           Switch between the standard list and a time-scaled visual layout.
         </p>
+        {/* Weekly Vet Snap upload: one shared file for every doctor (owner request, Nov 8, 2026). */}
+        <VetSnapDownload practiceId={practiceId} style={{ marginTop: 8 }} />
       </div>
 
       {/* Body */}

@@ -2,13 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
   getControlledReport,
-  getVetSnapPatientExport,
   setControlledReconciled,
   type ControlledReport,
   type ControlledReportDoctor,
   type ControlledReportLine,
-  type VetSnapPatientExport,
 } from '../api/inventoryOps';
+import VetSnapDownload from '../components/inventory/VetSnapDownload';
 import { fetchVeterinarians } from '../api/employee';
 import { usePermissions } from '../permissions/PermissionContext';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
@@ -131,45 +130,8 @@ export function controlledReportCsv(report: ControlledReport): string {
   return `﻿${lines.join('\r\n')}\r\n`;
 }
 
-/** The Vet Snap patient import: its 12 columns, in its order, with Scout IDs. */
-export function vetSnapPatientsCsv(data: VetSnapPatientExport): string {
-  const header = [
-    'Patient ID',
-    'Patient Name',
-    'Species',
-    'Breed',
-    'Client ID',
-    'Client First Name',
-    'Client Last Name',
-    'Client Address 1',
-    'Client Address 2',
-    'Client City',
-    'Client State',
-    'Client Zip Code',
-  ];
-  const lines = [header.join(',')];
-  for (const r of data.rows) {
-    lines.push(
-      [
-        r.patientId,
-        r.patientName,
-        r.species,
-        r.breed,
-        r.clientId,
-        r.clientFirstName,
-        r.clientLastName,
-        r.clientAddress1,
-        r.clientAddress2,
-        r.clientCity,
-        r.clientState,
-        r.clientZipCode,
-      ]
-        .map(csvCell)
-        .join(',')
-    );
-  }
-  return `${lines.join('\r\n')}\r\n`;
-}
+// The Vet Snap patient file lives with its button (shared with My Day).
+export { vetSnapPatientsCsv } from '../components/inventory/VetSnapDownload';
 
 function saveFile(csv: string, filename: string) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -532,31 +494,12 @@ export default function InventoryControlledReportPage() {
   const [report, setReport] = useState<ControlledReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [doctorFilter, setDoctorFilter] = useState<string>('');
   const [reloadTick, setReloadTick] = useState(0);
   const [wasteOnly, setWasteOnly] = useState(false);
   const [vets, setVets] = useState<Array<{ key: string; name: string }>>([]);
   const { scopeOf } = usePermissions();
   const ownOnly = scopeOf('inventory.controlled_report.view') === 'own';
-  const vetSnapScope = scopeOf('controlled.vetsnap_export');
-
-  const downloadVetSnap = async () => {
-    setExporting(true);
-    setError(null);
-    try {
-      const data = await getVetSnapPatientExport(practiceId);
-      if (data.rows.length === 0) {
-        setError(`No patients were given a controlled drug from ${data.fromDate} to ${data.toDate}.`);
-        return;
-      }
-      saveFile(vetSnapPatientsCsv(data), `vet-snap-patients-${data.fromDate}-to-${data.toDate}.csv`);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not build the Vet Snap file');
-    } finally {
-      setExporting(false);
-    }
-  };
 
   useEffect(() => {
     if (ownOnly) return;
@@ -711,21 +654,7 @@ export default function InventoryControlledReportPage() {
             </select>
           </label>
         ) : null}
-        {vetSnapScope !== 'none' ? (
-          <button
-            type="button"
-            className="btn secondary"
-            disabled={exporting}
-            onClick={() => void downloadVetSnap()}
-            title={
-              vetSnapScope === 'own'
-                ? 'Your patients given a controlled drug in the last 14 days'
-                : 'Every patient given a controlled drug in the last 14 days'
-            }
-          >
-            {exporting ? 'Building…' : 'Vet Snap patients (last 14 days)'}
-          </button>
-        ) : null}
+        <VetSnapDownload practiceId={practiceId} />
       </div>
       {busy && !report ? (
         <p className="settings-muted">Loading…</p>

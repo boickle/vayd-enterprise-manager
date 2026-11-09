@@ -118,7 +118,7 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip from '../labs/LabResultChip';
-import IdexxChip from '../idexx/IdexxChip';
+import IdexxChip, { IdexxAddedTag } from '../idexx/IdexxChip';
 import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
 import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
 import IdexxSendModal from '../idexx/IdexxSendModal';
@@ -2963,6 +2963,7 @@ export default function VisitCheckoutPanel({
                         ) : null}
                         {hasLabForms ? <LabResultChip results={lineLabResults} /> : null}
                         {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                        {isIdexxLine && idexx.isAddedInIdexx(l.id) ? <IdexxAddedTag /> : null}
                         {idexxOrder ? (
                           <IdexxRequisitionLink order={idexxOrder} onSync={idexx.sync} />
                         ) : null}

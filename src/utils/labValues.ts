@@ -27,7 +27,8 @@ export type LabFormMode = 'analytes' | 'summary';
  * Whether a reading should be flagged.
  *
  * Snap tests read Negative/Positive rather than a range, so they flag off
- * `abnormalOptions`. Free-text rows and rows with no range never flag.
+ * `abnormalOptions`. Number rows never flag (owner decision, Nov 8, 2026: no number
+ * ranges, whatever a form still holds in min/max), and neither do free-text rows.
  */
 export function isLabValueAbnormal(
   element: LabFormElement,
@@ -37,26 +38,12 @@ export function isLabValueAbnormal(
   if (element.abnormalOptions?.length) {
     return element.abnormalOptions.some((o) => o.toLowerCase() === String(value).toLowerCase());
   }
-  if (element.valueType !== 'number') return false;
-  const n = Number(value);
-  if (!Number.isFinite(n)) return false;
-  if (element.min != null && n < element.min) return true;
-  if (element.max != null && n > element.max) return true;
   return false;
 }
 
-/** "0 – 500 mg/dl", or empty when the row has no range to show. */
+/** The row's units ("mg/dl"), or empty. Number ranges aren't shown (owner decision, Nov 8, 2026). */
 export function formatLabRange(element: LabFormElement): string {
-  const hasMin = element.min != null;
-  const hasMax = element.max != null;
-  if (!hasMin && !hasMax) return '';
-  const range =
-    hasMin && hasMax
-      ? `${element.min} – ${element.max}`
-      : hasMin
-        ? `≥ ${element.min}`
-        : `≤ ${element.max}`;
-  return element.units ? `${range} ${element.units}` : range;
+  return element.valueType === 'number' && element.units ? element.units : '';
 }
 
 /** A row is answered when it has a value or a comment. Whitespace does not count. */
