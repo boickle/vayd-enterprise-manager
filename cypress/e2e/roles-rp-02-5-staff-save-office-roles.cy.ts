@@ -80,13 +80,22 @@ describe('RP-02-5: Settings → Staff saves keep office roles', () => {
         });
         technicianAssignments().should('deep.equal', before);
 
-        // Step 2: deactivate, handing open tasks to the practice manager.
-        cy.contains('button', /^Deactivate$/).click();
+        // Step 2: deactivate, handing open tasks to the practice manager. RP-03 replaced Deactivate with
+        // Offboard; a last day already over (yesterday, Eastern) deactivates them straight away.
+        cy.intercept('POST', '**/employee-offboarding/*').as('offboard');
+        cy.contains('button', /^Offboard$/).click();
         cy.get('.settings-employee-modal').within(() => {
-          cy.get('select').select(String(forwarderId));
-          cy.contains('button', /^Deactivate$/).click();
+          cy.get('input[aria-label="Last day"]')
+            .clear()
+            .type(
+              new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(
+                new Date(Date.now() - 864e5)
+              )
+            );
+          cy.get('select[aria-label="Their tasks go to"]').select(String(forwarderId));
+          cy.contains('button', /^Offboard$/).click();
         });
-        cy.wait('@saveEmployee');
+        cy.wait('@offboard');
 
         technicianRecord().should((rec) => {
           expect(rec.isActive).to.eq(false);
