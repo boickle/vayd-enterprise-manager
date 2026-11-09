@@ -14,7 +14,7 @@ vi.mock('../api/visitWorkflow', () => ({ VISIT_WORKFLOW_PRACTICE_ID: 1 }));
 vi.mock('./membershipCancelEstimateLine', () => ({}));
 vi.mock('./euthanasiaFutureAppointments', () => ({}));
 
-import { deathWrapUpTriggeredByInvoice } from './deathWrapUp';
+import { deathWrapUpTriggeredByInvoice, membershipCancelMoneyLabel } from './deathWrapUp';
 
 type Line = Parameters<typeof deathWrapUpTriggeredByInvoice>[0] extends infer I
   ? I extends { lines?: Array<infer L> }
@@ -53,4 +53,35 @@ it("ignores a removed or returned charge, and another pet's charge", () => {
   expect(
     deathWrapUpTriggeredByInvoice(invoice([line({ patientId: 8, catalogChangePatientStatusTo: 'Euthanized' })]), 7)
   ).toBe(false);
+});
+
+describe('membershipCancelMoneyLabel: no partial refund (owner rule, Nov 9, 2026)', () => {
+  const base = {
+    membershipId: 5,
+    planName: 'Membership - Canine Golden - Monthly',
+    petName: 'Pepper',
+    billingInterval: 'monthly' as const,
+    termStart: '2026-08-01T00:00:00.000Z',
+    termLabel: 'membership year',
+    paidThisTerm: 99,
+    usedThisTerm: 0,
+    chargeAmount: 0,
+    refundAmount: 0,
+    hasCard: true,
+    coveredLines: [],
+    paidLines: [],
+    ownerWillSee: '',
+  };
+
+  it('says the unused part is kept, not refunded', () => {
+    expect(membershipCancelMoneyLabel({ ...base, unusedAmount: 99 }, 'inactivate')).toBe(
+      'No refund: the unused $99.00 is kept under the agreement',
+    );
+  });
+
+  it('still names a charge when more was used than paid', () => {
+    expect(membershipCancelMoneyLabel({ ...base, chargeAmount: 40, unusedAmount: 0 }, 'inactivate')).toBe(
+      'Will charge $40.00 on cancel',
+    );
+  });
 });

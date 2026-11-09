@@ -39,8 +39,9 @@ import {
   defaultChatHoursOfOperation,
   type ChatHoursOfOperation,
 } from '../../utils/chatHours';
-import { pickRecommendedPlan, planFitsPet } from '../../utils/membershipAge';
+import { pickRecommendedPlan } from '../../utils/membershipAge';
 import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
+import { planAllowedForPet, planMatchesSpecies } from '../../utils/membershipPlanFit';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import { fetchClientInfo } from '../../api/clientPortal';
 import PostVisitCardEntry from './PostVisitCardEntry';
@@ -97,42 +98,9 @@ function listedPriceForPlan(plan: Bundle): number | null {
   return plan.priceMonthly ?? plan.price ?? null;
 }
 
-/** Portal / room-loader plan family (foundations, golden, …). */
-type PlanFamily = 'foundations' | 'golden' | 'comfort-care' | 'starter' | 'other';
-
-function planFamily(plan: Bundle): PlanFamily {
-  const blob = `${plan.portalSlug || ''} ${plan.tier || ''} ${plan.name || ''}`.toLowerCase();
-  if (/\bstarter\b|puppy|kitten/.test(blob)) return 'starter';
-  if (/\bcomfort\b/.test(blob)) return 'comfort-care';
-  if (/\bgolden\b/.test(blob)) return 'golden';
-  if (/\bfoundations?\b/.test(blob)) return 'foundations';
-  return 'other';
-}
-
 function planIsPlus(plan: Bundle): boolean {
   return /\bplus\b/i.test(`${plan.tier || ''} ${plan.name || ''}`);
 }
-
-/**
- * Same plan-age rule as MembershipSignup and the room loader: a plan is offered
- * when the pet's age is inside its range, and a plan with no ages set is offered
- * to every pet. With the age unknown, only plans with no ages set are offered.
- */
-function planAllowedForPet(plan: Bundle, ageYears: number | null | undefined): boolean {
-  if (planFamily(plan) === 'comfort-care') return false;
-  return planFitsPet(plan, ageYears == null ? null : ageYears * 12, null);
-}
-
-function planMatchesSpecies(plan: Bundle, kind: 'dog' | 'cat' | null): boolean {
-  if (!kind) return false;
-  const planKind =
-    resolveMembershipPetKind({ species: plan.species }) ||
-    resolveMembershipPetKind({ species: plan.name }) ||
-    resolveMembershipPetKind({ breed: plan.name });
-  if (!planKind) return true;
-  return planKind === kind;
-}
-
 
 function ageYearsFromPatientPayload(payload: unknown): number | null {
   if (payload == null || typeof payload !== 'object') return null;
@@ -1569,7 +1537,7 @@ export default function PostVisitMembershipSignup({
                 ) : (
                   emailing
                     ? 'Email agreement to sign'
-                    : signupActionLabel(preview, skipRefund, billingInterval)
+                    : signupActionLabel(preview, skipRefund, billingInterval, ownerAlreadyPaid)
                 )}
               </button>
             </>
@@ -1628,8 +1596,9 @@ function signupActionLabel(
   preview: PostVisitSignupPreview | null,
   skipRefund: boolean,
   billingInterval: MembershipBillingInterval,
+  ownerAlreadyPaid = false,
 ): string {
-  if (!preview) return `Sign up & refund ${money(0)}`;
+  if (!preview) return ownerAlreadyPaid ? 'Refund visit' : 'Sign up';
   if (preview.ownerAlreadyPaid) {
     if (skipRefund) return 'Re-price only (no refund)';
     if (preview.manualSettlement && preview.refundDue > 0.009) {

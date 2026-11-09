@@ -49,15 +49,17 @@ import {
   type PatientMembership,
 } from '../../api/memberships';
 import {
-  addCounterInvoiceLine,
-  ensureCounterInvoice,
+  getClientCardOnFile,
   listClientVisitInvoices,
+  type ClientCardOnFile,
   type VisitInvoice,
 } from '../../api/visitWorkflow';
+import PostVisitCardEntry from '../soap/PostVisitCardEntry';
+import { planAllowedForPet, planMatchesSpecies } from '../../utils/membershipPlanFit';
+import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { apiErrorMessage, getToken } from '../../api/http';
 import {
   getPracticeSettings,
-  membershipAssignFeeToProvider,
   membershipPostVisitSignupWindowHours,
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
@@ -400,10 +402,18 @@ export default function PatientMembershipPanel({
   const [editDraft, setEditDraft] = useState<BenefitDraft | null>(null);
   const [cancelPreview, setCancelPreview] = useState<MembershipCancelPreview | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  /** The agreement gives no partial refund; staff may refund the unused part as an exception, with a reason. */
+  const [refundException, setRefundException] = useState(false);
+  const [refundExceptionReason, setRefundExceptionReason] = useState('');
   const [cancelLoading, setCancelLoading] = useState(false);
   const cancelSectionRef = useRef<HTMLDivElement | null>(null);
   /** Blocks double-submit before React re-renders with `busy` (FE-STF-012, FE-STF-026). */
   const actionLockRef = useRef(false);
+
+  // Enrolment billing: the card Stripe charges for the first period and bills after (owner decision, Nov 9, 2026).
+  const [enrolCardOnFile, setEnrolCardOnFile] = useState<ClientCardOnFile['card']>(null);
+  const [enrolUseCardOnFile, setEnrolUseCardOnFile] = useState(true);
+  const enrolCreateCardRef = useRef<(() => Promise<string>) | null>(null);
 
   // Plan change / enrolment.
   const [changeReason, setChangeReason] = useState('');
@@ -648,6 +658,8 @@ export default function PatientMembershipPanel({
     setEditDraft(null);
     setCancelPreview(null);
     setCancelReason('');
+    setRefundException(false);
+    setRefundExceptionReason('');
     setAgreementAccepted(false);
     setAgreementSignature('');
     setAgreementSignatureDrawing('');
@@ -917,19 +929,32 @@ export default function PatientMembershipPanel({
     }
     const interval = billingIntervalForPlan(plan);
     const price = listedPriceForPlan(plan, interval);
+    const useCardOnFile = Boolean(enrolCardOnFile) && enrolUseCardOnFile;
     actionLockRef.current = true;
     setBusy(true);
     setFormError(null);
-    let ok = false;
     try {
-      ok = await appConfirm({
+      const cardLine = useCardOnFile && enrolCardOnFile
+        ? `the card on file (${enrolCardOnFile.brand ?? 'card'} ending ${enrolCardOnFile.last4 ?? '????'})`
+        : 'the card entered below';
+      const ok = await appConfirm({
         title: `Enroll in ${plan.name}?`,
-        message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}, billed ${
-          interval === 'annual' ? 'annually' : 'monthly'
-        } on an ongoing basis. You’ll open a counter invoice to collect the membership fee.`,
-        confirmLabel: 'Enroll',
+        message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}. Stripe charges ${
+          price != null ? money(price) : 'the first period'
+        } today on ${cardLine}, then bills it ${
+          interval === 'annual' ? 'every year' : 'every month'
+        } on its own.`,
+        confirmLabel: price != null ? `Enroll & charge ${money(price)}` : 'Enroll',
       });
       if (!ok) return;
+      let paymentMethodId: string | undefined;
+      if (!useCardOnFile) {
+        if (!enrolCreateCardRef.current) {
+          setFormError('Enter the card for the membership.');
+          return;
+        }
+        paymentMethodId = await enrolCreateCardRef.current();
+      }
       const signedAt = new Date().toISOString();
       const created = await createPatientMembership({
         patientId,
@@ -943,6 +968,9 @@ export default function PatientMembershipPanel({
         agreementText: buildMembershipAgreementText(
           agreementHours ?? defaultChatHoursOfOperation(),
         ),
+        startBilling: true,
+        clientId: clientId != null ? Number(clientId) : undefined,
+        paymentMethodId,
       });
       setMembership(created);
       await refreshAudit(created.id);
@@ -953,40 +981,7 @@ export default function PatientMembershipPanel({
           message: created.warnings.join('\n\n'),
         });
       }
-
-      if (clientId != null && Number(clientId) > 0) {
-        try {
-          const settings = await getPracticeSettings(practiceId).catch(() => ({}));
-          const assignToProvider = membershipAssignFeeToProvider(settings);
-          const invoice = await ensureCounterInvoice({
-            clientId: Number(clientId),
-            patientId,
-          });
-          const withLine = await addCounterInvoiceLine(invoice.id, {
-            description: plan.name,
-            qty: 1,
-            unitPrice: price ?? created.price ?? 0,
-            listUnitPrice: price ?? created.price ?? null,
-            patientId,
-            sourceBundleId: plan.id,
-            sourceBundleName: plan.name,
-            miscCharge: true,
-            excludeFromProduction: !assignToProvider,
-          });
-          navigate(
-            buildClientFinancialHref({
-              clientId,
-              invoice: withLine.id,
-              patientId,
-            }),
-          );
-          return;
-        } catch (invoiceErr) {
-          setError(
-            `Enrolled, but could not open the invoice: ${apiErrorMessage(invoiceErr)}`,
-          );
-        }
-      }
+      void load();
     } catch (e) {
       setFormError(apiErrorMessage(e));
     } finally {
@@ -994,6 +989,28 @@ export default function PatientMembershipPanel({
       setBusy(false);
     }
   }
+
+  // The card the membership will bill: the household's card on file when there is one.
+  useEffect(() => {
+    if (mode !== 'enrol' || clientId == null) return;
+    let cancelled = false;
+    void getClientCardOnFile(Number(clientId))
+      .then((res) => {
+        if (cancelled) return;
+        const card = res?.card && !res.card.expired ? res.card : null;
+        setEnrolCardOnFile(card);
+        setEnrolUseCardOnFile(Boolean(card));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEnrolCardOnFile(null);
+          setEnrolUseCardOnFile(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, clientId]);
 
   useEffect(() => {
     if (mode !== 'cancel') return;
@@ -1028,6 +1045,32 @@ export default function PatientMembershipPanel({
       setFormError('Tell us why the owner is canceling.');
       return;
     }
+    const unused = cancelPreview?.unusedAmount ?? 0;
+    const refundUnused = refundException && unused > 0.009;
+    if (refundUnused && !refundExceptionReason.trim()) {
+      setFormError('Say why you are refunding the unused part. It is an exception to the agreement.');
+      return;
+    }
+    const charge = cancelPreview?.chargeAmount ?? 0;
+    const refund = refundUnused ? unused : 0;
+    const ok = await appConfirm({
+      title: `Cancel ${membership.planName}?`,
+      message:
+        charge > 0.009
+          ? `${patientName ?? 'This pet'}'s membership ends now, and ${money(charge)} is charged to the card on file (covered services used beyond what was paid).`
+          : refund > 0.009
+            ? `${patientName ?? 'This pet'}'s membership ends now, and ${money(refund)} is refunded to the owner's card as an exception to the agreement.`
+            : unused > 0.009
+              ? `${patientName ?? 'This pet'}'s membership ends now. Nothing is charged, and the unused ${money(unused)} is not refunded (no partial refunds under the agreement).`
+              : `${patientName ?? 'This pet'}'s membership ends now. Nothing is charged or refunded.`,
+      confirmLabel:
+        charge > 0.009
+          ? `Cancel & charge ${money(charge)}`
+          : refund > 0.009
+            ? `Cancel & refund ${money(refund)}`
+            : 'Cancel membership',
+    });
+    if (!ok) return;
     actionLockRef.current = true;
     setBusy(true);
     setError(null);
@@ -1035,7 +1078,9 @@ export default function PatientMembershipPanel({
     try {
       const result = await cancelMembership(membership.id, reason, {
         chargeAmount: cancelPreview?.chargeAmount,
-        refundAmount: cancelPreview?.refundAmount,
+        refundAmount: refundUnused ? unused : cancelPreview?.refundAmount,
+        refundUnused,
+        refundReason: refundUnused ? refundExceptionReason.trim() : undefined,
       });
       setMembership(result.membership);
       setInactiveDetailsOpen(false);
@@ -1065,6 +1110,14 @@ export default function PatientMembershipPanel({
 
   const groupOptions = membership?.groups ?? [];
   /** A cancelled membership still shows its history, but the pet can be put on a plan again. */
+  /** Plans that fit this pet's species and age (same rule as post-visit signup and the portal). */
+  const enrolPlans = useMemo(() => {
+    const kind = resolveMembershipPetKind({ species: patientSpecies ?? null });
+    if (!kind) return plans;
+    return plans.filter(
+      (plan) => planMatchesSpecies(plan, kind) && planAllowedForPet(plan, patientAgeYears ?? null),
+    );
+  }, [plans, patientSpecies, patientAgeYears]);
   const canEnrol = !loading && (!membership || membership.status !== 'active');
   const ownerPaidOnline = (() => {
     if (membership?.status !== 'active') return false;
@@ -1075,7 +1128,9 @@ export default function PatientMembershipPanel({
     const started = Date.parse(membership.startDate);
     if (!Number.isFinite(started)) return false;
     // A future-dated plan is not an enrollment we can refund yet.
-    return started - Date.now() <= 3_600_000;
+    if (started - Date.now() > 3_600_000) return false;
+    // Only while a paid visit is inside the post-visit signup window (the server checks the window too).
+    return postVisitHoursLeft != null && postVisitHoursLeft > 0;
   })();
 
   function renderBenefitRow(benefit: MembershipBenefit, group: MembershipGroup) {
@@ -1490,17 +1545,56 @@ export default function PatientMembershipPanel({
                 disabled={busy}
               />
               <p className="pmp-muted">
-                Enrolling lets you price this visit at member rates. Collect the membership fee on
-                the counter invoice. The signed agreement is filed on this pet after payment and
-                stays off the printed medical record.
+                Enrolling prices this visit at member rates. Stripe charges the first month or year
+                today on the card below, then bills it on its own. The signed agreement is filed on
+                this pet and stays off the printed medical record.
               </p>
-              {plans.length === 0 ? (
+              <div className="pmp-enrol-card">
+                <span className="pmp-field__label">Card for the membership</span>
+                {enrolCardOnFile ? (
+                  <div className="pmp-enrol-card__choice" role="radiogroup" aria-label="Card for the membership">
+                    <label className="pmp-check">
+                      <input
+                        type="radio"
+                        name="pmp-enrol-card"
+                        checked={enrolUseCardOnFile}
+                        onChange={() => setEnrolUseCardOnFile(true)}
+                        disabled={busy}
+                      />
+                      <span>
+                        Card on file · {enrolCardOnFile.brand ?? 'Card'} ending {enrolCardOnFile.last4}
+                      </span>
+                    </label>
+                    <label className="pmp-check">
+                      <input
+                        type="radio"
+                        name="pmp-enrol-card"
+                        checked={!enrolUseCardOnFile}
+                        onChange={() => setEnrolUseCardOnFile(false)}
+                        disabled={busy}
+                      />
+                      <span>A different card</span>
+                    </label>
+                  </div>
+                ) : null}
+                {!enrolCardOnFile || !enrolUseCardOnFile ? (
+                  <PostVisitCardEntry
+                    name={null}
+                    onReady={(create) => {
+                      enrolCreateCardRef.current = create;
+                    }}
+                  />
+                ) : null}
+              </div>
+              {enrolPlans.length === 0 ? (
                 <p className="pmp-muted">
-                  No active membership plans yet. Plans are built in Settings → Memberships.
+                  {plans.length === 0
+                    ? 'No active membership plans yet. Plans are built in Settings → Memberships.'
+                    : `No plans fit ${patientName ?? 'this pet'}'s species and age. Check the pet's species and birthday, or the plans' ages in Settings → Memberships.`}
                 </p>
               ) : (
                 <ul className="pmp-plans">
-                  {plans.map((plan) => (
+                  {enrolPlans.map((plan) => (
                     <li key={plan.id} className="pmp-plan">
                       <div className="pmp-plan__main">
                         <span className="pmp-plan__name">{plan.name}</span>
@@ -1597,7 +1691,9 @@ export default function PatientMembershipPanel({
                         <PimsBadge tone="info">{customCount} added for this pet</PimsBadge>
                       ) : null}
                     </div>
-                    {membership.status === 'active' && membership.membershipFeePaid ? (
+                    {membership.status === 'active' &&
+                    membership.membershipFeePaid &&
+                    !membership.benefitsPaused ? (
                       <p className="pmp-muted pmp-summary__fee-note">
                         Benefits are available right away.
                       </p>
@@ -1906,15 +2002,15 @@ export default function PatientMembershipPanel({
                           <span>
                             {cancelPreview.chargeAmount > 0.009
                               ? 'Owner owes'
-                              : cancelPreview.refundAmount > 0.009
-                                ? 'Refund to owner'
+                              : (cancelPreview.unusedAmount ?? 0) > 0.009
+                                ? 'Unused (not refunded)'
                                 : 'Settlement'}
                           </span>
                           <strong>
                             {money(
                               cancelPreview.chargeAmount > 0.009
                                 ? cancelPreview.chargeAmount
-                                : cancelPreview.refundAmount,
+                                : cancelPreview.unusedAmount ?? cancelPreview.refundAmount,
                             )}
                           </strong>
                         </div>
@@ -1946,6 +2042,34 @@ export default function PatientMembershipPanel({
                       reason — try again if this stays empty.
                     </p>
                   )}
+                  {cancelPreview && (cancelPreview.unusedAmount ?? 0) > 0.009 ? (
+                    <div className="pmp-refund-exception">
+                      <label className="pmp-check">
+                        <input
+                          type="checkbox"
+                          checked={refundException}
+                          onChange={(e) => setRefundException(e.target.checked)}
+                          disabled={busy}
+                        />
+                        <span>
+                          <strong>Refund the unused {money(cancelPreview.unusedAmount ?? 0)} (exception)</strong>{' '}
+                          — the agreement gives no partial refund. Only when the practice decides to make an
+                          exception.
+                        </span>
+                      </label>
+                      {refundException ? (
+                        <label className="pmp-field pmp-field--full">
+                          <span className="pmp-field__label">Why make an exception?</span>
+                          <input
+                            className="pmp-input"
+                            value={refundExceptionReason}
+                            placeholder="e.g. approved by the practice manager after the owner's complaint"
+                            onChange={(e) => setRefundExceptionReason(e.target.value)}
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <label className="pmp-field pmp-field--full">
                     <span className="pmp-field__label">Why is the owner canceling?</span>
                     <textarea
@@ -1980,8 +2104,8 @@ export default function PatientMembershipPanel({
                         ? 'Canceling…'
                         : cancelPreview?.chargeAmount && cancelPreview.chargeAmount > 0.009
                           ? `Cancel & charge ${money(cancelPreview.chargeAmount)}`
-                          : cancelPreview?.refundAmount && cancelPreview.refundAmount > 0.009
-                            ? `Cancel & refund ${money(cancelPreview.refundAmount)}`
+                          : refundException && (cancelPreview?.unusedAmount ?? 0) > 0.009
+                            ? `Cancel & refund ${money(cancelPreview?.unusedAmount ?? 0)}`
                             : 'Cancel membership'}
                     </button>
                   </div>
@@ -2291,11 +2415,13 @@ export default function PatientMembershipPanel({
                 </h3>
                 <p className="pmp-confirm__body">
                   The owner already paid for {membership?.planName ?? 'this membership'}
-                  {membership?.billingInterval === 'annual'
-                    ? ' annually'
-                    : membership?.billingInterval === 'monthly'
-                      ? ' monthly'
-                      : ''}{' '}
+                  {/(monthly|annual)/i.test(membership?.planName ?? '')
+                    ? ''
+                    : membership?.billingInterval === 'annual'
+                      ? ' annually'
+                      : membership?.billingInterval === 'monthly'
+                        ? ' monthly'
+                        : ''}{' '}
                   online. This reviews the visit at member prices and refunds what the membership
                   covers. The membership fee is not charged again. Nothing is refunded until you
                   confirm the amount on the next screen.
@@ -2338,7 +2464,7 @@ export default function PatientMembershipPanel({
             setAgreementsKey((k) => k + 1);
           }}
           onCompleted={() => {
-            setPostVisitOpen(false);
+            // Stay on the receipt (refund and charge results, client email) until staff click Done.
             setAgreementsKey((k) => k + 1);
             void load();
           }}
