@@ -23,7 +23,8 @@ import {
 } from '@mui/material';
 import Refresh from '@mui/icons-material/Refresh';
 import dayjs from 'dayjs';
-import { fetchVeterinarians, type Provider } from '../api/employee';
+import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
+import { labelDeactivatedProviders } from '../utils/deactivatedProviderLabel';
 import {
   fetchAllAppointmentTypes,
   type EmployeeWeeklySchedule,
@@ -191,8 +192,15 @@ export default function BookingCalendarAnalytics() {
     (async () => {
       try {
         const result = await fetchVeterinarians();
+        // RP-07: deactivated doctors with production in these dates stay in the list.
+        const withActivity = await fetchPrimaryProviders({ from: startStr, to: endStr }).catch(
+          () => [] as Provider[]
+        );
         if (!alive) return;
-        setProviders(uniqueProviders(Array.isArray(result.providers) ? result.providers : []));
+        const departed = labelDeactivatedProviders(withActivity.filter((p) => p.isActive === false));
+        setProviders(
+          uniqueProviders([...(Array.isArray(result.providers) ? result.providers : []), ...departed])
+        );
       } catch (e) {
         if (!alive) return;
         console.error('fetchVeterinarians failed:', e);
@@ -204,7 +212,7 @@ export default function BookingCalendarAnalytics() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [startStr, endStr]);
 
   useEffect(() => {
     let alive = true;

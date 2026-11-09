@@ -44,6 +44,7 @@ import {
   Legend,
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { labelDeactivatedProviders } from '../utils/deactivatedProviderLabel';
 import {
   fetchEmployeeGoals,
   getGoalForDate,
@@ -365,9 +366,10 @@ export default function VeterinaryServicesDeliveredPage() {
     let alive = true;
     (async () => {
       try {
-        const list = await fetchPrimaryProviders();
+        // RP-07: deactivated doctors with production in these dates stay in their row and the total.
+        const list = await fetchPrimaryProviders({ from: startStr, to: endStr });
         if (!alive) return;
-        setProviders(Array.isArray(list) ? list : []);
+        setProviders(Array.isArray(list) ? labelDeactivatedProviders(list) : []);
       } catch (e) {
         if (!alive) return;
         console.error('fetchPrimaryProviders failed:', e);
@@ -377,7 +379,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [startStr, endStr]);
 
   // Load goals, weekly schedules, and schedule overrides; keep only those with at least one goal set
   useEffect(() => {
