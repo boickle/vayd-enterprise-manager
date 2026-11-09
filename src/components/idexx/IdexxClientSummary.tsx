@@ -3,6 +3,9 @@ import { CheckCircle2, ChevronDown, ChevronRight, Copy, Mail, Pencil } from 'luc
 import { idexxErrorMessage, saveIdexxClientSummary, type IdexxResultDetail } from '../../api/idexx';
 import IdexxReasonPrompt from './IdexxReasonPrompt';
 import { summaryPlaceholder } from './idexxClientSummaryDraft';
+import { summaryEditorHtml, summaryPlainText } from './clientSummaryHtml';
+import MessageTemplateHtmlEditor from '../messageTemplates/MessageTemplateHtmlEditor';
+import { sanitizeCommunicationHtml } from '../../utils/sanitizeCommunicationHtml';
 import { useIdexxReviewAccess } from './useIdexxReviewAccess';
 import './Idexx.css';
 
@@ -48,7 +51,7 @@ export default function IdexxClientSummary({
   const saved = result.clientSummary ?? '';
   const [text, setText] = useState(saved);
   /** "[doctor to add]" or another bracketed gap the draft left for the doctor. */
-  const placeholder = summaryPlaceholder(text);
+  const placeholder = summaryPlaceholder(summaryPlainText(text));
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(expandSignal > 0);
   const [busy, setBusy] = useState<'save' | 'approve' | null>(null);
@@ -72,7 +75,8 @@ export default function IdexxClientSummary({
   }, [expandSignal]);
 
   const approved = Boolean(result.clientSummaryApprovedAt) && !editing;
-  const dirty = text.trim() !== saved.trim();
+  // Compared as text, so opening the editor (plain → HTML) doesn't count as a change.
+  const dirty = summaryPlainText(text).trim() !== summaryPlainText(saved).trim();
 
   async function save(approve: boolean, reason?: string) {
     if (approve && mustGiveReason && !reason) {
@@ -95,7 +99,7 @@ export default function IdexxClientSummary({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(summaryPlainText(text));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -105,7 +109,7 @@ export default function IdexxClientSummary({
 
   if (!saved && !editing) return null;
 
-  const preview = saved.replace(/\s+/g, ' ').trim();
+  const preview = summaryPlainText(saved).replace(/\s+/g, ' ').trim();
 
   return (
     <div className="idexx-client-summary">
@@ -139,16 +143,22 @@ export default function IdexxClientSummary({
 
       {open ? (
         editing && !readOnly ? (
-          <textarea
-            className="settings-input idexx-client-summary__text"
-            rows={10}
-            maxLength={8000}
-            value={text}
-            disabled={busy != null}
-            onChange={(e) => setText(e.target.value)}
-          />
+          // The same formatting editor as the email window (owner, Nov 9, 2026): full width,
+          // with bold, italics, lists and links; the draft's paragraphs and bullets carry over.
+          <div className="idexx-client-summary__editor" data-testid="idexx-summary-editor">
+            <MessageTemplateHtmlEditor
+              value={text}
+              disabled={busy != null}
+              placeholder="Write the summary the family will read…"
+              onChange={setText}
+            />
+          </div>
         ) : (
-          <div className="idexx-client-summary__text idexx-client-summary__text--read">{saved}</div>
+          <div
+            className="idexx-client-summary__text idexx-client-summary__text--read"
+            // Sanitized: the summary is the doctor's own formatting, never raw input from elsewhere.
+            dangerouslySetInnerHTML={{ __html: sanitizeCommunicationHtml(summaryEditorHtml(saved)) }}
+          />
         )
       ) : null}
 
@@ -169,7 +179,10 @@ export default function IdexxClientSummary({
                   type="button"
                   className="btn secondary btn-sm"
                   disabled={busy != null}
-                  onClick={() => setEditing(true)}
+                  onClick={() => {
+                    setText(summaryEditorHtml(saved));
+                    setEditing(true);
+                  }}
                 >
                   <Pencil size={13} aria-hidden /> Edit
                 </button>
@@ -190,7 +203,7 @@ export default function IdexxClientSummary({
                     <button
                       type="button"
                       className="btn btn-sm"
-                      disabled={busy != null || !text.trim() || partial || placeholder != null}
+                      disabled={busy != null || !summaryPlainText(text).trim() || partial || placeholder != null}
                       title={
                         partial
                           ? "The results aren't complete yet. Approve the wording once all results are back."
