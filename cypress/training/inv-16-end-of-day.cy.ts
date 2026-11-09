@@ -34,7 +34,7 @@ describe('Training: INV-16 end of day', () => {
     line('inv16-11', () => {
       tap(() => cy.get('#deposit-bank-label').parent().find('[role="combobox"]'));
     });
-    line('inv16-11b', () => tap(() => cy.contains('[role="option"]', 'Operating account')));
+    line('inv16-11b', () => tap(() => cy.contains('[role="option"]', 'Skowhegan Savings')));
     line('inv16-12', () => pointAt(() => cy.contains('label', 'Deposited on'), 3500));
     line('inv16-13', () => pointAt(() => cy.contains('.MuiCard-root', 'Undeposited payments').find('table'), 6000));
     line('inv16-14', () => {
@@ -46,9 +46,9 @@ describe('Training: INV-16 end of day', () => {
     line('inv16-16', () => pointAt(() => cy.contains('Deposit slip draft').parent(), 6000));
     line('inv16-17', () => {
       tap(() => cy.contains('button', /^Create deposit$/));
-      cy.contains('Deposit posted to Operating account', { timeout: 30000 }).should('exist');
+      cy.contains('Deposit posted to Skowhegan Savings', { timeout: 30000 }).should('exist');
     });
-    line('inv16-18', () => pointAt(() => cy.contains('Deposit posted to Operating account'), 4000));
+    line('inv16-18', () => pointAt(() => cy.contains('Deposit posted to Skowhegan Savings'), 4000));
     // Printing opens a system dialog that would freeze the recording, so the browser's print is a no-op here.
     offCamera(() => cy.window().then((win) => { win.print = () => undefined; }));
     line('inv16-19', () => tap(() => cy.contains('button', 'Print deposit slip')));

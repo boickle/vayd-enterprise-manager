@@ -1,10 +1,10 @@
 [
- {"id": "inv16-01", "text": "Cash and checks are the payments most likely to go missing. A same-day deposit means every one is accounted for."},
- {"id": "inv16-02", "text": "Every check and cash payment goes into a deposit the same day."},
+ {"id": "inv16-01", "text": "If you take any cash or check payment, you must deposit it this way, every day."},
+ {"id": "inv16-02", "text": "Keep the day's cash and checks together as one deposit, with the printed deposit slip, for the bank."},
  {"id": "inv16-09", "text": "Click Create deposit, under Quick actions."},
  {"id": "inv16-10", "text": "Every cash and check payment not yet deposited is listed here."},
  {"id": "inv16-11", "text": "Open the bank account list."},
- {"id": "inv16-11b", "text": "And choose Operating account."},
+ {"id": "inv16-11b", "text": "Choose Skowhegan Savings or Bath Savings, whichever is closer to you."},
  {"id": "inv16-12", "text": "And the date you take it to the bank."},
  {"id": "inv16-13", "text": "Each cash and check payment, and who it was for."},
  {"id": "inv16-14", "text": "Tick the cash."},
@@ -12,7 +12,7 @@
  {"id": "inv16-16", "text": "The slip lists each check, and the total should match what's in your hand."},
  {"id": "inv16-17", "text": "Click Create deposit."},
  {"id": "inv16-18", "text": "Scout posts the deposit and shows the slip."},
- {"id": "inv16-19", "text": "Click Print deposit slip for the bank."},
+ {"id": "inv16-19", "text": "Click Print deposit slip. Either bank accepts this printed slip, or even a slip of paper with our account number and the total you're depositing."},
  {"id": "inv16-20", "text": "Then close it. The deposit is listed under Recent deposits, and the payments are gone from the undeposited list."},
- {"id": "inv16-21", "text": "The most common mistakes are leaving checks in the car overnight, and leaving a cash payment out of the deposit. Remember: every check and cash payment goes into a deposit the same day."}
+ {"id": "inv16-21", "text": "Even if you don't print the slip and use your own piece of paper, you must still create the deposit in Scout. Every cash and check payment goes into a deposit the same day."}
 ]

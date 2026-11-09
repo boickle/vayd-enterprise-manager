@@ -36,8 +36,12 @@ INSERT INTO practice_payment_types ("practiceId", name, "optionType", "isDefault
 SELECT 1, 'Cash', 'cash', false, true, true, 1 WHERE NOT EXISTS (SELECT 1 FROM practice_payment_types WHERE "practiceId"=1 AND name='Cash');
 INSERT INTO practice_payment_types ("practiceId", name, "optionType", "isDefault", "getsDeposited", "isActive", "sortOrder")
 SELECT 1, 'Check', 'check', false, true, true, 2 WHERE NOT EXISTS (SELECT 1 FROM practice_payment_types WHERE "practiceId"=1 AND name='Check');
+-- The practice's two deposit banks, by their real names (owner, Nov 9, 2026); the account numbers are made up.
 INSERT INTO practice_deposit_bank_accounts ("practiceId", name, "accountNumber", "isActive", "sortOrder")
-SELECT 1, 'Operating account', '000123456', true, 1 WHERE NOT EXISTS (SELECT 1 FROM practice_deposit_bank_accounts WHERE "practiceId"=1 AND name='Operating account');
+SELECT 1, 'Skowhegan Savings', '000123456', true, 1 WHERE NOT EXISTS (SELECT 1 FROM practice_deposit_bank_accounts WHERE "practiceId"=1 AND name='Skowhegan Savings');
+INSERT INTO practice_deposit_bank_accounts ("practiceId", name, "accountNumber", "isActive", "sortOrder")
+SELECT 1, 'Bath Savings Institution', '000654321', true, 2 WHERE NOT EXISTS (SELECT 1 FROM practice_deposit_bank_accounts WHERE "practiceId"=1 AND name='Bath Savings Institution');
+UPDATE practice_deposit_bank_accounts SET "isActive"=false WHERE "practiceId"=1 AND name='Operating account';
 
 -- The shared test database carries old cash payments with no client or payment type from other tests; set them
 -- aside so the undeposited list shows only this demo's payments.
