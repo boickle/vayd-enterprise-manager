@@ -18,8 +18,8 @@ describe('Training: SR-16 on the road', () => {
     hideNonProdBanner();
     resetDemo();
     const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-    // Today 11:00 New York (EST, UTC-5 in November).
-    const start = new Date(`${ymd}T16:00:00.000Z`);
+    // Today, at the current half hour, so Now (start) lands inside the scheduled time.
+    const start = new Date(Math.floor(Date.now() / 1_800_000) * 1_800_000);
     let id = 0;
     schedulingApi<{ id: number }>('cl', 'POST', '/appointments', {
       practiceId: w.practiceId, primaryProviderId: w.doctors.A, clientId: w.households.B.clientId, patientId: w.households.B.petId,

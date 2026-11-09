@@ -127,3 +127,9 @@ Dry runs use the free Mac voice (Samantha) on my own test stack: database vayd_a
 - **SR-18:** recorded with an admin token minted for the training world (test stack only). Nothing was saved. The test manager user was set back to its normal role afterwards.
 - **SR-23:** a pointer tour of the nine mistakes; page loads are cut.
 - **Test-only setup changes (not committed):** the demo reset now reactivates the demo pets after SR-17. Each SR-06 and SR-07 run clears the public form's rate-limit counters. The stack sets APP_URL to the recording app so offer links work.
+
+## Owner answers and re-records (Nov 9, 2026)
+- **Follow-up visit type (SR-10, SR-12):** owner chose "make them choose the type every time, with an error if none". Follow-ups from the Forward booking list, care outreach, the waitlist and the schedule loader now start Get Best Route on "Select type…", and searching without one says "Choose an appointment type for this follow-up." The visit team's planner keeps its type. build-doctor-flow commit `3e73c0c9` (test `Routing.followUpChooseType.test.ts`). SR-10 and SR-12 were re-recorded to show it.
+- **Texted offers:** owner confirmed a family's confirmation should go to To review, so CLs check the slot still works. SR-08 is correct as recorded.
+- **SR-09** re-recorded: the search line is now covered by narration (no silent stretch).
+- **SR-16** re-recorded in the daytime, with the visit at the current half hour (scheduled 10:00–10:45, actual start 10:11).

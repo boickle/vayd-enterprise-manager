@@ -48,7 +48,7 @@ describe('Training: SR-10 forward booking list', () => {
         cy.contains('button', /^Get Best Route$/, { timeout: 30000 }).should('exist');
       });
       line('sr10-07', () => {
-        // The card's type isn't carried over from this list (bug noted in the review), so pick it.
+        // Follow-ups start with no type; the CL chooses it (owner, Nov 9, 2026).
         choose(
           () => cy.get('select').filter(':visible').filter((_, el) => Array.from((el as HTMLSelectElement).options).some((o) => o.text === 'Recheck')).first(),
           'Recheck'

@@ -1,18 +1,66 @@
 [
- {"id": "sr09-01", "text": "Cancellations happen every day. The waitlist turns a lost hour into a visit for a family who wanted to come in sooner."},
- {"id": "sr09-02", "text": "Tom Chen would like something sooner. Keep the visit, and add him to the waitlist."},
- {"id": "sr09-03", "text": "The family and pet are filled in."},
- {"id": "sr09-04", "text": "The one thing to remember: when a visit cancels, check the waitlist before the slot goes to waste."},
- {"id": "sr09-05", "text": "How soon can they come?"},
- {"id": "sr09-06", "text": "Add anything that helps: best times, who to call."},
- {"id": "sr09-07", "text": "Add."},
- {"id": "sr09-08", "text": "Added."},
- {"id": "sr09-09", "text": "On the Waitlist, the card shows how soon, the visit they already have, and who they'd like to see."},
- {"id": "sr09-10", "text": "When a visit cancels, pick the doctor and the date of the opening here. Families that fit move to the top."},
- {"id": "sr09-11", "text": "Recommend slot searches that doctor's day for the family."},
- {"id": "sr09-12", "text": "Pick the doctor and visit type, and search."},
- {"id": "sr09-13", "text": "Pick the time, then Next."},
- {"id": "sr09-14", "text": "Book it if you have the family on the phone. Otherwise, text them the offer. That's the next video."},
- {"id": "sr09-15", "text": "For a family that already has a visit, Recommend slot opens Explore alternatives, so their visit stays until the new time is confirmed."},
- {"id": "sr09-16", "text": "The most common mistakes: letting a cancelled slot sit empty, and adding a family without saying how soon they can come. Remember: when a visit cancels, check the waitlist before the slot goes to waste."}
+ {
+  "id": "sr09-01",
+  "text": "Cancellations happen every day. The waitlist turns a lost hour into a visit for a family who wanted to come in sooner."
+ },
+ {
+  "id": "sr09-02",
+  "text": "Tom Chen would like something sooner. Keep the visit, and add him to the waitlist."
+ },
+ {
+  "id": "sr09-03",
+  "text": "The family and pet are filled in."
+ },
+ {
+  "id": "sr09-04",
+  "text": "The one thing to remember: when a visit cancels, check the waitlist before the slot goes to waste."
+ },
+ {
+  "id": "sr09-05",
+  "text": "How soon can they come?"
+ },
+ {
+  "id": "sr09-06",
+  "text": "Add anything that helps: best times, who to call."
+ },
+ {
+  "id": "sr09-07",
+  "text": "Add."
+ },
+ {
+  "id": "sr09-08",
+  "text": "Added."
+ },
+ {
+  "id": "sr09-09",
+  "text": "On the Waitlist, the card shows how soon, the visit they already have, and who they'd like to see."
+ },
+ {
+  "id": "sr09-10",
+  "text": "When a visit cancels, pick the doctor and the date of the opening here. Families that fit move to the top."
+ },
+ {
+  "id": "sr09-11",
+  "text": "Recommend slot searches that doctor's day for the family."
+ },
+ {
+  "id": "sr09-12",
+  "text": "Pick the doctor and visit type, and search. Routing checks each open time against the day's drive, so it takes a few seconds."
+ },
+ {
+  "id": "sr09-13",
+  "text": "Pick the time, then Next."
+ },
+ {
+  "id": "sr09-14",
+  "text": "Book it if you have the family on the phone. Otherwise, text them the offer. That's the next video."
+ },
+ {
+  "id": "sr09-15",
+  "text": "For a family that already has a visit, Recommend slot opens Explore alternatives, so their visit stays until the new time is confirmed."
+ },
+ {
+  "id": "sr09-16",
+  "text": "The most common mistakes: letting a cancelled slot sit empty, and adding a family without saying how soon they can come. Remember: when a visit cancels, check the waitlist before the slot goes to waste."
+ }
 ]
