@@ -2,6 +2,8 @@
 # Start the isolated TEST stack for training videos: a fresh copy of the test database, the seeded demo world
 # with demo names, fake Stripe and fake OSRM, the API (no scheduled jobs, email captured, SMS/Gmail keys blank)
 # on :3210 and Vite on :5210. Nothing here can reach a real client.
+# The API starts with the control DB off (its real Gmail, OpenPhone and Stripe keys would override the blank ones),
+# Gmail polling off, and no AI keys (chart summaries would otherwise send demo data to Anthropic/OpenAI).
 #
 #   API_DIR=<vayd-api checkout> stack-up.sh
 # Work files: ${TRAINING_WORK:-~/.vayd-training}/stack (world.json, logs, captured email).
@@ -34,6 +36,7 @@ SMS_KEY=; SMS_FROM=; SMS_PRELOAD=
 if [ "${TRAINING_SMS_CAPTURE:-0}" = 1 ]; then SMS_KEY=captured-not-real; SMS_FROM=+19195550100; SMS_PRELOAD=" --require $HERE/sms-capture-preload.cjs"; fi
 (redis-cli -n $TRAINING_REDIS_DB flushdb >/dev/null; PORT=$TRAINING_API_PORT REDIS_URL=redis://127.0.0.1:6379/$TRAINING_REDIS_DB OSRM_URL=http://127.0.0.1:$TRAINING_OSRM_PORT ROUTING_PROVIDER=osrm \
   DB_DATABASE=$DB MIGRATION_DB_NAME=$DB DISABLE_SCHEDULED_JOBS=true STRIPE_API_BASE=$STRIPE_BASE \
+  CONTROL_DB_ENABLED=false GMAIL_POLL_INTERVAL_MS=0 ANTHROPIC_API_KEY= OPENAI_API_KEY= \
   E2E_API_DIR="$API" EMAIL_CAPTURE_PATH="$S/emails.jsonl" APPOINTMENT_REQUEST_TEST_EMAIL=deirdre@vetatyourdoor.com \
   APPOINTMENT_REQUEST_TEST_SMS= ROOM_LOADER_TEST_SMS= OPENPHONE_API_KEY=$SMS_KEY OPENPHONE_FROM=$SMS_FROM SMS_REMINDERS_FROM=$SMS_FROM SMS_TEST_NUMBER=9195550199 \
   SMS_CAPTURE_PATH="$S/sms.jsonl" GMAIL_SMTP_PASS= GMAIL_SMTP_USER= GMAIL_OAUTH_CLIENT_SECRET= GMAIL_OAUTH_CLIENT_ID= GMAIL_TOKEN_ENCRYPTION_KEY= GMAIL_PUBSUB_TOPIC= \

@@ -1,0 +1,15 @@
+[
+  { "id": "m14-01", "text": "When a family cancels partway through the year, Scout compares what they've paid this membership year with the covered services they've used." },
+  { "id": "m14-02", "text": "Remember: read the preview to the owner before you cancel. If they used more than they paid, the difference is charged to their card." },
+  { "id": "m14-03", "text": "Maria is moving out of our area, and wants to cancel Maple's plan. Click Cancel." },
+  { "id": "m14-04", "text": "First, the sentence the owner will see. Read it to her." },
+  { "id": "m14-05", "text": "Paid this membership year, covered services used, and what's left unused. Under the membership agreement, the unused part isn't refunded." },
+  { "id": "m14-06", "text": "Below that, each payment and each covered service that went into the numbers." },
+  { "id": "m14-07", "text": "Only if the practice decides to make an exception, tick Refund the unused part, and say why. It's recorded in the audit trail." },
+  { "id": "m14-08", "text": "Type why she's canceling." },
+  { "id": "m14-09", "text": "Click Cancel membership." },
+  { "id": "m14-10", "text": "Scout confirms what happens: the membership ends now, nothing is charged, and nothing is refunded." },
+  { "id": "m14-11", "text": "Click Cancel membership to confirm." },
+  { "id": "m14-12", "text": "Scout opens Maria's account on the settlement record. The membership is inactive, Stripe billing stops, and she gets an email with the breakdown." },
+  { "id": "m14-13", "text": "The most common mistakes: cancelling in the Stripe dashboard, which Scout never hears about, and using Cancel when a pet has died. That has its own steps. Remember: read the preview to the owner before you cancel." }
+]

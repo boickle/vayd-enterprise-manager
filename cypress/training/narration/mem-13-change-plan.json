@@ -1,0 +1,58 @@
+[
+ {
+  "id": "m13-01",
+  "text": "Sometimes a pet starts on the wrong plan, or the family wants a different one. Change plan moves the membership, and its billing, in one step."
+ },
+ {
+  "id": "m13-02",
+  "text": "Remember: after the first month of the membership year, only a lead client liaison or a manager can change the plan."
+ },
+ {
+  "id": "m13-03",
+  "text": "Maple was signed up on Canine Golden ten days ago. At four years old, she belongs on Foundations."
+ },
+ {
+  "id": "m13-04",
+  "text": "It's within the first month, so anyone at the visit can fix it. Click Change plan."
+ },
+ {
+  "id": "m13-05",
+  "text": "Carry usage over keeps what Maple has already used counted, so the new plan can't hand it back. Leave it ticked."
+ },
+ {
+  "id": "m13-06",
+  "text": "Type a short reason."
+ },
+ {
+  "id": "m13-07",
+  "text": "Then pick the new plan: Canine Foundations, monthly. Click Move to this plan."
+ },
+ {
+  "id": "m13-08",
+  "text": "Scout spells out what changes, including how the billing difference is handled."
+ },
+ {
+  "id": "m13-09",
+  "text": "Click Move to confirm."
+ },
+ {
+  "id": "m13-09b",
+  "text": "Scout moved the Stripe billing for you. Maple was billed one month at the Golden price, so the thirty dollar difference comes off her next bills. It isn't refunded to the card."
+ },
+ {
+  "id": "m13-09c",
+  "text": "Click OK."
+ },
+ {
+  "id": "m13-10",
+  "text": "Maple is now on Canine Foundations, at the new price, with the same start and end dates."
+ },
+ {
+  "id": "m13-11",
+  "text": "The audit trail records who changed it, and why."
+ },
+ {
+  "id": "m13-12",
+  "text": "The most common mistakes: unticking Carry usage over, and cancelling and re-enrolling instead, which starts a new year and a second charge. Remember: after the first month of the membership year, only a lead client liaison or a manager can change the plan."
+ }
+]
