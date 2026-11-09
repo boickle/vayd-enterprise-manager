@@ -23,6 +23,10 @@ describe('Training: LV-06 review an IDEXX result', () => {
     const tab = (name: string) => cy.contains('[role="tab"]', name);
     const row = () => cy.get('button[aria-label="Expand Juniper"], button[aria-label="Collapse Juniper"]').first();
 
+    // Under All recent, open the result just reviewed (the Final one), not a newer partial.
+    const reviewedRow = () =>
+      cy.contains('.idexx-result-list__row', /Final ·/).filter(':contains("Juniper")').first().find('button[aria-label="Expand Juniper"]');
+
     startClock();
     line('lv06-01');
     line('lv06-02');
@@ -47,10 +51,10 @@ describe('Training: LV-06 review an IDEXX result', () => {
     });
     line('lv06-13', () => {
       tap(() => tab('All recent'));
-      row().should('exist');
+      reviewedRow().should('exist');
     });
     line('lv06-13b', () => {
-      tap(row);
+      tap(reviewedRow);
       cy.get('[data-testid="idexx-reviewed-by"]', { timeout: 30000 }).should('exist');
       pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 2500);
     });

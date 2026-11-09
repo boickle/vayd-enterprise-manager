@@ -112,7 +112,11 @@ export function newestCompleteResult(petId: number): Cypress.Chainable<number> {
  */
 export function freshResults(ids: number[]) {
   const list = ids.join(',');
-  sqlRun(`UPDATE idexx_results SET "reviewedAt"=now() WHERE "reviewedAt" IS NULL AND id NOT IN (${list})`);
+  // Only complete results are set aside as reviewed: the app never lets a partial be marked reviewed,
+  // so a partial set aside here would show "Reviewed" on camera. Undo that on any an earlier take touched.
+  const pending = `EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(payload->'categories','[]'::jsonb)) c, jsonb_array_elements(COALESCE(c->'tests','[]'::jsonb)) t WHERE lower(btrim(t->>'result'))='pending')`;
+  sqlRun(`UPDATE idexx_results SET "reviewedAt"=NULL, "reviewedByEmployeeId"=NULL WHERE "reviewedByEmployeeId" IS NULL AND ${pending}`);
+  sqlRun(`UPDATE idexx_results SET "reviewedAt"=now() WHERE "reviewedAt" IS NULL AND id NOT IN (${list}) AND NOT ${pending}`);
   sqlRun(
     `UPDATE idexx_results SET "reviewedAt"=NULL, "reviewedByEmployeeId"=NULL, "reviewedReason"=NULL, "clientSummary"=NULL, ` +
       `"clientSummaryApprovedAt"=NULL, "clientSummaryApprovedByEmployeeId"=NULL, "clientSummaryApprovedReason"=NULL, ` +
