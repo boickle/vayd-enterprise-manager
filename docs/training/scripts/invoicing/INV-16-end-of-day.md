@@ -1,6 +1,6 @@
 # INV-16. End of day: today's payments, and the bank deposit
 
-- **Audience:** every CL, tech and doctor who takes cash or checks, plus managers and billing.
+- **Audience:** managers and billing, plus field staff who bring back checks or cash.
 - **Length:** 2 to 3 minutes.
 - **Watch first:** EMR V5.
 - **The one thing to remember:** every check and cash payment goes into a deposit the same day.
@@ -41,7 +41,7 @@
 
 ## What other roles see
 
-- **Create deposit** is for every CL, tech and doctor, plus managers and billing (owner, Nov 9, 2026). Anyone who takes cash or checks makes the deposit.
+- **Create deposit** is for managers, doctors, technicians, lead CLs and billing (field staff drop checks at the bank). A plain CL has no **Create deposit** in the menu, and the page doesn't open for them.
 - **Void** on a deposit shows to managers only: a technician and a doctor saw the page with no Void.
 - **The Payments report** needs the Payments report permission.
 
