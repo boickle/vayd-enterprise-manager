@@ -282,6 +282,8 @@ export type VisitInvoice = {
    */
   lotsCleared?: boolean;
   lotsClearedLineId?: string;
+  /** Only on the reply to a line edit that moved a lab to another pet: what stays with the first pet (LAB-07). */
+  labWarnings?: string[];
   /**
    * A line of this invoice has a return whose credit still stands: it can't be unlocked or
    * reopened (owner decision, Nov 1, 2026).
@@ -1676,6 +1678,7 @@ export async function updateCounterInvoiceLine(
   );
   // Every screen that edits a line hears about it, whichever field changed the quantity.
   if (data?.lotsCleared) void appAlert({ title: 'Lots cleared', message: LOTS_CLEARED_MESSAGE });
+  if (data?.labWarnings?.length) void appAlert({ title: 'Lab stays with the first pet', message: data.labWarnings.join('\n') });
   return data;
 }
 
@@ -1747,7 +1750,6 @@ export async function voidInvoice(
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
     reason: opts?.reason,
-    voidedByEmployeeId: opts?.voidedByEmployeeId,
     ...removeDoseParams(opts?.removeDose),
   });
   return data;
@@ -1756,15 +1758,11 @@ export async function voidInvoice(
 /** Soft-delete an unused open invoice so it leaves the ledger. */
 export async function discardVisitInvoice(
   id: string,
-  opts?: { deletedByEmployeeId?: number | null },
+  _opts?: { deletedByEmployeeId?: number | null },
 ): Promise<void> {
   await http.delete(`/visit-invoices/${encodeURIComponent(id)}`, {
-    params: {
-      practiceId: pid(),
-      ...(opts?.deletedByEmployeeId != null
-        ? { deletedByEmployeeId: opts.deletedByEmployeeId }
-        : {}),
-    },
+    // The server takes the actor from the login (RP-A5).
+    params: { practiceId: pid() },
   });
 }
 

@@ -33,6 +33,8 @@ const TRIGGER_DESCRIPTIONS: Record<TaskAutomationTrigger, string> = {
     'An in-house lab was charged and its results were never entered. The doctor on the visit is added as a watcher.',
   membership_signup_failed:
     'Someone tried to sign up for a membership and it failed. Two hours later they still are not a member.',
+  vetsnap_weekly_upload:
+    'Weekly reminder to download the Vet Snap patient file and upload it to Vet Snap. Closes itself once anyone downloads the file.',
 };
 
 const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
@@ -42,7 +44,10 @@ const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
   call_unfiled: 'Whoever made the call',
   lab_result_missing: 'Whoever put the lab on the bill',
   membership_signup_failed: 'The client liaison queue',
+  vetsnap_weekly_upload: 'The practice manager',
 };
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function employeeName(e: Employee): string {
   return [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || `#${e.id}`;
@@ -270,9 +275,11 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                 <h3 className="auto-tasks__name">{rule.name}</h3>
                 <p className="auto-tasks__summary">
                   {TRIGGER_DESCRIPTIONS[rule.trigger]}{' '}
-                  {rule.timingMode === 'end_of_day'
-                    ? `Checked at ${hourLabel(rule.endOfDayHour)}.`
-                    : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
+                  {rule.timingMode === 'weekly'
+                    ? `Every ${WEEKDAYS[rule.weeklyDay] ?? 'week'} at ${hourLabel(rule.endOfDayHour)} (Eastern).`
+                    : rule.timingMode === 'end_of_day'
+                      ? `Checked at ${hourLabel(rule.endOfDayHour)}.`
+                      : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
                   {rule.assigneeMode === 'owner'
                     ? `Goes to ${ASSIGNEE_OWNER_LABELS[rule.trigger].toLowerCase()}.`
                     : rule.assigneeMode === 'role'
@@ -316,6 +323,37 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     />
                   </label>
 
+                  {rule.timingMode === 'weekly' ? (
+                    <>
+                      <label className="auto-tasks__field">
+                        <span>Day of the week</span>
+                        <select
+                          value={rule.weeklyDay}
+                          onChange={(e) => void save(rule, { weeklyDay: Number(e.target.value) })}
+                        >
+                          {WEEKDAYS.map((d, i) => (
+                            <option key={d} value={i}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="auto-tasks__field">
+                        <span>Time (Eastern)</span>
+                        <select
+                          value={rule.endOfDayHour}
+                          onChange={(e) => void save(rule, { endOfDayHour: Number(e.target.value) })}
+                        >
+                          {Array.from({ length: 24 }, (_, h) => (
+                            <option key={h} value={h}>
+                              {hourLabel(h)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : (
+                  <>
                   <label className="auto-tasks__field">
                     <span>When it fires</span>
                     <select
@@ -363,6 +401,8 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                         ))}
                       </select>
                     </label>
+                  )}
+                  </>
                   )}
 
                   <label className="auto-tasks__field">

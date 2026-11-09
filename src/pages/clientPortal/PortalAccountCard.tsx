@@ -248,7 +248,7 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
               </button>
             ) : null}
 
-            <div className="vayd-store">
+            <div className="vayd-store vayd-store--embedded">
               <StoreGiftCardCodeEntry
                 practiceId={practiceId}
                 applied={giftCodes}
@@ -265,7 +265,7 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
             </div>
 
             {!needsCard ? null : enterNewCard || !cards.length ? (
-              <div className="vayd-store">
+              <div className="vayd-store vayd-store--embedded">
                 <StoreCartCardEntry
                   ref={newCardRef}
                   billingPrefill={billingPrefill}
@@ -313,7 +313,7 @@ export default function PortalAccountCard({ clientId, email, customerName, onSho
           onClose={() => setInvoicesOpen(false)}
           labelledBy="pp-account-invoices-title"
         >
-          <div className="vayd-store">
+          <div className="vayd-store vayd-store--embedded">
             <StoreOpenInvoicesPanel invoices={invoices} />
           </div>
           <div className="pp-modal-foot">

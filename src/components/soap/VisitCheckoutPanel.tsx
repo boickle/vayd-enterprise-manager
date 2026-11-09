@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { membershipCoveredAmount, membershipCoveredLabel } from '../../utils/membershipCoveredRow';
 import { PrevisitCheckinPriceNote } from './PrevisitCheckinPriceNote';
 import { INVOICE_HAS_RETURNS_MESSAGE } from '../inventory/returnLineStock';
 import {
@@ -118,7 +119,7 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip from '../labs/LabResultChip';
-import IdexxChip from '../idexx/IdexxChip';
+import IdexxChip, { IdexxAddedTag } from '../idexx/IdexxChip';
 import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
 import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
 import IdexxSendModal from '../idexx/IdexxSendModal';
@@ -2963,6 +2964,7 @@ export default function VisitCheckoutPanel({
                         ) : null}
                         {hasLabForms ? <LabResultChip results={lineLabResults} /> : null}
                         {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                        {isIdexxLine && idexx.isAddedInIdexx(l.id) ? <IdexxAddedTag /> : null}
                         {idexxOrder ? (
                           <IdexxRequisitionLink order={idexxOrder} onSync={idexx.sync} />
                         ) : null}
@@ -3796,8 +3798,8 @@ export default function VisitCheckoutPanel({
           <div className="soap-invoice-totals">
             {Number(invoice.membershipAdjustments) !== 0 && (
               <div className="soap-invoice-row covered">
-                <span>Membership covered</span>
-                <span>{money(invoice.membershipAdjustments)}</span>
+                <span>{membershipCoveredLabel(invoice.lines ?? [])}</span>
+                <span>{membershipCoveredAmount(invoice.membershipAdjustments)}</span>
               </div>
             )}
             {Number(invoice.subtotal) !== Number(invoice.total) && (

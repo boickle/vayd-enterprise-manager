@@ -1,12 +1,10 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
 import type { JSX } from 'react';
 import { Navigate, useLocation } from 'react-router';
-import MembershipPromotionsPage from './pages/MembershipPromotions';
-import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import AdminUsers from './pages/AdminUsers';
 import PlatformPractices from './pages/PlatformPractices';
-import { getFrontendPaymentProvider } from './config/paymentProvider';
+import { APPOINTMENT_REQUEST_PROMOTIONS_PATH, MEMBERSHIP_PROMOTIONS_PATH } from './marketing-nav';
 
 export type AdminTabPage = {
   path: string;
@@ -38,18 +36,6 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     role: ADMIN,
   },
   {
-    path: 'membership-promotions',
-    label: 'Promotions',
-    element: <MembershipPromotionsPage />,
-    role: ADMIN,
-  },
-  {
-    path: 'appointment-request-promotions',
-    label: 'Appt Request Promotions',
-    element: <AppointmentRequestPromotionsPage />,
-    role: ADMIN,
-  },
-  {
     path: 'practices',
     label: 'Practices',
     element: <PlatformPractices />,
@@ -60,6 +46,21 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     path: 'open-phone-coaching',
     label: 'Open Phone Coaching',
     element: <OpenPhoneCoaching />,
+    role: ADMIN,
+    hidden: true,
+  },
+  // RP-08: both promotions pages moved to Marketing (owner decision D3 menus). Old links redirect.
+  {
+    path: 'membership-promotions',
+    label: 'Membership Promotions',
+    element: <Navigate to={MEMBERSHIP_PROMOTIONS_PATH} replace />,
+    role: ADMIN,
+    hidden: true,
+  },
+  {
+    path: 'appointment-request-promotions',
+    label: 'Appointment Request Promotions',
+    element: <Navigate to={APPOINTMENT_REQUEST_PROMOTIONS_PATH} replace />,
     role: ADMIN,
     hidden: true,
   },
@@ -116,7 +117,5 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
 
 /** Admin tabs visible to the current environment. */
 export function getAdminTabPages(): AdminTabPage[] {
-  const stripeOnlyPaths = new Set(['membership-promotions']);
-  const useStripe = getFrontendPaymentProvider() === 'stripe';
-  return ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
+  return ADMIN_TAB_PAGES;
 }

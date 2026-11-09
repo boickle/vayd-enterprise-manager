@@ -9,6 +9,12 @@ vi.mock('../api/appointmentRequestPromotions', () => ({
   updateAppointmentRequestPromotion: vi.fn(),
 }));
 
+// RP-08: the panel now checks who may edit (store.coupon.manage or marketing.manage); this user may.
+vi.mock('../auth/useAuth', () => ({ useAuth: () => ({ role: 'employee' }) }));
+vi.mock('../permissions/PermissionContext', () => ({
+  useCan: (key: string) => key === 'store.coupon.manage',
+}));
+
 import AppointmentRequestPromotionsPanel from './AppointmentRequestPromotionsPanel';
 import { optionalExpiresIso, toDateInputValue } from '../utils/promotionExpiry';
 

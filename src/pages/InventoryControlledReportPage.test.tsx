@@ -86,6 +86,13 @@ const api = vi.hoisted(() => ({
 vi.mock('../api/inventoryOps', () => ({
   getControlledReport: vi.fn(async () => api.report),
   getVetSnapPatientExport: vi.fn(),
+  getVetSnapLastDownload: vi.fn(async () => ({
+    at: '2026-11-12T14:14:00.000Z',
+    byName: 'Abigail Reyes',
+    fromDate: '2026-10-30',
+    toDate: '2026-11-12',
+    rowCount: 12,
+  })),
   setControlledReconciled: (...a: unknown[]) => api.setControlledReconciled(...(a as [])),
 }));
 vi.mock('../api/employee', () => ({
@@ -294,15 +301,21 @@ describe('INV-A14: Controlled drugs report', () => {
   it('tells a doctor with own-only access that the report is their doses', async () => {
     scopes.value = {
       'inventory.controlled_report.view': 'own',
-      'controlled.vetsnap_export': 'own',
+      'controlled.vetsnap_export': 'all',
     };
     render(<InventoryControlledReportPage />);
     await screen.findByRole('region', { name: 'Dr. Avery' });
     expect(screen.getByText(/You are seeing the doses recorded under you/)).toBeInTheDocument();
+    // Vet Snap is shared across doctors, so the file is everyone's (owner decision, Nov 8, 2026).
     expect(screen.getByRole('button', { name: 'Vet Snap patients (last 14 days)' })).toHaveAttribute(
       'title',
-      'Your patients given a controlled drug in the last 14 days'
+      'Every client given a controlled drug in the last 14 days, under any doctor, for the Vet Snap upload'
     );
+  });
+
+  it('says who last downloaded the Vet Snap file and when', async () => {
+    render(<InventoryControlledReportPage />);
+    expect(await screen.findByText(/^Last downloaded by Abigail Reyes on \w{3} 11\/12 at /)).toBeInTheDocument();
   });
 
   it('hides the Vet Snap download without that permission', async () => {
