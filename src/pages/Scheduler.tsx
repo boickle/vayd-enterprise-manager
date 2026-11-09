@@ -407,6 +407,7 @@ import { returnToAppointmentRequestsList } from '../utils/appointmentRequestList
 import {
   writeAppointmentRequestReturnSession,
 } from '../utils/appointmentRequestReturnSession';
+import { navigateAfterAppointmentRequestBook } from '../utils/appointmentRequestPostBookReturn';
 import {
   clearAppointmentRequestStaffConfirmSession,
   readAppointmentRequestStaffConfirmSession,
@@ -8283,12 +8284,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       if (shouldReturnAfterAppointmentRequestBook) {
         const startIso = bookSlot!.start.toUTC().toISO();
+        const bookTypeId = detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+        const bookTypeRow =
+          bookTypeId != null
+            ? typeList.find((t) => Number(t.id) === Number(bookTypeId))
+            : undefined;
+        const bookTypeName =
+          bookTypeRow?.name?.trim() || bookTypeRow?.prettyName?.trim() || null;
+        const isHold = isHoldAppointmentTypeForBook(typeCatalog, {
+          typeId: bookTypeId,
+          typeName: bookTypeName,
+        });
         if (startIso) {
           writeAppointmentRequestReturnSession({
             appointmentRequestSubmissionId: Number(prefillAtBook!.appointmentRequestSubmissionId),
             bookedAppointmentId: savedId!,
             bookedAppointmentStart: startIso,
             bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+            isHold,
+            openSms: true,
           });
         }
         if (embedInRoutingWorkspace || routingPreview) {
@@ -8312,7 +8326,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             /* ignore */
           }
         }
-        returnFromAppointmentRequestWorkspace(navigate, ariAtBook);
+        navigateAfterAppointmentRequestBook(navigate, {
+          isHold,
+          appointmentRequestSubmissionId: Number(prefillAtBook!.appointmentRequestSubmissionId),
+          returnListTab: ariAtBook?.returnListTab,
+          returnToGmail: ariAtBook?.returnToGmail,
+        });
         return;
       }
 
