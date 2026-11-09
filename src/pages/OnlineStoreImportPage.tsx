@@ -4047,7 +4047,7 @@ const blankCoupon = (): CouponDraft => ({
   code: '',
   name: '',
   discountType: 'percent',
-  amount: '10',
+  amount: '',
   minSubtotal: '',
   uses: 'unlimited',
   membershipOnly: false,
@@ -4204,6 +4204,7 @@ function CouponEditor({
                 className="settings-input"
                 type="number"
                 min={0}
+                placeholder="10"
                 value={draft.amount}
                 onChange={(e) => set({ amount: e.target.value })}
               />

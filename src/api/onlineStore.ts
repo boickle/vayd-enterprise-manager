@@ -884,6 +884,8 @@ export async function createStaffMailOrder(
     shippingPaymentStatus?: MailOrder['shippingPaymentStatus'];
     sendWithoutPayment?: boolean;
     payAfterApproval?: boolean;
+    /** B10: the doctor approved this script at the visit. */
+    approvedByDoctor?: boolean;
     doctorEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
     shippingChargeName?: string | null;
