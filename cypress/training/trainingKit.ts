@@ -151,7 +151,10 @@ function moveTo(doc: Document, r: DOMRect, highlightMs: number) {
 }
 
 /** Moves the cursor onto the element and outlines it, then clicks it (dblclick when asked). */
-export function tap(get: () => Cypress.Chainable<JQuery<HTMLElement>>, how: 'click' | 'dblclick' = 'click') {
+export function tap(
+  get: () => Cypress.Chainable<JQuery<HTMLElement>>,
+  how: 'click' | 'dblclick' | 'rightclick' = 'click'
+) {
   center(get).then(($el) => {
     moveTo($el[0].ownerDocument, $el[0].getBoundingClientRect(), 2000);
   });
@@ -164,7 +167,9 @@ export function tap(get: () => Cypress.Chainable<JQuery<HTMLElement>>, how: 'cli
     pointer(doc).style.transform = 'scale(.85)';
     ripple(doc, r.left + r.width / 2, r.top + r.height / 2);
   });
-  how === 'dblclick' ? get().dblclick() : get().click();
+  if (how === 'dblclick') get().dblclick();
+  else if (how === 'rightclick') get().rightclick();
+  else get().click();
   cy.wait(250, { log: false });
   cy.document({ log: false }).then((doc) => {
     pointer(doc).style.transform = 'scale(1)';

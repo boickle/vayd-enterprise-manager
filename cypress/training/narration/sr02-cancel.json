@@ -1,0 +1,90 @@
+[
+ {
+  "id": "sr02-01",
+  "text": "When a visit is cancelled, the reason is kept on the visit and counted in our cancellation reports. A real reason tells us why families cancel."
+ },
+ {
+  "id": "sr02-02",
+  "text": "Maria Rivera called. Maple is feeling better and doesn't need this afternoon's visit."
+ },
+ {
+  "id": "sr02-03",
+  "text": "The one thing to remember: every cancel needs a real reason, and a visit that has started can't be removed."
+ },
+ {
+  "id": "sr02-04",
+  "text": "Right-click the visit."
+ },
+ {
+  "id": "sr02-05",
+  "text": "Open Scheduling,"
+ },
+ {
+  "id": "sr02-06",
+  "text": "and click Remove."
+ },
+ {
+  "id": "sr02-07",
+  "text": "Remove doesn't delete the visit. It's kept, and marked cancelled."
+ },
+ {
+  "id": "sr02-08",
+  "text": "Scout won't remove it without a reason."
+ },
+ {
+  "id": "sr02-09",
+  "text": "It asks for one."
+ },
+ {
+  "id": "sr02-10",
+  "text": "Say who cancelled and why, in a few words."
+ },
+ {
+  "id": "sr02-11",
+  "text": "Then click Remove Visit."
+ },
+ {
+  "id": "sr02-12",
+  "text": "It's off the calendar, and the reason is saved with the visit."
+ },
+ {
+  "id": "sr02-13",
+  "text": "Biscuit's visit has already started."
+ },
+ {
+  "id": "sr02-14",
+  "text": "Right-click it,"
+ },
+ {
+  "id": "sr02-15",
+  "text": "open Scheduling,"
+ },
+ {
+  "id": "sr02-16",
+  "text": "and click Remove."
+ },
+ {
+  "id": "sr02-17",
+  "text": "Type a reason,"
+ },
+ {
+  "id": "sr02-18",
+  "text": "and click Remove Visit."
+ },
+ {
+  "id": "sr02-19",
+  "text": "Scout stops you. This visit has been started. Finish or void it in the chart first."
+ },
+ {
+  "id": "sr02-20",
+  "text": "Close this."
+ },
+ {
+  "id": "sr02-21",
+  "text": "Holds are different. Removing a hold just asks, Remove Visit, with no reason."
+ },
+ {
+  "id": "sr02-22",
+  "text": "The most common mistakes: a reason like cancel that tells nobody anything, and removing a visit to start over when Reschedule would keep its history. Remember: every cancel needs a real reason, and a visit that has started can't be removed."
+ }
+]

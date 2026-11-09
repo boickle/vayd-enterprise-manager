@@ -1,0 +1,50 @@
+[
+ {
+  "id": "sr10-01",
+  "text": "When the doctor wants to see a pet again, the visit team sends a follow-up to the CLs. This list is where they land."
+ },
+ {
+  "id": "sr10-02",
+  "text": "Follow-ups the visit team sent to the CLs land in Needs booking."
+ },
+ {
+  "id": "sr10-03",
+  "text": "The one thing to remember: every card ends booked, Book later, or removed. Work the oldest and highest priority first."
+ },
+ {
+  "id": "sr10-04",
+  "text": "The card shows the pet, about when the doctor wants to see them, and with whom."
+ },
+ {
+  "id": "sr10-05",
+  "text": "Log every call or text here. Everyone sees the same log."
+ },
+ {
+  "id": "sr10-06",
+  "text": "Book opens routing with the follow-up filled in."
+ },
+ {
+  "id": "sr10-07",
+  "text": "Check the visit type matches the card. Here it's a recheck."
+ },
+ {
+  "id": "sr10-07b",
+  "text": "Then book it like any visit: search, pick the time, and book."
+ },
+ {
+  "id": "sr10-08",
+  "text": "Once it's booked, the card moves out of Needs booking."
+ },
+ {
+  "id": "sr10-09",
+  "text": "If the family wants to wait, Book later. It comes back when it's time."
+ },
+ {
+  "id": "sr10-10",
+  "text": "Mark complete is for a follow-up that was booked another way. Remove is for one that's no longer needed."
+ },
+ {
+  "id": "sr10-11",
+  "text": "The most common mistakes: booking the visit from the calendar and leaving the card in Needs booking, and calling without logging it. Remember: every card ends booked, Book later, or removed. Work the oldest and highest priority first."
+ }
+]

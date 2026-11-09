@@ -1,0 +1,14 @@
+[
+ {"id": "sr17-01", "text": "When a pet dies or is made inactive, Scout closes everything still open for that pet, in one step."},
+ {"id": "sr17-02", "text": "Maria called: Juniper has passed away. Open Juniper's chart."},
+ {"id": "sr17-03", "text": "The one thing to remember: inactivate from the chart, and read the list before you accept."},
+ {"id": "sr17-04", "text": "Click Deactivate."},
+ {"id": "sr17-05", "text": "Scout lists everything still open for Juniper."},
+ {"id": "sr17-06", "text": "Choose the reason."},
+ {"id": "sr17-07", "text": "Follow-ups waiting for a CL are removed. Her reminders stop, any open text offers expire, and waitlist entries are removed."},
+ {"id": "sr17-08", "text": "Her future visits are cancelled."},
+ {"id": "sr17-09", "text": "Memberships, auto-ships, refills and pharmacy orders too."},
+ {"id": "sr17-10", "text": "Accept."},
+ {"id": "sr17-11", "text": "Maple and Pepper's visits and reminders aren't touched. Only Juniper's."},
+ {"id": "sr17-12", "text": "The most common mistakes: removing only the next visit and leaving reminders and follow-ups running, and accepting without reading the list. Remember: inactivate the pet from the chart and read the list before you accept."}
+]

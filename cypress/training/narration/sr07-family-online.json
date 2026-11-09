@@ -1,0 +1,14 @@
+[
+ {"id": "sr07-01", "text": "When a family calls about their online request, it helps to know exactly what they saw."},
+ {"id": "sr07-02", "text": "Signed-in families start with their details filled in."},
+ {"id": "sr07-03", "text": "The one thing to remember: the form only offers times routing would offer."},
+ {"id": "sr07-04", "text": "They confirm where the visit is."},
+ {"id": "sr07-05", "text": "They pick the pet and tell us why."},
+ {"id": "sr07-06", "text": "Then how soon."},
+ {"id": "sr07-07", "text": "If routing has times that fit, they pick a doctor, a day and a time. It books straight away and shows up in Auto-Booked."},
+ {"id": "sr07-08", "text": "Otherwise they tell us what works, and a CL calls them."},
+ {"id": "sr07-09", "text": "Submit."},
+ {"id": "sr07-10", "text": "They see this, with an offer to look at membership."},
+ {"id": "sr07-11", "text": "They also get an email: We Received Your Appointment Request. If the time they picked was taken while they were on the page, Scout doesn't book it. It tells them a CL will call within one business hour."},
+ {"id": "sr07-12", "text": "The most common mistakes: telling a family their online request is booked when it's still in New, and not knowing that a picked time can be taken while they're on the page. Remember: the form only offers times routing would offer. If none suit, the family asks for a call, and that request comes to us."}
+]

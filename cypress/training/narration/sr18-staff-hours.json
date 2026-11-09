@@ -1,0 +1,12 @@
+[
+ {"id": "sr18-01", "text": "Routing and online booking only offer times a doctor is set up to work."},
+ {"id": "sr18-02", "text": "Each person's schedule lives in Settings, Staff."},
+ {"id": "sr18-03", "text": "The one thing to remember: hours and zones decide what routing and online booking offer."},
+ {"id": "sr18-04", "text": "Pick the doctor."},
+ {"id": "sr18-05", "text": "Open Schedule."},
+ {"id": "sr18-06", "text": "For each day: is she working, her hours, where she starts and ends, and which zones she covers. A day that's off gets no visits from routing."},
+ {"id": "sr18-07", "text": "Use every day copies one day's settings to the rest. Then save."},
+ {"id": "sr18-08", "text": "For one day off or different hours, use Date overrides. Pick the doctor and the day, then set it off or change the hours."},
+ {"id": "sr18-09", "text": "Change the schedule before the day fills, then move any visits already booked on it."},
+ {"id": "sr18-10", "text": "The most common mistakes: booking around a doctor's day off without marking it here, so online booking keeps offering it, and changing a zone without checking that day's visits. Remember: hours and zones decide what routing and online booking offer. Change them here first."}
+]

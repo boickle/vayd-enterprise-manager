@@ -1,0 +1,86 @@
+[
+ {
+  "id": "sr06-01",
+  "text": "A family who asked for a visit online is waiting to hear from us. An empty New list means nobody is waiting."
+ },
+ {
+  "id": "sr06-02",
+  "text": "Online requests land in New. When you've worked one, it moves to Contacted, Booked or Not Booked."
+ },
+ {
+  "id": "sr06-03",
+  "text": "The one thing to remember: every request ends as Booked or Not booked, with a reason. New should be empty at the end of the day."
+ },
+ {
+  "id": "sr06-04",
+  "text": "The card shows who, which pet, why, and how soon."
+ },
+ {
+  "id": "sr06-05",
+  "text": "And anything the family told us about timing."
+ },
+ {
+  "id": "sr06-06",
+  "text": "The full form is one click away."
+ },
+ {
+  "id": "sr06-07",
+  "text": "To book it, click Book."
+ },
+ {
+  "id": "sr06-08",
+  "text": "Routing opens with the request filled in."
+ },
+ {
+  "id": "sr06-09",
+  "text": "Pick the doctor and search, like any booking."
+ },
+ {
+  "id": "sr06-10",
+  "text": "Use the family's note: mornings, not Wednesdays."
+ },
+ {
+  "id": "sr06-11",
+  "text": "Book."
+ },
+ {
+  "id": "sr06-12",
+  "text": "The pet and the visit type carry over. Check them."
+ },
+ {
+  "id": "sr06-13",
+  "text": "Book appointment."
+ },
+ {
+  "id": "sr06-14",
+  "text": "Scout brings you back to Appointments with a text to the family ready, arrival window filled in."
+ },
+ {
+  "id": "sr06-14a",
+  "text": "Send it, or cancel if you'd rather call. Scout checks before it drops the text."
+ },
+ {
+  "id": "sr06-15",
+  "text": "Maple's request moved to Booked by itself."
+ },
+ {
+  "id": "sr06-16",
+  "text": "If a request can't be booked, click Not booked."
+ },
+ {
+  "id": "sr06-17",
+  "text": "Pick the real reason. These feed our reports on why requests don't book."
+ },
+ {
+  "id": "sr06-18",
+  "text": "Mark not booked."
+ },
+ {
+  "id": "sr06-19",
+  "text": "Called and left a message? Mark contacted instead, and add a note, so the next person knows."
+ },
+ {
+  "id": "sr06-20",
+  "text": "The most common mistakes: booking the visit from the calendar and leaving the request sitting in New, and Not booked with no real reason. Remember: every request ends as Booked or Not booked, with a reason. New should be empty at the end of the day."
+ }
+]

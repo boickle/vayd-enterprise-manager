@@ -156,4 +156,9 @@ export function resetSeededHouseholdsInDb() {
   sql(
     `update patients set "isActive"=false where id in (select "patientsId" from clients_patients_patients where "clientsId" in (${clients})) and id not in (${keepPets})`
   );
+  // SR-17 inactivates Juniper on camera; bring the active demo pets back for the next take.
+  const activePets = [...w.households.A.activePetIds, w.households.B.petId].join(',');
+  sql(
+    `update patients set "isActive"=true, "inactiveAt"=null, "inactivatedByEmployeeId"=null, "inactivationReason"=null where id in (${activePets})`
+  );
 }

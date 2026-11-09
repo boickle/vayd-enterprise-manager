@@ -1,0 +1,14 @@
+[
+ {"id": "sr23-01", "text": "Most scheduling problems come from a few habits. Here they are, and how to avoid each."},
+ {"id": "sr23-02", "text": "The one thing to remember: let routing book, give the family the window, and close every loop."},
+ {"id": "sr23-03", "text": "One: telling the family the start time. They were promised the window."},
+ {"id": "sr23-04", "text": "Two: booking by hand when routing would have found a better time."},
+ {"id": "sr23-05", "text": "Three: removing a visit and booking a new one instead of rescheduling. And removing without a real reason."},
+ {"id": "sr23-06", "text": "Four: leaving online requests in New. Every one ends Booked or Not booked."},
+ {"id": "sr23-07", "text": "Five: follow-ups sent to the CLs that nobody books."},
+ {"id": "sr23-08", "text": "Six: a hold left on the calendar after the family confirms. A hold gets no reminder."},
+ {"id": "sr23-09", "text": "Seven: telling a family a texted time is booked. It isn't until they confirm."},
+ {"id": "sr23-10", "text": "Eight: when a pet dies, cancelling one visit and leaving the rest. Deactivate closes everything."},
+ {"id": "sr23-11", "text": "Nine: holidays not marked closed, so online booking offers them."},
+ {"id": "sr23-12", "text": "Remember: let routing book, give the family the window, and close every loop: requests, follow-ups, holds and offers."}
+]

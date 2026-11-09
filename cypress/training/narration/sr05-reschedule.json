@@ -1,0 +1,90 @@
+[
+ {
+  "id": "sr05-01",
+  "text": "A moved visit changes the doctor's whole day. Rescheduling through routing keeps the day efficient, and keeps the visit's history."
+ },
+ {
+  "id": "sr05-02",
+  "text": "Tom Chen needs to move Biscuit's visit."
+ },
+ {
+  "id": "sr05-03",
+  "text": "The one thing to remember: reschedule through routing, and give the family the new arrival window."
+ },
+ {
+  "id": "sr05-04",
+  "text": "Right-click the visit."
+ },
+ {
+  "id": "sr05-05",
+  "text": "Scheduling."
+ },
+ {
+  "id": "sr05-06",
+  "text": "Reschedule."
+ },
+ {
+  "id": "sr05-07",
+  "text": "Routing opens with the visit already filled in: the doctor, the type and the family."
+ },
+ {
+  "id": "sr05-08",
+  "text": "Click Get Best Route."
+ },
+ {
+  "id": "sr05-09",
+  "text": "Each option is compared with the current booking. Lower scores are better."
+ },
+ {
+  "id": "sr05-10",
+  "text": "Each card shows the arrival window and how much driving it adds."
+ },
+ {
+  "id": "sr05-11",
+  "text": "Pick the time Tom wants, and View Placement."
+ },
+ {
+  "id": "sr05-12",
+  "text": "Was is the old time. Now is the new arrival window."
+ },
+ {
+  "id": "sr05-13",
+  "text": "Click Reschedule."
+ },
+ {
+  "id": "sr05-14",
+  "text": "Check the pet, the type and the description carried over."
+ },
+ {
+  "id": "sr05-15",
+  "text": "Confirm."
+ },
+ {
+  "id": "sr05-16",
+  "text": "Moved. Now tell Tom the new arrival window."
+ },
+ {
+  "id": "sr05-17",
+  "text": "When a family has more than one visit that day, Scout asks first."
+ },
+ {
+  "id": "sr05-18",
+  "text": "Here the Riveras have two visits on Monday."
+ },
+ {
+  "id": "sr05-19",
+  "text": "Move just this pet, or everyone together. Cancel closes it without moving anything."
+ },
+ {
+  "id": "sr05-20",
+  "text": "Two more choices in the same menu. Explore alternatives searches for other times without moving anything. The visit stays until you book another time."
+ },
+ {
+  "id": "sr05-21",
+  "text": "Edit Appointment is for the same day. A new day or a new doctor always goes through Reschedule."
+ },
+ {
+  "id": "sr05-22",
+  "text": "The most common mistakes: removing a visit and booking a new one instead of rescheduling, which loses the visit's history, and telling the family the old time. Remember: reschedule through routing, and give the family the new arrival window."
+ }
+]

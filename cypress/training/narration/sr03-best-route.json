@@ -1,0 +1,86 @@
+[
+ {
+  "id": "sr03-01",
+  "text": "Every visit we book changes how far our doctors drive. Get Best Route finds the time that fits the day best, so doctors drive less and see more families."
+ },
+ {
+  "id": "sr03-02",
+  "text": "Tom Chen calls. Biscuit needs his ear rechecked. Click plus Appointment."
+ },
+ {
+  "id": "sr03-03",
+  "text": "The one thing to remember: let routing pick the doctor and time, then read the arrival window to the family."
+ },
+ {
+  "id": "sr03-04",
+  "text": "It searches from today through the next week. Change the dates if the family wants later."
+ },
+ {
+  "id": "sr03-05",
+  "text": "The doctor comes from the calendar you were on. Type another name to change it, or tick A-SAP to search every doctor in the zone."
+ },
+ {
+  "id": "sr03-07",
+  "text": "Then the visit type. It sets how long the visit takes."
+ },
+ {
+  "id": "sr03-08",
+  "text": "Find the family."
+ },
+ {
+  "id": "sr03-09",
+  "text": "Tom Chen."
+ },
+ {
+  "id": "sr03-10",
+  "text": "Pick the pet. If you skip this, the visit books with no pet."
+ },
+ {
+  "id": "sr03-11",
+  "text": "Scout checks the address and finds the zone."
+ },
+ {
+  "id": "sr03-12",
+  "text": "Click Get Best Route."
+ },
+ {
+  "id": "sr03-13",
+  "text": "The best fit is first. It shows the arrival window, how much driving it adds, and how much of the day is left open."
+ },
+ {
+  "id": "sr03-14",
+  "text": "View Placement shows it on the doctor's calendar."
+ },
+ {
+  "id": "sr03-15",
+  "text": "Here's where Biscuit would go, and the arrival window."
+ },
+ {
+  "id": "sr03-16",
+  "text": "If you need to check with the family, call or text them from here."
+ },
+ {
+  "id": "sr03-17",
+  "text": "Click Book."
+ },
+ {
+  "id": "sr03-18",
+  "text": "Each pet gets its own visit at this time, with its own type."
+ },
+ {
+  "id": "sr03-19",
+  "text": "Add why they're coming."
+ },
+ {
+  "id": "sr03-20",
+  "text": "Then Book appointment."
+ },
+ {
+  "id": "sr03-21",
+  "text": "It's on the calendar. Now read Tom the arrival window."
+ },
+ {
+  "id": "sr03-22",
+  "text": "The most common mistakes: skipping the pet, which books a visit with no patient, and telling the family the start time instead of the arrival window. Remember: let routing pick the doctor and time, then read the arrival window to the family."
+ }
+]
