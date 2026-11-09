@@ -1,0 +1,13 @@
+[
+  {"id": "lv07-01", "text": "Sometimes the doctor is in a visit and asks you to release a result. Scout lets you, and records who and why."},
+  {"id": "lv07-02", "text": "Remember: only mark a result reviewed when a vet has told you to, and pick the reason that says how."},
+  {"id": "lv07-03", "text": "Dr. Lane called. Biscuit Chen's CBC is fine to release. Open it."},
+  {"id": "lv07-04", "text": "Click Mark reviewed."},
+  {"id": "lv07-05", "text": "Scout asks why. The reason is saved with your name and the time."},
+  {"id": "lv07-06", "text": "Dr. Lane reviewed it on the phone, so Vet reviewed verbally."},
+  {"id": "lv07-07", "text": "Or Vet asked me to release. Anything else, pick Other and type it."},
+  {"id": "lv07-08", "text": "Mark reviewed."},
+  {"id": "lv07-09", "text": "Your name and the reason are on the result."},
+  {"id": "lv07-10", "text": "And in Biscuit's History."},
+  {"id": "lv07-11", "text": "The most common mistake: marking results reviewed to clear the list. Remember: only mark a result reviewed when a vet has told you to, and pick the reason that says how."}
+]

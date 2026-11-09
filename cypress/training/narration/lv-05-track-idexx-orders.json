@@ -1,0 +1,16 @@
+[
+  {"id": "lv05-01", "text": "Labs, IDEXX results, shows every order from Scout, from made to final. Check it every day, so no sample is stuck."},
+  {"id": "lv05-02", "text": "Remember: to drop an IDEXX test, remove its charge from the bill, and Scout cancels the order."},
+  {"id": "lv05-03", "text": "Open Labs."},
+  {"id": "lv05-04", "text": "IDEXX results has a tab for each stage."},
+  {"id": "lv05-05", "text": "Ordered, not at IDEXX yet: made in Scout, but IDEXX doesn't have the sample."},
+  {"id": "lv05-06", "text": "Pepper's order was never finished in IDEXX. Dr. Lane decided against it."},
+  {"id": "lv05-07", "text": "Usually you'd just remove the charge from the bill. When an order's been left behind like this one, click Cancel order."},
+  {"id": "lv05-08", "text": "Scout reminds you: the charge stays on the bill. Remove it there too."},
+  {"id": "lv05-09", "text": "Confirm."},
+  {"id": "lv05-10", "text": "In progress at IDEXX: the lab has the sample. Partial results show here."},
+  {"id": "lv05-11", "text": "Results arrive every few minutes. Check IDEXX now pulls them straight away."},
+  {"id": "lv05-12", "text": "All recent shows everything, newest first."},
+  {"id": "lv05-13", "text": "To review and Unmatched have their own videos."},
+  {"id": "lv05-14", "text": "The most common mistake: cancelling here and leaving the charge on the bill. Remember: to drop an IDEXX test, remove its charge from the bill, and Scout cancels the order."}
+]

@@ -21,12 +21,13 @@
 | 6 | The **BLOOD GLUCOSE** form | Point at the empty **Value** box | "The value is blank. It never starts at zero." | BLOOD GLUCOSE form (number row, units mg/dl) |
 | 7 | The form | Type 312 in **Value** | "Type the reading." | — |
 | 8 | The form | Click **Save results** | "And Save results." | — |
-| 9 | Checkout, the line | Point at the chip **Complete** | "It says Complete, and it's on Maple's chart. Scout doesn't judge the number; Dr. Lane does." | — |
+| 9 | Checkout, the line | Point at the chip **Complete** | "It says Complete, and it's on Maple's chart. Scout doesn't judge numbers. Dr. Lane does." | — |
 | 10 | Checkout | Type "4dx" in **Add a charge for Maple**, pick **Heartworm 4Dx (in-house)**, click its arrow | "Now the 4Dx." | Catalog lab attached to the Heartworm 4dx form (five Negative/Positive rows, Negative set as normal) |
 | 11 | The 4Dx form | Click **Fill normal values** | "Fill normal values sets every choice row to its normal, here Negative." | — |
 | 12 | The form | Change **Heartworm** to Positive | "Maple's heartworm is positive, so change that row." | — |
 | 13 | The form | Point at "1 result needs attention" and the row's **abnormal** tag | "An abnormal answer is flagged, so the doctor sees it." | — |
 | 14 | The form | Click **Save results** | "Save results." | — |
+| 14b | Checkout, the 4Dx line | Point at the chip **1 abnormal** | "The chip says 1 abnormal. Choice answers like Positive are judged, and a normal 4Dx would say Normal." | — |
 | 15 | Voice-over | — | "On a form with numbers, like the urine dipstick, Fill normal values leaves the numbers blank. Type each one." | — |
 | 16 | Voice-over | — | "If you click Save with a row still empty, Scout lists the empty rows. Type a value, or a comment like sample clotted." | — |
 
@@ -49,5 +50,5 @@
 
 - **Checked on the test stack (build-doctor-flow, Nov 8):** the charge search, the **Not run** chip, the arrow, the blank glucose value, **Fill normal values** (fills only choice rows), "1 result needs attention" and the **abnormal** tag, and **Save results**.
 - **The visit's Checkout has no "Run lab" button.** The arrow on the line opens the form. On the client's bill (Financial tab), the line says "Results needed — expand to run the lab".
-- **Owner decision (Nov 8):** no number ranges anywhere; the chip says **Complete**. Fixed on build-doctor-flow (frontend e8296a1): number rows show only their units and never flag; the 4Dx's Positive is still flagged inside the form.
+- **Owner decisions (Nov 8):** no number ranges anywhere; a number-only form's chip says **Complete**; a form with choice rows says **Normal** or **N abnormal**. Fixed on build-doctor-flow (frontend e8296a1): number rows show only their units and never flag; the 4Dx's Positive is still flagged inside the form.
 - Demo forms should use the practice's real names: BLOOD GLUCOSE, Heartworm 4dx, Urine Dipstick, Ear Cytology.

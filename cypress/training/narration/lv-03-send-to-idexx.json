@@ -1,0 +1,62 @@
+[
+  {
+    "id": "lv03-01",
+    "text": "Send-out tests go to IDEXX from the bill, so the charge, the requisition and the result all stay tied together."
+  },
+  {
+    "id": "lv03-02",
+    "text": "Juniper Rivera is drinking more. Dr. Lane wants a CBC from IDEXX."
+  },
+  {
+    "id": "lv03-03",
+    "text": "Remember: check that the vet is the doctor who ordered the test."
+  },
+  {
+    "id": "lv03-04",
+    "text": "Add the IDEXX test as a charge, like any lab."
+  },
+  {
+    "id": "lv03-05",
+    "text": "Pick CBC standard."
+  },
+  {
+    "id": "lv03-06",
+    "text": "It's tagged IDEXX, and says Not sent."
+  },
+  {
+    "id": "lv03-07",
+    "text": "Click Send to IDEXX."
+  },
+  {
+    "id": "lv03-08",
+    "text": "Every IDEXX test on her bill is ticked. Untick any you aren't sending yet."
+  },
+  {
+    "id": "lv03-09",
+    "text": "The vet is Dr. Lane, who ordered it. She gets the result and the review task. If a different vet ordered it, pick them here."
+  },
+  {
+    "id": "lv03-10",
+    "text": "Collected is today. Change it if the sample was drawn earlier."
+  },
+  {
+    "id": "lv03-11",
+    "text": "If IDEXX needs something the chart doesn't have, Scout asks. Here, a birthdate. An estimate is fine."
+  },
+  {
+    "id": "lv03-12",
+    "text": "IDEXX's order page opens next."
+  },
+  {
+    "id": "lv03-13",
+    "text": "Send."
+  },
+  {
+    "id": "lv03-14",
+    "text": "The order is made. You finish it in IDEXX's own page. That's the next video."
+  },
+  {
+    "id": "lv03-15",
+    "text": "The most common mistake: sending it under the wrong vet. Remember: check that the vet is the doctor who ordered the test."
+  }
+]

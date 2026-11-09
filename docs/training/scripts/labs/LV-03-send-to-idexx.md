@@ -3,7 +3,7 @@
 - **Audience:** techs.
 - **Length:** 2 minutes.
 - **Watch first:** none.
-- **The one thing to remember:** leave the vet on **Appointment's doctor** unless a different vet ordered the test.
+- **The one thing to remember:** check that the vet is the doctor who ordered the test.
 
 ## Why (opening)
 
@@ -18,7 +18,7 @@
 | 3 | Checkout, the line | Point at the **IDEXX** tag and **Not sent** | "It says Not sent." | — |
 | 4 | Checkout | Point at "1 IDEXX test not sent" and click **Send to IDEXX** | "Click Send to IDEXX." | — |
 | 5 | **Send to IDEXX · Juniper** | Point at the ticked **CBC** and its code | "Every IDEXX test on her bill is ticked. Untick any you aren't sending yet." | — |
-| 6 | Send to IDEXX | Point at **Veterinarian**: "Appointment's doctor" | "Leave the vet on Appointment's doctor. Dr. Lane gets the result and the review task." | — |
+| 6 | Send to IDEXX | Point at **Veterinarian**: Avery Lane | "The vet is Dr. Lane, who ordered it. She gets the result and the review task. If a different vet ordered it, pick them here." | — |
 | 7 | Send to IDEXX | Point at **Collected**, today | "Collected is today. Change it if the sample was drawn earlier." | — |
 | 8 | Send to IDEXX | Point at "IDEXX needs the birthdate" and type an estimate in **Birthdate (estimate is fine)** | "If IDEXX needs something the chart doesn't have, Scout asks. An estimate is fine." | Juniper has no birthdate on the chart |
 | 9 | Send to IDEXX | Point at "IDEXX's order page opens next…" | "IDEXX's order page opens next." | — |
@@ -37,10 +37,12 @@
 
 ## Closing
 
-"The most common mistakes: picking yourself as the vet, and sending again from a second tab. Scout stops the second send. Remember: leave the vet on Appointment's doctor unless a different vet ordered the test."
+"The most common mistake: sending it under the wrong vet. Remember: check that the vet is the doctor who ordered the test."
 
 ## Notes from the check in the app (Nov 8, 2026)
 
 - **Checked with the fake IDEXX:** the **IDEXX** tag and **Not sent** on the line, "1 IDEXX test not sent · …" with **Send to IDEXX**, the window **Send to IDEXX · Bella** with the test and its code (#CHEM25), **Veterinarian** (Appointment's doctor, then the vets), **Collected**, the note, **Send 1 test to IDEXX** and **Cancel**, then the IDEXX window.
 - **Not checked:** the birthdate prompt (the seeded pets have birthdates) and the sandbox's real CBC code. Check both in the dry run with the sandbox.
 - The screen pre-picks the line's provider only if that person is a vet (fixed Nov 8, frontend 0f76da3, not yet pushed). The training branch needs build-doctor-flow merged before recording.
+
+- **Recorded Nov 8:** the vet was pre-picked as Avery Lane (the line's provider, a vet). When the line's provider isn't a vet, it shows Appointment's doctor instead; the narration says "check" so it fits both.

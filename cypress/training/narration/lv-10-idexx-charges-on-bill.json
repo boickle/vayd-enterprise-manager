@@ -1,0 +1,11 @@
+[
+  {"id": "lv10-01", "text": "IDEXX tests are on the bill like any other charge. What's different is that the doctor can add tests inside IDEXX, and Scout keeps the bill in step."},
+  {"id": "lv10-02", "text": "Remember: tests the doctor adds in IDEXX are charged by Scout. Don't add them by hand."},
+  {"id": "lv10-03", "text": "Juniper Rivera's bill has a CBC sent to IDEXX."},
+  {"id": "lv10-04", "text": "The status says where the test is: Not sent, Finish in IDEXX, Not at IDEXX yet, Partial or Final."},
+  {"id": "lv10-05", "text": "Dr. Lane added a urinalysis inside IDEXX. Scout charged it here, at the family's price, and tagged it Added in IDEXX."},
+  {"id": "lv10-06", "text": "So don't add it again."},
+  {"id": "lv10-07", "text": "If Scout can't charge a test, for example when the bill is already paid, Billing gets a task naming the test and the family."},
+  {"id": "lv10-08", "text": "If the doctor drops a test, removing its charge also cancels it at IDEXX, as long as IDEXX doesn't have the sample yet."},
+  {"id": "lv10-09", "text": "The most common mistake: adding an IDEXX add-on by hand, so it's charged twice. Remember: tests the doctor adds in IDEXX are charged by Scout."}
+]

@@ -1,0 +1,15 @@
+[
+  {"id": "lv11-01", "text": "In a multi-pet visit it's easy to charge a lab to the wrong pet. The result follows the charge, so fixing the charge fixes the chart."},
+  {"id": "lv11-02", "text": "Remember: fix the charge, not the result."},
+  {"id": "lv11-03", "text": "The glucose was charged to Maple, but it was Pepper's, and the result is already in."},
+  {"id": "lv11-04", "text": "Open the line."},
+  {"id": "lv11-05", "text": "Charged to the wrong pet?"},
+  {"id": "lv11-06", "text": "Pick Pepper."},
+  {"id": "lv11-07", "text": "Scout says what moves: the charge and its lab result, onto Pepper's chart."},
+  {"id": "lv11-08", "text": "Move to Pepper."},
+  {"id": "lv11-09", "text": "The result is on Pepper's chart now,"},
+  {"id": "lv11-10", "text": "and gone from Maple's."},
+  {"id": "lv11-11", "text": "History shows the move."},
+  {"id": "lv11-12", "text": "An IDEXX test already sent stays with the first pet, and Scout warns you. Call IDEXX to correct the pet."},
+  {"id": "lv11-13", "text": "The most common mistake: typing the result again on the right pet and leaving the wrong one. Remember: fix the charge, not the result."}
+]

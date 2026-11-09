@@ -1,0 +1,18 @@
+[
+  {"id": "lv08-01", "text": "Families want to know what the numbers mean. Scout drafts a plain-language summary, but a doctor always approves the words."},
+  {"id": "lv08-02", "text": "Remember: a doctor reads, finishes and approves the summary before it goes out."},
+  {"id": "lv08-03", "text": "Juniper's CBC is final and reviewed. Open it."},
+  {"id": "lv08-04", "text": "The email button is grey, and Scout says why."},
+  {"id": "lv08-05", "text": "Click Draft client summary."},
+  {"id": "lv08-06", "text": "Scout drafts it from the result and Juniper's chart, to Maria by her first name. It's a draft until you approve it."},
+  {"id": "lv08-07", "text": "The next steps are yours to write. Click Edit."},
+  {"id": "lv08-08", "text": "Scout won't let you approve it with the gap still there."},
+  {"id": "lv08-09", "text": "Write the next steps."},
+  {"id": "lv08-10", "text": "Then Approve wording."},
+  {"id": "lv08-11", "text": "Approved, with your name."},
+  {"id": "lv08-12", "text": "Email lab results sends the summary, with IDEXX's report attached."},
+  {"id": "lv08-13", "text": "Check who it's going to, and read it once more before you send."},
+  {"id": "lv08-14", "text": "Email lab report sends just IDEXX's report with a short note. It only needs the result reviewed."},
+  {"id": "lv08-15", "text": "If IDEXX updates a result after you approved, the summary needs approving again. Draft it again, and approve it."},
+  {"id": "lv08-16", "text": "The most common mistake: approving the draft without reading it. Remember: a doctor reads, finishes and approves the summary before it goes out."}
+]

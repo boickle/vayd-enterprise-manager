@@ -62,8 +62,9 @@ describe('Training: LV-01 in-house lab', () => {
     line('lv01-16', () => pointAt(() => form('Heartworm 4dx').find('.lab-result-form__flag'), 3500));
     line('lv01-17', () => {
       tap(() => form('Heartworm 4dx').contains('button', 'Save results'));
-      lineFor('Heartworm 4Dx').find('.lab-chip', { timeout: 30000 }).should('contain.text', 'Complete');
+      lineFor('Heartworm 4Dx').find('.lab-chip', { timeout: 30000 }).should('contain.text', '1 abnormal');
     });
+    line('lv01-17b', () => pointAt(() => lineFor('Heartworm 4Dx').find('.lab-chip'), 3500));
     line('lv01-18');
     line('lv01-19');
     finish();

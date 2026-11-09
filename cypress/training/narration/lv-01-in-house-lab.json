@@ -41,7 +41,7 @@
   },
   {
     "id": "lv01-11",
-    "text": "It says Complete, and it's on Maple's chart. Scout doesn't judge the number. Dr. Lane does."
+    "text": "It says Complete, and it's on Maple's chart. Scout doesn't judge numbers. Dr. Lane does."
   },
   {
     "id": "lv01-12",
@@ -70,6 +70,10 @@
   {
     "id": "lv01-17",
     "text": "Save results."
+  },
+  {
+    "id": "lv01-17b",
+    "text": "The chip says 1 abnormal. Choice answers like Positive are judged, and a normal 4Dx would say Normal."
   },
   {
     "id": "lv01-18",

@@ -40,6 +40,8 @@ export function labsSetup(petIds: number[]) {
   const w = schedulingWorld();
   resetSeededHouseholdsInDb();
   cy.exec(`psql -q -d ${labsDb()} -v maple=${w.households.A.activePetIds[0]} -f cypress/training/setup/labs-demo.sql`);
+  // Pepper is the world's "inactive" pet for the scheduling videos; the Labs videos need her as a normal pet.
+  cy.exec(`psql -q -d ${labsDb()} -c "UPDATE patients SET \\"isActive\\"=true WHERE id=${w.households.A.inactivePetId}"`);
   const ids = petIds.join(',');
   cy.exec(
     `psql -q -d ${labsDb()} -c "UPDATE in_house_lab_results SET \\"isDeleted\\"=true WHERE \\"patientId\\" IN (${ids}) AND \\"isDeleted\\"=false"`
@@ -88,3 +90,36 @@ export function visitToday(o: { household: 'A' | 'B'; petId: number; startsMinut
 
 export const soapPath = (apptId: number, petId: number, clientId: number) =>
   `/schedule/soap/${apptId}/${petId}?clientId=${clientId}`;
+
+const sqlRun = (sql: string) => cy.exec(`psql -qAt -d ${labsDb()} -c "${sql.replace(/"/g, '\\"')}"`);
+
+/** The newest complete IDEXX result for a pet (from IDEXX's sandbox, made before the video). */
+export function newestCompleteResult(petId: number): Cypress.Chainable<number> {
+  return sqlRun(
+    `SELECT id FROM idexx_results WHERE "patientId"=${petId} AND status='COMPLETE' AND "isDeleted"=false ORDER BY id DESC LIMIT 1`
+  ).then((r) => {
+    const id = Number(r.stdout.trim());
+    expect(id, `a complete IDEXX sandbox result for pet ${petId} (run the prep order first)`).to.be.greaterThan(0);
+    return id;
+  });
+}
+
+/**
+ * Puts results back to unreviewed with no client summary and their review task open again; every other
+ * unreviewed result is marked reviewed so To review shows only these.
+ */
+export function freshResults(ids: number[]) {
+  const list = ids.join(',');
+  sqlRun(`UPDATE idexx_results SET "reviewedAt"=now() WHERE "reviewedAt" IS NULL AND id NOT IN (${list})`);
+  sqlRun(
+    `UPDATE idexx_results SET "reviewedAt"=NULL, "reviewedByEmployeeId"=NULL, "reviewedReason"=NULL, "clientSummary"=NULL, ` +
+      `"clientSummaryApprovedAt"=NULL, "clientSummaryApprovedByEmployeeId"=NULL, "clientSummaryApprovedReason"=NULL, ` +
+      `"clientSummaryResultUpdatedAt"=NULL WHERE id IN (${list})`
+  );
+  sqlRun(
+    `UPDATE tasks SET status='done', "completedAt"=now() WHERE status<>'done' AND id IN (SELECT "taskId" FROM task_link WHERE "entityType"='idexx_result' AND "entityId" NOT IN (${ids.map((i) => `'${i}'`).join(',')}))`
+  );
+  sqlRun(
+    `UPDATE tasks SET status='assigned', "completedAt"=NULL, "isDeleted"=false WHERE id IN (SELECT "taskId" FROM task_link WHERE "entityType"='idexx_result' AND "entityId" IN (${ids.map((i) => `'${i}'`).join(',')}))`
+  );
+}

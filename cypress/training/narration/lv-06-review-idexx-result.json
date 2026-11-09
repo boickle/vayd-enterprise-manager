@@ -1,0 +1,17 @@
+[
+  {"id": "lv06-01", "text": "Every IDEXX result comes to the ordering doctor as a task. Until it's marked reviewed, nobody should send it to the family."},
+  {"id": "lv06-02", "text": "Remember: read the out-of-range values first. Mark reviewed tells the team the result is safe to release."},
+  {"id": "lv06-03", "text": "When a result arrives, the ordering doctor gets a task. Abnormal and critical ones say so."},
+  {"id": "lv06-04", "text": "Open Labs, IDEXX results."},
+  {"id": "lv06-05", "text": "To review lists every complete result waiting for a doctor."},
+  {"id": "lv06-06", "text": "Each row says Partial or Final, and normal, abnormal or critical."},
+  {"id": "lv06-07", "text": "Open Juniper's CBC."},
+  {"id": "lv06-08", "text": "Out-of-range values are listed first."},
+  {"id": "lv06-09", "text": "Only out of range hides the rest."},
+  {"id": "lv06-10", "text": "VetConnect PLUS opens IDEXX's own view, with images and trends."},
+  {"id": "lv06-11", "text": "Medical note saves your read of the results on the chart."},
+  {"id": "lv06-12", "text": "When you've read it, click Mark reviewed."},
+  {"id": "lv06-13", "text": "Your name and the time are on the result, and in Juniper's History. Your task closes."},
+  {"id": "lv06-14", "text": "A partial result can't be marked reviewed. Wait until it says Final."},
+  {"id": "lv06-15", "text": "The most common mistake: marking reviewed without opening the result. Remember: read the out-of-range values first. Mark reviewed tells the team the result is safe to release."}
+]

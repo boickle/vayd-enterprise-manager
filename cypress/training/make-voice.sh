@@ -41,20 +41,31 @@ def openai_clip(text, name, wav):
 # Clips are cached by voice + style + text, so a re-take only makes the lines that changed.
 cache = os.environ.get("TRAINING_VOICE_CACHE") or os.path.expanduser("~/.vayd-training/voice-cache")
 os.makedirs(cache, exist_ok=True)
+# What the voice says can differ from the caption: a line's "say" wins, and brand names are
+# respelled so they're said, not spelled out (owner, Nov 8, 2026: IDEXX is "eye-dex").
+SAY_AS = [(r"\bIDEXX\b", "Eye-dex")]
+def spoken(l):
+    if l.get("say"):
+        return l["say"]
+    text = l["text"]
+    for pattern, said in SAY_AS:
+        text = re.sub(pattern, said, text)
+    return text
 made = 0
 for l in lines:
     clip = f"{out}/voice/{l['id']}.aiff"
-    key = hashlib.sha256(json.dumps([voice, STYLE, l["text"]]).encode()).hexdigest()[:20]
+    say_text = spoken(l)
+    key = hashlib.sha256(json.dumps([voice, STYLE, say_text]).encode()).hexdigest()[:20]
     cached = f"{cache}/{key}.aiff"
     if not os.path.exists(cached):
         made += 1
         if voice.startswith("openai:"):
             wav = f"{cache}/{key}.wav"
-            openai_clip(l["text"], voice.split(":", 1)[1], wav)
+            openai_clip(say_text, voice.split(":", 1)[1], wav)
             subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", wav, cached], check=True)
             os.remove(wav)
         else:
-            subprocess.run(["say", "-v", voice, "-r", "175", "-o", cached, l["text"]], check=True)
+            subprocess.run(["say", "-v", voice, "-r", "175", "-o", cached, say_text], check=True)
     shutil.copyfile(cached, clip)
     info = subprocess.run(["afinfo", clip], capture_output=True, text=True, check=True).stdout
     l["ms"] = round(float(re.search(r"estimated duration: ([0-9.]+)", info).group(1)) * 1000)
