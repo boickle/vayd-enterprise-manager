@@ -305,7 +305,14 @@
   overflow: hidden;
 }
 .idexx-client-summary__text { width: 100%; font-size: 13px; line-height: 1.5; }
-.idexx-client-summary__text--read { white-space: pre-wrap; }
+.idexx-client-summary__text--read { white-space: normal; }
+.idexx-client-summary__text--read p { margin: 0 0 10px; }
+.idexx-client-summary__text--read ul,
+.idexx-client-summary__text--read ol { margin: 0 0 10px; padding-left: 22px; }
+/* The summary editor uses the full width of the result panel (owner, Nov 9, 2026). */
+.idexx-client-summary__editor { width: 100%; margin: 6px 0 4px; }
+.idexx-client-summary__editor > * { width: 100%; max-width: none; }
+.idexx-client-summary__editor [contenteditable='true'] { min-height: 220px; font-size: 14px; line-height: 1.55; }
 
 .idexx-frame-overlay { z-index: 1200; }
 .idexx-frame {

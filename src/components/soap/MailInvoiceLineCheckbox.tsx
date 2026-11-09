@@ -350,6 +350,10 @@ type Props = {
   blockedReason?: string | null;
   /** Set when the script isn't approved yet; the mail order then waits on the doctor. */
   approvalReason?: string | null;
+  /** B10: a prescription line; the Send to mail queue window offers "Approved by doctor". */
+  isPrescription?: boolean;
+  /** B10: the visit's doctor, for "Approved by Dr. …". */
+  doctorName?: string | null;
   disabled?: boolean;
   onError?: (message: string) => void;
   onChargeShipping?: (
@@ -376,6 +380,8 @@ export default function MailInvoiceLineCheckbox({
   doctorEmployeeId,
   blockedReason,
   approvalReason,
+  isPrescription = false,
+  doctorName,
   disabled,
   onError,
   onChargeShipping,
@@ -567,6 +573,9 @@ export default function MailInvoiceLineCheckbox({
               ? `${approvalReason} — approve it on this invoice, or the doctor approves it from the mail queue before anything is filled.`
               : null
           }
+          isPrescription={isPrescription}
+          approvedAtVisit={Boolean(line.rxApprovedAt)}
+          doctorName={doctorName}
           saving={busy}
           onCancel={() => setAsk(false)}
           onConfirm={(result) => {
@@ -605,6 +614,7 @@ export default function MailInvoiceLineCheckbox({
                   result.shipping > 0 ? paymentStatus : result.shippingPaymentStatus,
                 sendWithoutPayment: result.sendWithoutPayment,
                 payAfterApproval: result.payAfterApproval,
+                approvedByDoctor: result.approvedByDoctor || undefined,
                 shippingChargeName: result.shippingChargeName,
                 shipping: result.shipping,
                 ship: result.ship ? shipBodyFromFields(result.ship.fields, clientName) : undefined,
@@ -615,7 +625,7 @@ export default function MailInvoiceLineCheckbox({
                     inventoryItemId: mailedLine.catalogItemId ?? line.catalogItemId,
                     name: mailedLine.description,
                     quantity: result.mailQty || Number(mailedLine.qty) || 1,
-                    needsApproval: Boolean(approvalReason) || undefined,
+                    needsApproval: (!result.approvedByDoctor && Boolean(approvalReason)) || undefined,
                   },
                 ],
               });

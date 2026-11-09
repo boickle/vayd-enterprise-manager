@@ -44,7 +44,8 @@ describe('RP-04-7: your own Access tab is locked', () => {
     cy.get('input[name="employee-license"]').should('have.length', 3).each(($radio) => {
       expect($radio).to.have.attr('disabled');
     });
-    cy.contains('Ask a practice admin to change your own access.').should('be.visible');
+    // The Access tab sits in a fixed-position panel that scrolls; bring the hint into view first.
+    cy.contains('Ask a practice admin to change your own access.').scrollIntoView().should('be.visible');
 
     // Forced license call.
     asManager('PUT', `/practice/1/employees/${w.managerEmployeeId}/permissions/license`, {
@@ -64,7 +65,7 @@ describe('RP-04-7: your own Access tab is locked', () => {
     asManager('GET', `/practice/1/employees/${w.managerEmployeeId}/permissions`).then((res) => {
       expect(res.status).to.eq(200);
       expect(res.body.isLicensed).to.eq(false);
-      expect(res.body.roles).to.not.include('veterinarian');
+      expect(res.body.roleSlugs).to.not.include('veterinarian');
     });
   });
 });

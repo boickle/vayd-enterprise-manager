@@ -48,6 +48,9 @@ const technicianRecord = () => {
 };
 
 describe('RP-02-5: Settings → Staff saves keep office roles', () => {
+  // Tall window: the Staff edit form scrolls inside a fixed panel that clips at 720px (as inventory specs do).
+  beforeEach(() => cy.viewport(1440, 2000));
+
   it('edit phone, deactivate, reactivate: the technician stays tied to the office', () => {
     const w = schedulingWorld();
     const techId = w.employees.technician;
@@ -70,9 +73,10 @@ describe('RP-02-5: Settings → Staff saves keep office roles', () => {
 
         // Step 1: edit the phone and save the profile.
         signInAsScheduling('manager', `/schedule/settings?tab=employee-directory&employee=${techId}&section=profile`);
-        cy.contains('button', /^Save profile$/, { timeout: 15000 }).should('be.visible');
-        cy.contains('span.label', /^Phone$/).closest('label').find('input').clear().type(newPhone);
-        cy.contains('button', /^Save profile$/).click();
+        // The edit form sits in a fixed-position modal that scrolls; bring Save into view first.
+        cy.contains('button', /^Save profile$/, { timeout: 15000 }).scrollIntoView().should('be.visible');
+        cy.contains('span.label', /^Phone$/).closest('label').find('input').scrollIntoView().clear().type(newPhone);
+        cy.contains('button', /^Save profile$/).scrollIntoView().click();
         cy.wait('@saveEmployee');
 
         technicianRecord().should((rec) => {
@@ -83,9 +87,10 @@ describe('RP-02-5: Settings → Staff saves keep office roles', () => {
         // Step 2: deactivate, handing open tasks to the practice manager. RP-03 replaced Deactivate with
         // Offboard; a last day already over (yesterday, Eastern) deactivates them straight away.
         cy.intercept('POST', '**/employee-offboarding/*').as('offboard');
-        cy.contains('button', /^Offboard$/).click();
+        cy.contains('button', /^Offboard$/).scrollIntoView().click();
         cy.get('.settings-employee-modal').within(() => {
           cy.get('input[aria-label="Last day"]')
+            .scrollIntoView()
             .clear()
             .type(
               new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(
@@ -93,7 +98,7 @@ describe('RP-02-5: Settings → Staff saves keep office roles', () => {
               )
             );
           cy.get('select[aria-label="Their tasks go to"]').select(String(forwarderId));
-          cy.contains('button', /^Offboard$/).click();
+          cy.contains('button', /^Offboard$/).scrollIntoView().click();
         });
         cy.wait('@offboard');
 
@@ -103,7 +108,7 @@ describe('RP-02-5: Settings → Staff saves keep office roles', () => {
         technicianAssignments().should('deep.equal', before);
 
         // Step 3: reactivate.
-        cy.contains('button', /^Reactivate$/, { timeout: 15000 }).click();
+        cy.contains('button', /^Reactivate$/, { timeout: 15000 }).scrollIntoView().click();
         cy.wait('@saveEmployee');
 
         technicianRecord().should((rec) => {

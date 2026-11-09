@@ -33,6 +33,7 @@ import { appAlert } from '../../utils/appDialog';
 import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
 import { idexxTestFlag, type IdexxFlag } from './idexxFlags';
 import { draftIdexxClientSummary } from './idexxClientSummaryDraft';
+import { summaryEmailHtml, summaryPlainText, summaryTextToHtml } from './clientSummaryHtml';
 import IdexxClientSummary from './IdexxClientSummary';
 import IdexxReasonPrompt from './IdexxReasonPrompt';
 import { idexxEmailRules } from './idexxEmailRules';
@@ -66,55 +67,6 @@ function pdfFilename(result: IdexxResultDetail): string {
   const pet = (result.patientName || 'patient').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
   const acc = result.accessionId ? `-${result.accessionId}` : '';
   return `${pet}-IDEXX${acc}.pdf`;
-}
-
-const EMAIL_P =
-  'margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1f2937;';
-const EMAIL_LI =
-  'margin:0 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2937;';
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/** Paragraphs and "- " bullets, so the compose window and the sent mail keep the shape. */
-function clientSummaryToEmailHtml(text: string): string {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const out: string[] = [];
-  let para: string[] = [];
-  let bullets: string[] = [];
-
-  const flushPara = () => {
-    const bits = para.map((l) => escapeHtml(l.trim())).filter(Boolean);
-    para = [];
-    if (bits.length) out.push(`<p style="${EMAIL_P}">${bits.join('<br>')}</p>`);
-  };
-  const flushBullets = () => {
-    if (!bullets.length) return;
-    const items = bullets.map((b) => `<li style="${EMAIL_LI}">${escapeHtml(b)}</li>`).join('');
-    bullets = [];
-    out.push(`<ul style="margin:0 0 14px;padding-left:22px;">${items}</ul>`);
-  };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    const bullet = line.match(/^[-*•]\s+(.*)$/);
-    if (!line) {
-      flushPara();
-      flushBullets();
-      continue;
-    }
-    if (bullet) {
-      flushPara();
-      bullets.push(bullet[1]);
-    } else {
-      flushBullets();
-      para.push(line);
-    }
-  }
-  flushPara();
-  flushBullets();
-  return out.join('');
 }
 
 function coverNote(result: IdexxResultDetail, clientLabel: string): string {
@@ -356,7 +308,9 @@ export default function IdexxResultView({
       const pet = result.patientName?.trim() || 'Lab results';
       const deceased = client.deceased;
       const wording = withSummary ? (result.clientSummary ?? '').trim() : '';
-      const body = wording || coverNote(result, client.clientLabel);
+      // The summary may be formatted (HTML from the editor); the plain body is its text version.
+      const body = wording ? summaryPlainText(wording) : coverNote(result, client.clientLabel);
+      const bodyHtml = wording ? summaryEmailHtml(wording) : summaryTextToHtml(body, true);
       setIncludeInEmr(true);
       setEmrPatientIds([result.patientId]);
       setEmail({
@@ -367,7 +321,7 @@ export default function IdexxResultView({
         // A softer subject when the pet has died: no possessive "lab results" line.
         subject: deceased ? `Lab results for ${pet}` : `${pet}'s lab results`,
         body,
-        bodyHtml: clientSummaryToEmailHtml(body),
+        bodyHtml,
         attachments: [
           { filename: pdfFilename(result), mimeType: 'application/pdf', contentBase64 },
         ],
