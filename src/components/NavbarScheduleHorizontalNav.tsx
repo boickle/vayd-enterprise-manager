@@ -19,7 +19,8 @@ import {
   isInventoryOpsNavPath,
 } from '../utils/catalogInventoryNav';
 import { LABS_HOME, isLabsNavPath } from '../utils/labsNav';
-import { useCan } from '../permissions/PermissionContext';
+import { useCan, usePermissions } from '../permissions/PermissionContext';
+import { canOpenSettings } from '../permissions/settingsTabAccess';
 import {
   APPOINTMENT_REQUEST_PROMOTIONS_PATH,
   EMAIL_CAMPAIGNS_PATH,
@@ -277,7 +278,13 @@ export default function NavbarScheduleHorizontalNav() {
     () => roles.includes('admin') || roles.includes('superadmin'),
     [roles]
   );
-  const canManageMembershipPlans = useCan('membership.plan.manage');
+  // RP-A1: Settings shows for anyone holding a Settings tab's permission (settingsTabAccess.ts);
+  // Admin stays admin and superadmin logins only.
+  const { can, hasRole } = usePermissions();
+  const showSettingsTab = useMemo(
+    () => canOpenSettings({ isAdminLogin: showAdminTab, can, hasRole }),
+    [showAdminTab, can, hasRole]
+  );
   // The catalog is for staff who use the price list; the mail order roles don't (owner decision,
   // Oct 30, 2026).
   const holdsCatalog = useCan('catalog.view');
@@ -297,10 +304,10 @@ export default function NavbarScheduleHorizontalNav() {
     }
     keys.push('tasks');
     if (showMarketingTab) keys.push('marketing');
-    if (showAdminTab) keys.push('settings', 'admin');
-    else if (canManageMembershipPlans) keys.push('settings');
+    if (showSettingsTab) keys.push('settings');
+    if (showAdminTab) keys.push('admin');
     return keys;
-  }, [homeTab, showAdminTab, canManageMembershipPlans, canSeeCatalog, showMarketingTab]);
+  }, [homeTab, showAdminTab, showSettingsTab, canSeeCatalog, showMarketingTab]);
 
   const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
   const marketingMenuRef = useRef<HTMLDetailsElement>(null);
