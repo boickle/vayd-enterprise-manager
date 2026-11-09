@@ -131,6 +131,7 @@ export async function draftIdexxClientSummary(
     prior,
   ].join('\n\n');
 
+  const firstName = ownerFirstName(history.owner);
   const answer = await chatAboutChart({
     sourceText,
     patientName,
@@ -139,8 +140,8 @@ export async function draftIdexxClientSummary(
     patientId: result.patientId,
     question: [
       `Write the email the owner will read about ${patientName}'s IDEXX lab results${
-        history.owner ? ` (owner ${history.owner}; greet them by first name)` : ''
-      }.`,
+        history.owner ? ` (owner ${history.owner})` : ''
+      }.${firstName ? ` Begin with exactly "Dear ${firstName},".` : ''}`,
       'Succinct and warm, like a short note from the doctor who knows this pet. Plain language. Explain a medical term only when you use one.',
       'One or two sentences for the bottom line. Then only the values that are out of range, each as a "- " bullet: high or low, what it looks at, and what that can mean for this pet.',
       'Connect this pet’s history to these results. Use a condition, medication, the reason for this visit, or an earlier value only when it changes what this lab means. Say in a few words whether a repeated value is better, worse, or about the same.',
@@ -154,5 +155,29 @@ export async function draftIdexxClientSummary(
   });
   const text = stripCitationTokens(answer.trim());
   if (!text) throw new Error('No summary came back.');
-  return text;
+  return withGreeting(text, firstName);
+}
+
+/** "Maria Rivera" → "Maria". */
+export function ownerFirstName(owner: string | null | undefined): string | null {
+  const first = String(owner ?? '').trim().split(/\s+/)[0];
+  return first || null;
+}
+
+/**
+ * The greeting always uses the owner's first name (owner decision, Nov 8, 2026): the model
+ * sometimes picked the surname. Replaces a "Dear …," / "Hi …," opening, or adds one.
+ */
+export function withGreeting(text: string, firstName: string | null): string {
+  if (!firstName) return text;
+  const greeting = `Dear ${firstName},`;
+  const opening = /^(dear|hi|hello)\b[^\n,]*,?[ \t]*/i;
+  if (opening.test(text)) return text.replace(opening, greeting);
+  return `${greeting}\n\n${text}`;
+}
+
+/** A placeholder the doctor still has to fill in, such as "[doctor to add]". */
+export function summaryPlaceholder(text: string | null | undefined): string | null {
+  const m = String(text ?? '').match(/\[[^\]\n]{1,60}\]/);
+  return m ? m[0] : null;
 }

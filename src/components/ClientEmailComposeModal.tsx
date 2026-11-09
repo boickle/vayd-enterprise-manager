@@ -625,8 +625,8 @@ export function ClientEmailComposeModal({
                       Put on these patient charts
                     </legend>
                     <p style={{ margin: '0 0 8px', color: '#6b7280', fontSize: 13 }}>
-                      Choose every pet this invoice or receipt belongs on. One household visit can
-                      include more than one.
+                      Choose every pet this email is about. One household visit can include more
+                      than one.
                     </p>
                     {regardingPatients.map((p) => {
                       const checked = (regardingPatientIds ?? []).includes(p.id);

@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Clock } from 'lucide-react';
+import { Check, Clock } from 'lucide-react';
 import { isLabValueAbnormal, type LabResult } from '../../api/inHouseLabs';
 import './LabResultChip.css';
 
@@ -10,17 +10,16 @@ export function labAbnormalCount(result: LabResult): number {
 }
 
 /**
- * Rolled-up state for every form on one lab charge. Nobody marks a result normal: Scout flags values against
- * each row's range or abnormal options. A notes-only (summary) form has nothing to check, so once saved it is
- * just complete. Normal means every form had values to check and none were flagged.
+ * Rolled-up state for every form on one lab charge: not run yet, or complete. The chip
+ * doesn't judge the result (owner decision, Nov 8, 2026); an abnormal choice is flagged
+ * inside the form itself.
  */
-export type LabResultsState = 'none' | 'waiting' | 'abnormal' | 'normal' | 'complete';
+export type LabResultsState = 'none' | 'waiting' | 'complete';
 
 export function labResultsState(results: LabResult[] | null | undefined): LabResultsState {
   if (!results?.length) return 'none';
   if (results.some((r) => r.status === 'pending')) return 'waiting';
-  if (results.some((r) => labAbnormalCount(r) > 0)) return 'abnormal';
-  return results.some((r) => r.templateMode === 'summary') ? 'complete' : 'normal';
+  return 'complete';
 }
 
 type Props = {
@@ -31,13 +30,12 @@ type Props = {
 };
 
 /**
- * Not run / abnormal / Normal / Complete, for a lab charge wherever it appears — the
+ * Not run / Complete, for a lab charge wherever it appears — the
  * invoice line, the SOAP checkout, or the chart timeline.
  */
 export default function LabResultChip({ results, waitingLabel = 'Not run', className }: Props) {
   const state = labResultsState(results);
   if (state === 'none') return null;
-  const flagged = (results ?? []).reduce((n, r) => n + labAbnormalCount(r), 0);
   const cls = `lab-chip lab-chip--${state}${className ? ` ${className}` : ''}`;
   if (state === 'waiting') {
     return (
@@ -46,16 +44,9 @@ export default function LabResultChip({ results, waitingLabel = 'Not run', class
       </span>
     );
   }
-  if (state === 'abnormal') {
-    return (
-      <span className={cls}>
-        <AlertTriangle size={11} aria-hidden /> {flagged} abnormal
-      </span>
-    );
-  }
   return (
     <span className={cls}>
-      <Check size={11} aria-hidden /> {state === 'complete' ? 'Complete' : 'Normal'}
+      <Check size={11} aria-hidden /> Complete
     </span>
   );
 }

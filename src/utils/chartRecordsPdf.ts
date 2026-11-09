@@ -359,17 +359,11 @@ export function labReportFromIdexx(detail: IdexxResultDetail): LabReport {
 }
 
 function inHouseFlag(el: LabFormElement, value: string): LabRow['flag'] {
-  if (!isLabValueAbnormal(el, value)) return '';
-  if (el.abnormalOptions?.length || el.valueType !== 'number') return 'A';
-  const n = Number(value);
-  if (el.min != null && n < el.min) return 'L';
-  return 'H';
+  // Only an abnormal choice flags; number rows have no ranges (owner decision, Nov 8, 2026).
+  return isLabValueAbnormal(el, value) ? 'A' : '';
 }
 
 function inHouseRange(el: LabFormElement): string {
-  if (el.min != null && el.max != null) return `${el.min} - ${el.max}`;
-  if (el.min != null) return `>= ${el.min}`;
-  if (el.max != null) return `<= ${el.max}`;
   return el.abnormalOptions?.length && el.options?.length
     ? el.options.filter((o) => !el.abnormalOptions!.includes(o)).join(' / ')
     : '';

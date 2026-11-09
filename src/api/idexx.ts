@@ -50,6 +50,8 @@ export type IdexxInvoiceLine = {
   labName: string;
   testCode: string | null;
   orderId: number | null;
+  /** Charged by Scout for a test the doctor added inside IDEXX. */
+  addedInIdexx?: boolean;
 };
 
 export type IdexxInvoiceState = {
