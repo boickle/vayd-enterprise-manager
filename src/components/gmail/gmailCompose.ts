@@ -15,6 +15,7 @@ import {
   type GmailDraftResponse,
   type GmailAddress,
   type GmailComposeAttachment,
+  type GmailComposePayload,
   type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../../api/gmail';
@@ -773,6 +774,8 @@ export async function submitCompose(opts: {
   /** Defaults to tracked; false sends without a read receipt. */
   trackOpens?: boolean;
   attachments?: GmailComposeAttachment[];
+  /** COM-07d: have the API write the chart entry after the send (see GmailComposePayload.chartLog). */
+  chartLog?: GmailComposePayload['chartLog'];
 }) {
   const to = opts.to
     .split(/[,;]/)
@@ -795,6 +798,7 @@ export async function submitCompose(opts: {
     references: opts.references,
     trackOpens: opts.trackOpens,
     attachments: opts.attachments?.length ? opts.attachments : undefined,
+    ...(opts.chartLog ? { chartLog: opts.chartLog } : {}),
   });
 }
 

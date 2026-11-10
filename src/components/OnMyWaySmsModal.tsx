@@ -155,6 +155,9 @@ export function OnMyWaySmsModal({
       await sendClientSms(clientId, {
         message: message.trim(),
         source: 'on_my_way',
+        ...(appt.patient?.id != null && Number(appt.patient.id) > 0
+          ? { patientIds: [Number(appt.patient.id)] }
+          : {}),
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         ...fromLineRouting.payload,
       });

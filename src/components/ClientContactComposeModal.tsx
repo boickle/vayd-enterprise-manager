@@ -57,6 +57,8 @@ type Props = {
   markInboxDone?: boolean;
   /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
   smsSource?: string;
+  /** Pets this message is about; the chart entry goes on each pet's record. Leave out for client-level. */
+  patientIds?: number[];
   mergeValues?: MergeValues;
   /** Called after a successful text or email, before the modal closes. */
   onSent?: () => void;
@@ -88,6 +90,7 @@ export function ClientContactComposeModal({
   smsFrom,
   markInboxDone,
   smsSource,
+  patientIds,
   mergeValues,
   onSent,
 }: Props) {
@@ -206,6 +209,7 @@ export function ClientContactComposeModal({
         ...(markInboxDone ? { markInboxDone: true } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
         ...(smsSource ? { source: smsSource } : {}),
+        ...(patientIds?.length ? { patientIds } : {}),
       });
       onSent?.();
       onClose();
@@ -234,6 +238,12 @@ export function ClientContactComposeModal({
         subject: subject.trim(),
         bodyText,
         bodyHtml: bodyHtml || undefined,
+        // COM-07d: the API writes the chart entry after Gmail accepts the email.
+        chartLog: {
+          ...(clientId != null ? { clientId } : {}),
+          ...(patientIds?.length ? { patientIds } : {}),
+          typeLabel: emailFormat === 'forward_booking' ? 'Forward booking email' : 'Care outreach email',
+        },
       });
       onSent?.();
       onClose();

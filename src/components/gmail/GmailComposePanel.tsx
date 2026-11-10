@@ -521,6 +521,8 @@ export default function GmailComposePanel({
         inReplyTo,
         references,
         trackOpens,
+        // COM-07d: an email to a client's address lands in their Communications (client-level).
+        chartLog: {},
       });
       draftIdRef.current = undefined;
       setDraftId(undefined);

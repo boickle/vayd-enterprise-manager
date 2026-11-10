@@ -613,6 +613,17 @@ export type GmailComposePayload = {
   keepOutOfInbox?: boolean;
   /** Defaults to true server-side; set false to send without a read receipt. */
   trackOpens?: boolean;
+  /**
+   * Ask the API to write the chart entry once Gmail accepted the email (COM-07d). Leave out when the
+   * screen records its own entry. Without a clientId the API uses the one client matching the recipients.
+   */
+  chartLog?: {
+    clientId?: number;
+    patientIds?: number[];
+    typeLabel?: string;
+    /** Pay link, invoice or receipt: client record only. */
+    financial?: boolean;
+  };
 };
 
 export type GmailSendResponse = {

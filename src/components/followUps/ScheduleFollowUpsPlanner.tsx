@@ -2959,6 +2959,7 @@ export default function ScheduleFollowUpsPlanner({
           emailFormat="forward_booking"
           canText={false}
           smsSource="follow_up_confirmation"
+          patientIds={data.pets.map((p) => p.patientId)}
           onClose={() => setEmailOpen(false)}
           onSent={() => {
             setEmailOpen(false);
