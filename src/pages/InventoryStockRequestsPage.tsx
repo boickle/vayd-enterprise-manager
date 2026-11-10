@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { fetchMyOffices } from '../api/permissions';
-import { usePermissions } from '../permissions/PermissionContext';
 import {
   getInventoryBranchStock,
   listBranchParLevels,
@@ -182,8 +181,6 @@ type Props = { kind: InventoryStockRequestKind };
 
 export default function InventoryStockRequestsPage({ kind }: Props) {
   const { token } = useAuth() as { token: string | null };
-  const { hasRole } = usePermissions();
-  const isInventoryManager = hasRole('inventory_manager');
   const [searchParams] = useSearchParams();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const branchFromUrl = Number(searchParams.get('branchId'));
@@ -220,9 +217,10 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const isOrder = kind === 'order';
   const title = isTransfer || isFill ? 'Transfer List' : 'Order List';
   const officeName = branches.find((b) => b.id === branchId)?.name ?? 'Office';
+  // The API's inventory.po.manage decides who orders where: the practice manager at any office,
+  // an inventory manager at their own (owner decision, Nov 9, 2026).
   const canActOnOrder =
     isOrder &&
-    isInventoryManager &&
     branchId !== '' &&
     (poOffices === 'all' ||
       (Array.isArray(poOffices) && poOffices.includes(Number(branchId))));
@@ -526,7 +524,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
       <p className="settings-section-description">
         {isTransfer || isFill
           ? 'Prefer Main first (down to 0 — that may put the item on the order list back to max), then other locations over par, then other offices over par. Only pull another location below par if Main is empty. To is short of par; uncovered asks show From as —. Locations at or over par are not destinations.'
-          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that. Everyone can view this list. Placing an order or adding a line is for the inventory manager of this office.'}
+          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that. Everyone can view this list. Placing an order or adding a line is for the practice manager and the inventory manager of this office.'}
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>

@@ -11,6 +11,7 @@ import {
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { fetchMyOffices } from '../api/permissions';
 import { INVENTORY_MOVEMENT_LABELS as ACTION_LABELS } from '../utils/inventoryMovementLabels';
+import { sellUnitLabel } from '../utils/vendorPackSize';
 import './Settings.css';
 
 const PAGE_SIZE = 50;
@@ -32,6 +33,30 @@ function locationText(row: InventoryStockMovement): string {
   if (to) return `into ${to}`;
   if (from) return `from ${from}`;
   return '';
+}
+
+/**
+ * "0.6 mL", "20 tablets", "1 bottle". Controlled drugs are counted in mL (owner decision,
+ * Oct 30, 2026), so one with no unit set reads mL, not "units" (U8, Nov 9, 2026).
+ */
+type QuantityRow = {
+  quantity?: number | null;
+  inventoryItem?: {
+    sellUnitType?: string | null;
+    sellUnitTypeDetail?: string | null;
+    isControlled?: boolean;
+  } | null;
+};
+
+function quantityText(row: QuantityRow): string {
+  const qty = Number(row.quantity ?? 0);
+  const item = row.inventoryItem;
+  const type = item?.sellUnitType?.trim() || (item?.isControlled ? 'ml' : '');
+  if (!type) return `${qty} unit${qty === 1 ? '' : 's'}`;
+  const label = sellUnitLabel(type, item?.sellUnitTypeDetail);
+  const singular =
+    qty === 1 && /[^s]s$/.test(label) && label !== 'units' ? label.slice(0, -1) : label;
+  return `${qty} ${singular}`;
 }
 
 export default function InventoryActivityPage() {
@@ -302,7 +327,7 @@ export default function InventoryActivityPage() {
                 </time>
               </div>
               <div style={{ marginTop: 5 }}>
-                {Number(row.quantity ?? 0)} unit{Number(row.quantity ?? 0) === 1 ? '' : 's'}
+                {quantityText(row)}
                 {locationText(row) ? ` · ${locationText(row)}` : ''}
                 {row.fromQuantityAfter != null
                   ? ` · QOH after ${Number(row.fromQuantityAfter)}`
