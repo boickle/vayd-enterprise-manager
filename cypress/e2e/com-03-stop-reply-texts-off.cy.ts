@@ -115,7 +115,6 @@ describe('COM-03-7: a STOP reply shows on the client page and turns the text scr
 
     // The CL opens the client page.
     signInAsScheduling('cl', `/schedule/clients?clientId=${clientId}`);
-    cy.contains('a, button, td', /Sched/i, { timeout: 20000 }).first().click();
     cy.contains(`Texts off: replied STOP (${today})`, { timeout: 20000 }).should('be.visible');
 
     // The text screen gives the reason and cannot send.
@@ -123,7 +122,11 @@ describe('COM-03-7: a STOP reply shows on the client page and turns the text scr
     cy.contains(phone.replace(/\D/g, '').slice(-4)).first().click();
     cy.contains('[role="menuitem"]', 'Text this number').click();
     cy.get('[data-testid="texts-off-reason"]').should('contain.text', `Texts off: replied STOP (${today})`);
-    cy.contains('button', /^Send/).should('be.disabled');
+    // Even with a message typed, the text screen's Send stays off.
+    cy.get('[role="dialog"]').within(() => {
+      cy.get('textarea').first().type('Hello from the clinic');
+      cy.contains('button', 'Send text').should('be.disabled');
+    });
 
     // A text composed by staff is refused by the API with the date.
     schedulingApi(

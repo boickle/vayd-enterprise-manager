@@ -126,10 +126,14 @@ export function ClientSmsWorkspaceModal({
 
   useEffect(() => {
     if (!open) return;
-    if (doNotSms === true || doNotSms === false) {
-      setResolvedDoNotSms(doNotSms);
+    if (doNotSms === false) {
+      setResolvedDoNotSms(false);
+      setTextsOffReason(null);
       return;
     }
+    // Texts are off (or unknown): load the client so a STOP reply or Quo block shows its reason
+    // and blocks sending, rather than the staff "send anyway" prompt (COM-03).
+    if (doNotSms === true) setResolvedDoNotSms(true);
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
