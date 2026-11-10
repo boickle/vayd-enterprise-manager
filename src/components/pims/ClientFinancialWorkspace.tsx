@@ -293,6 +293,8 @@ type LedgerRow = {
   paymentNote?: string | null;
   /** Online store, visit, or a direct invoice. */
   where?: string | null;
+  /** Direct invoices: what the bill is for (first line, "+N more"). */
+  lineSummary?: string | null;
   /** Card, cash, and the other tenders that settled it. */
   paidHow?: string | null;
   total: number;
@@ -1325,6 +1327,19 @@ function invoiceWhere(inv: VisitInvoice, orders: MailOrder[]): InvoiceWhere {
   }
   if (inv.appointmentId != null || (inv.lines ?? []).some((line) => line.orderId)) return 'Visit';
   return 'Direct invoice';
+}
+
+/**
+ * What a direct (counter) invoice is for, from its lines, so a ledger row says "Membership Multi-Pet — Juniper"
+ * instead of only "Direct invoice". Visit and store bills already say where they came from.
+ */
+function directInvoiceSummary(inv: VisitInvoice, orders: MailOrder[]): string | null {
+  if (invoiceWhere(inv, orders) !== 'Direct invoice') return null;
+  const lines = (inv.lines ?? []).filter((l) => !(l as { isDeleted?: boolean }).isDeleted && l.description);
+  if (!lines.length) return null;
+  const first = String(lines[0].description).trim();
+  const short = first.length > 60 ? `${first.slice(0, 57)}…` : first;
+  return lines.length > 1 ? `${short} +${lines.length - 1} more` : short;
 }
 
 function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'direct' {
@@ -2846,6 +2861,7 @@ export default function ClientFinancialWorkspace({
         }),
         actorNote,
         where: invoiceWhere(inv, mailOrders),
+        lineSummary: directInvoiceSummary(inv, mailOrders),
         paidHow: paidHowLabel(inv),
         paymentNote: voidedPaymentNote(
           (inv.tenders ?? [])
@@ -5499,6 +5515,7 @@ export default function ClientFinancialWorkspace({
                             ) : null}
                             {row.where ? ' · ' : ''}
                             {row.source === 'scout' ? 'Scout' : 'eVet'}
+                            {row.lineSummary ? ` · ${row.lineSummary}` : ''}
                             {row.actorNote ? ` · ${row.actorNote}` : ''}
                           </div>
                         </td>

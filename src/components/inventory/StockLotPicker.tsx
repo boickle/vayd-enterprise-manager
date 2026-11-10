@@ -53,6 +53,13 @@ type Props = {
    * it (owner decision, Oct 30, 2026).
    */
   otherShelvesFrom?: string | null;
+  /** Unbox: these lot fields were filled in by reading the supplier invoice (U4). */
+  fromInvoiceRead?: boolean;
+  /**
+   * "Older lot … has stock": a nudge to use the oldest bottle first. Waste / Adjust turns it off,
+   * since you waste the bottle that's broken or expired, not the oldest (U7).
+   */
+  olderLotHint?: boolean;
 };
 
 /** "Oct 1" from "2026-10-01". */
@@ -143,6 +150,8 @@ export default function StockLotPicker({
   className,
   refreshKey = 0,
   forUse = false,
+  fromInvoiceRead = false,
+  olderLotHint = true,
   otherShelvesFrom = null,
 }: Props) {
   /** Showing lots from every shelf instead of the doctor's controlled drug location. */
@@ -433,7 +442,7 @@ export default function StockLotPicker({
           </label>
         </div>
       ) : null}
-      {showEditableLotFields ? (
+      {showEditableLotFields && fromInvoiceRead ? (
         <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
           From the invoice — change these if the read was wrong.
         </p>
@@ -451,7 +460,7 @@ export default function StockLotPicker({
           Soonest expiration is listed first — use that bottle unless you know otherwise.
         </p>
       ) : null}
-      {olderLotNote ? (
+      {olderLotNote && olderLotHint ? (
         <p
           className="settings-muted stock-lot-picker__older-note"
           role="note"

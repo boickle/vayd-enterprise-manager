@@ -18,7 +18,12 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { appointmentTypeIsArchived } from '../../utils/appointmentTypeSettings';
-import { ROLE_LABELS } from '../../api/permissions';
+import {
+  fetchPermissionAudit,
+  roleMembershipChanges,
+  ROLE_LABELS,
+  type PermissionAuditEntry,
+} from '../../api/permissions';
 import RolePermissionsEditor from './RolePermissionsEditor';
 
 function extractErr(err: unknown): string {
@@ -53,8 +58,10 @@ export default function SettingsScoutRoles({
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [assignments, setAssignments] = useState<ScoutRoleAssignment[]>([]);
-  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [auditRows, setAuditRows] = useState<PermissionAuditEntry[]>([]);
 
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -90,6 +97,45 @@ export default function SettingsScoutRoles({
         .filter((e) => e.isActive !== false && e.isDeleted !== true)
         .slice()
         .sort((a, b) => formatEmployeeName(a).localeCompare(formatEmployeeName(b))),
+    [employees]
+  );
+
+  /** RP-04: deactivated people stay on a role until someone removes them, but are hidden by default. */
+  const deactivatedAssignments = useMemo(
+    () => assignments.filter((a) => a.isActive === false),
+    [assignments]
+  );
+  const deactivatedCount = useMemo(
+    () => new Set(deactivatedAssignments.map((a) => a.employeeId)).size,
+    [deactivatedAssignments]
+  );
+  const deactivatedForList = useMemo(() => {
+    const seen = new Set<string>();
+    return deactivatedAssignments.filter((a) => {
+      const key = `${a.employeeId}:${a.branchId ?? 'all'}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [deactivatedAssignments]);
+
+  const loadRecentChanges = useCallback(() => {
+    fetchPermissionAudit(practiceId, { permissionKeys: ['staff.role.assign'], limit: 300 })
+      .then(setAuditRows)
+      .catch(() => setAuditRows([]));
+  }, [practiceId]);
+
+  useEffect(loadRecentChanges, [loadRecentChanges]);
+
+  const recentForRole = useMemo(
+    () => (selectedRoleId == null ? [] : roleMembershipChanges(auditRows, selectedRoleId).slice(0, 10)),
+    [auditRows, selectedRoleId]
+  );
+  const nameOfEmployee = useCallback(
+    (id: number | null) => {
+      const emp = employees.find((e) => e.id === id);
+      return emp ? formatEmployeeName(emp) : id != null ? `Employee ${id}` : 'Someone';
+    },
     [employees]
   );
 
@@ -292,6 +338,7 @@ export default function SettingsScoutRoles({
           }));
       const res = await replaceScoutRoleAssignments(selectedRoleId, practiceId, payload);
       setAssignments(res.assignments);
+      loadRecentChanges();
       onMessage?.(`Assignees saved for ${selectedRole.name}.`, 'success');
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
@@ -526,6 +573,24 @@ export default function SettingsScoutRoles({
                               <span>{formatEmployeeName(emp)}</span>
                             </label>
                           ))}
+                          {showDeactivated &&
+                            deactivatedForList
+                              .filter((a) => a.branchId === branch.id)
+                              .map((a) => (
+                                <label
+                                  key={`${branch.id}-x${a.employeeId}`}
+                                  style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={(selectedByBranch[branch.id] ?? []).includes(a.employeeId)}
+                                    onChange={(e) =>
+                                      toggleBranchEmployee(branch.id, a.employeeId, e.target.checked)
+                                    }
+                                  />
+                                  <span>{a.employeeName} (Deactivated)</span>
+                                </label>
+                              ))}
                         </div>
                       </div>
                     ))}
@@ -556,7 +621,33 @@ export default function SettingsScoutRoles({
                         <span>{formatEmployeeName(emp)}</span>
                       </label>
                     ))}
+                    {showDeactivated &&
+                      deactivatedForList.map((a) => (
+                        <label
+                          key={`x-${a.employeeId}`}
+                          style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedEmployeeIds.includes(a.employeeId)}
+                            onChange={(e) => toggleEmployee(a.employeeId, e.target.checked)}
+                          />
+                          <span>{a.employeeName} (Deactivated)</span>
+                        </label>
+                      ))}
                   </div>
+                )}
+                {deactivatedCount > 0 && (
+                  <label
+                    style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, marginTop: 8 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showDeactivated}
+                      onChange={(e) => setShowDeactivated(e.target.checked)}
+                    />
+                    <span>Show deactivated ({deactivatedCount})</span>
+                  </label>
                 )}
                 <div style={{ marginTop: 12 }}>
                   <button
@@ -574,6 +665,25 @@ export default function SettingsScoutRoles({
                   )}
                 </div>
               </div>
+
+              {recentForRole.length > 0 && (
+                <div className="settings-card" data-testid="recent-role-changes">
+                  <h3 className="settings-card-title">Recent changes to {selectedRole.name}</h3>
+                  <ul style={{ listStyle: 'none', margin: '0 0 8px', padding: 0, fontSize: 13 }}>
+                    {recentForRole.map((c, i) => (
+                      <li key={`${c.id}-${i}`} style={{ padding: '4px 0' }}>
+                        {nameOfEmployee(c.targetId)} was {c.kind === 'added' ? 'added to' : 'removed from'}{' '}
+                        this role{c.office ? ` at ${c.office}` : ''}
+                        <span className="settings-muted">
+                          {' '}
+                          · {c.actor ?? 'Someone'} · {new Date(c.when).toLocaleString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <a href="/schedule/settings?tab=permission-audit">See the full Permission Audit Log</a>
+                </div>
+              )}
 
               <RolePermissionsEditor
                 key={selectedRole.id}

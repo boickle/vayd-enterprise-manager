@@ -33,6 +33,7 @@ import DesignBlocksEditor, { MergeTagButton } from './DesignBlocksEditor';
 import EmailPreview from './EmailPreview';
 import GoalStep from './GoalStep';
 import ReviewStep from './ReviewStep';
+import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
 import { StatusChip } from './campaignFormat';
 import { campaignChecks } from './campaignChecks';
 import { createDefaultDesign, EmailDesign, parseDesign, renderDesignToHtml } from './emailDesign';
@@ -59,7 +60,9 @@ export default function EmailCampaignEditorPage() {
   const timer = useRef<number | null>(null);
   const saving = useRef<Promise<boolean>>(Promise.resolve(true));
 
-  const readOnly = !campaign || campaign.status !== 'draft';
+  // RP-08: without marketing.manage (Executive) every campaign is view only.
+  const canManage = useCanOrAdminLogin('marketing.manage');
+  const readOnly = !campaign || campaign.status !== 'draft' || !canManage;
   const design = useMemo(() => parseDesign(campaign?.design), [campaign?.design]);
 
   const flush = useCallback((): Promise<boolean> => {
@@ -285,7 +288,7 @@ export default function EmailCampaignEditorPage() {
             Report
           </Button>
         ) : null}
-        {readOnly ? (
+        {readOnly && canManage ? (
           <Button
             size="small"
             startIcon={<Copy size={16} />}
@@ -493,6 +496,7 @@ export default function EmailCampaignEditorPage() {
           summary={preview.summary}
           checks={checks}
           busy={busy}
+          viewOnly={!canManage}
           onFlush={flush}
           onSpreadChange={(spreadMinutes) => patch({ spreadMinutes })}
           onSchedule={(sendAt) => runAction(() => scheduleEmailCampaign(campaign.id, sendAt))}

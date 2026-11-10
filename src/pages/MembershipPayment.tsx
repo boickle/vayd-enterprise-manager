@@ -12,6 +12,7 @@ import {
   resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { fetchClientInfo } from '../api/clientPortal';
 import { getFrontendPaymentProvider } from '../config/paymentProvider';
 import { loadStripePublishableKey } from '../api/practicePublicConfig';
 import { trackPurchase } from '../utils/analytics';
@@ -168,6 +169,12 @@ export type MembershipPaymentModalProps = {
   onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
+/** True for a client's own login. `role` from useAuth is a list (['client']); a single string is accepted too. */
+export function isClientLogin(role: unknown): boolean {
+  const roles = Array.isArray(role) ? role : role ? [role] : [];
+  return roles.some((r) => String(r).toLowerCase() === 'client');
+}
+
 export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -175,7 +182,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const fromModal = props?.fromModal === true;
   const onEnrollmentSucceeded = props?.onEnrollmentSucceeded;
   const state = fromModal ? (props?.initialState ?? locationState) : locationState;
-  const { userEmail, userId } = useAuth() as any;
+  const { userEmail, userId, role } = useAuth() as any;
+  const clientLogin = isClientLogin(role);
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
@@ -400,6 +408,30 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [locality, setLocality] = useState('');
   const [administrativeDistrictLevel1, setAdministrativeDistrictLevel1] = useState('');
   const [postalCode, setPostalCode] = useState('');
+
+  // Pre-fill the cardholder and billing address from the household record; the client can still change them.
+  useEffect(() => {
+    // Only for the client's own login (a staff login's id is not a household).
+    if (!clientLogin) return;
+    const clientId = Number(userId);
+    if (!Number.isFinite(clientId) || clientId <= 0) return;
+    let cancelled = false;
+    void fetchClientInfo(clientId)
+      .then((c: any) => {
+        if (cancelled || !c) return;
+        const name = [c.firstName, c.lastName].filter(Boolean).join(' ').trim();
+        setCardholderName((prev) => prev || state?.customerName || name);
+        setAddressLine1((prev) => prev || c.address1 || '');
+        setAddressLine2((prev) => prev || c.address2 || '');
+        setLocality((prev) => prev || c.city || '');
+        setAdministrativeDistrictLevel1((prev) => prev || c.state || '');
+        setPostalCode((prev) => prev || c.zipcode || '');
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [clientLogin, userId, state?.customerName]);
 
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -796,7 +828,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
             Payment Successful
           </h1>
           <p className="cp-muted" style={{ marginBottom: 20 }}>
-            {`${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`}
+            {`${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly.`}
           </p>
           {state.multiPetCreditEligible && (
             <p style={{ marginBottom: 20, padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: 15, lineHeight: 1.5 }}>
@@ -935,7 +967,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           !state.fromRoomLoaderPublicForm && (
           <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
             <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-              <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
+              <strong>NOTE:</strong> To sign up another pet from your household, or to make an appointment for {state.petName}, go to{' '}
               <a 
                 href="/client-portal" 
                 onClick={(e) => {
@@ -944,7 +976,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 }}
                 style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
               >
-                login to your client portal
+                your client portal
               </a>
               .
             </p>

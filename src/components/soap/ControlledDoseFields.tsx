@@ -8,6 +8,7 @@ import WasteDetailFields, {
 } from '../inventory/WasteDetailFields';
 import { useCan } from '../../permissions/PermissionContext';
 import { getInvoice, type VisitInvoice, type VisitInvoiceLine } from '../../api/visitWorkflow';
+import { lotShelf } from '../../utils/lotShelf';
 import './ControlledDoseFields.css';
 
 /** Matches the API's waste reason for a controlled dose drawn up and not given. */
@@ -84,7 +85,10 @@ export default function ControlledDoseFields({
   const wastedMl = num(wasted);
   const lotMissing =
     line.trackLots === true && line.inventoryLotBalanceId == null && !line.lotNumber;
-  const shelfMissing = invoice.inventoryBranchId == null || invoice.inventoryLocationId == null;
+  // The waste comes off the shelf the dose came from: the doctor's safe for a controlled drug,
+  // not the bill's car (B1, Nov 9, 2026).
+  const shelf = lotShelf(line, invoice);
+  const shelfMissing = shelf.branchId == null || shelf.locationId == null;
   const wasteBlocked = lotMissing
     ? 'Pick the lot first'
     : shelfMissing
@@ -105,8 +109,8 @@ export default function ControlledDoseFields({
         ? `invoice #${invoice.scoutInvoiceNumber}`
         : 'this visit';
       await recordWaste(practiceId, {
-        branchId: invoice.inventoryBranchId as number,
-        fromBranchLocationId: invoice.inventoryLocationId as number,
+        branchId: shelf.branchId as number,
+        fromBranchLocationId: shelf.locationId as number,
         inventoryItemId: line.catalogItemId as number,
         quantity: wastedMl,
         reasonCode: CONTROLLED_DOSE_WASTE_REASON,
