@@ -25,7 +25,7 @@ type AnalyticsProps = {
 
 export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const { role } = useAuth() as { role?: string | string[] };
-  const { can, effective } = usePermissions();
+  const { can, effective, error: permissionsError } = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
   const normalizedRoles = normalizeAuthRoles(role);
@@ -34,9 +34,9 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const holdsViewAll = can('analytics.view_all');
   const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles, holdsViewAll);
   const canAccessAnalytics = canOpenAnalytics(normalizedRoles, holdsViewAll);
-  // RP-A10: wait for the first permissions load. Before it starts, `loading` is still false, so the
-  // old check counted nothing-loaded as ready and sent a link to /vsd to the first other report.
-  const permissionsReady = Boolean(effective);
+  // Before the first permission load ends, `loading` can still be false and `effective` null; a
+  // deep link or refresh then bounced to the first tab (B2, Nov 9, 2026). Wait, as Pharmacy does.
+  const permissionsReady = isAdmin || effective != null || permissionsError != null;
 
   const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
 
@@ -114,11 +114,11 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
 
   useEffect(() => {
     if (!canAccessAnalytics) {
-      navigate('/schedule/routing', { replace: true });
+      if (permissionsReady) navigate('/schedule/routing', { replace: true });
       return;
     }
     if (blockedRedirect) navigate(`${base}/${blockedRedirect}`, { replace: true });
-  }, [base, blockedRedirect, canAccessAnalytics, navigate]);
+  }, [base, blockedRedirect, canAccessAnalytics, navigate, permissionsReady]);
 
   if (!canAccessAnalytics) {
     return null;

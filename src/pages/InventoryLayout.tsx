@@ -130,10 +130,50 @@ export default function InventoryLayout({
   const holdsCostReview = useCan('inventory.cost_review.manage');
   const canCostReview = isAdmin || holdsCostReview;
   const canSeeGiftCards = isAdmin || holdsGiftCardAdmin;
+  // Move / Order screens follow their own permissions, so client liaisons (who don't count or
+  // unbox) see only what they can use (Q8, owner, Nov 9, 2026).
+  const holdsCount = useCan('inventory.count.enter');
+  const holdsReceive = useCan('inventory.receive');
+  const holdsTransfer = useCan('inventory.transfer');
+  const holdsWaste = useCan('inventory.waste');
+  const holdsFillList = useCan('inventory.fill_list.manage');
+  const holdsOrderRequest = useCan('inventory.po.request');
+  const holdsOrderManage = useCan('inventory.po.manage');
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
 
   const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
+  const moveOrderNav = [
+    { segment: 'counts', label: 'Weekly Counts', allowed: isAdmin || holdsCount },
+    { segment: 'receive', label: 'Unbox', allowed: isAdmin || holdsReceive },
+    { segment: 'move', label: 'Move Items', allowed: isAdmin || holdsTransfer },
+    { segment: 'waste', label: 'Waste / Adjust', allowed: isAdmin || holdsWaste },
+    { segment: 'transfer-list', label: 'Transfer List', allowed: isAdmin || holdsFillList },
+    {
+      segment: 'order-list',
+      label: 'Order List',
+      allowed: isAdmin || holdsOrderRequest || holdsOrderManage,
+    },
+  ].map((item) => ({ ...item, to: `${basePath}/${item.segment}` }));
+  // Someone with no Move / Order screens (the mail order team) lands on what they do use.
+  const firstMoveOrder =
+    moveOrderNav.find((item) => item.allowed)?.to ??
+    (canMailQueue
+      ? '/schedule/mail-orders'
+      : canAutoships
+        ? `${basePath}/auto-ships`
+        : canStoreListings
+          ? `${basePath}/online-store`
+          : '/schedule');
+  const blockedMoveOrder = moveOrderNav.find(
+    (item) =>
+      !item.allowed &&
+      (location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
+  );
+  if (blockedMoveOrder) {
+    if (!permissionsReady) return <p className="settings-muted">Loading…</p>;
+    return <Navigate to={firstMoveOrder} replace />;
+  }
   const gated = [
     'par-review',
     'cost-reviews',
@@ -228,14 +268,9 @@ export default function InventoryLayout({
       : []),
     { to: '/schedule/analytics/inventory', label: 'Reports (shrink, counts, expiring, controlled) →' },
   ];
-  const moveOrderItems: NavItem[] = [
-    { to: `${basePath}/counts`, label: 'Weekly Counts' },
-    { to: `${basePath}/receive`, label: 'Unbox' },
-    { to: `${basePath}/move`, label: 'Move Items' },
-    { to: `${basePath}/waste`, label: 'Waste / Adjust' },
-    { to: `${basePath}/transfer-list`, label: 'Transfer List' },
-    { to: `${basePath}/order-list`, label: 'Order List' },
-  ];
+  const moveOrderItems: NavItem[] = moveOrderNav
+    .filter((item) => item.allowed)
+    .map(({ to, label }) => ({ to, label }));
 
   return (
     <div
@@ -245,11 +280,13 @@ export default function InventoryLayout({
       <div className="settings-tabs" role="navigation" aria-label={sectionTitle}>
         {pharmacySection ? (
           <>
-            <InventoryNavGroup
-              label="Move / Order"
-              items={moveOrderItems}
-              alsoActiveFor={[`${basePath}/full-count`]}
-            />
+            {moveOrderItems.length ? (
+              <InventoryNavGroup
+                label="Move / Order"
+                items={moveOrderItems}
+                alsoActiveFor={[`${basePath}/full-count`]}
+              />
+            ) : null}
             {storeItems.length ? <InventoryNavGroup label="Store" items={storeItems} /> : null}
             {canMailQueue ? (
               <NavLink
