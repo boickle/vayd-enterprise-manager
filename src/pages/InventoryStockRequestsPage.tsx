@@ -780,22 +780,47 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                         <td colSpan={branchId === '' ? 5 : 4}>
                           <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
                             Order qty brings Main back to max when on-hand (after planned transfers
-                            out) is at or below the re-order point.
+                            out) is at or below the re-order point, plus anything a car or shelf is
+                            short that no transfer can cover.
                           </div>
                           {breakdown ? (
                             <div style={{ display: 'grid', gap: 10 }}>
                               <div>
-                                Main: {breakdown.mainOnHand} on hand
-                                {breakdown.mainOut > 0
-                                  ? ` − ${breakdown.mainOut} planned out = ${breakdown.effectiveOnHand} effective`
-                                  : ` · effective ${breakdown.effectiveOnHand}`}
-                                {' · '}
-                                re-order {breakdown.reorderPoint ?? '—'}
-                                {' · '}
-                                max {breakdown.max ?? '—'}
+                                Main:{' '}
+                                {breakdown.mainNotCounted ? (
+                                  'not counted for this item, so it orders nothing for itself'
+                                ) : (
+                                  <>
+                                    {breakdown.mainOnHand} on hand
+                                    {breakdown.mainOut > 0
+                                      ? ` − ${breakdown.mainOut} planned out = ${breakdown.effectiveOnHand} effective`
+                                      : ` · effective ${breakdown.effectiveOnHand}`}
+                                    {' · '}
+                                    re-order {breakdown.reorderPoint ?? '—'}
+                                    {' · '}
+                                    max {breakdown.max ?? '—'}
+                                  </>
+                                )}
+                                {breakdown.notCovered > 0 ? (
+                                  <>
+                                    {' → '}Main {breakdown.mainOrder} + not covered{' '}
+                                    {breakdown.notCovered}
+                                  </>
+                                ) : null}
                                 {' → '}
                                 order <strong>{breakdown.quantity}</strong>
                               </div>
+                              {breakdown.notCovered > 0 ? (
+                                <div data-testid="order-not-covered">
+                                  No shelf or office has spare for{' '}
+                                  {breakdown.locationNeeds
+                                    .filter((n) => n.notCovered > 0)
+                                    .map((n) => `${n.locationName} (short ${n.notCovered})`)
+                                    .join(', ')}
+                                  , so it's ordered for this office. When it comes in, unbox it
+                                  straight to that shelf.
+                                </div>
+                              ) : null}
                               {row.packs ? (
                                 <div>
                                   Buy <strong>{formatOrderPacks(row.packs)}</strong> ={' '}
@@ -818,6 +843,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                       <th>Par</th>
                                       <th>Short</th>
                                       <th>From Main</th>
+                                      <th>Not covered</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -830,6 +856,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                           <span className="par-short">{need.short}</span>
                                         </td>
                                         <td>{need.coveredFromMain}</td>
+                                        <td>{need.notCovered}</td>
                                       </tr>
                                     ))}
                                   </tbody>
