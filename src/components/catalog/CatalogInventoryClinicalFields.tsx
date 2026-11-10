@@ -72,7 +72,7 @@ const VACCINE_TYPES = [
 
 const FLAG_HELP: Record<string, string> = {
   isMedication:
-    'Something you prescribe or hand to the client. The SOAP opens Dose & Rx (directions, refills, start date), it goes on the prescription history, and the directions below prefill the label.',
+    'Something you prescribe or send home with the client. The SOAP opens Dose & Rx (directions, refills, start date), checkout asks for directions and a doctor’s approval, it goes on the prescription history, and the directions below prefill the label. Leave it off for drugs given during the visit (injections, controlled doses); make a separate dispensed item for the take-home version.',
   isVaccine:
     'Marks this as a vaccine. Recording the dose writes it to the vaccination log and captures the lot. The serial number comes from that lot.',
   isControlled: 'Controlled substance — track carefully for DEA / state reporting.',
@@ -311,7 +311,7 @@ function FlagCheckbox({
 
 function summaryChips(draft: ClinicalDraft): string[] {
   const chips: string[] = [];
-  if (draft.isMedication) chips.push('Medication');
+  if (draft.isMedication) chips.push('Dispensed / prescribed');
   if (draft.isVaccine) chips.push('Vaccine');
   if (draft.trackLots) chips.push('Lots');
   if (draft.requireLotNumber) chips.push('Lot # required');
@@ -483,7 +483,7 @@ export default function CatalogInventoryClinicalFields({
             ))}
           </div>
 
-          <SectionTitle>Medication</SectionTitle>
+          <SectionTitle>Dispensed / prescribed</SectionTitle>
           <div
             style={{
               border: '1px solid #e2e8f0',
@@ -495,7 +495,7 @@ export default function CatalogInventoryClinicalFields({
           >
             <FlagCheckbox
               checked={draft.isMedication}
-              label="Medication"
+              label="Dispensed / prescribed (sent home with a label)"
               help={FLAG_HELP.isMedication}
               onChange={(checked) =>
                 setDraft((d) => ({
@@ -506,8 +506,8 @@ export default function CatalogInventoryClinicalFields({
               }
             />
             <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-              Opens Dose &amp; Rx on the SOAP and adds it to the patient’s prescription
-              history.
+              Opens Dose &amp; Rx on the SOAP, asks for directions at checkout and adds it to the
+              patient’s prescription history. Leave it off for drugs given during the visit.
             </p>
             {draft.isMedication && (
               <>

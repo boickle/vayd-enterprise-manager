@@ -314,7 +314,7 @@ export default function IdexxResultView({
       setIncludeInEmr(true);
       setEmrPatientIds([result.patientId]);
       setEmail({
-        title: withSummary ? 'Email lab results' : 'Email lab report',
+        title: withSummary ? 'Email lab summary & report' : 'Email lab report',
         description: withSummary
           ? `${pet}'s summary is the message. The IDEXX PDF is attached.`
           : `${pet}'s IDEXX PDF is attached, without the written summary.`,
@@ -480,7 +480,7 @@ export default function IdexxResultView({
               onClick={() => void openEmail(true)}
             >
               <Mail size={13} aria-hidden />{' '}
-              {busy === 'email-summary' ? 'Preparing…' : 'Email lab results'}
+              {busy === 'email-summary' ? 'Preparing…' : 'Email lab summary & report'}
             </button>
           ) : null}
           {canAct ? (
@@ -544,7 +544,7 @@ export default function IdexxResultView({
       {canAct && (!emailRules.withSummary.allowed || !emailRules.reportOnly.allowed) ? (
         <div className="idexx-order__note" data-testid="idexx-email-why">
           {!emailRules.withSummary.allowed ? (
-            <div>Email lab results: {emailRules.withSummary.why}.</div>
+            <div>Email lab summary & report: {emailRules.withSummary.why}.</div>
           ) : null}
           {!emailRules.reportOnly.allowed ? (
             <div>Email lab report: {emailRules.reportOnly.why}.</div>

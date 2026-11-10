@@ -55,17 +55,27 @@ export type OrderNeedLine = {
   par: number | null;
   short: number;
   coveredFromMain: number;
+  /** Still short after every transfer (Main, spare shelves, other offices): ordered for this office. */
+  notCovered: number;
 };
 
 export type OrderBreakdown = {
   inventoryItemId: number;
   branchLocationId: number;
+  /** The office's main shelf name (a home office may call it "Home"). */
+  mainName: string;
   quantity: number;
   mainOnHand: number;
   mainOut: number;
   effectiveOnHand: number;
   reorderPoint: number | null;
   max: number | null;
+  /** What Main itself needs to get back to its max (0 when it's above its re-order point or has none). */
+  mainOrder: number;
+  /** Shortfalls on other shelves that no transfer can cover; added to the order. */
+  notCovered: number;
+  /** Main has never been counted for this item, so its own numbers don't order anything (INV-A15). */
+  mainNotCounted: boolean;
   locationNeeds: OrderNeedLine[];
 };
 
@@ -91,6 +101,9 @@ function requestKey(row: {
  * 3. Each covered short becomes a transfer From → To (not a separate fill row).
  * 4. Uncovered shorts stay as fill (To only, From —).
  * 5. If default on-hand after planned gives is at or below min → order list back to max.
+ * 6. Shortfalls nothing can cover (step 4) are ordered too, onto the default shelf, so an office
+ *    whose stock lives on a car (a doctor's home office with nothing at the depot) still gets an
+ *    order when the car runs low (owner, Nov 9, 2026: option B).
  */
 export function planStockLists(
   branchId: number,
@@ -134,18 +147,29 @@ export function planStockLists(
           par: loc.parLevel,
           short: need,
           coveredFromMain: 0,
+          notCovered: 0,
         });
       }
     }
     const pushOrder = (defaultOut: number) => {
-      // Nothing is ordered on an uncounted main shelf's numbers (INV-A15).
-      if (defaultLoc.notCounted) return;
       const effectiveOnHand = Number(defaultLoc.quantityOnHand) - defaultOut;
-      const orderQty = orderQtyForDefault({
-        effectiveOnHand,
-        min: item.reorderPoint,
-        max: defaultLoc.parLevel,
-      });
+      // Nothing is ordered on an uncounted main shelf's own numbers (INV-A15). A counted shelf's
+      // shortfall that no transfer covers is real, so it's ordered either way.
+      const mainOrder = defaultLoc.notCounted
+        ? 0
+        : orderQtyForDefault({
+            effectiveOnHand,
+            min: item.reorderPoint,
+            max: defaultLoc.parLevel,
+          });
+      let notCovered = 0;
+      for (const [destId, need] of remaining) {
+        if (need <= 0) continue;
+        notCovered += need;
+        const line = needLines.get(destId);
+        if (line) line.notCovered = need;
+      }
+      const orderQty = mainOrder + notCovered;
       if (orderQty <= 0) return;
       planned.push({
         kind: 'order',
@@ -157,12 +181,16 @@ export function planStockLists(
       orderBreakdowns.push({
         inventoryItemId: item.inventoryItemId,
         branchLocationId: defaultLoc.branchLocationId,
+        mainName: defaultLoc.name ?? 'Main',
         quantity: orderQty,
         mainOnHand: Number(defaultLoc.quantityOnHand) || 0,
         mainOut: defaultOut,
         effectiveOnHand,
         reorderPoint: item.reorderPoint,
         max: defaultLoc.parLevel,
+        mainOrder,
+        notCovered,
+        mainNotCounted: Boolean(defaultLoc.notCounted),
         locationNeeds: [...needLines.values()].filter((n) => n.short > 0),
       });
     };

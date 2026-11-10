@@ -26,6 +26,8 @@ const PHARMACY_SEGMENTS = new Set([
   'store-import',
   'abandoned-carts',
   'auto-ships',
+  'autoship-import',
+  'gift-cards',
   'subscriptions',
 ]);
 

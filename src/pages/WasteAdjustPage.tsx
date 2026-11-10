@@ -362,6 +362,7 @@ export default function WasteAdjustPage() {
         {item ? (
           <div style={{ marginTop: 12 }}>
             <StockLotPicker
+              olderLotHint={false}
               practiceId={practiceId}
               inventoryItemId={item.id}
               branchId={branchId === '' ? null : Number(branchId)}

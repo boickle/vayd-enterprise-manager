@@ -70,11 +70,12 @@ export function PermissionGate({
 
 /**
  * Whole-page stand-in. Says what is behind the door and who opens it, so the
- * reader's next step is a message to a person rather than a bug report.
+ * reader's next step is a message to a person rather than a bug report. Only a practice admin
+ * grants individual permissions (Nov 9, 2026: it used to say a practice manager).
  */
 export function PermissionDenied({
   what,
-  who = 'a practice manager',
+  who = 'a practice admin',
 }: {
   what: string;
   who?: string;
@@ -83,7 +84,7 @@ export function PermissionDenied({
     <div className="perm-denied">
       <div className="perm-denied-title">{what} isn’t part of your access</div>
       <div className="perm-denied-body">
-        Ask {who} if you need it — they can grant it from Employee Settings.
+        Ask {who} if you need it — they can add it on your Access tab in Settings → Staff.
       </div>
     </div>
   );
