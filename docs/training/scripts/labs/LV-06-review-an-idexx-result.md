@@ -16,7 +16,7 @@
 | 1 | Tasks | Point at "Abnormal · Review IDEXX results: Juniper (Rivera)" | "When a result arrives, the ordering doctor gets a task. Abnormal and critical ones say so." | Juniper's CBC final, abnormal (sandbox); logged in as Dr. Avery Lane |
 | 2 | Labs, **IDEXX results**, **To review** | Point at the count | "To review lists every complete result waiting for a doctor." | — |
 | 3 | To review | Point at **Final · abnormal** on Juniper's row | "Each row says Partial or Final, and normal, abnormal or critical." | — |
-| 4 | To review | Click the arrow on Juniper's row | "Open Juniper's CBC." | — |
+| 4 | To review | Click the arrow on Juniper's row | "Open Juniper's results." | — |
 | 5 | Result | Point at "1 out of range" and the value | "Values outside IDEXX's range are listed at the top." | — |
 | 6 | Result | Click **Only out of range** | "Only out of range hides the rest." | — |
 | 7 | Result | Point at **VetConnect PLUS** | "VetConnect PLUS opens IDEXX's own view, with images and trends." | — |

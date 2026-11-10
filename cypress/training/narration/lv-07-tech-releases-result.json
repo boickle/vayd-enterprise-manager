@@ -1,7 +1,7 @@
 [
   {
     "id": "lv07-01",
-    "text": "Sometimes the doctor is in a visit and asks you to release a result. Scout lets you, and records who and why."
+    "text": "Sometimes the doctor is in a visit and asks you to mark a result reviewed. Scout lets you, and records who and why."
   },
   {
     "id": "lv07-02",
@@ -9,7 +9,7 @@
   },
   {
     "id": "lv07-03",
-    "text": "Dr. Lane called. Biscuit Chen's CBC is fine to release. Open it."
+    "text": "Dr. Lane called. Biscuit Chen's results are fine. Open them."
   },
   {
     "id": "lv07-04",
@@ -25,7 +25,7 @@
   },
   {
     "id": "lv07-07",
-    "text": "Or Vet asked me to release. Anything else, pick Other and type it."
+    "text": "Or Vet asked me to send it to the client. Anything else, pick Other and type it."
   },
   {
     "id": "lv07-08",

@@ -15,7 +15,7 @@ Demo world (same as every training series):
 | LV-04 | Finish in IDEXX: specimen questions, order, requisition | Techs, doctors | Must-have |
 | LV-05 | Track and cancel IDEXX orders | Techs | Must-have |
 | LV-06 | Review an IDEXX result | Doctors | Must-have |
-| LV-07 | When a tech releases a result | Techs | Must-have |
+| LV-07 | When a tech marks a result reviewed | Techs | Must-have |
 | LV-08 | Client summary and emailing results | Doctors (techs send) | Must-have |
 | LV-09 | Unmatched IDEXX results | Techs | Must-have (cutover) |
 | LV-10 | IDEXX lab charges on the bill | CLs | Must-have |

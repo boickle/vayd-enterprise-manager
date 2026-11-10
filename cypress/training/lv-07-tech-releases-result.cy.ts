@@ -9,7 +9,7 @@ import { schedulingWorld, signInAsScheduling } from '../support/schedulingWorld'
 import { finish, line, loadNarration, offCamera, pointAt, startClock, tap } from './trainingKit';
 import { freshResults, labsSetup, newestCompleteResult } from './labsTraining';
 
-describe('Training: LV-07 tech releases a result', () => {
+describe('Training: LV-07 tech marks a result reviewed', () => {
   it('LV-07', () => {
     const w = schedulingWorld();
     const biscuit = w.households.B.petId;
@@ -36,7 +36,7 @@ describe('Training: LV-07 tech releases a result', () => {
     line('lv07-05', () => pointAt(() => prompt().find('.perm-reason-note'), 3000));
     line('lv07-06', () => tap(() => prompt().contains('label', 'Vet reviewed verbally')));
     line('lv07-07', () => {
-      pointAt(() => prompt().contains('label', 'Vet asked me to release'), 1800);
+      pointAt(() => prompt().contains('label', 'Vet asked me to send it to the client'), 1800);
       pointAt(() => prompt().contains('label', 'Other'), 1800);
     });
     line('lv07-08', () => {
