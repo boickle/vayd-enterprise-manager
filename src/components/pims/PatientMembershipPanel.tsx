@@ -301,6 +301,8 @@ type Props = {
   clientId?: number | null;
   patientSpecies?: string | null;
   patientAgeYears?: number | null;
+  /** The pet has passed away: no enrolling or post-visit sign-up (P-15). History stays visible. */
+  patientPassedAway?: boolean;
 };
 
 type PanelMode = 'none' | 'add' | 'change' | 'enrol' | 'cancel';
@@ -312,6 +314,7 @@ export default function PatientMembershipPanel({
   clientId,
   patientSpecies,
   patientAgeYears,
+  patientPassedAway = false,
 }: Props) {
   const navigate = useNavigate();
   const { userId } = useAuth() as { userId?: string | null };
@@ -1475,8 +1478,13 @@ export default function PatientMembershipPanel({
                   {`${patientName ?? 'This pet'} is not on a membership plan.`}
                 </p>
               )}
+              {patientPassedAway ? (
+                <p className="pmp-muted" role="status">
+                  {`Not available: ${patientName ?? 'this pet'} has passed away.`}
+                </p>
+              ) : null}
               <div className="pmp-empty__actions">
-                {canEnroll ? (
+                {canEnroll && !patientPassedAway ? (
                   <button
                     type="button"
                     className="pims-detail__btn-primary"
@@ -1493,7 +1501,7 @@ export default function PatientMembershipPanel({
                     Enroll in a plan
                   </button>
                 ) : null}
-                {clientId && canPostVisitSignup ? (
+                {clientId && canPostVisitSignup && !patientPassedAway ? (
                   <button
                     type="button"
                     className="pims-detail__btn-secondary pmp-signup-btn"
