@@ -44,7 +44,7 @@ describe('Training: OSV-11 auto-ships list', () => {
     });
     line('s09-edit', () => {
       cy.contains('button', /^Active$/).click();
-      press(() => row(/Heartworm/).contains('button', /^Edit$/));
+      tap(() => row(/Heartworm/).contains('button', /^Edit$/));
     });
     line('s10-locked', () => look(() => cy.get('[data-testid="autoship-locked-note"]', { timeout: 20000 }), 6000));
     line('s10b-often', () => look(() => editWindow().contains('label', 'Frequency'), 3000));

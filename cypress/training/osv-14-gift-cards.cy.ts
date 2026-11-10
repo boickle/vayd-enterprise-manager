@@ -36,7 +36,7 @@ describe('Training: OSV-14 gift cards', () => {
     line('g11-reason', () => typeSlowly(() => cy.contains('label', 'Reason *').find('input'), 'Service recovery: late visit'));
     line('g12-who', () => typeSlowly(() => cy.contains('label', 'Recipient name').find('input'), 'Tom Chen'));
     line('g13-print', () => look(() => cy.contains('label', 'Recipient email'), 3500));
-    line('g14-send', () => press(() => cy.contains('h3', 'Issue a gift card').parents('.settings-card').first().contains('button', /^Issue gift card$/)));
+    line('g14-send', () => tap(() => cy.contains('h3', 'Issue a gift card').parents('.settings-card').first().contains('button', /^Issue gift card$/)));
     line('g15-issued', () => look(() => cy.contains('issued by staff (Service recovery: late visit)', { timeout: 20000 }), 4000));
     line('g16-mistakes');
     line('g17-remember');

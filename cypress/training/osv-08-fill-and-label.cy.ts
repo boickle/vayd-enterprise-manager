@@ -26,7 +26,7 @@ describe('Training: OSV-08 fill and label', () => {
 
     // Switching filters sometimes keeps the order open, sometimes not: open it only when it's closed.
     const openIfClosed = () =>
-      cy.wait(400).then(() => {
+      cy.wait(100).then(() => {
         if (!Cypress.$('body').text().includes('Reject + refund + email')) tap(() => cy.contains(`#${orderId}`, { timeout: 20000 }).first());
       });
 

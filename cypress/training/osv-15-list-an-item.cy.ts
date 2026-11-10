@@ -6,7 +6,7 @@
  */
 import '../support/e2e';
 import { look, press, signIn, sql } from './osvTraining';
-import { finish, line, loadNarration, startClock, typeSlowly } from './trainingKit';
+import { finish, line, loadNarration, startClock, tap, typeSlowly } from './trainingKit';
 
 describe('Training: OSV-15 list an item', () => {
   it('OSV-15', () => {
@@ -32,7 +32,7 @@ describe('Training: OSV-15 list an item', () => {
       typeSlowly(() => cy.get('input[placeholder="Search inventory or procedures to add"]', { timeout: 30000 }), 'Gabapentin')
     );
     line('p11-try', () =>
-      press(() => cy.contains('Gabapentin 100 mg', { timeout: 20000 }).parents('li, tr, div').filter(':has(button)').first().contains('button', /^Add/))
+      tap(() => cy.contains('Gabapentin 100 mg', { timeout: 20000 }).parents('li, tr, div').filter(':has(button)').first().contains('button', /^Add/))
     );
     line('p12-refused', () => look(() => cy.contains(/is a controlled drug, so it can't be/, { timeout: 20000 }), 6000));
     line('p13-mistakes');
