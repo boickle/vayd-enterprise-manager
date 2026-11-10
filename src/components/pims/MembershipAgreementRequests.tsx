@@ -137,7 +137,7 @@ export default function MembershipAgreementRequests({
           {r.status === 'pending' ? (
             <button
               type="button"
-              className="pims-detail__btn-ghost"
+              className="pims-detail__btn-quiet"
               onClick={() => {
                 void navigator.clipboard?.writeText(r.link).then(() => setCopiedId(r.id));
               }}
@@ -148,7 +148,7 @@ export default function MembershipAgreementRequests({
           {canSend && (r.status === 'pending' || r.status === 'expired') ? (
             <button
               type="button"
-              className="pims-detail__btn-ghost"
+              className="pims-detail__btn-quiet"
               disabled={busy}
               onClick={() => void run(() => resendMembershipAgreement(r.id))}
             >
@@ -158,7 +158,7 @@ export default function MembershipAgreementRequests({
           {canSend && r.status === 'pending' ? (
             <button
               type="button"
-              className="pims-detail__btn-ghost"
+              className="pims-detail__btn-quiet"
               disabled={busy}
               onClick={() => {
                 void appConfirm({
@@ -179,7 +179,7 @@ export default function MembershipAgreementRequests({
       {membershipId != null && canSend ? (
         <button
           type="button"
-          className="pims-detail__btn-ghost"
+          className="pims-detail__btn-secondary"
           disabled={busy}
           onClick={() => void sendAgreement()}
         >
