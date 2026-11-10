@@ -15,19 +15,33 @@
  * It uses only endpoints the API already has: POST /reminders (staff writes a reminder due in 30 days, which is in the
  * default 30/15/7-day cadence), POST /notifications/reminders/build-reminders and POST /notifications/sender/email
  * (the staff "send now" triggers). The build queues reminders for every household, so the sender also sends other
- * households' pending reminders; the spec only looks at household A's pet. The seeded household's client must have a
- * real email address on file and "Do not send reminders" off (the seed does both).
+ * households' pending reminders; the spec only looks at household A's pet. The seed turns every contact block on
+ * (doNotEmail, doNotSendReminders), so the spec turns those two off for household A first and back on afterwards.
+ * Emails stay captured by the stack (EMAIL_CAPTURE_PATH) and are never delivered.
  */
 import '../support/e2e';
 import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
 
+/** Midday New York time `days` from today, as the app's own reminder screens send it (a bare date would be read as
+ * midnight UTC, which is the evening before in New York, and miss the 30-day step). */
 function dueInDays(days: number): string {
   const d = new Date(Date.now() + days * 86400_000);
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d); // YYYY-MM-DD
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d); // YYYY-MM-DD
+  return `${day}T16:00:00.000Z`;
 }
 
 describe('COM-07-6: a sent reminder shows in the pet chart Communications', () => {
   const description = `COM-07 Rabies vaccine ${Date.now()}`;
+
+  before(() => {
+    const { clientId } = schedulingWorld().households.A;
+    schedulingApi('manager', 'PATCH', `/clients/${clientId}`, { doNotEmail: false, doNotSendReminders: false });
+  });
+
+  after(() => {
+    const { clientId } = schedulingWorld().households.A;
+    schedulingApi('manager', 'PATCH', `/clients/${clientId}`, { doNotEmail: true, doNotSendReminders: true });
+  });
 
   it('the CL sees "Health reminder email" with the date, the client address and the text', () => {
     const w = schedulingWorld();
@@ -46,12 +60,13 @@ describe('COM-07-6: a sent reminder shows in the pet chart Communications', () =
       });
       schedulingApi('manager', 'POST', '/notifications/reminders/build-reminders', {});
       schedulingApi('manager', 'POST', '/notifications/sender/email', {}).then((sent) => {
-        expect(sent.success, JSON.stringify(sent)).to.eq(true);
+        expect(sent.body.success, JSON.stringify(sent.body)).to.eq(true);
       });
 
       // The database side: one entry on this pet, with the text as sent and the client's own address.
-      schedulingApi('cl', 'GET', `/patients/${petId}/communication-logs`).then((logs) => {
-        const entry = (logs as any[]).find(
+      schedulingApi('cl', 'GET', `/patients/${petId}/communication-logs`).then((res) => {
+        const logs = res.body as any[];
+        const entry = logs.find(
           (l) =>
             String(l.communicationMessageLog?.communicationTypeLabel ?? l.typeLabel ?? '') ===
               'Health reminder email' &&
@@ -63,8 +78,14 @@ describe('COM-07-6: a sent reminder shows in the pet chart Communications', () =
 
       // The screen: the pet chart, Communications.
       signInAsScheduling('cl', `/schedule/patients?patientId=${petId}`);
-      cy.contains('Communications', { timeout: 20000 }).first().scrollIntoView().click();
-      cy.contains('Health reminder email', { timeout: 20000 }).should('be.visible');
+      // The medical record's "By category" tab lists Communications as a collapsible group.
+      cy.contains('[role="tab"]', 'By category', { timeout: 20000 }).scrollIntoView().click();
+      cy.contains('.pims-patient-detail__accordion-head', /^.*Communications \(\d+\)/, { timeout: 20000 })
+        .scrollIntoView()
+        .click();
+      cy.contains('.pims-patient-detail__accordion-body', 'Health reminder email', { timeout: 20000 })
+        .scrollIntoView()
+        .should('be.visible');
     });
   });
 });
