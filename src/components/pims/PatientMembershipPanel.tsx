@@ -1163,6 +1163,10 @@ export default function PatientMembershipPanel({
     if (membership?.status !== 'active') return false;
     // A post-visit signup already re-priced and refunded the visit (in person or emailed).
     if (membership.visitRefund) return false;
+    // Staff enrolled it (at the visit, fee on the invoice): the visit was priced as a member, nothing to refund.
+    // Online signups have no enrolling employee.
+    if (membership.createdByEmployeeId != null) return false;
+    if (membership.awaitingPayment) return false;
     if (!membership.stripeSubscriptionId?.startsWith('sub_')) return false;
     if (!membership.startDate) return false;
     const started = Date.parse(membership.startDate);
@@ -1747,6 +1751,7 @@ export default function PatientMembershipPanel({
                       </p>
                     ) : membership.status === 'active' &&
                       membership.isScoutManaged &&
+                      !membership.awaitingPayment &&
                       membership.membershipFeePaid === false ? (
                       <p className="pmp-muted pmp-summary__fee-note" role="status">
                         Membership fee not collected yet — finish payment on the counter invoice.
@@ -1965,7 +1970,7 @@ export default function PatientMembershipPanel({
                       : []),
                   ]}
                 />
-                {canUpdateCard && membership.status !== 'inactive' ? (
+                {canUpdateCard && membership.status !== 'inactive' && !membership.awaitingPayment ? (
                   <div className="pmp-card-update">
                     <MembershipCardUpdate
                       membershipId={membership.id}
