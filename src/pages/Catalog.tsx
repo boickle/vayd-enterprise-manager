@@ -90,7 +90,12 @@ import TaxLevelSelect, {
 } from '../components/catalog/TaxLevelSelect';
 import CategorySelect from '../components/catalog/CategorySelect';
 import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
-import { clientUnitPrice, priceVariants, type PriceVariant } from '../utils/catalogPriceList';
+import {
+  priceListChargeNote,
+  priceListUnitPrice,
+  priceVariants,
+  type PriceVariant,
+} from '../utils/catalogPriceList';
 import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './Catalog.css';
@@ -2001,6 +2006,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           return { ...row, name: savedName || row.name };
         }),
       );
+      // Reload the saved row so its price, cost and fees show the new values right away (U11).
+      const savedType = selected.itemType;
+      const savedId = selected.itemId;
+      const isSaved = (row: SearchResultItem) =>
+        row.itemType === savedType && entityIdFromSelection(row.itemType, row) === savedId;
+      void fetchCatalogPage(0, Math.max(CATALOG_PAGE_SIZE, searchResults.length))
+        .then((fresh) => {
+          const hit = fresh.find(isSaved);
+          if (hit) setSearchResults((rows) => rows.map((row) => (isSaved(row) ? hit : row)));
+        })
+        .catch(() => undefined);
       setToast('Saved');
       window.setTimeout(() => setToast(null), 3500);
       setJustSavedKey(savedKey);
@@ -3039,7 +3055,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       </td>
                       {priceListOnly ? (
                         <td className="inv-catalog-results__td-num">
-                          {formatUsd(clientUnitPrice(itemType, baseMoney))}
+                          {formatUsd(priceListUnitPrice(itemType, baseMoney))}
+                          {priceListChargeNote(itemType, baseMoney) ? (
+                            <span className="inv-catalog-results__code" style={{ display: 'block' }}>
+                              {priceListChargeNote(itemType, baseMoney)}
+                            </span>
+                          ) : null}
                           {variantNote}
                         </td>
                       ) : (

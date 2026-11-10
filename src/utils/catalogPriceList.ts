@@ -17,14 +17,17 @@ const num = (v: unknown): number | null =>
  * A branch's money for an item: the API's `applyBranchOverride` (branch-catalog.service), so the
  * price list matches what checkout charges at that branch. A markup makes the price follow cost.
  */
-export function applyBranchOverride(base: CatalogMoney, o?: BranchOverrideMoney | null): CatalogMoney {
+export function applyBranchOverride(
+  base: CatalogMoney,
+  o?: BranchOverrideMoney | null
+): CatalogMoney {
   if (!o) return { ...base };
   const cost = num(o.cost) ?? base.cost;
   const markup = num(o.markup);
   const price =
     markup != null && cost != null && cost > 0
       ? Math.round(cost * markup) / 100
-      : num(o.price) ?? base.price;
+      : (num(o.price) ?? base.price);
   return {
     price,
     cost,
@@ -43,6 +46,30 @@ export function clientUnitPrice(itemType: string, money: CatalogMoney): number {
   } as Parameters<typeof getPreDiscountForOneUnit>[0]);
 }
 
+/**
+ * The price a price-list row shows. A product shows its price per unit; its dispensing fee and
+ * minimum are per charge, so they go in `priceListChargeNote`. Folding them in made Carprofen
+ * ($1.29 a caplet, $15 fee, $31.90 minimum) read "$31.90 · tablet" (Q3, owner, Nov 9, 2026).
+ * Procedures and labs are charged once, so they keep the one-unit charge.
+ */
+export function priceListUnitPrice(itemType: string, money: CatalogMoney): number {
+  if (itemType === 'inventory') return money.price ?? 0;
+  return clientUnitPrice(itemType, money);
+}
+
+const usd = (n: number) => `$${n.toFixed(2)}`;
+
+/** "+ $15.00 fee per charge · $31.90 minimum charge" for a product with a fee or minimum. */
+export function priceListChargeNote(itemType: string, money: CatalogMoney): string | null {
+  if (itemType !== 'inventory') return null;
+  const parts: string[] = [];
+  const fee = money.serviceFee ?? 0;
+  const minimum = money.minimumPrice ?? 0;
+  if (fee > 0) parts.push(`+ ${usd(fee)} fee per charge`);
+  if (minimum > 0) parts.push(`${usd(minimum)} minimum charge`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
 export type PriceVariant = { label: string; price: number };
 
 /**
@@ -55,10 +82,13 @@ export function priceVariants(args: {
   onlineStorePrice?: number | string | null;
   branchOverrides: Array<{ branchName: string; override: BranchOverrideMoney }>;
 }): PriceVariant[] {
-  const practice = Math.round(clientUnitPrice(args.itemType, args.base) * 100) / 100;
+  const practice = Math.round(priceListUnitPrice(args.itemType, args.base) * 100) / 100;
   const out: PriceVariant[] = [];
   for (const b of args.branchOverrides) {
-    const price = Math.round(clientUnitPrice(args.itemType, applyBranchOverride(args.base, b.override)) * 100) / 100;
+    const price =
+      Math.round(
+        priceListUnitPrice(args.itemType, applyBranchOverride(args.base, b.override)) * 100
+      ) / 100;
     if (Math.abs(price - practice) >= 0.005) out.push({ label: b.branchName, price });
   }
   const online = num(args.onlineStorePrice);
