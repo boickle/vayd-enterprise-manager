@@ -407,7 +407,10 @@
   background: #fff;
 }
 
-.renewal-review__primary {
+/* Inside the actions row too: `.renewal-review__actions button` (white) otherwise wins, and the button
+   reads white on white (MEM-19 review, Nov 10, 2026). */
+.renewal-review__primary,
+.renewal-review__actions .renewal-review__primary {
   padding: 14px 20px;
   border: none;
   border-radius: 12px;

@@ -288,6 +288,11 @@ export type PatientMembership = {
   membershipFeePaid: boolean;
   /** Set while a card dispute is open: no member pricing or covered services. */
   benefitsPaused: { since: string; reason: string | null } | null;
+  /**
+   * Enrolled at the visit with the first fee on this invoice, not paid yet (Nov 10, 2026). Older APIs omit it.
+   * Stripe billing, the multi-pet credit and the welcome email start when it is paid.
+   */
+  awaitingPayment?: { invoiceId: string; since: string } | null;
   /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
   ownerChange: MembershipOwnerChange | null;
   groups: MembershipGroup[];
@@ -690,6 +695,10 @@ export async function createPatientMembership(input: {
   agreementText?: string;
   /** Start Stripe billing now (first period charged today) on the entered card or the client's card on file. */
   startBilling?: boolean;
+  /** First fee on the pet's open visit invoice, paid at checkout (Nov 10, 2026). */
+  feeOnInvoice?: boolean;
+  /** Practice setting `membership.assignFeeToProvider`. */
+  feeToProvider?: boolean;
   clientId?: number;
   paymentMethodId?: string;
 }): Promise<PatientMembership> {
@@ -858,6 +867,20 @@ export async function updateMembershipCard(
   const { data } = await http.post<PatientMembership>(
     membershipCardPath(membershipId, opts?.mine === true),
     { practiceId: currentPracticeId(), paymentMethodId }
+  );
+  return data;
+}
+
+/**
+ * Undo an at-visit enrollment whose fee on the visit invoice isn't paid yet: removes the membership and the fee,
+ * and puts the visit back to regular prices (open invoices only; void a finalized one instead).
+ */
+export async function cancelMembershipEnrolment(
+  membershipId: number,
+): Promise<{ removed: true; invoiceId: string }> {
+  const { data } = await http.post<{ removed: true; invoiceId: string }>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel-enrolment`,
+    { practiceId: currentPracticeId() },
   );
   return data;
 }
@@ -1076,6 +1099,8 @@ export type PostVisitSignupResult = {
     membershipAdjustments: number;
     amountPaid: number;
     balanceDue: number;
+    /** Paid beyond the re-priced total and not refunded (refund failed or skipped). Older APIs omit it. */
+    owedToClient?: number;
   };
   invoices?: Array<{
     id: string;

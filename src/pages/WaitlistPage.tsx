@@ -421,6 +421,7 @@ export default function WaitlistPage() {
         message,
         useRemindersFrom: true,
         source: 'waitlist',
+        ...(smsEntry.patientIds?.length ? { patientIds: smsEntry.patientIds } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
       });
       await patchWaitlistEntry(smsEntry.id, {

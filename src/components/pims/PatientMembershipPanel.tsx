@@ -27,6 +27,7 @@ import {
   changeMembershipPlan,
   previewMembershipPlanChange,
   createPatientMembership,
+  cancelMembershipEnrolment,
   getPatientMembership,
   getPatientMembershipAudit,
   listBundles,
@@ -60,6 +61,7 @@ import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { apiErrorMessage, getToken } from '../../api/http';
 import {
   getPracticeSettings,
+  membershipAssignFeeToProvider,
   membershipPostVisitSignupWindowHours,
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
@@ -301,6 +303,8 @@ type Props = {
   clientId?: number | null;
   patientSpecies?: string | null;
   patientAgeYears?: number | null;
+  /** The pet has passed away: no enrolling or post-visit sign-up (P-15). History stays visible. */
+  patientPassedAway?: boolean;
 };
 
 type PanelMode = 'none' | 'add' | 'change' | 'enrol' | 'cancel';
@@ -312,6 +316,7 @@ export default function PatientMembershipPanel({
   clientId,
   patientSpecies,
   patientAgeYears,
+  patientPassedAway = false,
 }: Props) {
   const navigate = useNavigate();
   const { userId } = useAuth() as { userId?: string | null };
@@ -380,6 +385,8 @@ export default function PatientMembershipPanel({
   /** Reloads emailed agreements after the post-visit signup modal closes. */
   const [agreementsKey, setAgreementsKey] = useState(0);
   const [postVisitWindowHours, setPostVisitWindowHours] = useState(24);
+  /** Practice setting: the membership fee on the visit invoice counts in the provider's production. */
+  const [feeToProvider, setFeeToProvider] = useState(false);
   const [postVisitHoursLeft, setPostVisitHoursLeft] = useState<number | null>(null);
   const [postVisitInvoiceIds, setPostVisitInvoiceIds] = useState<string[]>([]);
   const [postVisitSeedInvoices, setPostVisitSeedInvoices] = useState<VisitInvoice[]>([]);
@@ -483,6 +490,7 @@ export default function PatientMembershipPanel({
         if (cancelled) return;
         const windowHours = membershipPostVisitSignupWindowHours(settings);
         setPostVisitWindowHours(windowHours);
+        setFeeToProvider(membershipAssignFeeToProvider(settings));
         const paid = invoices.filter((inv) => {
           if ((Number(inv.amountPaid) || 0) <= 0 || inv.status === 'void') return false;
           if (inv.patientId === patientId) return true;
@@ -915,6 +923,28 @@ export default function PatientMembershipPanel({
     }
   }
 
+  async function cancelEnrolment() {
+    if (!membership || busy || actionLockRef.current) return;
+    const ok = await appConfirm({
+      title: 'Cancel this enrollment?',
+      message: `${patientName ?? 'This pet'}'s ${membership.planName} enrollment and its fee come off the visit invoice, and the visit goes back to regular prices. Nothing was charged.`,
+      confirmLabel: 'Cancel enrollment',
+    });
+    if (!ok) return;
+    actionLockRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await cancelMembershipEnrolment(membership.id);
+      await load();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      actionLockRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function enrol(plan: Bundle) {
     if (busy || actionLockRef.current) return;
     if (
@@ -934,21 +964,30 @@ export default function PatientMembershipPanel({
     setBusy(true);
     setFormError(null);
     try {
+      // Owner decision, Nov 10, 2026: the first month (or year) goes on today's invoice and is paid at checkout
+      // with the visit. Monthly plans save a card now, not charged; Stripe bills it from next month.
+      const monthly = interval !== 'annual';
       const cardLine = useCardOnFile && enrolCardOnFile
         ? `the card on file (${enrolCardOnFile.brand ?? 'card'} ending ${enrolCardOnFile.last4 ?? '????'})`
         : 'the card entered below';
+      const nextMonth = new Date();
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      const fee = price != null ? money(price) : 'The first period';
       const ok = await appConfirm({
         title: `Enroll in ${plan.name}?`,
-        message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}. Stripe charges ${
-          price != null ? money(price) : 'the first period'
-        } today on ${cardLine}, then bills it ${
-          interval === 'annual' ? 'every year' : 'every month'
-        } on its own.`,
-        confirmLabel: price != null ? `Enroll & charge ${money(price)}` : 'Enroll',
+        message: monthly
+          ? `${fee} for the first month goes on today's invoice and is paid at checkout with the visit. ${
+              cardLine[0].toUpperCase() + cardLine.slice(1)
+            } is saved, not charged today: Stripe bills it every month from ${nextMonth.toLocaleDateString(
+              'en-US',
+              { month: 'short', day: 'numeric', year: 'numeric' },
+            )}, once the invoice is paid.`
+          : `${fee} for the year goes on today's invoice and is paid at checkout with the visit. No card is needed now.`,
+        confirmLabel: price != null ? `Enroll & add ${money(price)} to the invoice` : 'Enroll',
       });
       if (!ok) return;
       let paymentMethodId: string | undefined;
-      if (!useCardOnFile) {
+      if (monthly && !useCardOnFile) {
         if (!enrolCreateCardRef.current) {
           setFormError('Enter the card for the membership.');
           return;
@@ -968,7 +1007,8 @@ export default function PatientMembershipPanel({
         agreementText: buildMembershipAgreementText(
           agreementHours ?? defaultChatHoursOfOperation(),
         ),
-        startBilling: true,
+        feeOnInvoice: true,
+        feeToProvider,
         clientId: clientId != null ? Number(clientId) : undefined,
         paymentMethodId,
       });
@@ -1123,6 +1163,10 @@ export default function PatientMembershipPanel({
     if (membership?.status !== 'active') return false;
     // A post-visit signup already re-priced and refunded the visit (in person or emailed).
     if (membership.visitRefund) return false;
+    // Staff enrolled it (at the visit, fee on the invoice): the visit was priced as a member, nothing to refund.
+    // Online signups have no enrolling employee.
+    if (membership.createdByEmployeeId != null) return false;
+    if (membership.awaitingPayment) return false;
     if (!membership.stripeSubscriptionId?.startsWith('sub_')) return false;
     if (!membership.startDate) return false;
     const started = Date.parse(membership.startDate);
@@ -1475,8 +1519,13 @@ export default function PatientMembershipPanel({
                   {`${patientName ?? 'This pet'} is not on a membership plan.`}
                 </p>
               )}
+              {patientPassedAway ? (
+                <p className="pmp-muted" role="status">
+                  {`Not available: ${patientName ?? 'this pet'} has passed away.`}
+                </p>
+              ) : null}
               <div className="pmp-empty__actions">
-                {canEnroll ? (
+                {canEnroll && !patientPassedAway ? (
                   <button
                     type="button"
                     className="pims-detail__btn-primary"
@@ -1493,7 +1542,7 @@ export default function PatientMembershipPanel({
                     Enroll in a plan
                   </button>
                 ) : null}
-                {clientId && canPostVisitSignup ? (
+                {clientId && canPostVisitSignup && !patientPassedAway ? (
                   <button
                     type="button"
                     className="pims-detail__btn-secondary pmp-signup-btn"
@@ -1545,12 +1594,15 @@ export default function PatientMembershipPanel({
                 disabled={busy}
               />
               <p className="pmp-muted">
-                Enrolling prices this visit at member rates. Stripe charges the first month or year
-                today on the card below, then bills it on its own. The signed agreement is filed on
-                this pet and stays off the printed medical record.
+                Enrolling prices this visit at member rates and adds the first month (or the year) to
+                today's invoice, paid at checkout with the visit. Monthly plans save the card below, not
+                charged today; Stripe bills it from next month once the invoice is paid. The signed
+                agreement is filed on this pet and stays off the printed medical record.
               </p>
               <div className="pmp-enrol-card">
-                <span className="pmp-field__label">Card for the membership</span>
+                <span className="pmp-field__label">
+                  Card for monthly billing (saved, not charged today; not needed for annual plans)
+                </span>
                 {enrolCardOnFile ? (
                   <div className="pmp-enrol-card__choice" role="radiogroup" aria-label="Card for the membership">
                     <label className="pmp-check">
@@ -1699,6 +1751,7 @@ export default function PatientMembershipPanel({
                       </p>
                     ) : membership.status === 'active' &&
                       membership.isScoutManaged &&
+                      !membership.awaitingPayment &&
                       membership.membershipFeePaid === false ? (
                       <p className="pmp-muted pmp-summary__fee-note" role="status">
                         Membership fee not collected yet — finish payment on the counter invoice.
@@ -1768,6 +1821,33 @@ export default function PatientMembershipPanel({
                     ) : null}
                   </div>
                 </div>
+                {membership.awaitingPayment ? (
+                  <div className="pmp-paused pmp-awaiting" role="status">
+                    <div className="pmp-paused__copy">
+                      <p>
+                        <strong>Awaiting payment.</strong> The membership fee is on the visit invoice
+                        from {shortDate(membership.awaitingPayment.since)}. Benefits apply to that
+                        visit. Stripe billing, the multi-pet credit and the welcome email start once the
+                        invoice is paid.
+                      </p>
+                      <p>
+                        If the family changed their mind, <strong>Cancel enrollment</strong> removes the
+                        membership and its fee, and puts the visit back to regular prices (void a finalized
+                        invoice instead).
+                      </p>
+                    </div>
+                    {canEnroll ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-secondary"
+                        disabled={busy}
+                        onClick={() => void cancelEnrolment()}
+                      >
+                        Cancel enrollment
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {membership.benefitsPaused ? (
                   <div className="pmp-paused" role="status">
                     <div className="pmp-paused__copy">
@@ -1890,10 +1970,11 @@ export default function PatientMembershipPanel({
                       : []),
                   ]}
                 />
-                {canUpdateCard && membership.status !== 'inactive' ? (
+                {canUpdateCard && membership.status !== 'inactive' && !membership.awaitingPayment ? (
                   <div className="pmp-card-update">
                     <MembershipCardUpdate
                       membershipId={membership.id}
+                      subscriptionId={membership.stripeSubscriptionId ?? null}
                       buttonClassName="pims-detail__btn-secondary"
                       onSaved={() => void load()}
                     />
