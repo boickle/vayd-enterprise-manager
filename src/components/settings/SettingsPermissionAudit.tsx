@@ -246,7 +246,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
   }
 
   if (!canView) {
-    return <PermissionDenied what="The permission audit log" who="a practice manager or admin" />;
+    return <PermissionDenied what="The permission audit log" />;
   }
 
   return (

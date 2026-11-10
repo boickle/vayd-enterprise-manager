@@ -209,6 +209,8 @@ export default function AddInventoryLotModal({
               inputMode="decimal"
               value={quantity}
               disabled={saving}
+              // Select the starting 1 so typing 30 gives 30, not 130 (U3, Nov 9, 2026).
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setQuantity(e.target.value)}
             />
           </label>

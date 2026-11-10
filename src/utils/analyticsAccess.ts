@@ -5,17 +5,32 @@ export function normalizeAuthRoles(role: string | string[] | undefined | null): 
   return arr.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
 }
 
+/** Admin or superadmin login. Other code also uses this as "an admin login passes the screen check". */
 export function isAnalyticsAdmin(roles: string[]): boolean {
   return roles.some((r) => r === 'admin' || r === 'superadmin');
 }
 
 /**
- * Staff with the employee role who are not admin/superadmin get a restricted analytics view:
- * practice-wide totals are allowed; per-doctor breakdowns are limited to assigned doctors.
+ * Sees analytics for every doctor: admin and superadmin logins, as before, and anyone holding
+ * `analytics.view_all` (Practice Admin and Executive roles, RP-08). Pass `useCan('analytics.view_all')`.
  */
-export function isEmployeeAnalyticsRestricted(roles: string[]): boolean {
-  if (isAnalyticsAdmin(roles)) return false;
+export function seesAllAnalytics(roles: string[], holdsViewAll = false): boolean {
+  return isAnalyticsAdmin(roles) || holdsViewAll;
+}
+
+/**
+ * Staff with the employee role who don't see everything get a restricted analytics view:
+ * practice-wide totals are allowed; per-doctor breakdowns are limited to assigned doctors.
+ * `holdsViewAll` is `useCan('analytics.view_all')` (RP-08).
+ */
+export function isEmployeeAnalyticsRestricted(roles: string[], holdsViewAll = false): boolean {
+  if (seesAllAnalytics(roles, holdsViewAll)) return false;
   return roles.includes('employee');
+}
+
+/** Can open Analytics at all: everyone who sees all of it, plus restricted employee logins. */
+export function canOpenAnalytics(roles: string[], holdsViewAll = false): boolean {
+  return seesAllAnalytics(roles, holdsViewAll) || roles.includes('employee');
 }
 
 /** Collect doctor / provider ids assigned to the user (supports several API shapes). */

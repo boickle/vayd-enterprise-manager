@@ -886,10 +886,29 @@ export type VetSnapPatientExport = {
   rows: VetSnapPatientRow[];
 };
 
-/** Patients and clients given a controlled drug in the last 14 days, for the Vet Snap import. */
+/**
+ * Patients and clients given a controlled drug in the last 14 days, for the Vet Snap import.
+ * One combined file for every doctor; the API records who downloaded it.
+ */
 export async function getVetSnapPatientExport(practiceId: number) {
   const { data } = await http.get<VetSnapPatientExport>(
     `/practice/${practiceId}/inventory-reports/controlled/vet-snap-patients`
   );
   return data;
+}
+
+export type VetSnapLastDownload = {
+  at: string;
+  byName: string | null;
+  fromDate: string;
+  toDate: string;
+  rowCount: number;
+};
+
+/** Who last downloaded the Vet Snap patient file, and when (null if nobody has). */
+export async function getVetSnapLastDownload(practiceId: number) {
+  const { data } = await http.get<{ lastDownload: VetSnapLastDownload | null }>(
+    `/practice/${practiceId}/inventory-reports/controlled/vet-snap-patients/last-download`
+  );
+  return data.lastDownload;
 }

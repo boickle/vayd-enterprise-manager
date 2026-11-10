@@ -123,7 +123,7 @@ async function openEmailFor(status: string | null) {
   composeProps.current = null;
   render(<IdexxResultView resultId={7} />);
   await screen.findByText(/Final|Partial/);
-  fireEvent.click(screen.getByRole('button', { name: /Email lab results/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Email lab summary & report/ }));
   await waitFor(() => expect(composeProps.current).not.toBeNull());
   return composeProps.current as {
     initialSubject: string;

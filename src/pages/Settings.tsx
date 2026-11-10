@@ -71,7 +71,6 @@ import SettingsEmployeeDirectory, {
   type EmployeeHubSection,
 } from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
-import SettingsClosedDates from '../components/settings/SettingsClosedDates';
 import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
 import SettingsPermissionAudit from '../components/settings/SettingsPermissionAudit';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
@@ -88,7 +87,7 @@ import SettingsDepositBankAccounts from '../components/settings/SettingsDepositB
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
 import SettingsMemberships from '../components/settings/SettingsMemberships';
-import { useCan, usePermissions } from '../permissions/PermissionContext';
+import { usePermissions } from '../permissions/PermissionContext';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import FormsAdmin from './FormsAdmin';
 import SettingsLabForms from '../components/settings/SettingsLabForms';
@@ -100,45 +99,13 @@ import SettingsChatHours from '../components/settings/SettingsChatHours';
 import SettingsProductionIncentive from '../components/settings/SettingsProductionIncentive';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
+import {
+  SETTINGS_TAB_IDS,
+  allowedSettingsTabs,
+  isAdminLoginRole,
+  type SettingsTabId,
+} from '../permissions/settingsTabAccess';
 
-const SETTINGS_TAB_IDS = [
-  'practice-letterhead',
-  'branches-locations',
-  'euthanasia-consent',
-  'outside-hospitals',
-  'appointment-types',
-  'practice-booking-goals',
-  'client-offers',
-  'employee-types',
-  'employee-zones',
-  'employee-schedule',
-  'inventory-online-store',
-  'inventory-refills',
-  'inventory-mail-shipping',
-  'inventory-sales-tax',
-  'inventory-waste',
-  'inventory-count-alerts',
-  'employee-images',
-  'employee-goals',
-  'production-incentive',
-  'employee-directory',
-  'roles',
-  'permission-audit',
-  'cl-seat-assignment',
-  'gmail-mailboxes',
-  'chat-hours',
-  'reminders',
-  'payment-types',
-  'client-statuses',
-  'patient-statuses',
-  'memberships',
-  'message-templates',
-  'forms',
-  'lab-forms',
-  'automatic-tasks',
-  'room-loader',
-] as const;
-type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
 type SettingsMenuItem = { id: SettingsTabId; label: string };
 
@@ -368,10 +335,24 @@ function SettingsTabMenu({
 export default function Settings() {
   const { role } = useAuth() as any;
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = useMemo(
+  const { can, hasRole } = usePermissions();
+  // RP-A1: admin and superadmin logins see every tab, as before (D4); anyone else sees the tabs
+  // whose permission they hold (src/permissions/settingsTabAccess.ts).
+  const isAdmin = isAdminLoginRole(role);
+  const allowedTabs = useMemo(
+    () => new Set(allowedSettingsTabs({ isAdminLogin: isAdmin, can, hasRole })),
+    [isAdmin, can, hasRole]
+  );
+  const settingsOpen = allowedTabs.size > 0;
+  const requestedTab = useMemo(
     () => parseSettingsTabParam(searchParams.get('tab')),
     [searchParams]
   );
+  /** The tab asked for in the URL, or the first one this user may open. */
+  const activeTab = useMemo((): SettingsTabId => {
+    if (allowedTabs.has(requestedTab)) return requestedTab;
+    return SETTINGS_TAB_IDS.find((tab) => allowedTabs.has(tab)) ?? requestedTab;
+  }, [allowedTabs, requestedTab]);
   const employeeHubSection = useMemo(
     () => parseEmployeeHubSection(searchParams.get('tab'), searchParams.get('section')),
     [searchParams]
@@ -520,15 +501,6 @@ export default function Settings() {
   const [taxSettingsSaving, setTaxSettingsSaving] = useState(false);
   const [taxSettingsError, setTaxSettingsError] = useState<string | null>(null);
 
-  // Normalize roles
-  const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
-  const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
-  const canManageMembershipPlans = useCan('membership.plan.manage');
-  const { hasRole } = usePermissions();
-  const canViewAutomaticTasks =
-    isAdmin || hasRole('practice_admin', 'practice_manager');
-  /** Practice managers and the medical director keep holidays closed for online booking (owner, Nov 7, 2026). */
-  const canManageClosedDays = useCan('appointment_type.manage');
 
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
@@ -544,10 +516,15 @@ export default function Settings() {
     });
   }, [employees]);
 
+  // Appointment types, employees and zones feed the Scheduling, Roles and Staff tabs.
+  const needsCoreData =
+    allowedTabs.has('appointment-types') ||
+    allowedTabs.has('roles') ||
+    allowedTabs.has('employee-directory');
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!needsCoreData) return;
     loadData();
-  }, [isAdmin]);
+  }, [needsCoreData]);
 
   useEffect(() => {
     if (activeTab !== 'employee-directory' || hubEmployeeId == null) return;
@@ -562,7 +539,7 @@ export default function Settings() {
 
   // Load reminder settings when Reminders tab is active
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'reminders') return;
+    if (!settingsOpen || activeTab !== 'reminders') return;
     let cancelled = false;
     setReminderLoadError(null);
     setReminderLoading(true);
@@ -581,12 +558,12 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, activeTab]);
+  }, [settingsOpen, activeTab]);
 
   // Load online-store + refill settings when those Inventory sections are active
   useEffect(() => {
     if (
-      !isAdmin ||
+      !settingsOpen ||
       (activeTab !== 'inventory-online-store' && activeTab !== 'inventory-refills')
     ) {
       return;
@@ -634,11 +611,11 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, activeTab]);
+  }, [settingsOpen, activeTab]);
 
   // Load practice sales-tax settings when the Finance → Sales Tax section is active
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'inventory-sales-tax') return;
+    if (!settingsOpen || activeTab !== 'inventory-sales-tax') return;
     let cancelled = false;
     setTaxSettingsError(null);
     setTaxSettingsLoading(true);
@@ -659,11 +636,11 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, activeTab]);
+  }, [settingsOpen, activeTab]);
 
   useEffect(() => {
     if (
-      !isAdmin ||
+      !settingsOpen ||
       activeTab !== 'inventory-online-store' ||
       onlineStoreFulfillmentBranchId == null
     ) {
@@ -690,7 +667,7 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, activeTab, onlineStoreFulfillmentBranchId]);
+  }, [settingsOpen, activeTab, onlineStoreFulfillmentBranchId]);
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -812,9 +789,9 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'practice-booking-goals') return;
+    if (!settingsOpen || activeTab !== 'practice-booking-goals') return;
     void handleLoadAppointmentBookingsGoals();
-  }, [isAdmin, activeTab, handleLoadAppointmentBookingsGoals]);
+  }, [settingsOpen, activeTab, handleLoadAppointmentBookingsGoals]);
 
   const handleSaveEmployeeGoals = async () => {
     if (!selectedEmployeeForGoals) return;
@@ -1019,7 +996,7 @@ export default function Settings() {
   const scheduleOverrideDeepLinkRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isAdmin || employees.length === 0) return;
+    if (!allowedTabs.has('employee-directory') || employees.length === 0) return;
     const open = searchParams.get('openScheduleOverride') === '1';
     const empRaw = searchParams.get('overrideEmployeeId');
     const dateStr = searchParams.get('overrideDate');
@@ -1048,7 +1025,7 @@ export default function Settings() {
       },
       { replace: true }
     );
-  }, [isAdmin, employees, searchParams, activeTab, goToTab, setSearchParams]);
+  }, [allowedTabs, employees, searchParams, activeTab, goToTab, setSearchParams]);
 
   const handleSaveEmployeeSchedule = async () => {
     if (!selectedEmployeeForSchedule) return;
@@ -1368,119 +1345,27 @@ export default function Settings() {
     }
   };
 
-  const closedDaysForNonAdmin =
-    !isAdmin && canManageClosedDays ? (
-      <div className="settings-section" style={{ marginBottom: 28 }}>
-        <SettingsClosedDates
-          practiceId={practiceId}
-          onMessage={(msg, kind) => {
-            if (kind === 'error') {
-              setError(msg);
-              setSuccess(null);
-            } else {
-              setSuccess(msg);
-              setError(null);
-            }
-          }}
-        />
-      </div>
-    ) : null;
-
-  if (!isAdmin && canManageMembershipPlans) {
-    return (
-      <div className="container">
-        <div className="settings-page">
-          <h1 className="settings-title">{canManageClosedDays ? 'Settings' : 'Settings: Memberships'}</h1>
-          {error && (
-            <div className="settings-message settings-error-message">
-              {error}
-              <button onClick={() => setError(null)} className="settings-close">×</button>
-            </div>
-          )}
-          {success && (
-            <div className="settings-message settings-success-message">
-              {success}
-              <button onClick={() => setSuccess(null)} className="settings-close">×</button>
-            </div>
-          )}
-          {closedDaysForNonAdmin}
-          <SettingsMemberships
-            onMessage={(msg, kind) => {
-              if (kind === 'error') {
-                setError(msg);
-                setSuccess(null);
-              } else {
-                setSuccess(msg);
-                setError(null);
-              }
-            }}
-          />
-          {canViewAutomaticTasks ? (
-            <>
-              <h2 className="settings-section-title" style={{ marginTop: 28 }}>
-                Automatic Tasks
-              </h2>
-              <p className="settings-section-description">
-                Work Scout chases on its own. Practice managers can see the list. Admins can change
-                the rules.
-              </p>
-              <SettingsAutomaticTasks
-                practiceId={REMINDERS_PRACTICE_ID}
-                readOnly={!isAdmin}
-              />
-            </>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAdmin && canViewAutomaticTasks) {
-    return (
-      <div className="container">
-        <div className="settings-page">
-          {closedDaysForNonAdmin ? (
-            <>
-              <h1 className="settings-title">Settings</h1>
-              {error && <div className="settings-message settings-error-message">{error}</div>}
-              {success && <div className="settings-message settings-success-message">{success}</div>}
-              {closedDaysForNonAdmin}
-            </>
-          ) : null}
-          <h1 className="settings-title">Automatic Tasks</h1>
-          <p className="settings-section-description">
-            Work Scout chases on its own. This list is for practice managers and admins. The rules
-            themselves are changed by an admin.
-          </p>
-          <SettingsAutomaticTasks practiceId={REMINDERS_PRACTICE_ID} readOnly />
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAdmin && closedDaysForNonAdmin) {
-    return (
-      <div className="container">
-        <div className="settings-page">
-          <h1 className="settings-title">Settings</h1>
-          {error && <div className="settings-message settings-error-message">{error}</div>}
-          {success && <div className="settings-message settings-success-message">{success}</div>}
-          {closedDaysForNonAdmin}
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
+  if (!settingsOpen) {
     return (
       <div className="container">
         <div className="settings-error">
           <h2>Access Denied</h2>
-          <p>You need admin privileges to access settings.</p>
+          <p>None of your roles includes a Settings permission.</p>
         </div>
       </div>
     );
   }
+
+  const visibleItems = (items: SettingsMenuItem[]) =>
+    items.filter((item) => allowedTabs.has(item.id));
+  const settingsMenus: { label: string; items: SettingsMenuItem[] }[] = [
+    { label: 'Practice', items: visibleItems(PRACTICE_SETTINGS_ITEMS) },
+    { label: 'Scheduling', items: visibleItems(SCHEDULING_SETTINGS_ITEMS) },
+    { label: 'Staff', items: visibleItems(EMPLOYEE_SETTINGS_ITEMS) },
+    { label: 'Inventory', items: visibleItems(INVENTORY_SETTINGS_ITEMS) },
+    { label: 'Finance', items: visibleItems(FINANCE_SETTINGS_ITEMS) },
+    { label: 'Communication', items: visibleItems(COMMUNICATION_SETTINGS_ITEMS) },
+  ].filter((menu) => menu.items.length > 0);
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -1490,42 +1375,15 @@ export default function Settings() {
         <h1 className="settings-title">Settings</h1>
 
         <div className="settings-tabs">
-          <SettingsTabMenu
-            label="Practice"
-            items={PRACTICE_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
-          <SettingsTabMenu
-            label="Scheduling"
-            items={SCHEDULING_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
-          <SettingsTabMenu
-            label="Staff"
-            items={EMPLOYEE_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
-          <SettingsTabMenu
-            label="Inventory"
-            items={INVENTORY_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
-          <SettingsTabMenu
-            label="Finance"
-            items={FINANCE_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
-          <SettingsTabMenu
-            label="Communication"
-            items={COMMUNICATION_SETTINGS_ITEMS}
-            activeTab={activeTab}
-            onSelect={goToTab}
-          />
+          {settingsMenus.map((menu) => (
+            <SettingsTabMenu
+              key={menu.label}
+              label={menu.label}
+              items={menu.items}
+              activeTab={activeTab}
+              onSelect={goToTab}
+            />
+          ))}
         </div>
 
         {error && (
@@ -3337,6 +3195,8 @@ export default function Settings() {
             </p>
             <SettingsAutomaticTasks
               practiceId={REMINDERS_PRACTICE_ID}
+              // Practice managers see the list; admins change the rules (unchanged by RP-A1).
+              readOnly={!isAdmin}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
@@ -3393,7 +3253,7 @@ export default function Settings() {
             <h2 className="settings-section-title">CL Seat Assignment</h2>
             <p className="settings-section-description">
               Assign each Client Liaison to Phones, Outreach, or Email for the week, set weekly seat par
-              targets, and add day overrides (OFF / one-day seat swaps) used by Analytics → CL Performance
+              targets, and add day overrides (OFF / one-day seat swaps) used by Analytics &amp; Reports → CL Performance
               (normalized score = points ÷ prorated par).
             </p>
             <SettingsClSeatAssignment

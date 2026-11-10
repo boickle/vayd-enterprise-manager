@@ -1750,7 +1750,6 @@ export async function voidInvoice(
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
     reason: opts?.reason,
-    voidedByEmployeeId: opts?.voidedByEmployeeId,
     ...removeDoseParams(opts?.removeDose),
   });
   return data;
@@ -1759,15 +1758,11 @@ export async function voidInvoice(
 /** Soft-delete an unused open invoice so it leaves the ledger. */
 export async function discardVisitInvoice(
   id: string,
-  opts?: { deletedByEmployeeId?: number | null },
+  _opts?: { deletedByEmployeeId?: number | null },
 ): Promise<void> {
   await http.delete(`/visit-invoices/${encodeURIComponent(id)}`, {
-    params: {
-      practiceId: pid(),
-      ...(opts?.deletedByEmployeeId != null
-        ? { deletedByEmployeeId: opts.deletedByEmployeeId }
-        : {}),
-    },
+    // The server takes the actor from the login (RP-A5).
+    params: { practiceId: pid() },
   });
 }
 

@@ -1058,7 +1058,8 @@ export default function MailOrdersPage() {
               ? '1 rejected order'
               : `${rejectedNeedsContactCount} rejected orders`}
           </strong>{' '}
-          still need the client contacted (email or text).
+          {rejectedNeedsContactCount === 1 ? 'still needs' : 'still need'} the client contacted (email or
+          text).
           <button type="button" className="mail-queue__rejected-banner-link" onClick={() => applyFilter('rejected')}>
             Open Rejected
           </button>

@@ -18,8 +18,14 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { appointmentTypeIsArchived } from '../../utils/appointmentTypeSettings';
-import { ROLE_LABELS } from '../../api/permissions';
+import {
+  fetchPermissionAudit,
+  roleMembershipChanges,
+  ROLE_LABELS,
+  type PermissionAuditEntry,
+} from '../../api/permissions';
 import RolePermissionsEditor from './RolePermissionsEditor';
+import { useCan } from '../../permissions/PermissionContext';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -47,14 +53,20 @@ export default function SettingsScoutRoles({
   allAppointmentTypes,
   onMessage,
 }: Props) {
+  // Adding roles and editing a role's name, slug and office setting need role.definition.manage
+  // (Practice Admin). Others see the role and its people only (Nov 9, 2026: the screen let a Practice
+  // Manager try, and the API refused).
+  const canDefineRoles = useCan('role.definition.manage');
   const [roles, setRoles] = useState<EmployeeRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [assignments, setAssignments] = useState<ScoutRoleAssignment[]>([]);
-  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [auditRows, setAuditRows] = useState<PermissionAuditEntry[]>([]);
 
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -90,6 +102,45 @@ export default function SettingsScoutRoles({
         .filter((e) => e.isActive !== false && e.isDeleted !== true)
         .slice()
         .sort((a, b) => formatEmployeeName(a).localeCompare(formatEmployeeName(b))),
+    [employees]
+  );
+
+  /** RP-04: deactivated people stay on a role until someone removes them, but are hidden by default. */
+  const deactivatedAssignments = useMemo(
+    () => assignments.filter((a) => a.isActive === false),
+    [assignments]
+  );
+  const deactivatedCount = useMemo(
+    () => new Set(deactivatedAssignments.map((a) => a.employeeId)).size,
+    [deactivatedAssignments]
+  );
+  const deactivatedForList = useMemo(() => {
+    const seen = new Set<string>();
+    return deactivatedAssignments.filter((a) => {
+      const key = `${a.employeeId}:${a.branchId ?? 'all'}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [deactivatedAssignments]);
+
+  const loadRecentChanges = useCallback(() => {
+    fetchPermissionAudit(practiceId, { permissionKeys: ['staff.role.assign'], limit: 300 })
+      .then(setAuditRows)
+      .catch(() => setAuditRows([]));
+  }, [practiceId]);
+
+  useEffect(loadRecentChanges, [loadRecentChanges]);
+
+  const recentForRole = useMemo(
+    () => (selectedRoleId == null ? [] : roleMembershipChanges(auditRows, selectedRoleId).slice(0, 10)),
+    [auditRows, selectedRoleId]
+  );
+  const nameOfEmployee = useCallback(
+    (id: number | null) => {
+      const emp = employees.find((e) => e.id === id);
+      return emp ? formatEmployeeName(emp) : id != null ? `Employee ${id}` : 'Someone';
+    },
     [employees]
   );
 
@@ -292,6 +343,7 @@ export default function SettingsScoutRoles({
           }));
       const res = await replaceScoutRoleAssignments(selectedRoleId, practiceId, payload);
       setAssignments(res.assignments);
+      loadRecentChanges();
       onMessage?.(`Assignees saved for ${selectedRole.name}.`, 'success');
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
@@ -358,16 +410,18 @@ export default function SettingsScoutRoles({
             <h3 className="settings-card-title" style={{ margin: 0 }}>
               Roles
             </h3>
-            <button
-              type="button"
-              className="btn secondary"
-              style={{ padding: '4px 10px', fontSize: 13 }}
-              onClick={() => setAdding((v) => !v)}
-            >
-              {adding ? 'Cancel' : 'Add'}
-            </button>
+            {canDefineRoles ? (
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ padding: '4px 10px', fontSize: 13 }}
+                onClick={() => setAdding((v) => !v)}
+              >
+                {adding ? 'Cancel' : 'Add'}
+              </button>
+            ) : null}
           </div>
-          {adding && (
+          {adding && canDefineRoles && (
             <form onSubmit={(e) => void handleAddRole(e)} style={{ marginBottom: 12 }}>
               <input
                 className="settings-input"
@@ -429,65 +483,75 @@ export default function SettingsScoutRoles({
             <p className="settings-muted">Select a role.</p>
           ) : (
             <>
-              <form className="settings-card" style={{ marginTop: 0 }} onSubmit={(e) => void handleSaveRoleDetails(e)}>
-                <h3 className="settings-card-title">{selectedRole.name}</h3>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 12,
-                    marginBottom: 12,
-                  }}
-                >
-                  <label className="settings-label">
-                    Name
-                    <input
+              {canDefineRoles ? (
+                <form className="settings-card" style={{ marginTop: 0 }} onSubmit={(e) => void handleSaveRoleDetails(e)}>
+                  <h3 className="settings-card-title">{selectedRole.name}</h3>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <label className="settings-label">
+                      Name
+                      <input
+                        className="settings-input"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        required
+                      />
+                    </label>
+                    <label className="settings-label">
+                      Slug
+                      <input
+                        className="settings-input"
+                        value={editSlug}
+                        onChange={(e) => setEditSlug(e.target.value)}
+                        placeholder="auto from name"
+                        readOnly={isBuiltInRole}
+                        title={
+                          isBuiltInRole
+                            ? 'Built-in roles keep their slug — permissions are attached to it.'
+                            : undefined
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
+                    Description
+                    <textarea
                       className="settings-input"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      required
+                      rows={2}
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
                     />
                   </label>
-                  <label className="settings-label">
-                    Slug
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                     <input
-                      className="settings-input"
-                      value={editSlug}
-                      onChange={(e) => setEditSlug(e.target.value)}
-                      placeholder="auto from name"
-                      readOnly={isBuiltInRole}
-                      title={
-                        isBuiltInRole
-                          ? 'Built-in roles keep their slug — permissions are attached to it.'
-                          : undefined
-                      }
+                      type="checkbox"
+                      checked={editBranchSpecific}
+                      onChange={(e) => setEditBranchSpecific(e.target.checked)}
                     />
+                    <span>Is branch-specific</span>
                   </label>
+                  <p className="settings-muted" style={{ fontSize: 12, marginTop: 0 }}>
+                    Changing this clears assignees that no longer match (practice-wide vs per office).
+                  </p>
+                  <button type="submit" className="btn primary" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save role'}
+                  </button>
+                </form>
+              ) : (
+                <div className="settings-card" style={{ marginTop: 0 }}>
+                  <h3 className="settings-card-title">{selectedRole.name}</h3>
+                  <p className="settings-muted" style={{ margin: 0 }}>
+                    {selectedRole.isBranchSpecific ? 'Per office' : 'Practice-wide'}
+                    {selectedRole.description ? ` · ${selectedRole.description}` : ''}
+                  </p>
                 </div>
-                <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
-                  Description
-                  <textarea
-                    className="settings-input"
-                    rows={2}
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                  />
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={editBranchSpecific}
-                    onChange={(e) => setEditBranchSpecific(e.target.checked)}
-                  />
-                  <span>Is branch-specific</span>
-                </label>
-                <p className="settings-muted" style={{ fontSize: 12, marginTop: 0 }}>
-                  Changing this clears assignees that no longer match (practice-wide vs per office).
-                </p>
-                <button type="submit" className="btn primary" disabled={saving}>
-                  {saving ? 'Saving…' : 'Save role'}
-                </button>
-              </form>
+              )}
 
               <div className="settings-card">
                 <h3 className="settings-card-title">
@@ -526,6 +590,24 @@ export default function SettingsScoutRoles({
                               <span>{formatEmployeeName(emp)}</span>
                             </label>
                           ))}
+                          {showDeactivated &&
+                            deactivatedForList
+                              .filter((a) => a.branchId === branch.id)
+                              .map((a) => (
+                                <label
+                                  key={`${branch.id}-x${a.employeeId}`}
+                                  style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={(selectedByBranch[branch.id] ?? []).includes(a.employeeId)}
+                                    onChange={(e) =>
+                                      toggleBranchEmployee(branch.id, a.employeeId, e.target.checked)
+                                    }
+                                  />
+                                  <span>{a.employeeName} (Deactivated)</span>
+                                </label>
+                              ))}
                         </div>
                       </div>
                     ))}
@@ -556,7 +638,33 @@ export default function SettingsScoutRoles({
                         <span>{formatEmployeeName(emp)}</span>
                       </label>
                     ))}
+                    {showDeactivated &&
+                      deactivatedForList.map((a) => (
+                        <label
+                          key={`x-${a.employeeId}`}
+                          style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedEmployeeIds.includes(a.employeeId)}
+                            onChange={(e) => toggleEmployee(a.employeeId, e.target.checked)}
+                          />
+                          <span>{a.employeeName} (Deactivated)</span>
+                        </label>
+                      ))}
                   </div>
+                )}
+                {deactivatedCount > 0 && (
+                  <label
+                    style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, marginTop: 8 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showDeactivated}
+                      onChange={(e) => setShowDeactivated(e.target.checked)}
+                    />
+                    <span>Show deactivated ({deactivatedCount})</span>
+                  </label>
                 )}
                 <div style={{ marginTop: 12 }}>
                   <button
@@ -574,6 +682,25 @@ export default function SettingsScoutRoles({
                   )}
                 </div>
               </div>
+
+              {recentForRole.length > 0 && (
+                <div className="settings-card" data-testid="recent-role-changes">
+                  <h3 className="settings-card-title">Recent changes to {selectedRole.name}</h3>
+                  <ul style={{ listStyle: 'none', margin: '0 0 8px', padding: 0, fontSize: 13 }}>
+                    {recentForRole.map((c, i) => (
+                      <li key={`${c.id}-${i}`} style={{ padding: '4px 0' }}>
+                        {nameOfEmployee(c.targetId)} was {c.kind === 'added' ? 'added to' : 'removed from'}{' '}
+                        this role{c.office ? ` at ${c.office}` : ''}
+                        <span className="settings-muted">
+                          {' '}
+                          · {c.actor ?? 'Someone'} · {new Date(c.when).toLocaleString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <a href="/schedule/settings?tab=permission-audit">See the full Permission Audit Log</a>
+                </div>
+              )}
 
               <RolePermissionsEditor
                 key={selectedRole.id}

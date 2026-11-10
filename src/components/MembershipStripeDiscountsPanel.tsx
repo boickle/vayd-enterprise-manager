@@ -122,7 +122,10 @@ const DEFAULT_FORM = {
 
 export default function MembershipStripeDiscountsPanel() {
   // PAY-A8 / D3: only practice manager and admin create, edit, pause or archive promotions.
-  const canManage = useCanOrAdminLogin('payment_type.manage');
+  // RP-08: Marketing → Membership Promotions; marketing.manage edits too, Executives only look.
+  const canManagePaymentTypes = useCanOrAdminLogin('payment_type.manage');
+  const canManageMarketing = useCanOrAdminLogin('marketing.manage');
+  const canManage = canManagePaymentTypes || canManageMarketing;
   const [listView, setListView] = useState<ListView>('active');
   const [rows, setRows] = useState<MembershipDiscountRecord[]>([]);
   const [loading, setLoading] = useState(true);
