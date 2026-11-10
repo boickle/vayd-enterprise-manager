@@ -121,13 +121,16 @@ import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
 import { listMessageTemplates } from './api/messageTemplates';
 import { ensurePracticePremedsWindowLoaded } from './utils/premedsWindow';
 import { currentPracticeId } from './utils/practiceIdFromToken';
+import { useMayShow } from './permissions/PermissionContext';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
   const { abilities } = useAuth() as { abilities?: string[] };
   const location = useLocation();
   const navigate = useNavigate();
-  if (!location.pathname.startsWith('/schedule')) return null;
+  // Hidden for anyone who can't book (owner, Nov 9, 2026: read-only roles saw it).
+  const mayBook = useMayShow('routing.book', 'calendar.book_manual');
+  if (!location.pathname.startsWith('/schedule') || !mayBook) return null;
   const toRouting = !abilities || abilities.includes('canSeeRouting');
   return (
     <button

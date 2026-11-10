@@ -173,7 +173,7 @@ type Props = {
 
 export default function SettingsEmployeeDirectory({
   onMessage,
-  section = 'profile',
+  section: requestedSection = 'profile',
   onSectionChange,
   selectedEmployeeId,
   onSelectedEmployeeIdChange,
@@ -250,6 +250,14 @@ export default function SettingsEmployeeDirectory({
   /** Practice manager and above add employees and edit their records (owner decision, Nov 2, 2026). */
   const canManageStaff = can('staff.employee.manage');
   const canManageLogins = can('staff.login.manage');
+  /**
+   * The Medical Director sets licenses but doesn't manage staff (D1; owner, Nov 9, 2026): they see the
+   * Access tab only. Anyone who manages staff, logins or roles sees every tab.
+   */
+  const accessOnly =
+    !canManageStaff && !canManageLogins && !can('staff.role.assign') && can('staff.license.manage');
+  const section: EmployeeHubSection = accessOnly ? 'access' : requestedSection;
+  const hubSections = accessOnly ? HUB_SECTIONS.filter((item) => item.id === 'access') : HUB_SECTIONS;
   const { lines: quoLines } = useOpenPhoneLineDirectory(isProvider);
   const quoMatch = quoLinePhone.trim()
     ? quoLines.find((line) => phonesMatchForQuo(line.phone, quoLinePhone))
@@ -1046,7 +1054,7 @@ export default function SettingsEmployeeDirectory({
         ) : (
           <>
               <div className="settings-employee-hub__sections" role="tablist" aria-label="Employee sections">
-                {HUB_SECTIONS.map((item) => (
+                {hubSections.map((item) => (
                   <button
                     key={item.id}
                     type="button"

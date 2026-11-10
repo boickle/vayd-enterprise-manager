@@ -145,6 +145,17 @@ export function useCan(
 }
 
 /**
+ * Whether to show a control that needs any one of `keys`. Before permissions have loaded (or if
+ * they failed to load) it shows, so controls don't flicker away; once loaded it hides for anyone
+ * holding none of them (Nov 9, 2026: read-only roles saw booking and client buttons).
+ */
+export function useMayShow(...keys: string[]): boolean {
+  const { effective, can } = usePermissions();
+  if (!effective) return true;
+  return keys.some((key) => can(key));
+}
+
+/**
  * The breadth of a permission, for code that behaves differently per scope —
  * e.g. a list that shows own cases at `own` and everyone's at `all`.
  */

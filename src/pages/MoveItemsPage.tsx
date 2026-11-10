@@ -372,7 +372,7 @@ export default function MoveItemsPage() {
   }
 
   if (!canTransfer) {
-    return <PermissionDenied what="Moving inventory" who="an inventory or practice manager" />;
+    return <PermissionDenied what="Moving inventory" />;
   }
 
   return (

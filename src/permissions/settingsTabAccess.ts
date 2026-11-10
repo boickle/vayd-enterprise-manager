@@ -53,6 +53,8 @@ const STAFF_HUB: TabRequirement[] = [
   { key: 'staff.employee.manage' },
   { key: 'staff.login.manage' },
   { key: 'staff.role.assign' },
+  // The Medical Director sets licenses on the Access tab (D1; owner, Nov 9, 2026).
+  { key: 'staff.license.manage' },
 ];
 
 /** Any one of these opens the tab. Empty: admin and superadmin logins only. */

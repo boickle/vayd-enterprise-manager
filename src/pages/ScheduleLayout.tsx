@@ -32,6 +32,9 @@ import {
   scoutTabPermissionOk,
 } from '../scout-tabs';
 import { canOpenAnalytics } from '../utils/analyticsAccess';
+import { useMayShow, usePermissions } from '../permissions/PermissionContext';
+import { visibleAnalyticsTabs } from '../analytics-tabs';
+import { isAnalyticsAdmin } from '../utils/analyticsAccess';
 import {
   useRoutingCalendarPreviewActive,
   useRoutingCalendarPreviewNavigationGuard,
@@ -100,11 +103,22 @@ export default function ScheduleLayout() {
 
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
 
+  const { can: canPermission, effective: permissionsLoaded } = usePermissions();
+  // The Analytics link shows only when at least one report opens for this person (Nov 9, 2026: the
+  // mail order roles saw it and got "You don't have access to any analytics pages").
   const canAccessScheduleAnalytics = useMemo(
-    () => canOpenAnalytics(roles),
-    [roles],
+    () =>
+      canOpenAnalytics(roles) &&
+      (!permissionsLoaded || visibleAnalyticsTabs(roles, isAnalyticsAdmin(roles), canPermission).length > 0),
+    [roles, permissionsLoaded, canPermission],
   );
   const inventoryAttention = useInventoryAttention(canAccessScheduleAnalytics);
+  // Quick actions show only for people who may use them (owner, Nov 9, 2026: read-only roles saw them all).
+  const showBook = useMayShow('routing.book', 'calendar.book_manual');
+  const showNewClient = useMayShow('client.create');
+  const showRoomLoader = useMayShow('room_loader.reconcile');
+  const showNewTask = useMayShow('task.create');
+  const showForwardBooking = useMayShow('forward_booking.manage');
 
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
   const [forwardBookingModalOpen, setForwardBookingModalOpen] = useState(false);
@@ -261,45 +275,49 @@ export default function ScheduleLayout() {
         <div id="schedule-app-rail-nav" className="schedule-app__rail-scroll">
           <h2 className="schedule-app__rail-title">Quick actions</h2>
           <nav className="schedule-app__quick" aria-label="Quick actions">
-            <NavLink
-              to={appointmentHref}
-              className="schedule-app__quick-link schedule-app__quick-link--primary"
-              title={railCollapsedEffective ? 'New appointment' : undefined}
-              onClick={(e) => {
-                if (forwardBookingWorkspaceLockActive) {
-                  e.preventDefault();
-                  void appAlert({
-                    title: 'Forward booking in progress',
-                    message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
-                  });
-                  return;
-                }
-                if (appointmentHref === '/schedule/routing') {
-                  if (!startFreshNewAppointmentRouting()) {
+            {showBook ? (
+              <NavLink
+                to={appointmentHref}
+                className="schedule-app__quick-link schedule-app__quick-link--primary"
+                title={railCollapsedEffective ? 'New appointment' : undefined}
+                onClick={(e) => {
+                  if (forwardBookingWorkspaceLockActive) {
                     e.preventDefault();
+                    void appAlert({
+                      title: 'Forward booking in progress',
+                      message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+                    });
                     return;
                   }
+                  if (appointmentHref === '/schedule/routing') {
+                    if (!startFreshNewAppointmentRouting()) {
+                      e.preventDefault();
+                      return;
+                    }
+                  }
+                  markSchedulerHandoffPreferRoutingDoctor();
+                }}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <CalendarPlus size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">+ Appointment</span>
+              </NavLink>
+            ) : null}
+            {showNewClient ? (
+              <NavLink
+                to="/schedule/clients?add=1"
+                className={({ isActive }) =>
+                  `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
                 }
-                markSchedulerHandoffPreferRoutingDoctor();
-              }}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <CalendarPlus size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">+ Appointment</span>
-            </NavLink>
-            <NavLink
-              to="/schedule/clients?add=1"
-              className={({ isActive }) =>
-                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
-              }
-              title={railCollapsedEffective ? 'New Client' : undefined}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <UserPlus size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">+ New Client</span>
-            </NavLink>
+                title={railCollapsedEffective ? 'New Client' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <UserPlus size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">+ New Client</span>
+              </NavLink>
+            ) : null}
             <NavLink
               to="/schedule/jot"
               className={({ isActive }) =>
@@ -324,16 +342,18 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">Help</span>
             </NavLink>
-            <NavLink
-              to="/schedule/room-loader"
-              className="schedule-app__quick-link"
-              title={railCollapsedEffective ? 'Send Room Loader' : undefined}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <Send size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">Send Room Loader</span>
-            </NavLink>
+            {showRoomLoader ? (
+              <NavLink
+                to="/schedule/room-loader"
+                className="schedule-app__quick-link"
+                title={railCollapsedEffective ? 'Send Room Loader' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <Send size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">Send Room Loader</span>
+              </NavLink>
+            ) : null}
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
                 to="/schedule/inventory/items"
@@ -346,27 +366,31 @@ export default function ScheduleLayout() {
                 <span className="schedule-app__quick-link-label">Restock Location</span>
               </NavLink>
             ) : null}
-            <NavLink
-              to={{ pathname: '/schedule/tasks', search: '?new=1' }}
-              className="schedule-app__quick-link"
-              title={railCollapsedEffective ? 'New Task' : undefined}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <ClipboardPlus size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">New Task</span>
-            </NavLink>
-            <button
-              type="button"
-              className="schedule-app__quick-link"
-              title={railCollapsedEffective ? 'Forward booking' : undefined}
-              onClick={() => setForwardBookingModalOpen(true)}
-            >
-              <span className="schedule-app__quick-link-icon" aria-hidden>
-                <CalendarClock size={18} strokeWidth={1.75} />
-              </span>
-              <span className="schedule-app__quick-link-label">+ Forward Booking</span>
-            </button>
+            {showNewTask ? (
+              <NavLink
+                to={{ pathname: '/schedule/tasks', search: '?new=1' }}
+                className="schedule-app__quick-link"
+                title={railCollapsedEffective ? 'New Task' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <ClipboardPlus size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">New Task</span>
+              </NavLink>
+            ) : null}
+            {showForwardBooking ? (
+              <button
+                type="button"
+                className="schedule-app__quick-link"
+                title={railCollapsedEffective ? 'Forward booking' : undefined}
+                onClick={() => setForwardBookingModalOpen(true)}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <CalendarClock size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">+ Forward Booking</span>
+              </button>
+            ) : null}
             <DepositQuickLink collapsed={railCollapsedEffective} />
             {canAccessScheduleAnalytics ? (
               <>
