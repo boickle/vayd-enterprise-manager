@@ -1458,7 +1458,8 @@ export type GmailAdminMailboxPermissionsUser = {
 };
 
 export type GmailAdminMailboxPermissionsOverview = {
-  mailboxes: Array<{ email: string; displayLabel: string }>;
+  /** `connected` is false when Google revoked Scout's access (COM-A18); missing on older servers. */
+  mailboxes: Array<{ email: string; displayLabel: string; connected?: boolean }>;
   users: GmailAdminMailboxPermissionsUser[];
 };
 
