@@ -82,4 +82,4 @@ These videos build on videos already recorded:
 
 **When to record (Q12):** the Must videos before go-live. The Nice videos (STK-16, STK-22 to STK-26, PRC-07 to PRC-11) after the first weeks of go-live, except STK-16 if doctors count their safes in week one.
 
-**Before STK-05:** in-clinic injectables and controlled doses should have **Medication** unticked in Catalog, or checkout asks for a sig (Q4). The demo's Buprenorphine already has it unticked.
+**Before STK-05:** in-clinic injectables and controlled doses should have **Dispensed / prescribed (sent home with a label)** unticked in Catalog (the box was called Medication before Nov 10), or checkout asks for a sig (Q4). The demo's Buprenorphine already has it unticked.

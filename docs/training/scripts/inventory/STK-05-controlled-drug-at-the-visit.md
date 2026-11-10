@@ -48,7 +48,7 @@ Signed in as Dr. Avery Lane. Maple's visit; Buprenorphine 0.3 mg/mL injection, 0
 
 - Walked as Dr. Avery Lane: all labels as written, and the waste saved with "Recorded 0.2 mL wasted in the controlled drug log."
 - **Bug (B1): the waste is booked against the bill's location (the Car), not the safe the dose comes from.** The lot in the safe went down 0.2 mL, but the shelf total that dropped was the Car's (Car: −0.2 mL; safe unchanged). The lot and shelf totals no longer agree, and that's the drug Vet Snap reconciles. Don't record step 11 until this is fixed on `build-doctor-flow`.
-- In the demo, Buprenorphine is not marked **Medication**, so the line doesn't ask for a sig. If a real in-clinic item is marked Medication, checkout asks for a sig; untick it in Catalog (Q4).
+- In the demo, Buprenorphine is not marked **Dispensed / prescribed** (called Medication before Nov 10), so the line doesn't ask for a sig. If a real in-clinic item is marked, checkout asks for a sig; untick it in Catalog (Q4).
 - The paid dose drew from the safe correctly (checked through the API in the setup: "sold 0.6 from Controlled safe").
 
 - **B1 fixed** on `fix/inventory-training`: the waste comes off the Controlled safe (17.9 → 17.7 mL), and the waste row names the safe. **Q4 (owner, Nov 9):** no code change. In-clinic injectables and controlled doses have **Medication** unticked in Catalog, so checkout asks no sig; a dispensed version (e.g. Buprenex dispensed) keeps it and gets a label.
