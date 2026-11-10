@@ -1,7 +1,7 @@
 /// <reference types="cypress" />
 /**
  * Training video LV-07: a tech marks a result reviewed, with a reason (docs/training/scripts/labs/LV-07-tech-releases-a-result.md).
- * TEST stack; Biscuit's CBC result came from IDEXX's sandbox before the video. Demo names: Tom Chen's dog Biscuit,
+ * TEST stack; Juniper's urinalysis came from IDEXX's sandbox before the video. Demo names: Maria Rivera's cat Juniper,
  * Dr. Avery Lane, Jordan Pike (tech).
  */
 import '../support/e2e';
@@ -12,12 +12,12 @@ import { freshResults, labsSetup, newestCompleteResult } from './labsTraining';
 describe('Training: LV-07 tech marks a result reviewed', () => {
   it('LV-07', () => {
     const w = schedulingWorld();
-    const biscuit = w.households.B.petId;
+    const pet = w.households.A.activePetIds[1]; // Juniper: Biscuit's sandbox urinalysis never finished (Nov 10, 2026)
     loadNarration();
-    labsSetup([biscuit]);
-    newestCompleteResult(biscuit).then((id) => freshResults([id]));
+    labsSetup([pet]);
+    newestCompleteResult(pet).then((id) => freshResults([id]));
     signInAsScheduling('technician', '/schedule/idexx-results');
-    const row = () => cy.get('button[aria-label="Expand Biscuit"], button[aria-label="Collapse Biscuit"]', { timeout: 90000 }).first();
+    const row = () => cy.get('button[aria-label="Expand Juniper"], button[aria-label="Collapse Juniper"]', { timeout: 90000 }).first();
     row().should('exist');
     cy.wait(2000);
     const prompt = () => cy.get('[data-testid="idexx-reason-prompt"]');
@@ -53,7 +53,7 @@ describe('Training: LV-07 tech marks a result reviewed', () => {
       pointAt(() => cy.get('[data-testid="idexx-reviewed-by"]'), 2500);
     });
     offCamera(() => {
-      cy.visit(`/schedule/patients?patientId=${biscuit}`);
+      cy.visit(`/schedule/patients?patientId=${pet}`);
       cy.contains('[role="tab"]', /^History$/, { timeout: 120000 }).click();
       cy.contains('tr', 'Vet reviewed verbally', { timeout: 30000 }).should('exist');
     });

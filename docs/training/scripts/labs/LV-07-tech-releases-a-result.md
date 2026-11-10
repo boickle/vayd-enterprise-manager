@@ -13,7 +13,7 @@
 
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
-| 1 | Labs, IDEXX results, **To review** | Click the arrow on Biscuit's row | "Dr. Lane called: Biscuit Chen's results are fine." | Biscuit's CBC final, normal; ordering vet Dr. Avery Lane; logged in as Jordan Pike |
+| 1 | Labs, IDEXX results, **To review** | Click the arrow on Juniper's row | "Dr. Lane called about Juniper Rivera's results." | Juniper's urinalysis final; ordering vet Dr. Avery Lane; logged in as Jordan Pike |
 | 2 | Result | Point at the one thing to remember | "Only mark a result reviewed when a vet has told you to." | — |
 | 3 | Result | Click **Mark reviewed** | "Click Mark reviewed." | — |
 | 4 | **Mark this result reviewed** | Point at "Pick a reason. It is saved on the result and in the pet's History with your name and the time." | "Scout asks why." | — |
@@ -21,7 +21,7 @@
 | 6 | Reason window | Point at **Vet asked me to send it to the client** and **Other** | "Or Vet asked me to send it to the client. Anything else, pick Other and type it." | — |
 | 7 | Reason window | Click **Mark reviewed** | "Mark reviewed." | — |
 | 8 | Result | Point at "Reviewed … by Jordan Pike — Vet reviewed verbally" | "Your name and the reason are on the result." | — |
-| 9 | Biscuit's chart, Timeline, **History** | Point at "… marked reviewed by Jordan Pike (tech) — reason: Vet reviewed verbally" | "And in History." | — |
+| 9 | Juniper's chart, Timeline, **History** | Point at "… marked reviewed by Jordan Pike (tech) — reason: Vet reviewed verbally" | "And in History." | — |
 
 ## What else you can do here
 
