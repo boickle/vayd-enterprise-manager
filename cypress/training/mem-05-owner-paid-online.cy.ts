@@ -8,6 +8,7 @@
 import '../support/e2e';
 import { signInAsScheduling } from '../support/schedulingWorld';
 import { chartUrl, enrolPet, fileAgreement, paidVisit, pets, PLAN, quietChart, resetMembershipWorld, settle, trace } from './memKit';
+import { sql } from './memKit';
 import { finish, line, loadNarration, offCamera, pointAt, startClock, tap } from './trainingKit';
 
 describe('Training: MEM-05 owner paid online', () => {
@@ -24,6 +25,9 @@ describe('Training: MEM-05 owner paid online', () => {
       'Revolution Plus for Cats 5.6-11lb',
     ], 240);
     enrolPet(p.juniper, PLAN.catFoundationsMonthly, { startDaysAgo: 0.02 });
+    // An online signup has no enrolling employee (enrolPet goes through the staff API); Scout offers
+    // "Owner paid — refund visit" only for those (Nov 10, 2026).
+    cy.then(() => sql(`UPDATE wellness_plans SET "createdByEmployeeId"=NULL WHERE "patientId"=${p.juniper} AND "isDeleted"=false`));
     fileAgreement(p.juniper, p.maria, 0);
     signInAsScheduling('cl', chartUrl(p.juniper));
     quietChart();
