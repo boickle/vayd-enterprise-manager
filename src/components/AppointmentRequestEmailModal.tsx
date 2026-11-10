@@ -30,6 +30,7 @@ import {
   requestDataEmail,
 } from '../utils/appointmentRequestDisplay';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
+import { sanitizeEmailHtml } from '../utils/sanitizeEmailHtml';
 import '../pages/GmailInbox.css';
 import './AppointmentRequestEmailModal.css';
 
@@ -392,7 +393,7 @@ export function AppointmentRequestEmailModal({
                         {msg.body.html ? (
                           <div
                             className="gmail-thread-message__body gmail-thread-message__body--html"
-                            dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                            dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                           />
                         ) : (
                           <div className="gmail-thread-message__body">
@@ -513,7 +514,7 @@ export function AppointmentRequestEmailModal({
                     {threadMessages[0].body.html ? (
                       <div
                         className="gmail-thread-message__body gmail-thread-message__body--html"
-                        dangerouslySetInnerHTML={{ __html: threadMessages[0].body.html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(threadMessages[0].body.html) }}
                       />
                     ) : (
                       <div className="gmail-thread-message__body">
