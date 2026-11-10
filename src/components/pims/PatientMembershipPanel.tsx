@@ -1894,6 +1894,7 @@ export default function PatientMembershipPanel({
                   <div className="pmp-card-update">
                     <MembershipCardUpdate
                       membershipId={membership.id}
+                      subscriptionId={membership.stripeSubscriptionId ?? null}
                       buttonClassName="pims-detail__btn-secondary"
                       onSaved={() => void load()}
                     />
