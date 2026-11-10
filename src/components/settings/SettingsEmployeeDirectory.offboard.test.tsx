@@ -51,8 +51,9 @@ vi.mock('../../api/users', () => ({
   getStaffLogin: async () => null,
   setStaffWorksWith: vi.fn(),
 }));
+const perms = vi.hoisted(() => ({ only: null as null | string[] }));
 vi.mock('../../permissions/PermissionContext', () => ({
-  usePermissions: () => ({ can: () => true }),
+  usePermissions: () => ({ can: (key: string) => (perms.only ? perms.only.includes(key) : true) }),
 }));
 vi.mock('../../hooks/useOpenPhoneLineDirectory', () => ({
   displayNameForQuoLine: () => '',
@@ -81,3 +82,16 @@ it('RP-03-11 hides the deactivated technician until "Show deactivated" is ticked
     /Deactivated/
   );
 });
+
+it('RPV-5 the Medical Director (license only) sees just the Access tab', async () => {
+  perms.only = ['staff.license.manage'];
+  try {
+    render(<SettingsEmployeeDirectory selectedEmployeeId={2} section="profile" />);
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Access']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+  } finally {
+    perms.only = null;
+  }
+});
+

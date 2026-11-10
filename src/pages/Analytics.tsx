@@ -5,6 +5,7 @@ import { useAuth } from '../auth/useAuth';
 import {
   ANALYTICS_CATEGORIES,
   getAnalyticsTabPages,
+  visibleAnalyticsTabs,
   type AnalyticsTabPage,
 } from '../analytics-tabs';
 import { usePermissions } from '../permissions/PermissionContext';
@@ -17,14 +18,6 @@ import {
 } from '../utils/analyticsAccess';
 import './Settings.css';
 
-function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
-  if (!userRoles.length) return false;
-  if (userRoles.includes('superadmin')) return true;
-  if (!required) return true;
-  const need = Array.isArray(required) ? required : [required];
-  return need.some((r) => userRoles.includes(String(r)));
-}
-
 type AnalyticsProps = {
   /** Default `/analytics`; use `/schedule/analytics` when nested under the schedule app. */
   basePath?: string;
@@ -32,7 +25,7 @@ type AnalyticsProps = {
 
 export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const { role } = useAuth() as { role?: string | string[] };
-  const { can, effective, loading: permissionsLoading } = usePermissions();
+  const { can, effective } = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
   const normalizedRoles = normalizeAuthRoles(role);
@@ -41,16 +34,14 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const holdsViewAll = can('analytics.view_all');
   const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles, holdsViewAll);
   const canAccessAnalytics = canOpenAnalytics(normalizedRoles, holdsViewAll);
-  const permissionsReady = Boolean(effective) || !permissionsLoading;
+  // RP-A10: wait for the first permissions load. Before it starts, `loading` is still false, so the
+  // old check counted nothing-loaded as ready and sent a link to /vsd to the first other report.
+  const permissionsReady = Boolean(effective);
 
   const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
 
   const allTabs = getAnalyticsTabPages();
-  const visibleTabs = allTabs.filter(
-    (tab) =>
-      matchesRole(tab.role, normalizedRoles) &&
-      (!tab.permissions || isAdmin || tab.permissions.some((key) => can(key)))
-  );
+  const visibleTabs = visibleAnalyticsTabs(normalizedRoles, isAdmin, can);
   const categories = ANALYTICS_CATEGORIES.map((cat) => ({
     ...cat,
     tabs: visibleTabs.filter((t) => t.category === cat.id),
