@@ -4,7 +4,7 @@ import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
 import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
-import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../utils/smsEnvironment';
 import {
   ComposeCloseButton,
   UnsentComposeConfirm,
@@ -314,7 +314,7 @@ export function ClientSmsComposeModal({
               className="btn secondary"
               disabled={sending || !message.trim() || Boolean(textsOffReason)}
               onClick={() => void handleSend({ overrideNonProd: true })}
-              title="Send to the client's real number (non-production only)"
+              title={SMS_OUTSIDE_PRODUCTION_NOTE}
             >
               {sending ? 'Sending…' : 'Send to actual client'}
             </button>

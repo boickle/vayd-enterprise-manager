@@ -23,7 +23,7 @@ import {
 import type { ClientReachPet, ClientReachPhone } from '../../utils/clientReachContacts';
 import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../../utils/doNotSmsWarning';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { smsAllowsProductionOverride } from '../../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../../utils/smsEnvironment';
 import { appAlert } from '../../utils/appDialog';
 import MessageTemplatePicker from '../messageTemplates/MessageTemplatePicker';
 import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
@@ -603,6 +603,7 @@ export function ClientSmsWorkspaceModal({
                   onChange={(e) => setOverrideNonProd(e.target.checked)}
                 />
                 Send to the actual client
+                <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>{SMS_OUTSIDE_PRODUCTION_NOTE}</span>
               </label>
             ) : null}
             {sendError ? <p className="client-reach-sms__error">{sendError}</p> : null}

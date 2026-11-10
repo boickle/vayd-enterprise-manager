@@ -12,7 +12,7 @@ import {
 } from '../utils/onMyWaySmsMessage';
 import { resolveOnMyWaySmsFromLine } from '../utils/onMyWaySmsFromLine';
 import { resolveQuoFromLine } from '../utils/quoContact';
-import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../utils/smsEnvironment';
 import '../pages/Scheduler.css';
 
 type Props = {
@@ -277,6 +277,7 @@ export function OnMyWaySmsModal({
                 className="btn secondary"
                 disabled={sendDisabled}
                 onClick={() => void handleSend({ overrideNonProd: true })}
+                title={SMS_OUTSIDE_PRODUCTION_NOTE}
               >
                 {sending ? 'Sending…' : 'Send to actual client'}
               </button>
