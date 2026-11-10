@@ -10,11 +10,11 @@ This series replaces the two older drafts, `docs/training/inventory-tech-video-s
 - **Staff:**
   - Jordan Pike, technician (default location: Raleigh office · Car);
   - Dr. Avery Lane, licensed veterinarian, inventory manager of **Dr. Lane home**, whose **Controlled safe** is her controlled drug location;
-  - Dr. Priya Shah, veterinarian (Car 2);
+  - Dr. Priya Shah, veterinarian (Car 2), inventory manager of **Dr. Shah home**;
   - Sam Ortiz, technician and inventory manager of the Raleigh office;
   - Casey Morgan, client liaison;
   - Robin Hale, practice manager (plus an admin login for the admin-only Settings screens).
-- **Offices:** Raleigh office (Main, Car, Car 2), Durham office (Main, Car), Dr. Lane home (Controlled safe).
+- **Offices:** Raleigh office (Main, Car, Car 2), Durham office (Main, Car), Dr. Lane home (Controlled safe), Dr. Shah home (Home, Car; its doxycycline lives only in the car, for STK-27).
 - **Supplier:** Northline Vet Supply (made up).
 - **Stripe:** the stack's fake Stripe. No video in this series takes a card payment.
 
@@ -63,6 +63,7 @@ These videos build on videos already recorded:
 | [STK-24](STK-24-par-review-and-set-par-levels.md) | Par Review and Set par levels | Manager | Nice |
 | [STK-25](STK-25-waste-and-count-alert-settings.md) | Settings: waste reasons, disposal methods, count alerts | Admin | Nice |
 | [STK-26](STK-26-common-inventory-mistakes.md) | The most common inventory mistakes | All | Nice |
+| [STK-27](STK-27-home-office-car-stock-ordering.md) | A home office that keeps its stock in the car: when it gets ordered | DVM, Manager | Must |
 | [PRC-01](PRC-01-look-up-a-price.md) | Look up a price | CL, Tech, DVM | Must |
 | [PRC-02](PRC-02-change-an-items-price.md) | Change one item's price | Manager | Must |
 | [PRC-03](PRC-03-add-a-new-item.md) | Add a new item, lab or procedure | Manager | Must |

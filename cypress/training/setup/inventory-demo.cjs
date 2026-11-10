@@ -5,7 +5,8 @@
  * Stock is received through the API (shipments), so lots, shelf totals and the Activity history agree.
  *
  * World after this script (docs/training/scripts/inventory/README.md):
- * - Offices: Raleigh office (Main = default, Car, Car 2), Durham office (Main, Car), Dr. Lane home (Controlled safe).
+ * - Offices: Raleigh office (Main = default, Car, Car 2), Durham office (Main, Car), Dr. Lane home (Controlled safe),
+ *   Dr. Shah home (Home = default, Car: keeps its doxycycline only in the car, for STK-27).
  *   Every other office in the copied test database is set inactive.
  * - Staff: Jordan Pike (technician, default Car), Dr. Avery Lane (veterinarian, default Car, inventory manager of
  *   Dr. Lane home, controlled drug location = Controlled safe), Dr. Priya Shah (Car 2), Robin Hale (practice manager),
@@ -134,7 +135,9 @@ async function item(name, o) {
   const raleigh = await office('Raleigh office', [['main', 'Main', true, 0], ['CAR', 'Car', false, 1], ['CAR2', 'Car 2', false, 2]]);
   const durham = await office('Durham office', [['main', 'Main', true, 0], ['CAR', 'Car', false, 1]]);
   const home = await office('Dr. Lane home', [['main', 'Controlled safe', true, 0]]);
-  const keep = [raleigh.id, durham.id, home.id];
+  // STK-27: a doctor's home office that keeps its stock in the car and none at home (like Dr. Lloyd's).
+  const shah = await office('Dr. Shah home', [['main', 'Home', true, 0], ['CAR', 'Car', false, 1]]);
+  const keep = [raleigh.id, durham.id, home.id, shah.id];
   const off = await q(`UPDATE practice_branch SET "isActive"=false WHERE "practiceId"=$1 AND NOT (id = ANY($2)) AND "isActive" RETURNING id`, [P, keep]);
 
   // 2. Staff: default locations, roles, controlled drug location, and Sam Ortiz.
@@ -144,6 +147,11 @@ async function item(name, o) {
   await q(`UPDATE employee_branch SET "defaultInventoryLocationId"=$2 WHERE "employeeId"=$1 AND "branchId"=$3`, [E.doctorB, raleigh.loc.CAR2, raleigh.id]);
   await q(`UPDATE employees SET "controlledInventoryLocationId"=$2 WHERE id=$1`, [E.doctorA, home.loc.main]);
   await giveRole(E.doctorA, 'inventory_manager', home.id);
+  await giveRole(E.doctorB, 'inventory_manager', shah.id);
+  await q(
+    `INSERT INTO employee_branch ("employeeId","branchId","isPrimary") SELECT $1::int,$2::int,false WHERE NOT EXISTS (SELECT 1 FROM employee_branch WHERE "employeeId"=$1 AND "branchId"=$2)`,
+    [E.doctorB, shah.id],
+  );
   await q(
     `INSERT INTO employee_branch ("employeeId","branchId","isPrimary") SELECT $1::int,$2::int,false WHERE NOT EXISTS (SELECT 1 FROM employee_branch WHERE "employeeId"=$1 AND "branchId"=$2)`,
     [E.doctorA, home.id],
@@ -201,6 +209,7 @@ async function item(name, o) {
   I.chews = await item('Dental chews, medium (30 ct)', { code: 'DCHEW', price: 24, cost: 11, markup: 218, sellUnitType: 'bag' });
   I.diet = await item('Prescription diet, 8 lb bag', { code: 'RXD8', price: 60, cost: 31, markup: 194, trackLots: true, requireExpirationOnLots: true, sellUnitType: 'bag', taxLevelValue: 0 });
   I.ace = await item('Acepromazine 10 mg/mL injection', { code: 'ACE10', price: 0.14, cost: 0.04, markup: 350, isMedication: true, hideOnInvoice: true, sellUnitType: 'mL', taxLevelValue: 0 });
+  I.doxy = await item('Doxycycline 100 mg tablet', { code: 'DOX100', price: 0.95, cost: 0.18, markup: 428, serviceFee: 12, isMedication: true, isDispensable: true, trackLots: true, requireExpirationOnLots: true, sellUnitType: 'tablet', dispenseNote: 'Give 1 tablet by mouth twice a day with food.' });
   I.simparica = await item('Simparica Trio chewable, 22-44 lb', { code: 'SIMP2244', price: 28, cost: 15.5, markup: 181, isMedication: true, isDispensable: true, sellUnitType: 'chew' });
   await q(`DELETE FROM quantity_price_breaks WHERE "inventoryItemId"=$1`, [I.simparica]);
   for (const [lo, hi, price] of [[1, 2, 28], [3, 5, 26.5], [6, 11, 25], [12, 999, 23.5]]) {
@@ -275,6 +284,10 @@ async function item(name, o) {
     { item: I.bup, qty: 8.5, lot: 'BU-1101', exp: day(300), to: home.loc.main },
     { item: I.bup, qty: 10, lot: 'BU-1102', exp: day(420), to: home.loc.main },
   ], home.loc.main);
+  // STK-27: Dr. Shah's doxycycline lives in her car (30 left of a par of 100); her home shelf has none.
+  await receive(shah.id, 'NL-40216', [
+    { item: I.doxy, qty: 30, lot: 'DX-7710', exp: day(330), to: shah.loc.CAR },
+  ], shah.loc.CAR);
   // A buprenorphine lot in a Raleigh car, so STK-14 can show a dose that didn't come from Dr. Lane's safe (Q9).
   await receive(raleigh.id, 'NL-40214', [
     { item: I.bup, qty: 2, lot: 'BU-0990', exp: day(240), to: R.CAR },
@@ -323,6 +336,8 @@ async function item(name, o) {
   await par(raleigh.id, I.syringe, 2, 6, []);
   await par(raleigh.id, I.chews, 10, 30, [[R.CAR, 6]]);
   await par(durham.id, I.gaba, 20, 60, [[durham.loc.CAR, 20]]);
+  // STK-27: a par of 100 on the car, and no re-order point or max on the home shelf.
+  await par(shah.id, I.doxy, null, null, [[shah.loc.CAR, 100]]);
 
   // 9. Pending Cost Review: a Carprofen invoice at $0.55 (+31%), received at Main by Sam Ortiz.
   const s2 = await api('POST', `/practice/${P}/inventory-shipments`, { branchId: raleigh.id, supplierId: sup.id, invoiceNumber: 'NL-40415', defaultToBranchLocationId: R.main }, samLogin.Authorization);
@@ -391,7 +406,7 @@ async function item(name, o) {
   // Client discount statuses from earlier test runs carry tag codes; give them plain ones.
   await q(`UPDATE client_status SET code=CASE WHEN name ILIKE 'Employee%' THEN 'EMP' WHEN name ILIKE 'Senior%' THEN 'SR10' ELSE code END WHERE code ~ '^h[a-z]+-[0-9]{10,}'`).catch(() => null);
 
-  const out = { practiceId: P, offices: { raleigh, durham, home }, supplierId: sup.id, items: I, employees: { ...E, sam: sam.id }, auth: { sam: samLogin, admin: adminLogin }, };
+  const out = { practiceId: P, offices: { raleigh, durham, home, shah }, supplierId: sup.id, items: I, employees: { ...E, sam: sam.id }, auth: { sam: samLogin, admin: adminLogin }, };
   fs.writeFileSync(outFile, JSON.stringify(out, null, 2));
   const reviews = await one(`SELECT count(*)::int n FROM inventory_cost_reviews WHERE "inventoryItemId"=$1 AND status='pending'`, [I.carprofen]);
   console.log(`offices ${keep.join(',')} (${off.length} others inactive); items archived ${archived.length}; demo items ${ids.length}; Sam Ortiz ${sam.id}; pending cost reviews ${reviews.n}`);

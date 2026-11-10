@@ -16,8 +16,8 @@ Signed in as Sam Ortiz (inventory manager, Raleigh office). Main is low on syrin
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
 | 1 | Pharmacy | Click **Move / Order**, then **Order List** | "Open the Order List." | — |
-| 2 | Order List | Choose **Office**: Raleigh office | "Pick the office." | Main: Syringes 1 (re-order 2, max 6), Lactated Ringer's 4 (re-order 6, max 24) |
-| 3 | Order List | Point at the rows: Syringes 3 mL, box of 100, qty 1; Lactated Ringer's 1 L bag, qty 2 | "Each row is what Main needs to get back to its max." | — |
+| 2 | Order List | Choose **Office**: Raleigh office | "Pick the office." | Main: Syringes 1 (re-order 2, max 6), Lactated Ringer's 4 (re-order 6, max 24); Gabapentin: Car short 20, nobody has spare |
+| 3 | Order List | Point at the rows: Syringes 3 mL, box of 100, qty 1; Lactated Ringer's 1 L bag, qty 2; Gabapentin 100 mg capsule, qty 20 | "Each row is what Main needs to get back to its max, or what a car is short that nobody can transfer." | — |
 | 4 | Order List | Click **Show need** on the syringes row | "Show need explains the number." | — |
 | 5 | Order List | Point at "Main: 1 on hand · effective 1 · re-order 2 · max — → order 1" | "It's at or below the re-order point, so it orders back up." | — |
 | 6 | Order List | Point at the one thing to remember (voice only) | "Remember: recording an order doesn't change what's on the shelf." | — |
@@ -46,3 +46,4 @@ Signed in as Sam Ortiz (inventory manager, Raleigh office). Main is low on syrin
 - Walked as Sam Ortiz end to end; text as written. The order shows with today's date at 12:00:00 PM (the order date has no time).
 - As Robin Hale (practice manager) the same list had no **Order** or **+ Order List** (Q1). Fixed on `fix/inventory-training`: Robin now sees both buttons. Record once the fix is on `build-doctor-flow` and merged into the training branch.
 - The list only orders on shelves that have been counted (INV-A15): the demo's Main shelf is marked counted.
+- **Nov 9, option B:** the Order List now also orders a car's shortfall that no transfer can cover, so Raleigh's list gains Gabapentin 100 mg capsule, qty 20 (Car short 20; Main has none and Durham has no spare). Steps 2 and 3 updated; not walked again yet. STK-27 shows this for a home office.

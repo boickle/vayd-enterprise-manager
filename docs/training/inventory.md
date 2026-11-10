@@ -182,7 +182,7 @@ It also tidies the copied test database:
   - `vite.sch.config.ts` (own Vite cache);
   - `~/.vayd-inv-env.sh` and `~/.vayd-inv-fix-env.sh`.
 
-## 6. Open: ordering for an office whose stock lives in a car (Lloyd home)
+## 6. Answered: ordering for an office whose stock lives in a car (Lloyd home)
 
 **How the Order List works today.** Each office has one main shelf (the default location) with a min and max per item. Every other shelf (a car, a safe) has a par. The Transfer List fills a short shelf from the main shelf first, then from shelves or offices with extra. The Order List orders only when the **main shelf** is at or under its min (after the planned transfers out), and it orders back up to the max.
 
@@ -198,5 +198,10 @@ It also tidies the copied test database:
 - **B. Small app change (recommended):** a shortfall that no transfer can cover goes on that office's Order List. One rule, no new setting, and it also catches any car whose office main shelf is empty.
 - **C. Bigger app change:** an office setting "Restocked from: <office>". The small office never orders; its shortfalls go to the hub office's Transfer List and Order List.
 
-Needs the owner's answer: does Lloyd home get supplier shipments at home, or is she restocked from an office?
+**Owner's answer (Nov 9): B.** Built on `build-doctor-flow` (web app `d9a7efd0`, `43fd6afe`, `b03e4d0b`; Help topic `3001db52` in vayd-api):
+- Any counted shelf's shortfall that Main, spare shelves and other offices can't cover is added to the office's order, on its main shelf. This applies even when the main shelf has never been counted for that item, because the car's count is real.
+- **Show need** names the main shelf (for example "Home: no count for this item · not covered 70 → order 70"), lists the car under **Not covered**, and says to unbox it straight to that shelf.
+- Lloyd home's setup: a par on the car for each item she keeps there; no re-order point on Lloyd home's main shelf.
+- Side effect in the demo: Raleigh's Gabapentin, which Car is short 20 and nobody can spare, now shows on Raleigh's Order List (qty 20). That makes STK-07's line "That one ends up on the Order List" true, and adds a row to STK-18.
+- Video: **STK-27** (Dr. Shah home: doxycycline only in the car). Demo: the seed adds **Dr. Shah home** (Home, Car), Doxycycline 100 mg tablet (Car 30, par 100), and makes Dr. Priya Shah its inventory manager.
 
