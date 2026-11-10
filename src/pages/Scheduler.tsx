@@ -1884,6 +1884,9 @@ function buildSchedulerDriveHintForAppt(
   const isFixedTime = schedulerHouseholdFixedTimeApprox(h);
   const etaIso = slot?.eta ?? null;
   const etdIso = slot?.etd ?? null;
+  const multiPetHousehold =
+    Array.isArray((h as { sourceAppointmentIds?: unknown }).sourceAppointmentIds) &&
+    ((h as { sourceAppointmentIds: unknown[] }).sourceAppointmentIds.length > 1);
   const resolvedWindow = resolveArrivalWindowIsos({
     apptEffectiveWindow: appt.effectiveWindow ?? null,
     household: h,
@@ -1892,6 +1895,7 @@ function buildSchedulerDriveHintForAppt(
     appointmentType: appt.appointmentType,
     appointmentEndIso: appt.appointmentEnd,
     practiceTz,
+    preferHouseholdWindow: multiPetHousehold,
   });
   const windowStartIso = resolvedWindow?.startIso ?? null;
   const windowEndIso = resolvedWindow?.endIso ?? null;
