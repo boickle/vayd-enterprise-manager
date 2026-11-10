@@ -620,7 +620,9 @@ export default function PimsTasksPage() {
     const onChanged = () => {
       void loadTaskSummary();
       void loadWatchingOpenTasks();
-      if (isBucketTab(tab)) void loadAssignedOpenTasks();
+      // Always: the Active/Expired/Future tabs read this list, and a claim from the Unassigned tab
+      // (or a task assigned by someone else) has to be there when the user switches to them (P-21).
+      void loadAssignedOpenTasks();
     };
     window.addEventListener(VAYD_TASKS_CHANGED, onChanged);
     // Cross-user/cross-tab updates arrive over the `/tasks` websocket instead of polling.
