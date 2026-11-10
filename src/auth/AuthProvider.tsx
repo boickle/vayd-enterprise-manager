@@ -19,10 +19,10 @@ export type LoginResult = {
     id?: number;
     email?: string;
     requiresPasswordReset?: boolean;
-    resetPasswordCode?: string | null;
     [k: string]: any;
   } | null;
   resetRequired: boolean;
+  /** One-time code for the reset screen; the API sends it (top level) only after a temporary-password sign-in. */
   resetCode?: string | null;
   /** The browser is leaving for another practice's host to finish signing in. */
   redirecting?: boolean;
@@ -398,7 +398,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token: fakeAccessToken, // Keep for backward compatibility
         accessToken: fakeAccessToken,
         refreshToken: fakeRefreshToken,
-        user: { email: emailInput, requiresPasswordReset: false, resetPasswordCode: null },
+        user: { email: emailInput, requiresPasswordReset: false },
         resetRequired: false,
       };
     }
@@ -442,8 +442,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const accessToken: string | null = data?.accessToken ?? data?.token ?? null;
     const refreshToken: string | null = data?.refreshToken ?? null;
     const user = (data?.user ?? null) as LoginResult['user'];
-    const resetRequired = !!(user?.requiresPasswordReset || user?.resetPasswordCode);
-    const resetCode = user?.resetPasswordCode ?? null;
+    // PA-02: the user object carries no reset secrets; the code comes beside it.
+    const resetRequired = !!user?.requiresPasswordReset;
+    const resetCode: string | null = data?.resetCode ?? null;
 
     // Persist tokens/email if accessToken is present (even if reset is required)
     if (accessToken) {

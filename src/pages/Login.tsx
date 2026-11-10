@@ -41,7 +41,8 @@ export default function LoginPage() {
         if (res.resetCode) {
           nav('/reset-password', {
             replace: true,
-            state: { email, code: res.resetCode, reason: 'temp-password' },
+            // PA-02: the reset screen sends this email with the code.
+            state: { email: email.trim(), code: res.resetCode, reason: 'temp-password' },
           });
         } else {
           nav('/request-reset', { replace: true, state: { email, reason: 'temp-password' } });
