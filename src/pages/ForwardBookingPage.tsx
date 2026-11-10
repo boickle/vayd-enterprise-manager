@@ -2870,6 +2870,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
           smsSource="forward_booking"
+          patientIds={contactEntry.patientId != null ? [contactEntry.patientId] : undefined}
         />
       ) : null}
 
