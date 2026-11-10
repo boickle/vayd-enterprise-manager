@@ -19,7 +19,7 @@ import {
   isInventoryOpsNavPath,
 } from '../utils/catalogInventoryNav';
 import { LABS_HOME, isLabsNavPath } from '../utils/labsNav';
-import { useCan, usePermissions } from '../permissions/PermissionContext';
+import { useCan, useMayShow, usePermissions } from '../permissions/PermissionContext';
 import { canOpenSettings } from '../permissions/settingsTabAccess';
 import {
   APPOINTMENT_REQUEST_PROMOTIONS_PATH,
@@ -272,7 +272,8 @@ export default function NavbarScheduleHorizontalNav() {
 
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
   const homeTab = useMemo(() => tabs.find((t) => t.path === 'home'), [tabs]);
-  const showRouting = scoutTabPermissionOk('canSeeRouting', abilities);
+  const mayBook = useMayShow('routing.book', 'calendar.book_manual');
+  const showRouting = scoutTabPermissionOk('canSeeRouting', abilities) && mayBook;
 
   const showAdminTab = useMemo(
     () => roles.includes('admin') || roles.includes('superadmin'),

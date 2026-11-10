@@ -5,6 +5,7 @@ import { useAuth } from '../auth/useAuth';
 import {
   ANALYTICS_CATEGORIES,
   getAnalyticsTabPages,
+  visibleAnalyticsTabs,
   type AnalyticsTabPage,
 } from '../analytics-tabs';
 import { usePermissions } from '../permissions/PermissionContext';
@@ -16,14 +17,6 @@ import {
   normalizeAuthRoles,
 } from '../utils/analyticsAccess';
 import './Settings.css';
-
-function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
-  if (!userRoles.length) return false;
-  if (userRoles.includes('superadmin')) return true;
-  if (!required) return true;
-  const need = Array.isArray(required) ? required : [required];
-  return need.some((r) => userRoles.includes(String(r)));
-}
 
 type AnalyticsProps = {
   /** Default `/analytics`; use `/schedule/analytics` when nested under the schedule app. */
@@ -48,11 +41,7 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
 
   const allTabs = getAnalyticsTabPages();
-  const visibleTabs = allTabs.filter(
-    (tab) =>
-      matchesRole(tab.role, normalizedRoles) &&
-      (!tab.permissions || isAdmin || tab.permissions.some((key) => can(key)))
-  );
+  const visibleTabs = visibleAnalyticsTabs(normalizedRoles, isAdmin, can);
   const categories = ANALYTICS_CATEGORIES.map((cat) => ({
     ...cat,
     tabs: visibleTabs.filter((t) => t.category === cat.id),
