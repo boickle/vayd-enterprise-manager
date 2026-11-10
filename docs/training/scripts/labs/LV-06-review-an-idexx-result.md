@@ -3,7 +3,7 @@
 - **Audience:** doctors.
 - **Length:** 2½ minutes.
 - **Watch first:** none.
-- **The one thing to remember:** read the out-of-range values first. **Mark reviewed** tells the team the result is safe to release.
+- **The one thing to remember:** **Mark reviewed** closes your task, and lets the team email IDEXX's report to the family.
 
 ## Why (opening)
 
@@ -17,7 +17,7 @@
 | 2 | Labs, **IDEXX results**, **To review** | Point at the count | "To review lists every complete result waiting for a doctor." | — |
 | 3 | To review | Point at **Final · abnormal** on Juniper's row | "Each row says Partial or Final, and normal, abnormal or critical." | — |
 | 4 | To review | Click the arrow on Juniper's row | "Open Juniper's CBC." | — |
-| 5 | Result | Point at "1 out of range" and the value | "Out-of-range values are listed first." | — |
+| 5 | Result | Point at "1 out of range" and the value | "Values outside IDEXX's range are listed at the top." | — |
 | 6 | Result | Click **Only out of range** | "Only out of range hides the rest." | — |
 | 7 | Result | Point at **VetConnect PLUS** | "VetConnect PLUS opens IDEXX's own view, with images and trends." | — |
 | 8 | Result | Click **Medical note**, type your read, save | "Write your read of the results. It's saved on the chart." | — |
@@ -38,7 +38,9 @@
 
 ## Closing
 
-"The most common mistakes: marking reviewed without opening the result, and reviewing a partial. Remember: read the out-of-range values first. Mark reviewed tells the team the result is safe to release."
+"The most common mistakes: marking reviewed without opening the result, and reviewing a partial. Remember: Mark reviewed closes your task, and lets the team email IDEXX's report to the family."
+
+(Owner, Nov 9, 2026: the video doesn't tell doctors how to read labs, and doesn't say "release": there is no separate release step.)
 
 ## Notes from the check in the app (Nov 8, 2026)
 

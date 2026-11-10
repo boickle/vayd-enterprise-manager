@@ -78,7 +78,7 @@ describe('Training: LV-08 client summary', () => {
     });
     line('lv08-11', () => pointAt(() => cy.contains(/Approved .* by/), 3000));
     line('lv08-12', () => {
-      tap(() => cy.contains('button', 'Email lab results'));
+      tap(() => cy.get('[data-testid="idexx-summary-email"]'));
       cy.contains('Put on these patient charts', { timeout: 30000 }).should('exist');
     });
     line('lv08-13', () => {
@@ -90,6 +90,17 @@ describe('Training: LV-08 client summary', () => {
       cy.contains('Put on these patient charts').should('not.exist');
     });
     line('lv08-14', () => pointAt(() => cy.contains('button', 'Email lab report'), 3000));
+    line('lv08-14b', () => {
+      tap(() => cy.contains('button', 'Medical note'));
+      cy.get('.pims-chart-compose__textarea', { timeout: 30000 }).should('be.visible');
+      typeSlowly(() => cy.get('.pims-chart-compose__textarea'), '{moveToEnd}{enter}Plan: recheck glucose and urine in two weeks.');
+    });
+    line('lv08-14c', () => {
+      tap(() => cy.get('[aria-labelledby="pims-chart-note-title"]').contains('button', 'Wrap up'));
+      cy.contains('Medical note saved on the chart.', { timeout: 30000 }).should('exist');
+      cy.get('[aria-labelledby="pims-chart-note-title"]').should('not.exist');
+      pointAt(() => cy.contains('Medical note saved on the chart.'), 2500);
+    });
     line('lv08-15');
     line('lv08-16');
     finish();

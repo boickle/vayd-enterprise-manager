@@ -5,7 +5,7 @@
   },
   {
     "id": "lv06-02",
-    "text": "Remember: read the out-of-range values first. Mark reviewed tells the team the result is safe to release."
+    "text": "Remember: Mark reviewed closes your task, and lets the team email IDEXX's report to the family."
   },
   {
     "id": "lv06-03",
@@ -29,7 +29,7 @@
   },
   {
     "id": "lv06-08",
-    "text": "Out-of-range values are listed first."
+    "text": "Values outside IDEXX's range are listed at the top."
   },
   {
     "id": "lv06-09",
@@ -61,6 +61,6 @@
   },
   {
     "id": "lv06-15",
-    "text": "The most common mistake: marking reviewed without opening the result. Remember: read the out-of-range values first. Mark reviewed tells the team the result is safe to release."
+    "text": "The most common mistake: marking reviewed without opening the result. Remember: Mark reviewed closes your task, and lets the team email IDEXX's report to the family."
   }
 ]

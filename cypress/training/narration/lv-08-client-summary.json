@@ -45,7 +45,7 @@
   },
   {
     "id": "lv08-12",
-    "text": "Email lab results sends the summary, with IDEXX's report attached."
+    "text": "Once the wording is approved, Email lab summary and report appears right beside it. It sends the summary, with IDEXX's report attached."
   },
   {
     "id": "lv08-13",
@@ -54,6 +54,14 @@
   {
     "id": "lv08-14",
     "text": "Email lab report sends just IDEXX's report with a short note. It only needs the result reviewed."
+  },
+  {
+    "id": "lv08-14b",
+    "text": "Medical note opens on top of the result. Write your read of it."
+  },
+  {
+    "id": "lv08-14c",
+    "text": "Wrap up puts it on Juniper's chart, and you're still on the result."
   },
   {
     "id": "lv08-15",
