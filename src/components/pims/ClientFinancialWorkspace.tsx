@@ -242,7 +242,7 @@ import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
 import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
-import { lotShelf } from '../../utils/lotShelf';
+import { lineDrawsStock, lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 // A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
 // invoice's office / shelf fields aren't shown on it (owner request, Oct 30, 2026).
@@ -3556,7 +3556,7 @@ export default function ClientFinancialWorkspace({
       selected ? matchingMailOrderForLine(mailOrders, selected.id, line) : null,
     [selected, mailOrders]
   );
-  /** Only lines we hand over in person still need somewhere to decrement from. */
+  /** Something on the invoice is handed over in person (not everything ships). */
   const needsLocalFill = useMemo(
     () =>
       visibleLines.some(
@@ -3564,6 +3564,21 @@ export default function ClientFinancialWorkspace({
           !line.tagalongOfLineId &&
           !isInvoiceShippingLine(line, shippingIdSet) &&
           !mailOrderForLine(line)
+      ),
+    [visibleLines, shippingIdSet, mailOrderForLine]
+  );
+  /**
+   * Only in-person charges that take stock off a shelf need Branch/Location. A services-only
+   * invoice (exam, lab send-out) shows none and doesn't wait on it (owner decision, Nov 9, 2026).
+   */
+  const needsStockShelf = useMemo(
+    () =>
+      visibleLines.some(
+        (line) =>
+          !line.tagalongOfLineId &&
+          !isInvoiceShippingLine(line, shippingIdSet) &&
+          !mailOrderForLine(line) &&
+          lineDrawsStock(line)
       ),
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
@@ -3660,7 +3675,7 @@ export default function ClientFinancialWorkspace({
     !hasUnsavedDeletes &&
     !rxBlocksPay &&
     !lotBlocksPay &&
-    (!needsLocalFill ||
+    (!needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canPay =
     selected &&
@@ -3671,7 +3686,7 @@ export default function ClientFinancialWorkspace({
     !rxBlocksPay &&
     !lotBlocksPay &&
     (selected.status !== 'open' ||
-      !needsLocalFill ||
+      !needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canReturn =
     mayReturn &&
@@ -8257,7 +8272,8 @@ export default function ClientFinancialWorkspace({
               !invoiceGone &&
               selected.status !== 'void' &&
               visibleLines.length > 0 &&
-              !someLineShowsBranch ? (
+              !someLineShowsBranch &&
+              (needsStockShelf || !needsLocalFill) ? (
                 <div className="client-fin__pay">
                   {!needsLocalFill ? (
                     <p className="client-fin__fulfill-note">
@@ -8563,7 +8579,7 @@ export default function ClientFinancialWorkspace({
                           ? 'Choose a lot before closing'
                           : rxBlocksPay
                             ? 'Approve each prescription before closing'
-                            : needsLocalFill &&
+                            : needsStockShelf &&
                                 (selected.inventoryBranchId == null ||
                                   selected.inventoryLocationId == null)
                               ? 'Select a branch and location before closing'

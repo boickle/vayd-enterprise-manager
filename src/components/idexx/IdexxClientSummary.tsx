@@ -224,12 +224,13 @@ export default function IdexxClientSummary({
           {onEmail && !editing ? (
             <button
               type="button"
-              className="btn secondary btn-sm"
+              className="btn btn-sm"
               disabled={!text.trim() || emailBusy}
-              title="Email this summary, with the IDEXX PDF attached"
+              title="Email this approved summary, with the IDEXX PDF attached"
+              data-testid="idexx-summary-email"
               onClick={onEmail}
             >
-              <Mail size={13} aria-hidden /> {emailBusy ? 'Preparing…' : 'Email'}
+              <Mail size={13} aria-hidden /> {emailBusy ? 'Preparing…' : 'Email lab summary & report'}
             </button>
           ) : null}
           <button

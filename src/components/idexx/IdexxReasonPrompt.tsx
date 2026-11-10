@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import '../../permissions/PermissionGate.css';
 
 /** Q2 (Nov 7, 2026): a short pick list plus "Other" with free text. No "vet to sign later" option. */
-export const IDEXX_REASONS = ['Vet reviewed verbally', 'Vet asked me to release'] as const;
+export const IDEXX_REASONS = ['Vet reviewed verbally', 'Vet asked me to send it to the client'] as const;
 const OTHER = 'Other';
 
 type Props = {

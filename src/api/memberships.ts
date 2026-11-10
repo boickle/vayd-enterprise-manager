@@ -1076,6 +1076,8 @@ export type PostVisitSignupResult = {
     membershipAdjustments: number;
     amountPaid: number;
     balanceDue: number;
+    /** Paid beyond the re-priced total and not refunded (refund failed or skipped). Older APIs omit it. */
+    owedToClient?: number;
   };
   invoices?: Array<{
     id: string;

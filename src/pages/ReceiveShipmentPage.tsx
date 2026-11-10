@@ -25,9 +25,11 @@ import {
 } from '../api/inventoryOps';
 import {
   listInventoryBranchLocations,
+  listPracticeBranches,
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../api/branchInventory';
+import { fetchMyOffices } from '../api/permissions';
 import { searchItems, type InventoryItem, type SearchResultItem } from '../api/quantityPriceBreaks';
 import {
   loadInventoryItem,
@@ -41,7 +43,10 @@ import {
   receivedShipmentSummary,
 } from '../components/inventory/receivedShipmentSummary';
 import { appConfirm } from '../utils/appDialog';
-import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import {
+  resolveEmployeeIdFromToken,
+  resolvePracticeIdFromToken,
+} from '../utils/practiceIdFromToken';
 import {
   clearReceiveShipmentDraft,
   loadReceiveShipmentDraft,
@@ -180,6 +185,34 @@ function normalizeInvoiceNo(value: string | null | undefined): string {
 export default function ReceiveShipmentPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const myEmployeeId = useMemo(() => resolveEmployeeIdFromToken(token), [token]);
+  // Every office's name, so Shipments received names offices you can't receive at (U12).
+  const [officeNames, setOfficeNames] = useState<Map<number, string>>(new Map());
+  // Offices where you're the practice manager or inventory manager: you may delete any receive (Q5).
+  const [managerOffices, setManagerOffices] = useState<number[] | 'all'>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void listPracticeBranches(practiceId, { includeInactive: true })
+      .then((rows) => {
+        if (!cancelled) setOfficeNames(new Map(rows.map((b) => [b.id, b.name])));
+      })
+      .catch(() => {});
+    void fetchMyOffices(practiceId, 'inventory.po.manage')
+      .then((offices) => {
+        if (!cancelled) setManagerOffices(offices);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
+  /** Q5 (owner, Nov 9, 2026): managers of that office, or whoever received it, the same day. */
+  const canDeleteReceived = (row: InventoryShipment): boolean => {
+    if (managerOffices === 'all' || managerOffices.includes(row.branchId)) return true;
+    if (myEmployeeId == null || row.receivedByEmployeeId !== myEmployeeId) return false;
+    if (!row.finalizedAt) return false;
+    return new Date(row.finalizedAt).toDateString() === new Date().toDateString();
+  };
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
@@ -1847,6 +1880,7 @@ export default function ReceiveShipmentPage() {
                           branchId={branchId === '' ? null : Number(branchId)}
                           locationId={defaultLocId === '' ? null : Number(defaultLocId)}
                           allowNew
+                          fromInvoiceRead
                           requireExpiration
                           requireLotNumber={line.requireLotNumber === true}
                           required
@@ -2210,6 +2244,8 @@ export default function ReceiveShipmentPage() {
                 min={0.01}
                 step="any"
                 value={qty}
+                // Select the starting 1 so typing 30 gives 30, not 130 (U3, Nov 9, 2026).
+                onFocus={(e) => e.currentTarget.select()}
                 onChange={(e) => setQty(e.target.value)}
                 required
               />
@@ -2621,7 +2657,8 @@ export default function ReceiveShipmentPage() {
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {receivedPageRows.map((row) => {
-              const office = branches.find((b) => b.id === row.branchId)?.name;
+              const office =
+                branches.find((b) => b.id === row.branchId)?.name ?? officeNames.get(row.branchId);
               const supplier = suppliers.find((s) => s.id === row.supplierId)?.name;
               const deleted = row.status === 'deleted';
               const open = receivedOpenId === row.id;
@@ -2693,7 +2730,7 @@ export default function ReceiveShipmentPage() {
                         View invoice
                       </button>
                     ) : null}
-                    {!deleted ? (
+                    {!deleted && canDeleteReceived(row) ? (
                       <button
                         type="button"
                         className="btn secondary"

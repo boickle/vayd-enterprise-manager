@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
-import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
-import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../utils/smsEnvironment';
 import {
   ComposeCloseButton,
   UnsentComposeConfirm,
@@ -69,25 +69,34 @@ export function ClientSmsComposeModal({
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
   const [resolvedDoNotSms, setResolvedDoNotSms] = useState(doNotSms === true);
+  const [textsOffReason, setTextsOffReason] = useState<string | null>(null);
   const { confirming, requestClose, keepEditing, discard } = useUnsentComposeClose(open, onClose);
 
   useEffect(() => {
     if (!open) return;
-    if (doNotSms === true || doNotSms === false) {
-      setResolvedDoNotSms(doNotSms);
+    if (doNotSms === false) {
+      setResolvedDoNotSms(false);
+      setTextsOffReason(null);
       return;
     }
+    // Texts are off (or unknown): load the client so a STOP reply or Quo block shows its reason
+    // and blocks sending, rather than the staff "send anyway" prompt (COM-03).
+    if (doNotSms === true) setResolvedDoNotSms(true);
     if (clientId == null || !Number.isFinite(clientId)) {
-      setResolvedDoNotSms(false);
+      setResolvedDoNotSms(doNotSms === true);
       return;
     }
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
-        if (!cancelled) setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        if (cancelled) return;
+        setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        setTextsOffReason(clientTextsOffReason(raw));
       })
       .catch(() => {
-        if (!cancelled) setResolvedDoNotSms(false);
+        if (cancelled) return;
+        setResolvedDoNotSms(false);
+        setTextsOffReason(null);
       });
     return () => {
       cancelled = true;
@@ -177,7 +186,11 @@ export function ClientSmsComposeModal({
           </div>
         </div>
 
-        {resolvedDoNotSms ? (
+        {textsOffReason ? (
+          <p role="alert" data-testid="texts-off-reason" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
+            {textsOffReason}. Texts can&apos;t be sent to this client.
+          </p>
+        ) : resolvedDoNotSms ? (
           <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
             Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
           </p>
@@ -299,9 +312,9 @@ export function ClientSmsComposeModal({
             <button
               type="button"
               className="btn secondary"
-              disabled={sending || !message.trim()}
+              disabled={sending || !message.trim() || Boolean(textsOffReason)}
               onClick={() => void handleSend({ overrideNonProd: true })}
-              title="Send to the client's real number (non-production only)"
+              title={SMS_OUTSIDE_PRODUCTION_NOTE}
             >
               {sending ? 'Sending…' : 'Send to actual client'}
             </button>
@@ -309,7 +322,7 @@ export function ClientSmsComposeModal({
           <button
             type="button"
             className="btn primary"
-            disabled={sending || !message.trim()}
+            disabled={sending || !message.trim() || Boolean(textsOffReason)}
             onClick={() => void handleSend({ overrideNonProd: false })}
           >
             {sending ? 'Sending…' : primarySendLabel}

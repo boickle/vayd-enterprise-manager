@@ -348,7 +348,7 @@ export default function SettingsEmployeeAccess({
           {effective.roles.length
             ? effective.roles.map((slug) => ROLE_LABELS[slug] ?? slug).join(', ')
             : 'none assigned'}
-          . Assign roles on the Profile tab. Hover a permission to see where it comes from.
+          . Practice-wide roles are on the Profile tab, office roles on Staff → Roles. Hover a permission to see where it comes from.
         </p>
         {sections.length === 0 ? (
           <p className="settings-muted" style={{ margin: 0 }}>

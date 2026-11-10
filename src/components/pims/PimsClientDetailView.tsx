@@ -129,6 +129,8 @@ import './PimsPatientDetailView.css';
 import './PimsClientDetailView.css';
 import '../../pages/BriefWorkspacePage.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { clientTextsOffReason } from '../../utils/doNotSmsWarning';
+import { useMayShow } from '../../permissions/PermissionContext';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
 const PIMS_CLIENT_DETAIL_TZ =
@@ -439,14 +441,16 @@ const PHONE_FIELDS: FieldSpec[] = [
   },
 ];
 
+// Plain text, not type="email": a browser's email check blocks "a@x; b@y" before the
+// save reaches the API, which splits it (COM-A15) and shows any refusal message itself.
 const EMAIL_FIELDS: FieldSpec[] = [
-  { key: 'email', label: 'Email', type: 'email' },
+  { key: 'email', label: 'Email', type: 'text' },
   {
     key: 'noEmail',
     label: 'No Email',
     type: 'checkbox',
   },
-  { key: 'secondEmail', label: 'Second contact email', type: 'email' },
+  { key: 'secondEmail', label: 'Second contact email', type: 'text' },
 ];
 
 type HeaderEdit = 'name' | 'phone' | 'email' | 'address' | 'alerts' | 'connectionNotes' | null;
@@ -898,6 +902,9 @@ function ClientCommunicationPrefsCard({
               }}
             />
             Do not SMS
+            {doNotSms && clientTextsOffReason(record) ? (
+              <span className="settings-muted"> · {clientTextsOffReason(record)}</span>
+            ) : null}
           </label>
           <label>
             <input
@@ -1320,6 +1327,14 @@ export default function PimsClientDetailView({
   embedded = false,
   onOpenPatient,
 }: Props) {
+  // Header buttons show only for people who may use them (owner, Nov 9, 2026: read-only roles saw them).
+  const mayBook = useMayShow('routing.book', 'calendar.book_manual');
+  const mayEncounter = useMayShow('soap.edit');
+  const mayCommunicate = useMayShow('client.communicate');
+  const mayResetPortal = useMayShow('portal_access.send');
+  const mayDeactivate = useMayShow('client.deactivate');
+  const mayEditAlerts = useMayShow('client.alert.edit');
+  const mayEditConnectionNotes = useMayShow('client.staff_note.edit');
   const routerNavigate = useNavigate();
   const [urlSearchParams, setUrlSearchParams] = useSearchParams();
   const [localSearchParams, setLocalSearchParams] = useState(() => new URLSearchParams());
@@ -1753,6 +1768,7 @@ export default function PimsClientDetailView({
 
   const doNotEmail = flagOn(record.doNotEmail);
   const doNotSms = flagOn(record.doNotSms) || flagOn(record.smsOptOut);
+  const textsOffReason = clientTextsOffReason(record);
   const doNotSendReminders = flagOn(record.doNotSendReminders);
 
   // Only the stored `email` column is editable. `emails` can be a multi-address list from
@@ -1843,7 +1859,11 @@ export default function PimsClientDetailView({
               </PimsBadge>
             ) : null}
             {doNotEmail ? <PimsBadge tone="warn">Do not email</PimsBadge> : null}
-            {doNotSms ? <PimsBadge tone="warn">Do not SMS</PimsBadge> : null}
+            {doNotSms ? (
+              <PimsBadge tone="warn" title={textsOffReason ?? undefined}>
+                {textsOffReason ?? 'Do not SMS'}
+              </PimsBadge>
+            ) : null}
             {doNotSendReminders ? <PimsBadge tone="warn">No reminders</PimsBadge> : null}
             {portalAccounts.some((a) => a.hasLoggedIn) ? (
               <PimsBadge tone="ok">Portal login</PimsBadge>
@@ -2048,7 +2068,7 @@ export default function PimsClientDetailView({
                 {alerts}
                 {alertsBy ? <span className="pims-emr-alert-box__by"> — {alertsBy}</span> : null}
               </div>
-            ) : (
+            ) : mayEditAlerts ? (
               <button
                 type="button"
                 className="pims-emr-alert-add"
@@ -2056,7 +2076,7 @@ export default function PimsClientDetailView({
               >
                 + Add client alerts
               </button>
-            )}
+            ) : null}
             {connectionNotes ? (
               <div className="pims-emr-alert-box pims-emr-alert-box--connection">
                 <div className="pims-emr-alert-box__head">
@@ -2071,7 +2091,7 @@ export default function PimsClientDetailView({
                   <span className="pims-emr-alert-box__by"> — {connectionNotesBy}</span>
                 ) : null}
               </div>
-            ) : (
+            ) : mayEditConnectionNotes ? (
               <button
                 type="button"
                 className="pims-emr-alert-add"
@@ -2079,7 +2099,7 @@ export default function PimsClientDetailView({
               >
                 + Add connection notes
               </button>
-            )}
+            ) : null}
           </div>
         }
         stat={
@@ -2110,14 +2130,16 @@ export default function PimsClientDetailView({
         }
         actions={
           <>
-            <button
-              type="button"
-              className="pims-detail__btn-primary"
-              onClick={startAppointmentForThisClient}
-            >
-              <Plus size={14} aria-hidden />
-              Appointment
-            </button>
+            {mayBook ? (
+              <button
+                type="button"
+                className="pims-detail__btn-primary"
+                onClick={startAppointmentForThisClient}
+              >
+                <Plus size={14} aria-hidden />
+                Appointment
+              </button>
+            ) : null}
             <PimsClientMergeButton
               clientId={clientId}
               clientName={name}
@@ -2125,48 +2147,56 @@ export default function PimsClientDetailView({
                 void applyWriteResult(undefined);
               }}
             />
-            <button
-              type="button"
-              className="pims-detail__btn-secondary"
-              onClick={startSoapFromClient}
-              disabled={soapPetChoices.length === 0}
-              title="Continue an open SOAP or medical note, or start one from a visit on the books"
-            >
-              <Stethoscope size={14} aria-hidden />
-              Start/Continue encounter
-            </button>
-            <button
-              type="button"
-              className="pims-detail__btn-secondary"
-              onClick={() => setCommunicatePick(true)}
-            >
-              <MessageSquare size={14} aria-hidden />
-              Communicate
-            </button>
-            <button
-              type="button"
-              className="pims-detail__btn-secondary"
-              onClick={() => void handleSendResetPassword()}
-              disabled={resetBusy || busy}
-              title={primaryEmail ? `Send a portal password reset to ${primaryEmail}` : 'Add an email first'}
-            >
-              <KeyRound size={14} aria-hidden />
-              {resetBusy ? 'Sending…' : 'Send Reset Password'}
-            </button>
+            {mayEncounter ? (
+              <button
+                type="button"
+                className="pims-detail__btn-secondary"
+                onClick={startSoapFromClient}
+                disabled={soapPetChoices.length === 0}
+                title="Continue an open SOAP or medical note, or start one from a visit on the books"
+              >
+                <Stethoscope size={14} aria-hidden />
+                Start/Continue encounter
+              </button>
+            ) : null}
+            {mayCommunicate ? (
+              <button
+                type="button"
+                className="pims-detail__btn-secondary"
+                onClick={() => setCommunicatePick(true)}
+              >
+                <MessageSquare size={14} aria-hidden />
+                Communicate
+              </button>
+            ) : null}
+            {mayResetPortal ? (
+              <button
+                type="button"
+                className="pims-detail__btn-secondary"
+                onClick={() => void handleSendResetPassword()}
+                disabled={resetBusy || busy}
+                title={primaryEmail ? `Send a portal password reset to ${primaryEmail}` : 'Add an email first'}
+              >
+                <KeyRound size={14} aria-hidden />
+                {resetBusy ? 'Sending…' : 'Send Reset Password'}
+              </button>
+            ) : null}
             <ViewAsButton
               clientId={Number(clientId)}
               name={[nameValues.firstName, nameValues.lastName].filter(Boolean).join(' ') || 'this client'}
               className="pims-detail__btn-secondary"
             />
-            <button
-              type="button"
-              className="pims-detail__btn-danger"
-              onClick={handleToggleActive}
-              disabled={busy}
-            >
-              {isActive ? <UserX size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
-              {isActive ? 'Deactivate' : 'Reactivate'}
-            </button>
+            {mayDeactivate ? (
+              <button
+                type="button"
+                className="pims-detail__btn-danger"
+                onClick={handleToggleActive}
+                disabled={busy}
+              >
+                {isActive ? <UserX size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
+                {isActive ? 'Deactivate' : 'Reactivate'}
+              </button>
+            ) : null}
           </>
         }
       />

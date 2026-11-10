@@ -15,7 +15,7 @@ import type { Appointment } from '../../api/roomLoader';
 import { getVisitReminders, type VisitWrapUp } from '../../api/visitWrapUp';
 import { listEncounters } from '../../api/visitWorkflow';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
-import { clientDoNotSmsFromRecord } from '../../utils/doNotSmsWarning';
+import { clientDoNotSmsFromRecord, clientTextsOffReason } from '../../utils/doNotSmsWarning';
 import { forwardBookingDispositionIsComplete } from '../../utils/forwardBookingDisposition';
 import { appointmentArrivalWindowIsosForSms } from '../../utils/forwardBookingSmsMessage';
 import { appointmentTypeDisplayName } from '../../utils/nextScheduledAppointmentForVisit';
@@ -72,6 +72,8 @@ export type FollowUpPlannerData = {
   clientPhone: string | null;
   clientEmails: string[];
   doNotSms: boolean;
+  /** "Texts off: replied STOP (Nov 9, 2026)" when Scout turned texts off itself; else null/absent. */
+  textsOffReason?: string | null;
   pets: PlannerPet[];
   /**
    * The household's pet list could not be loaded, so pets not on today's visit may be
@@ -487,6 +489,7 @@ export async function loadFollowUpPlannerData(args: {
         : (visit.clientEmails ??
           [str(client.email), str(client.secondEmail)].filter((e): e is string => !!e)),
     doNotSms: clientDoNotSmsFromRecord(clientPayload),
+    textsOffReason: clientTextsOffReason(clientPayload),
     pets,
     householdError:
       clientPayload == null

@@ -22,6 +22,7 @@ vi.mock('../auth/useAuth', () => ({
 }));
 vi.mock('../permissions/PermissionContext', () => ({
   useCan: (key: string) => state.keys.has(key),
+  useMayShow: (...keys: string[]) => keys.some((key) => state.keys.has(key)),
   usePermissions: () => ({
     effective: {},
     can: (key: string) => state.keys.has(key),

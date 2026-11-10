@@ -1790,7 +1790,8 @@ function AgreementSentReceipt({ request }: { request: MembershipAgreementRequest
   );
 }
 
-function SignupReceipt({ result }: { result: PostVisitSignupResult }) {
+/** Exported for tests. */
+export function SignupReceipt({ result }: { result: PostVisitSignupResult }) {
   const owe = (result.chargeAmount ?? 0) > 0.009;
   const moneyLine = owe
     ? result.chargeStatus === 'issued'
@@ -1806,7 +1807,7 @@ function SignupReceipt({ result }: { result: PostVisitSignupResult }) {
         ? 'No refund was due.'
         : result.refundStatus === 'skipped'
           ? `Refund of ${money(result.refundAmount)} was not issued — refund this by hand.`
-          : `Refund of ${money(result.refundAmount)} FAILED. Refund this by hand.`;
+          : `Refund of ${money(result.refundAmount)} FAILED. Refund this by hand: you have a task for it.`;
   const moneyFailed = owe
     ? result.chargeStatus === 'failed'
     : result.refundStatus === 'failed';
@@ -1868,7 +1869,11 @@ function SignupReceipt({ result }: { result: PostVisitSignupResult }) {
       <div className="pvms-totals">
         <Total label="New total" value={money(result.invoice.total)} />
         <Total label="Paid" value={money(result.invoice.amountPaid)} />
-        <Total label="Balance" value={money(result.invoice.balanceDue)} emphasis />
+        {(result.invoice.owedToClient ?? 0) > 0.009 ? (
+          <Total label="Owed to client" value={money(result.invoice.owedToClient ?? 0)} emphasis />
+        ) : (
+          <Total label="Balance" value={money(result.invoice.balanceDue)} emphasis />
+        )}
       </div>
 
       {result.benefitsCredited.length > 0 && (

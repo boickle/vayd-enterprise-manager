@@ -2005,7 +2005,9 @@ export default function ScheduleFollowUpsPlanner({
                 </>
               ) : (
                 <div className="fup-warnbox">
-                  {data.doNotSms
+                  {data.textsOffReason
+                    ? `${data.textsOffReason}.`
+                    : data.doNotSms
                     ? 'This client is marked do-not-text.'
                     : 'No mobile number on file.'}{' '}
                   {data.clientEmails.length
@@ -2957,6 +2959,7 @@ export default function ScheduleFollowUpsPlanner({
           emailFormat="forward_booking"
           canText={false}
           smsSource="follow_up_confirmation"
+          patientIds={data.pets.map((p) => p.patientId)}
           onClose={() => setEmailOpen(false)}
           onSent={() => {
             setEmailOpen(false);
