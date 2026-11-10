@@ -15,7 +15,7 @@ import {
   careOutreachSmsToEmail,
   forwardBookingSmsToEmail,
 } from '../utils/clientOutreachEmailMessage';
-import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../utils/smsEnvironment';
 import {
   composeBodiesFromUserContent,
   isEmailBodyEmpty,
@@ -592,7 +592,7 @@ export function ClientContactComposeModal({
                   className="btn secondary"
                   disabled={!canSendText}
                   onClick={() => void handleSendText(true)}
-                  title="Send to the client's real number (non-production only)"
+                  title={SMS_OUTSIDE_PRODUCTION_NOTE}
                 >
                   {sending ? 'Sending…' : 'Send to actual client'}
                 </button>

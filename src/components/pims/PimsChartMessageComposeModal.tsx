@@ -18,7 +18,7 @@ import {
   NO_SHARED_GMAIL_MESSAGE,
   sharedConnectedMailboxes,
 } from '../../utils/practiceGmailMailboxes';
-import { smsAllowsProductionOverride } from '../../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../../utils/smsEnvironment';
 import {
   composeBodiesFromUserContent,
   defaultFromAlias,
@@ -344,6 +344,7 @@ export function PimsChartMessageComposeModal({
               onChange={(e) => setOverrideNonProd(e.target.checked)}
             />
             Send to the actual client
+            <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>{SMS_OUTSIDE_PRODUCTION_NOTE}</span>
           </label>
         ) : null}
 
