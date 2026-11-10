@@ -5340,7 +5340,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               {createType === 'inventory' && (
               <>
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 6px' }}>
-                Medication
+                Dispensed / prescribed
               </h4>
               <div
                 style={{
@@ -5359,11 +5359,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       setCreateForm((f) => ({ ...f, isMedication: e.target.checked }))
                     }
                   />
-                  <span>Medication</span>
+                  <span>Dispensed / prescribed (sent home with a label)</span>
                 </label>
                 <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                  Opens Dose &amp; Rx on the SOAP and adds it to the patient’s prescription
-                  history.
+                  Opens Dose &amp; Rx on the SOAP, asks for directions at checkout and adds it to the
+                  patient’s prescription history. Leave it off for drugs given during the visit.
                 </p>
               </div>
               {createForm.isMedication && (
