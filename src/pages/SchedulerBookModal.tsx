@@ -117,6 +117,7 @@ import {
   alignSiblingVisitScheduledTimes,
   findCoVisitHouseholdVisitsNeedingAlign,
 } from '../utils/householdVisitTimeAlign';
+import { expandPreFirstNeighborBumpToHousehold } from '../utils/preFirstNeighborBump';
 import { patientHasOverlappingActiveVisit } from '../utils/patientOverlappingVisit';
 import type { Appointment } from '../api/roomLoader';
 import {
@@ -2633,15 +2634,22 @@ export function SchedulerBookModal({
         !isRescheduleBook
       ) {
         try {
-          await patchAppointment(
-            neighborBump.appointmentId,
-            {
-              appointmentStart: neighborBump.appointmentStart,
-              appointmentEnd: neighborBump.appointmentEnd,
-              bookedViaRouting: true,
-            },
-            { practiceId }
-          );
+          const householdBumpPatches = expandPreFirstNeighborBumpToHousehold({
+            bump: neighborBump,
+            appointments: practiceAppointments,
+            practiceTz,
+          });
+          for (const patch of householdBumpPatches) {
+            await patchAppointment(
+              patch.appointmentId,
+              {
+                appointmentStart: patch.appointmentStart,
+                appointmentEnd: patch.appointmentEnd,
+                bookedViaRouting: true,
+              },
+              { practiceId }
+            );
+          }
         } catch (bumpErr) {
           console.warn('Could not bump former-first visit after PRE-FIRST book', bumpErr);
           const bumpMsg =
