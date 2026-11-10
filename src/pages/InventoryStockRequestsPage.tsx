@@ -786,9 +786,9 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                           {breakdown ? (
                             <div style={{ display: 'grid', gap: 10 }}>
                               <div>
-                                Main:{' '}
+                                {breakdown.mainName}:{' '}
                                 {breakdown.mainNotCounted ? (
-                                  'not counted for this item, so it orders nothing for itself'
+                                  'not counted for this item'
                                 ) : (
                                   <>
                                     {breakdown.mainOnHand} on hand
@@ -803,8 +803,11 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                 )}
                                 {breakdown.notCovered > 0 ? (
                                   <>
-                                    {' → '}Main {breakdown.mainOrder} + not covered{' '}
-                                    {breakdown.notCovered}
+                                    {' · '}
+                                    {breakdown.mainOrder > 0
+                                      ? `${breakdown.mainName} needs ${breakdown.mainOrder} + `
+                                      : ''}
+                                    not covered {breakdown.notCovered}
                                   </>
                                 ) : null}
                                 {' → '}

@@ -62,6 +62,8 @@ export type OrderNeedLine = {
 export type OrderBreakdown = {
   inventoryItemId: number;
   branchLocationId: number;
+  /** The office's main shelf name (a home office may call it "Home"). */
+  mainName: string;
   quantity: number;
   mainOnHand: number;
   mainOut: number;
@@ -179,6 +181,7 @@ export function planStockLists(
       orderBreakdowns.push({
         inventoryItemId: item.inventoryItemId,
         branchLocationId: defaultLoc.branchLocationId,
+        mainName: defaultLoc.name ?? 'Main',
         quantity: orderQty,
         mainOnHand: Number(defaultLoc.quantityOnHand) || 0,
         mainOut: defaultOut,
