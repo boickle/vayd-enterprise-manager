@@ -41,6 +41,7 @@ if [ "${TRAINING_SMS_CAPTURE:-0}" = 1 ]; then SMS_KEY=captured-not-real; SMS_FRO
   E2E_API_DIR="$API" EMAIL_CAPTURE_PATH="$S/emails.jsonl" APPOINTMENT_REQUEST_TEST_EMAIL=deirdre@vetatyourdoor.com \
   APPOINTMENT_REQUEST_TEST_SMS= ROOM_LOADER_TEST_SMS= OPENPHONE_API_KEY=$SMS_KEY OPENPHONE_FROM=$SMS_FROM SMS_REMINDERS_FROM=$SMS_FROM SMS_TEST_NUMBER=9195550199 \
   SMS_CAPTURE_PATH="$S/sms.jsonl" GMAIL_SMTP_PASS= GMAIL_SMTP_USER= GMAIL_OAUTH_CLIENT_SECRET= GMAIL_OAUTH_CLIENT_ID= GMAIL_TOKEN_ENCRYPTION_KEY= GMAIL_PUBSUB_TOPIC= \
+  SQUARE_ACCESS_TOKEN= SQUARE_LOCATION_ID= SQUARE_API_BASE=http://127.0.0.1:9 \
   NET_GUARD_LOG="$S/blocked.jsonl" NODE_OPTIONS="--require $HERE/net-guard-preload.cjs --require $API/test/scripts/e2e-capture-preload.js$SMS_PRELOAD" nohup node dist/main.js > "$S/api.log" 2>&1 & echo $! > "$S/api.pid")
 cd "$FE"
 VITE_CFG=; [ -f "$FE/vite.sch.config.ts" ] && VITE_CFG="--config vite.sch.config.ts"  # own dependency cache (see vite.sch.config.ts)

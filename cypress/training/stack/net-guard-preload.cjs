@@ -10,6 +10,9 @@ const BLOCKED = [
   'people.googleapis.com',
   'oauth2.googleapis.com',
   'www.googleapis.com',
+  // Square: Analytics → Payments lists Square payments with the .env key (inventory review E1, Nov 9, 2026).
+  'connect.squareup.com',
+  'connect.squareupsandbox.com',
 ];
 const logPath = process.env.NET_GUARD_LOG;
 const isBlocked = (host) => BLOCKED.some((b) => String(host || '').toLowerCase().split(':')[0] === b);

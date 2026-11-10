@@ -1,3 +1,5 @@
+> **Superseded (Nov 9, 2026)** by the checked series in `docs/training/scripts/inventory/` (STK-01 to STK-26). Kept for reference only; don't record from this file.
+
 # Inventory training videos: VAYD technicians
 
 Seven short videos, 2 to 4 minutes each, one task per video. Written from the code on Nov 2, 2026 (screen names and button text come from the app source). Do a dry run on the demo database first; places that need a visual check on the first take are marked **[check on screen]**.

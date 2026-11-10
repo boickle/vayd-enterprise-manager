@@ -1,3 +1,5 @@
+> **Superseded (Nov 9, 2026)** by the checked series in `docs/training/scripts/inventory/` (STK-01 to STK-26). Kept for reference only; don't record from this file.
+
 # Inventory training videos: VAYD doctors
 
 Six short videos, 1 to 4 minutes each. Doctors only need to know what touches their own day: charging stock at checkout, controlled drugs, their truck, and helping with the weekly count when the tech is out. Written from the code on Nov 2, 2026; places needing a visual check on the first take are marked **[check on screen]**.
