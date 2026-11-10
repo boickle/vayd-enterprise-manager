@@ -3,6 +3,8 @@ import { useLocation, useNavigate, Link, useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { completePasswordReset, requestPasswordReset } from '../api/users';
 
+const STALE_LINK_MESSAGE = 'This link has expired or a newer one was sent. Use the most recent email.';
+
 export default function ResetPass() {
   const [search] = useSearchParams();
   const location = useLocation() as any;
@@ -107,7 +109,12 @@ export default function ResetPass() {
       setMsg('Password updated. You can now sign in.');
       setTimeout(() => nav('/login', { replace: true }), 700);
     } catch (err: any) {
-      setError(err?.response?.data?.message || err.message || 'Reset failed');
+      // PA-A5: a rejected link (401) is usually one voided by a newer request.
+      if (err?.response?.status === 401) {
+        setError(STALE_LINK_MESSAGE);
+      } else {
+        setError(err?.response?.data?.message || err.message || 'Reset failed');
+      }
     } finally {
       setPending(false);
     }
