@@ -27,7 +27,8 @@ export type RoleSlug =
   | 'observer'
   | 'controlled_substances_director'
   | 'mail_order_manager'
-  | 'mail_order_team';
+  | 'mail_order_team'
+  | 'executive';
 
 export const ROLE_LABELS: Record<RoleSlug, string> = {
   practice_admin: 'Practice Admin',
@@ -45,6 +46,7 @@ export const ROLE_LABELS: Record<RoleSlug, string> = {
   controlled_substances_director: 'Controlled Substances Director',
   mail_order_manager: 'Mail Order Manager',
   mail_order_team: 'Mail Order Team Member',
+  executive: 'Executive (read-only)',
 };
 
 export type EffectivePermissions = {
@@ -74,6 +76,8 @@ export type PermissionCatalogEntry = {
   grantable: boolean;
   /** Scout has no screen for this action yet. */
   unbuilt: boolean;
+  /** False when no API code checks this key yet, so switching it off changes nothing (RP-A7). Absent = enforced. */
+  enforced?: boolean;
   note: string | null;
 };
 
@@ -167,6 +171,9 @@ export async function fetchPermissionAudit(
     to?: string;
     permissionKeys?: string[];
     employeeId?: number;
+    /** Changes made TO one record, e.g. entityType 'employee' with that person's id. */
+    entityType?: string;
+    entityId?: number;
     limit?: number;
   } = {}
 ): Promise<PermissionAuditEntry[]> {
@@ -279,4 +286,99 @@ export async function fetchMyOffices(practiceId: number, key: string): Promise<n
     { params: { key } }
   );
   return data?.offices === 'all' ? 'all' : Array.isArray(data?.offices) ? data.offices : [];
+}
+
+/** The audit action keys behind "recent changes" (role, license and grant changes). */
+export const ACCESS_CHANGE_KEYS = [
+  'staff.role.assign',
+  'staff.license.manage',
+  'staff.permission.grant',
+];
+
+export type AuditRoleRef = {
+  roleId: number;
+  slug: string | null;
+  name: string;
+  branchId: number | null;
+  office: string | null;
+};
+
+function roleRefs(value: unknown): AuditRoleRef[] {
+  return Array.isArray(value) ? (value as AuditRoleRef[]) : [];
+}
+
+function roleLabel(r: AuditRoleRef): string {
+  return r.office ? `${r.name} (${r.office})` : r.name;
+}
+
+/** One plain sentence for a role, license or grant audit row about a person. */
+export function describeAccessChange(
+  entry: PermissionAuditEntry,
+  labelOfKey: (key: string) => string = (k) => k
+): string {
+  const detail = (entry.detail ?? {}) as Record<string, unknown>;
+  if (entry.permissionKey === 'staff.role.assign') {
+    const before = roleRefs(detail.before);
+    const after = roleRefs(detail.after);
+    const keyOf = (r: AuditRoleRef) => `${r.roleId}:${r.branchId ?? 'all'}`;
+    const was = new Set(before.map(keyOf));
+    const now = new Set(after.map(keyOf));
+    const added = after.filter((r) => !was.has(keyOf(r))).map(roleLabel);
+    const removed = before.filter((r) => !now.has(keyOf(r))).map(roleLabel);
+    const parts = [
+      added.length ? `added ${added.join(', ')}` : '',
+      removed.length ? `removed ${removed.join(', ')}` : '',
+    ].filter(Boolean);
+    return `Roles: ${parts.join('; ') || 'changed'}`;
+  }
+  if (entry.permissionKey === 'staff.license.manage') {
+    const fmt = (v: unknown) => {
+      const o = (v ?? {}) as { isLicensed?: boolean; licenseType?: string | null };
+      return o.isLicensed ? (o.licenseType ?? 'licensed') : 'not licensed';
+    };
+    return `License: ${fmt(detail.before)} → ${fmt(detail.after)}`;
+  }
+  if (entry.permissionKey === 'staff.permission.grant') {
+    const key = typeof detail.permissionKey === 'string' ? detail.permissionKey : '';
+    return detail.action === 'revoke'
+      ? `Grant removed: ${labelOfKey(key)}`
+      : `Granted: ${labelOfKey(key)}`;
+  }
+  return labelOfKey(entry.permissionKey);
+}
+
+/**
+ * Who was added to or removed from one role, from the role-change audit rows.
+ * Each result names the person (by id, the caller looks up the name) and the office, if any.
+ */
+export function roleMembershipChanges(
+  entries: PermissionAuditEntry[],
+  roleId: number
+): Array<{
+  id: number;
+  when: string;
+  actor: string | null;
+  targetId: number | null;
+  kind: 'added' | 'removed';
+  office: string | null;
+}> {
+  const out: ReturnType<typeof roleMembershipChanges> = [];
+  for (const entry of entries) {
+    if (entry.permissionKey !== 'staff.role.assign') continue;
+    const detail = (entry.detail ?? {}) as Record<string, unknown>;
+    const before = roleRefs(detail.before).filter((r) => r.roleId === roleId);
+    const after = roleRefs(detail.after).filter((r) => r.roleId === roleId);
+    const keyOf = (r: AuditRoleRef) => String(r.branchId ?? 'all');
+    const was = new Set(before.map(keyOf));
+    const now = new Set(after.map(keyOf));
+    for (const r of after) {
+      if (!was.has(keyOf(r)))
+        out.push({ id: entry.id, when: entry.created, actor: entry.employeeName, targetId: entry.entityId, kind: 'added', office: r.office });
+    }
+    for (const r of before) {
+      if (!now.has(keyOf(r)))
+        out.push({ id: entry.id, when: entry.created, actor: entry.employeeName, targetId: entry.entityId, kind: 'removed', office: r.office });
+    }
+  }
+  return out;
 }

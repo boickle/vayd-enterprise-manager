@@ -1058,7 +1058,8 @@ export default function MailOrdersPage() {
               ? '1 rejected order'
               : `${rejectedNeedsContactCount} rejected orders`}
           </strong>{' '}
-          still need the client contacted (email or text).
+          {rejectedNeedsContactCount === 1 ? 'still needs' : 'still need'} the client contacted (email or
+          text).
           <button type="button" className="mail-queue__rejected-banner-link" onClick={() => applyFilter('rejected')}>
             Open Rejected
           </button>
@@ -1272,6 +1273,26 @@ const CANCEL_OUTCOME_LABEL: Record<MailCancelResolution, string> = {
  * OS-A1 (D5): "Mark paid" records no payment, so it asks for a reason first and points staff to
  * record the payment on the invoice instead. Who may use it is checked by the server.
  */
+/**
+ * What to record on the order after the reject window's email is sent. B11 (OSV-10 dry run, owner Nov 9, 2026):
+ * the email counts as contacting the client, for a whole-order reject as well as for rejected items, so the
+ * order stops asking staff to contact the client.
+ */
+export function rejectEmailSentAction(args: {
+  outreachOnly: boolean;
+  subject: string;
+  bodyText: string;
+  refundRejected: boolean;
+}) {
+  return {
+    action: 'email_sent' as const,
+    rejectOutreach: true,
+    refundRejected: args.outreachOnly ? args.refundRejected : false,
+    notes: `${args.outreachOnly ? 'Rejected item outreach' : 'Rejection emailed'} · ${args.subject}`,
+    message: args.bodyText,
+  };
+}
+
 export function MarkPaidButton({ onConfirm }: { onConfirm: (reason: string) => void }) {
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
@@ -4168,19 +4189,19 @@ function OrderDetail({
                 }
           }
           onAfterSend={async ({ subject, bodyText, bodyHtml, to, from }) => {
-            if (rejectOutreachOnly) {
-              const ok = await onRun(() =>
-                pharmacyMailAction(practiceId, open.id, {
-                  action: 'email_sent',
-                  rejectOutreach: true,
-                  refundRejected:
-                    refundRejectedOnSend && rejectedRefundStillDue(open) > 0.009,
-                  notes: `Rejected item outreach · ${subject}`,
-                  message: bodyText,
+            const ok = await onRun(() =>
+              pharmacyMailAction(
+                practiceId,
+                open.id,
+                rejectEmailSentAction({
+                  outreachOnly: rejectOutreachOnly,
+                  subject,
+                  bodyText,
+                  refundRejected: refundRejectedOnSend && rejectedRefundStillDue(open) > 0.009,
                 }),
-              );
-              if (!ok) throw new Error('Email sent but the order could not be updated.');
-            }
+              ),
+            );
+            if (!ok) throw new Error('Email sent but the order could not be updated.');
             if (!rejectLogClient && !rejectIncludeEmr) return;
             await recordScoutChartCommunication({
               clientId: open.clientId!,

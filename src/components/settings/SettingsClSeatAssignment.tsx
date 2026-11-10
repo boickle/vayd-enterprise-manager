@@ -559,7 +559,7 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
           Normalized score = points ÷ seat par. 1.0 means on target for that rotating seat.
           Day offs and mid-week seat swaps prorate par (weekly ÷ 5 per workday). Adjust these when
           the competition targets change. Suggested values come from the last 30 days of actual
-          points by seat (Analytics → CL Performance).
+          points by seat (Analytics &amp; Reports → CL Performance).
         </p>
         {loadingPar ? (
           <p className="settings-muted">Loading par…</p>
@@ -643,7 +643,7 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
         <h3 className="settings-card-title">Weekly seat assignment</h3>
         <p className="settings-muted" style={{ marginBottom: 16 }}>
           Assign each Client Liaison to Phones, Outreach, or Email for the week (Sunday–Saturday).
-          Used by Analytics → CL Performance for normalized scores. Use day overrides below for
+          Used by Analytics &amp; Reports → CL Performance for normalized scores. Use day overrides below for
           days off or one-day seat swaps (same idea as DPG schedule overrides).
         </p>
 

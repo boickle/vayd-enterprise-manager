@@ -96,6 +96,9 @@ import BankDepositsPage from './pages/BankDepositsPage';
 import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
 import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
 import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
+import MembershipPromotionsPage from './pages/MembershipPromotions';
+import { usePermissions } from './permissions/PermissionContext';
+import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -459,6 +462,13 @@ export default function App() {
     [abilities, roles, isClient]
   );
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  // RP-08 (owner decision D3): the Executive role sees no Settings. Admin logins keep it.
+  const { effective: effectivePermissions } = usePermissions();
+  const onlyExecutiveRole = useMemo(() => {
+    const held = effectivePermissions?.roles ?? [];
+    const adminLogin = roles.some((r) => r === 'admin' || r === 'superadmin');
+    return !adminLogin && held.length > 0 && held.every((r) => r === 'executive');
+  }, [effectivePermissions, roles]);
 
   const menuExtras = useMemo((): UserMenuExtra[] => {
     if (isClient) return [];
@@ -476,17 +486,17 @@ export default function App() {
       out.push({ label: 'Catalog', to: CATALOG_HOME });
       out.push({ label: 'Pharmacy', to: INVENTORY_HOME });
       out.push({ label: '🎉 Pet Snapshots', to: '/schedule/patient-snapshots' });
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/schedule/analytics' });
-      out.push({ label: 'Settings', to: '/schedule/settings' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/schedule/analytics' });
+      if (!onlyExecutiveRole) out.push({ label: 'Settings', to: '/schedule/settings' });
       if (roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()))) {
         out.push({ label: 'Admin', to: '/schedule/admin' });
       }
     } else {
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/analytics' });
       if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     }
     return out;
-  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles]);
+  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles, onlyExecutiveRole]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -919,6 +929,15 @@ export default function App() {
                       element={<Navigate to="/schedule/deposits" replace />}
                     />
                     <Route path="marketing" element={<EmailCampaignsPage />} />
+                    {/* RP-08: promotions moved here from Admin; /schedule/admin/... redirects (admin-tabs.tsx). */}
+                    <Route
+                      path="marketing/membership-promotions"
+                      element={<MembershipPromotionsPage />}
+                    />
+                    <Route
+                      path="marketing/appointment-request-promotions"
+                      element={<AppointmentRequestPromotionsPage />}
+                    />
                     <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
                     <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>

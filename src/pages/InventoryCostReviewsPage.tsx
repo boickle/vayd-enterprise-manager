@@ -182,9 +182,10 @@ export default function InventoryCostReviewsPage() {
         <div>
           <h2 style={{ margin: 0 }}>Cost reviews</h2>
           <p className="settings-muted" style={{ margin: '4px 0 0' }}>
-            When a received invoice cost is lower than catalog cost, or an item was added while
-            receiving, decide whether to update practice pricing, office-only overrides, or leave
-            prices unchanged.
+            When a received invoice cost is more than 15% above catalog cost, lower than catalog
+            cost, or an item was added while receiving, decide whether to update practice pricing,
+            office-only overrides, or leave prices unchanged. Client prices don't change until
+            you decide.
           </p>
         </div>
         <button className="btn secondary" type="button" disabled={busy} onClick={() => void load()}>
