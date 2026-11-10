@@ -122,9 +122,9 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe('LAB-03 emailing results (screen)', () => {
-  it('LAB-03-1: a draft summary leaves "Email lab results" disabled, saying the summary needs approving', async () => {
+  it('LAB-03-1: a draft summary leaves "Email lab summary & report" disabled, saying the summary needs approving', async () => {
     await open({ reviewedAt: '2026-11-08T11:00:00Z' });
-    expect(btn(/Email lab results/)).toBeDisabled();
+    expect(btn(/Email lab summary & report/)).toBeDisabled();
     expect(screen.getByTestId('idexx-email-why').textContent).toContain(
       'The summary needs approving first'
     );
@@ -136,7 +136,7 @@ describe('LAB-03 emailing results (screen)', () => {
       clientSummaryApprovedAt: '2026-11-08T10:30:00Z',
       clientSummaryStale: true,
     });
-    expect(btn(/Email lab results/)).toBeDisabled();
+    expect(btn(/Email lab summary & report/)).toBeDisabled();
     expect(screen.getByTestId('idexx-email-why').textContent).toContain(
       'IDEXX changed this result'
     );
@@ -150,7 +150,7 @@ describe('LAB-03 emailing results (screen)', () => {
     granted.add('lab_result.review');
     roles = ['veterinarian'];
     await open({ status: 'INPROCESS', hasPending: true });
-    expect(btn(/Email lab results/)).toBeDisabled();
+    expect(btn(/Email lab summary & report/)).toBeDisabled();
     expect(screen.getByTestId('idexx-email-why').textContent).toContain("aren't complete");
     fireEvent.click(screen.getByText('Client summary'));
     fireEvent.click(screen.getByRole('button', { name: /Edit/ }));
@@ -170,7 +170,7 @@ describe('LAB-03 emailing results (screen)', () => {
       reviewedAt: '2026-11-08T11:00:00Z',
       clientSummaryApprovedAt: '2026-11-08T10:30:00Z',
     });
-    expect(btn(/Email lab results/)).toBeEnabled();
+    expect(btn(/Email lab summary & report/)).toBeEnabled();
     expect(btn(/Email lab report/)).toBeEnabled();
     expect(screen.queryByTestId('idexx-email-why')).toBeNull();
   });
