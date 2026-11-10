@@ -169,6 +169,12 @@ export type MembershipPaymentModalProps = {
   onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
+/** True for a client's own login. `role` from useAuth is a list (['client']); a single string is accepted too. */
+export function isClientLogin(role: unknown): boolean {
+  const roles = Array.isArray(role) ? role : role ? [role] : [];
+  return roles.some((r) => String(r).toLowerCase() === 'client');
+}
+
 export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -177,6 +183,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const onEnrollmentSucceeded = props?.onEnrollmentSucceeded;
   const state = fromModal ? (props?.initialState ?? locationState) : locationState;
   const { userEmail, userId, role } = useAuth() as any;
+  const clientLogin = isClientLogin(role);
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
@@ -405,7 +412,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   // Pre-fill the cardholder and billing address from the household record; the client can still change them.
   useEffect(() => {
     // Only for the client's own login (a staff login's id is not a household).
-    if (role !== 'client') return;
+    if (!clientLogin) return;
     const clientId = Number(userId);
     if (!Number.isFinite(clientId) || clientId <= 0) return;
     let cancelled = false;
@@ -424,7 +431,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [role, userId, state?.customerName]);
+  }, [clientLogin, userId, state?.customerName]);
 
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
