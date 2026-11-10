@@ -21,9 +21,9 @@ import {
   useOpenPhoneLineDirectory,
 } from '../../hooks/useOpenPhoneLineDirectory';
 import type { ClientReachPet, ClientReachPhone } from '../../utils/clientReachContacts';
-import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../../utils/doNotSmsWarning';
+import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../../utils/doNotSmsWarning';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { smsAllowsProductionOverride } from '../../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../../utils/smsEnvironment';
 import { appAlert } from '../../utils/appDialog';
 import MessageTemplatePicker from '../messageTemplates/MessageTemplatePicker';
 import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
@@ -89,6 +89,7 @@ export function ClientSmsWorkspaceModal({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [resolvedDoNotSms, setResolvedDoNotSms] = useState(doNotSms === true);
+  const [textsOffReason, setTextsOffReason] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [emrPets, setEmrPets] = useState<number[]>(defaultPatientIds ?? []);
   const [postingEmr, setPostingEmr] = useState(false);
@@ -125,17 +126,25 @@ export function ClientSmsWorkspaceModal({
 
   useEffect(() => {
     if (!open) return;
-    if (doNotSms === true || doNotSms === false) {
-      setResolvedDoNotSms(doNotSms);
+    if (doNotSms === false) {
+      setResolvedDoNotSms(false);
+      setTextsOffReason(null);
       return;
     }
+    // Texts are off (or unknown): load the client so a STOP reply or Quo block shows its reason
+    // and blocks sending, rather than the staff "send anyway" prompt (COM-03).
+    if (doNotSms === true) setResolvedDoNotSms(true);
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
-        if (!cancelled) setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        if (cancelled) return;
+        setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        setTextsOffReason(clientTextsOffReason(raw));
       })
       .catch(() => {
-        if (!cancelled) setResolvedDoNotSms(false);
+        if (cancelled) return;
+        setResolvedDoNotSms(false);
+        setTextsOffReason(null);
       });
     return () => {
       cancelled = true;
@@ -411,7 +420,12 @@ export function ClientSmsWorkspaceModal({
           </label>
         ) : null}
 
-        {resolvedDoNotSms ? (
+        {textsOffReason ? (
+          <p className="client-reach-sms__warn" role="alert" data-testid="texts-off-reason">
+            {textsOffReason}.{' '}
+            {isHistory ? 'You can still review history.' : "Texts can't be sent to this client."}
+          </p>
+        ) : resolvedDoNotSms ? (
           <p className="client-reach-sms__warn" role="alert">
             {isHistory
               ? 'Do not SMS is on. You can still review history.'
@@ -589,6 +603,7 @@ export function ClientSmsWorkspaceModal({
                   onChange={(e) => setOverrideNonProd(e.target.checked)}
                 />
                 Send to the actual client
+                <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>{SMS_OUTSIDE_PRODUCTION_NOTE}</span>
               </label>
             ) : null}
             {sendError ? <p className="client-reach-sms__error">{sendError}</p> : null}
@@ -599,7 +614,13 @@ export function ClientSmsWorkspaceModal({
               <button
                 type="button"
                 className="brief-btn primary"
-                disabled={sending || !draft.trim() || !sendToPhone || (quoLines.length > 0 && !fromPhone)}
+                disabled={
+                  sending ||
+                  Boolean(textsOffReason) ||
+                  !draft.trim() ||
+                  !sendToPhone ||
+                  (quoLines.length > 0 && !fromPhone)
+                }
                 onClick={() => void handleSend()}
               >
                 {sending ? 'Sending…' : 'Send text'}

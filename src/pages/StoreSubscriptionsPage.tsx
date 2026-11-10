@@ -491,15 +491,17 @@ export default function StoreSubscriptionsPage() {
                 ×
               </button>
             </div>
-            <AutoshipCardPanel
-              load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
-              save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
-              name={cardRow.customerName || ''}
-              email={cardRow.customerEmail}
-              buttonClass="btn primary"
-              secondaryButtonClass="btn secondary"
-              onSaved={(text) => setNote(text)}
-            />
+            <div className="settings-modal-body">
+              <AutoshipCardPanel
+                load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
+                save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
+                name={cardRow.customerName || ''}
+                email={cardRow.customerEmail}
+                buttonClass="btn primary"
+                secondaryButtonClass="btn secondary"
+                onSaved={(text) => setNote(text)}
+              />
+            </div>
           </div>
         </div>
       ) : null}
@@ -698,24 +700,24 @@ export default function StoreSubscriptionsPage() {
                   onChange={(e) => setPauseUntil(e.target.value)}
                 />
               </label>
-            </div>
-            <div className="settings-modal-actions">
-              <button
-                type="button"
-                className="btn primary"
-                disabled={!pauseUntil || busyId === pauseRow.id}
-                onClick={() => {
-                  const id = pauseRow.id;
-                  void run(id, { paused: true, pausedUntil: pauseUntil }).then((ok) => {
-                    if (ok) setPauseRow(null);
-                  });
-                }}
-              >
-                Pause until {formatPauseUntil(pauseUntil) || '…'}
-              </button>
-              <button type="button" className="btn secondary" onClick={() => setPauseRow(null)}>
-                Back
-              </button>
+              <div className="settings-modal-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!pauseUntil || busyId === pauseRow.id}
+                  onClick={() => {
+                    const id = pauseRow.id;
+                    void run(id, { paused: true, pausedUntil: pauseUntil }).then((ok) => {
+                      if (ok) setPauseRow(null);
+                    });
+                  }}
+                >
+                  Pause until {formatPauseUntil(pauseUntil) || '…'}
+                </button>
+                <button type="button" className="btn secondary" onClick={() => setPauseRow(null)}>
+                  Back
+                </button>
+              </div>
             </div>
           </div>
         </div>

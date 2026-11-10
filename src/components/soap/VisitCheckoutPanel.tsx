@@ -103,7 +103,7 @@ import MultiLotEditor, { lotEditorProps } from '../inventory/MultiLotEditor';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import FindEstimatePanel from '../estimates/FindEstimatePanel';
-import { lotShelf } from '../../utils/lotShelf';
+import { lineDrawsStock, lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
 import {
@@ -2137,8 +2137,18 @@ export default function VisitCheckoutPanel({
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
   const hasSavedCard = Boolean(cardOnFile || invoice?.savedPaymentMethodId);
+  // Branch/Location only matter when an in-person charge takes stock off a shelf. A services-only
+  // invoice shows neither and doesn't wait on them (owner decision, Nov 9, 2026).
+  const needsStockShelf = (invoice?.lines ?? []).some(
+    (l) =>
+      !l.tagalongOfLineId &&
+      !isInvoiceShippingLine(l) &&
+      lineDrawsStock(l) &&
+      !matchingMailOrderForLine(mailOrders, invoice!.id, l)
+  );
   const branchReady =
     invoice?.status !== 'open' ||
+    !needsStockShelf ||
     (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
   // D1: the old prepay (Save card / Authorize / Convert) only for invoices that already use it.
@@ -2653,6 +2663,7 @@ export default function VisitCheckoutPanel({
         </div>
       ) : (
         <>
+          {needsStockShelf ? (
           <CheckoutInventoryBranchField
             invoice={invoice}
             disabled={disabled || busy != null}
@@ -2666,6 +2677,7 @@ export default function VisitCheckoutPanel({
               Object.keys(rxApproveTried).length > 0 && invoice.inventoryLocationId == null
             }
           />
+          ) : null}
           <div className="soap-invoice-lines">
             <div className="soap-invoice-lines-head" aria-hidden>
               <span />
