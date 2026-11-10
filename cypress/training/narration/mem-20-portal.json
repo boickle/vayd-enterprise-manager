@@ -57,7 +57,11 @@
  },
  {
   "id": "m20-12",
-  "text": "shows, for each pet who isn't a member yet, what a membership would cover, and the seventy-five dollar credit for each extra pet."
+  "text": "shows each pet who isn't a member yet, with the seventy-five dollar credit for each extra pet."
+ },
+ {
+  "id": "m20-12b",
+  "text": "For Juniper, it compares today's visit at regular prices with the price on the plan Scout recommends."
  },
  {
   "id": "m20-13",

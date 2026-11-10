@@ -88,7 +88,12 @@ describe('Training: MEM-20 portal', () => {
       cy.contains('h1', 'Your One-Team Membership savings', { timeout: 60000 }).should('be.visible');
     });
     offCamera(() => cy.contains('Loading your savings').should('not.exist'));
-    trace('m20-12'); line('m20-12', () => pointAt(() => cy.contains('h1', 'Your One-Team Membership savings').parent(), 5500));
+    trace('m20-12'); line('m20-12', () => {
+      pointAt(() => cy.contains('h1', 'Your One-Team Membership savings').parent(), 4000);
+      // P-20 (fixed Nov 10): today's paid Scout visit now gives Juniper a real comparison.
+      settle(() => cy.get('[id^="pet-savings-"]').filter(':contains("Juniper")').find('table'));
+    });
+    trace('m20-12b'); line('m20-12b', () => pointAt(() => cy.get('[id^="pet-savings-"]').filter(':contains("Juniper")').find('table'), 5500));
     trace('m20-13'); line('m20-13');
     trace('done');
     finish();

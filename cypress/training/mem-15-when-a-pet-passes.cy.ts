@@ -50,6 +50,17 @@ describe('Training: MEM-15 when a pet passes', () => {
       cy.wait(1500);
     });
     trace('m15-09'); line('m15-09', () => pointAt(() => cy.contains('Inactive patient', { matchCase: false }).parent(), 5000));
+    // P-15 (fixed Nov 10).
+    trace('m15-09b'); line('m15-09b', () => {
+      // Scout remembers whether the section was open last time; open it only when it is closed.
+      cy.get('#pims-emr-membership').then(($s) => {
+        if (!$s.find('[aria-expanded="true"]').length && $s.attr('aria-expanded') !== 'true') {
+          tap(() => cy.get('#pims-emr-membership'));
+        }
+      });
+      settle(() => cy.contains('Not available: Pepper has passed away.'));
+      pointAt(() => cy.contains('Not available: Pepper has passed away.'), 3000);
+    });
     trace('m15-10'); line('m15-10');
     trace('done');
     finish();

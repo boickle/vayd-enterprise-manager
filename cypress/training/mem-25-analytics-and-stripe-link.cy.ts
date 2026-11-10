@@ -74,7 +74,12 @@ describe('Training: MEM-25 analytics and Stripe link', () => {
       cy.contains('Not linked', { timeout: 60000 }).should('not.exist');
       cy.wait(1000);
     });
-    trace('m25-12'); line('m25-12', () => pointAt(() => cy.contains('a', '↗').parent(), 3500));
+    trace('m25-12'); line('m25-12', () => pointAt(() => cy.contains('a', '↗').parent(), 3000));
+    // P-25b (fixed Nov 10): the card box reloads after Link.
+    trace('m25-12b'); line('m25-12b', () => {
+      cy.contains('.pmp-card-update', /ending 4242/, { timeout: 30000 }).should('exist');
+      pointAt(() => cy.get('.pmp-card-update'), 3000);
+    });
     trace('m25-13'); line('m25-13');
     trace('done');
     finish();

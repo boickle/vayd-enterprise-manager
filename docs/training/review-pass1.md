@@ -46,17 +46,17 @@ database now start at 700000+.
   for client logins, but it checks `role !== 'client'` while `role` is a list (`['client']`), so it never runs.
   One-line fix (`role.includes('client')`) plus a test. MEM-06 then needs a re-take (Maria would no longer type her
   address).
-- **P-03:** when the post-visit refund fails, the receipt still shows **Balance $0.00** although the owner is owed the
+- **P-03 — FIXED Nov 10 (receipt shows "Owed to client"; the refund task already existed):** when the post-visit refund fails, the receipt still shows **Balance $0.00** although the owner is owed the
   refund (seen in MEM-03's first take).
-- **P-15:** after a pet is marked passed away, the Membership section still offers **Enroll in a plan** and
+- **P-15 — FIXED Nov 10 (enroll buttons hidden, "Not available: <pet> has passed away"; MEM-15 re-taken):** after a pet is marked passed away, the Membership section still offers **Enroll in a plan** and
   **Post-appointment sign-up**.
-- **P-20:** the portal savings page says "We don't have a recent wellness visit with vaccines for Juniper" on the
+- **P-20 — FIXED Nov 10 (paid Scout visits now count; before, no Scout visit ever did; MEM-20 re-taken):** the portal savings page says "We don't have a recent wellness visit with vaccines for Juniper" on the
   day of a paid wellness visit with a vaccine.
-- **P-25a:** Analytics → Memberships "by type" shows "Canine Foundations - Monthly Monthly" (same slip I fixed on
+- **P-25a — FIXED Nov 10 (MEM-25 re-taken):** Analytics → Memberships "by type" shows "Canine Foundations - Monthly Monthly" (same slip I fixed on
   the chart).
-- **P-21:** on the Tasks page, after **Assign to me** on a queue task, the Active tab count goes up but its list stays
+- **P-21 — FIXED Nov 10 (MEM-21's off-camera reload is no longer needed):** on the Tasks page, after **Assign to me** on a queue task, the Active tab count goes up but its list stays
   empty until the page is reloaded. MEM-21 reloads off camera.
-- **P-25b:** after **Link** connects a Stripe subscription, the chart still says Billing card "Not on Stripe yet" /
+- **P-25b — FIXED Nov 10 (MEM-25 re-taken):** after **Link** connects a Stripe subscription, the chart still says Billing card "Not on Stripe yet" /
   "Enter a card".
 
 **Small things on camera (kept):** MEM-05 shows a "Tasks 1" badge from MEM-03's failed-refund task (since removed);
