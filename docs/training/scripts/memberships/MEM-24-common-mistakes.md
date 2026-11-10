@@ -1,7 +1,10 @@
 # MEM-24. The most common membership mistakes
 
-> **Dry run:** pending. Best made last: it reuses short clips of the other screens, so it should wait until their
-> fixes (B-14, Q-02a) settle.
+> **Made from clips (owner decision Nov 9):** no recording. Each line plays over a short clip of the finished video
+> named in its `from` field (`narration/mem-24-common-mistakes.json`), with new Nova narration.
+> Build: `python3 -I cypress/training/clip-video.py cypress/training/narration/mem-24-common-mistakes.json openai:nova
+> <marks folder> ~/Movies/VAYD\ Training "<final .mp4>"`. The marks folder holds each source video's `marks.json`,
+> saved right after its final take as `mem-NN.marks.json`.
 
 - **Audience:** everyone.
 - **Length:** about 2 minutes.
@@ -12,17 +15,18 @@
 
 "Most membership money mistakes come from a handful of habits. Here they are, with what to do instead."
 
-## Steps (one screen each, pointing only)
+## Steps (one clip each)
 
-| Step | Screen | Mistake | Do instead (narration) |
+| Step | Clip from | Mistake | Narration |
 |---|---|---|---|
-| 1 | — | — | Why line, then the remember line |
-| 2 | **Enroll & charge $59.00** confirm | Clicking Enroll before the owner has heard the amount | "Read the amount to the owner first: Enroll charges the card today and every month after (MEM-02)." |
-| 3 | Post-visit signup button with the hours badge | Waiting past the signup window, or refunding by hand on top | "Use Post-appointment sign-up within the window (MEM-03)." |
-| 4 | "Owner paid — refund visit" | Enrolling again after an online signup | "Refund the visit only (MEM-05)." |
-| 5 | Coverage picker | Closing the benefit question | "Pick a benefit (MEM-08)." |
-| 6 | **Benefits paused** | Member prices for a paused pet | "Charge regular prices (MEM-17)." |
-| 7 | Cancel preview | Cancelling in Stripe, or not reading the preview | "Cancel in Scout and read the preview aloud (MEM-14)." |
-| 8 | Death wrap-up | Closing the wrap-up | "Always accept it (MEM-15)." |
-| 9 | Ledger credit | Adding the $75 credit by hand | "It posts automatically (MEM-07)." |
-| 10 | — | — | Closing: the remember line |
+| 1 | MEM-01, Membership section | — | "Most membership money mistakes come from a handful of habits. Here they are, with what to do instead." |
+| 2 | MEM-01, benefits list | — | "Remember: never refund, cancel or change a membership in the Stripe dashboard. Do it in Scout." |
+| 3 | MEM-02, **Enroll and charge** confirm | Enrolling before the owner has heard the amount | "Enrolling at the visit charges the card today, and every month after. Read the amount to the owner before you click Enroll and charge." |
+| 4 | MEM-03, the hours badge | Waiting past the window, or refunding by hand on top | "Joining after the visit? Use Post-appointment sign-up within twenty-four business hours. Scout does the refund, so don't refund by hand as well." |
+| 5 | MEM-05, **Owner paid, refund visit** | Enrolling again after an online signup | "If they already signed up online, don't enroll them again. Use Owner paid, refund visit." |
+| 6 | MEM-08, the benefit question | Closing it, or typing a price | "When Scout asks which benefit to use, pick one. Don't close the question, and don't type a price by hand." |
+| 7 | MEM-17, **Benefits paused** | Member prices for a paused pet | "When benefits are paused, charge regular prices until the payment is settled." |
+| 8 | MEM-14, the cancel preview | Cancelling in Stripe, or not reading the preview | "To cancel, use Cancel on the pet's Membership section, and read the preview to the owner first." |
+| 9 | MEM-15, the wrap-up list | Closing the wrap-up | "When a pet passes, always accept the wrap-up. If you close it, the membership keeps billing." |
+| 10 | MEM-07, the credit on the ledger | Adding the $75 credit by hand | "The seventy-five dollar second-pet credit posts by itself. Don't add it by hand, or the family gets it twice." |
+| 11 | MEM-01, Used this term | — | "Each of these has its own video. Remember: never refund, cancel or change a membership in the Stripe dashboard. Do it in Scout." |

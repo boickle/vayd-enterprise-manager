@@ -27,9 +27,9 @@
 | 11 | Agreement | Tick the agreement box | "She ticks that she agrees," | — |
 | 12 | Agreement | Type "Maria Rivera" in **Typed Signature** | "types her name," | — |
 | 13 | Footer | Click **Continue to Payment** | "and clicks Continue to Payment." | — |
-| 14 | **Payment Method** | Type "Maria Rivera" in **Cardholder Name** | "She types the name on her card," | — |
-| 15 | **Billing Address** | Type 100 Test Lane, Raleigh, NC, 27601 | "and her billing address. The portal doesn't fill it in for her." | — |
-| 16 | Card box | Type Stripe's test Visa 4242…, 12/34, 123, 27606 | "then her card number," | — |
+| 14 | **Payment Method** | Point at **Cardholder Name**, already "Maria Rivera" | "The portal fills in the name on her card and her billing address from her account." | Maria's address on her client record (100 Test Lane, Raleigh, NC 27601) |
+| 15 | **Billing Address** | Point at the filled-in address | "She only changes them if her card uses a different address." | — |
+| 16 | Card box | Type Stripe's test Visa 4242…, 12/34, 123, 27606 | "Then she types her card number," | — |
 | 17 | Footer | Click **Pay & Enroll** | "and clicks Pay and Enroll." | — |
 | 18 | **Payment Successful** | Point at the confirmation (plan, billing preference, total paid today, payment reference) | "Payment successful. The page shows the plan and what she paid, with buttons to sign up another pet or go back to the portal." | — |
 | 19 | Juniper's chart (staff) | Point at the new membership (Active, Visa ending 4242) | "In Scout, Juniper now shows as a member, and staff get an email about the new signup." | — |

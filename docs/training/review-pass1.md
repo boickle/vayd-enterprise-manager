@@ -30,19 +30,19 @@ database now start at 700000+.
 | MEM-11 | Passed (re-run) | Catalog pick split into its own line; four late clicks fixed |
 | MEM-16 | Passed | Mark handled asks for a note (added to the script) |
 | MEM-22 | Passed (one late click fixed after) | No Stripe prices on this screen; store discount field only shows when the online store is on |
-| MEM-23 | **Blocked: bug P-23** | Promotions are under Marketing → Membership promotions, not Admin |
+| MEM-23 | Passed on the P-23 fix (Nov 9) | Promotions are under Marketing → Membership promotions, not Admin |
 | MEM-25 | Passed | Link takes a pasted `sub_` id; it doesn't search Stripe |
-| MEM-24 | Not run | Question Q-24 below |
+| MEM-24 | Made from clips (Nov 9) | Q-24 answered: clips (owner, Nov 9) |
 
 **Possible bugs found this session (none fixed: product code waits for your OK):**
 
-- **P-23 (blocks MEM-23, affects production):** creating a membership promotion attaches *every* Stripe product
+- **P-23 — FIXED Nov 9 (vayd-api e6e9eeb6 on build-doctor-flow; MEM-23 recorded on it):** creating a membership promotion attaches *every* Stripe product
   with an active recurring price to the coupon (`stripeCatalog.service.ts` `getMembershipProductIds`). That includes
   online-store autoship products, so a membership code also discounts autoship. Stripe allows at most 100 products
   on a coupon; the test account has 134 and every create fails ("applies_to[products] exceeded maximum 100").
   Production will hit the same limit as autoship products grow. **Recommended:** limit it to the Stripe products of
   membership plans (`packages.stripeMonthlyPriceId` / `stripeAnnualPriceId`).
-- **P-06 (my Q-06a fix doesn't work):** the online signup payment page should pre-fill the cardholder and address
+- **P-06 — FIXED Nov 9 (web 29e5a307 on build-doctor-flow; MEM-06 re-taken):** the online signup payment page should pre-fill the cardholder and address
   for client logins, but it checks `role !== 'client'` while `role` is a list (`['client']`), so it never runs.
   One-line fix (`role.includes('client')`) plus a test. MEM-06 then needs a re-take (Maria would no longer type her
   address).
@@ -69,9 +69,9 @@ Plan" on the monthly plan (plan tag line); Feline Foundations shows no online st
 
 **Questions:**
 - **Q-24:** MEM-24 shows eight screens. Build it from short clips of the finished videos with new narration
-  (recommended: faster, no extra queue turns), or as its own Cypress recording?
-- **Q-06:** fix P-06 and re-take MEM-06?
-- **Q-23:** fix P-23 (membership products only), then record MEM-23?
+  (recommended: faster, no extra queue turns), or as its own Cypress recording? **Owner: clips (Nov 9). Done.**
+- **Q-06:** fix P-06 and re-take MEM-06? **Owner: yes (Nov 9). Done.**
+- **Q-23:** fix P-23 (membership products only), then record MEM-23? **Owner: yes (Nov 9). Done.**
 
 ## Summary (Nov 9, 2026, early morning)
 

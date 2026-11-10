@@ -38,10 +38,8 @@ describe('Training: MEM-23 discount codes', () => {
     });
     trace('m23-04'); line('m23-04', () => typeSlowly(() => field('Internal name'), 'LL Bean — first month free'));
     trace('m23-05'); line('m23-05', () => typeSlowly(() => field('Public Name'), 'First month free on membership'));
-    trace('m23-06'); line('m23-06', () => {
-      tap(() => select('discount-type-label'));
-      tap(() => cy.contains('li[role="option"]', 'First month off'));
-    });
+    trace('m23-06'); line('m23-06', () => tap(() => select('discount-type-label')));
+    trace('m23-06b'); line('m23-06b', () => tap(() => cy.contains('li[role="option"]', 'First month off')));
     trace('m23-07'); line('m23-07', () => {
       settle(() => field('Percent off the first month'));
       cy.wait(300);
@@ -63,11 +61,11 @@ describe('Training: MEM-23 discount codes', () => {
       tap(() => dlg().contains('button', 'Create promotion'));
       cy.get('[role="dialog"]', { timeout: 60000 }).should('not.exist');
       row().should('be.visible');
-      cy.wait(800);
+      // The signup link is made with the promotion, so the button copies it ("Copy signup link").
+      settle(() => row().find('[data-testid="LinkIcon"]').closest('button'));
     });
     trace('m23-12'); line('m23-12', () => {
-      settle(() => row().find('[aria-label="Create signup link"]'));
-      tap(() => row().find('[aria-label="Create signup link"]'));
+      tap(() => row().find('[data-testid="LinkIcon"]').closest('button'));
       cy.wait(1500);
     });
     trace('m23-13'); line('m23-13', () => pointAt(() => cy.get('.MuiAlert-root').first(), 4000));

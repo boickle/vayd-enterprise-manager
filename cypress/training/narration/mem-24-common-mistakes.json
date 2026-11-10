@@ -1,0 +1,13 @@
+[
+  { "id": "m24-01", "from": "mem-01:m01-07", "text": "Most membership money mistakes come from a handful of habits. Here they are, with what to do instead." },
+  { "id": "m24-02", "from": "mem-01:m01-11", "text": "Remember: never refund, cancel or change a membership in the Stripe dashboard. Do it in Scout." },
+  { "id": "m24-03", "from": "mem-02:m02-14", "text": "Enrolling at the visit charges the card today, and every month after. Read the amount to the owner before you click Enroll and charge." },
+  { "id": "m24-04", "from": "mem-03:m03-03", "text": "Joining after the visit? Use Post-appointment sign-up within twenty-four business hours. Scout does the refund, so don't refund by hand as well." },
+  { "id": "m24-05", "from": "mem-05:m05-04", "text": "If they already signed up online, don't enroll them again. Use Owner paid, refund visit." },
+  { "id": "m24-06", "from": "mem-08:m08-06", "text": "When Scout asks which benefit to use, pick one. Don't close the question, and don't type a price by hand." },
+  { "id": "m24-07", "from": "mem-17:m17-04", "text": "When benefits are paused, charge regular prices until the payment is settled." },
+  { "id": "m24-08", "from": "mem-14:m14-04", "text": "To cancel, use Cancel on the pet's Membership section, and read the preview to the owner first." },
+  { "id": "m24-09", "from": "mem-15:m15-04", "text": "When a pet passes, always accept the wrap-up. If you close it, the membership keeps billing." },
+  { "id": "m24-10", "from": "mem-07:m07-08", "text": "The seventy-five dollar second-pet credit posts by itself. Don't add it by hand, or the family gets it twice." },
+  { "id": "m24-11", "from": "mem-01:m01-14", "text": "Each of these has its own video. Remember: never refund, cancel or change a membership in the Stripe dashboard. Do it in Scout." }
+]

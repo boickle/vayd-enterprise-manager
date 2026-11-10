@@ -15,7 +15,7 @@ Videos marked **Blocked** wait on a fix or a decision first.
 | MEM-02 | Enroll a pet at the visit | Must | Passed | — (fixed Nov 9) | yes (Nov 9) |
 | MEM-03 | Post-appointment sign-up (owner here, or email the agreement) | Must | Passed | — | yes (Nov 9) |
 | MEM-05 | Owner signed up online: refund the visit | Must | Passed | — | yes (Nov 9) |
-| MEM-06 | Walk a client through online signup in the portal | Must | Passed | P-06 (fix approved Nov 9; re-take after) | yes (Nov 9) |
+| MEM-06 | Walk a client through online signup in the portal | Must | Passed | — (P-06 fixed Nov 9, re-taken on the fix) | yes (Nov 9) |
 | MEM-07 | Second pet: the $75 credit | Must | Passed | — | yes (Nov 9) |
 | MEM-08 | Covered services during the visit | Must | Passed | — | yes (Nov 9) |
 | MEM-09 | Check a member's invoice before checkout | Must | Passed | — | yes (Nov 9) |
@@ -27,12 +27,15 @@ Videos marked **Blocked** wait on a fix or a decision first.
 | MEM-19 | Renewals: the 14-day notice and what the client can choose | Must | Passed (Nov 9) | — | yes (Nov 9) |
 | MEM-20 | What members see in the portal | Must | Passed (Nov 9) | — | yes (Nov 9) |
 | MEM-21 | Membership staff tasks | Must | Passed (Nov 9) | — | yes (Nov 9) |
-| MEM-24 | The most common membership mistakes | Must | Not run | — (Q-24: clips of the finished videos, owner decision Nov 9) | yes, as clips (Nov 9) |
+| MEM-24 | The most common membership mistakes | Must | Made from clips (Nov 9) | — | yes, as clips (Nov 9) |
 | MEM-11 | Add or edit a benefit for one pet | Nice | Passed (Nov 9) | — | yes (Nov 9) |
 | MEM-16 | Pet changed owners: "Owner changed" | Nice | Passed (Nov 9) | — | yes (Nov 9) |
 | MEM-22 | Settings → Memberships | Nice | Passed (Nov 9) | — | yes (Nov 9) |
-| MEM-23 | Discount codes and share links | Nice | Blocked | P-23 (promotion create fails; fix approved Nov 9) | yes, after the fix (Nov 9) |
+| MEM-23 | Discount codes and share links | Nice | Passed (Nov 9, on the P-23 fix) | — | yes (Nov 9) |
 | MEM-25 | Membership analytics, and linking a Stripe subscription by hand | Nice | Passed (Nov 9) | — | yes (Nov 9) |
+
+**Final takes (all 23, Nov 9, 2026):** in `~/Movies/VAYD Training/`, named `<ID> - <roles> - <description>.mp4`. The
+recording queue accepts only CL, Tech, DVM and Manager as roles, so lead-CL videos are labeled "CL, Manager".
 
 ## Before any final take
 

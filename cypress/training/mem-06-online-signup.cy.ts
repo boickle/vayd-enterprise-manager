@@ -63,13 +63,14 @@ describe('Training: MEM-06 online signup', () => {
     });
     trace('m06-13b'); line('m06-13b', () => {
       settle(() => cy.get('input[placeholder="Full name on card"]'));
-      typeSlowly(() => cy.get('input[placeholder="Full name on card"]'), 'Maria Rivera');
+      cy.get('input[placeholder="Full name on card"]', { timeout: 20000 }).should('have.value', 'Maria Rivera');
+      pointAt(() => cy.get('input[placeholder="Full name on card"]'), 2500);
     });
     trace('m06-13c'); line('m06-13c', () => {
-      typeSlowly(() => cy.get('input[placeholder="Address line 1"]'), '100 Test Lane');
-      typeSlowly(() => cy.get('input[placeholder="City"]'), 'Raleigh');
-      typeSlowly(() => cy.get('input[placeholder="State"]'), 'NC');
-      typeSlowly(() => cy.get('input[placeholder="Postal Code"]'), '27601');
+      cy.get('input[placeholder="Address line 1"]').should('have.value', '100 Test Lane');
+      cy.get('input[placeholder="Postal Code"]').should('have.value', '27601');
+      pointAt(() => cy.get('input[placeholder="Address line 1"]'), 2500);
+      settle(() => cy.get('#card-container'));
     });
     trace('m06-14'); line('m06-14', () => {
       settle(() => cy.get('#card-container'));

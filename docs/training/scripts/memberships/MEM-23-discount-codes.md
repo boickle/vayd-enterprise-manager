@@ -23,7 +23,7 @@
 | 6 | Form | **Use a custom code** ("LLBEAN2026") or **Link only — no code** | "A code to type, or a link only." | — |
 | 7 | Form | **Max redemptions (optional)**, **Expires (optional)** | "Limit uses, or set an end date." | — |
 | 8 | Form | Save | "Save it." | — |
-| 9 | List | Click **Create signup link** on the code | "Create a signup link to share." | — |
+| 9 | List | Click the link button (**Copy signup link**) on the row | "Each promotion also gets a signup link with the discount built in. The link button copies it," | — |
 | 10 | List | Point at **Redemptions**, **Status**, **Archive** | "Track how many families used it, and archive it when it ends." | — |
 | 11 | Voice-over | — | Closing line | — |
 
