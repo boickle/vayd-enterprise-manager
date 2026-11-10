@@ -1,9 +1,9 @@
 // src/api/users.ts
 import { http } from './http';
 
-// Issue a password reset link to the given email
+// Issue a password reset link to the given email (PA-04: the one public reset-request route).
 export async function requestPasswordReset(email: string) {
-  return http.post('/users/reset-password/request', { email });
+  return http.post('/auth/request-reset', { email });
 }
 
 // Complete a password reset with the emailed link's token or a 6-digit code.
@@ -35,10 +35,6 @@ export async function createClientUser(email: string, password?: string) {
 }
 
 // Optional helpers
-export async function loginUser(email: string, password: string) {
-  return http.post('/users/login', { email, password });
-}
-
 export async function getCurrentUser() {
   return http.get('/users');
 }
