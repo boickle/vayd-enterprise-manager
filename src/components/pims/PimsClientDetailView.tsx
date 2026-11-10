@@ -129,6 +129,7 @@ import './PimsPatientDetailView.css';
 import './PimsClientDetailView.css';
 import '../../pages/BriefWorkspacePage.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { clientTextsOffReason } from '../../utils/doNotSmsWarning';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
 const PIMS_CLIENT_DETAIL_TZ =
@@ -898,6 +899,9 @@ function ClientCommunicationPrefsCard({
               }}
             />
             Do not SMS
+            {doNotSms && clientTextsOffReason(record) ? (
+              <span className="settings-muted"> · {clientTextsOffReason(record)}</span>
+            ) : null}
           </label>
           <label>
             <input
@@ -1753,6 +1757,7 @@ export default function PimsClientDetailView({
 
   const doNotEmail = flagOn(record.doNotEmail);
   const doNotSms = flagOn(record.doNotSms) || flagOn(record.smsOptOut);
+  const textsOffReason = clientTextsOffReason(record);
   const doNotSendReminders = flagOn(record.doNotSendReminders);
 
   // Only the stored `email` column is editable. `emails` can be a multi-address list from
@@ -1843,7 +1848,11 @@ export default function PimsClientDetailView({
               </PimsBadge>
             ) : null}
             {doNotEmail ? <PimsBadge tone="warn">Do not email</PimsBadge> : null}
-            {doNotSms ? <PimsBadge tone="warn">Do not SMS</PimsBadge> : null}
+            {doNotSms ? (
+              <PimsBadge tone="warn" title={textsOffReason ?? undefined}>
+                {textsOffReason ?? 'Do not SMS'}
+              </PimsBadge>
+            ) : null}
             {doNotSendReminders ? <PimsBadge tone="warn">No reminders</PimsBadge> : null}
             {portalAccounts.some((a) => a.hasLoggedIn) ? (
               <PimsBadge tone="ok">Portal login</PimsBadge>
