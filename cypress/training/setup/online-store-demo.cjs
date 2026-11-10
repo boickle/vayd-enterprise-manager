@@ -2,7 +2,8 @@
  * Online Store training demo data (OSV videos), on top of the training stack's seeded world.
  *   NODE_PATH=$API_DIR/node_modules node cypress/training/setup/online-store-demo.cjs <test db> <world.json> <out.json>
  * Writes ONLY to a vayd_api_test* database. Invented product names; the Riveras and Chens from demo-names.sh.
- * - Takes every other store product and item off the store, so only the demo catalog shows.
+ * - Takes every other store product and item off the store, so only the demo catalog shows; old unlisted products
+ *   are dropped so Removed stays empty, and leftover consent-filing tasks from earlier test runs are closed.
  * - Demo catalog: Dental chews (OTC), Joint support chews (OTC, monthly), Heartworm & flea chewable (Rx),
  *   Thyroid tablets (Rx), a Gift card product, and an unlisted controlled item (Gabapentin) for OSV-15.
  * - Maple: heartworm Rx with 3 refills (Dr. Avery Lane). Juniper: thyroid Rx with no refills left.
@@ -96,6 +97,15 @@ async function login(email, role, ids) {
   await q(`UPDATE online_store_products SET listed = false WHERE "practiceId" = $1`, [P]);
   await q(`UPDATE online_store_item_settings SET listed = false WHERE "practiceId" = $1`, [P]);
   await q(`UPDATE inventory_items SET "showOnOnlineStore" = false WHERE "practiceId" = $1`, [P]);
+  // The products just taken off would all show under Removed (115 of them in OSV-15): the test database's old store
+  // products aren't part of the demo, so drop them (their variants go with them). The demo's own come next.
+  await q(`DELETE FROM online_store_products WHERE "practiceId" = $1 AND listed = false`, [P]);
+  // Earlier test runs leave "Consent signed for Pippin: not filed to the chart" open in Unassigned (seen in OSV-12).
+  await q(
+    `UPDATE tasks SET status = 'done', "completedAt" = now()
+      WHERE "practiceId" = $1 AND status <> 'done' AND title LIKE 'Consent signed for %: not filed to the chart'`,
+    [P],
+  );
 
   const chews = await item('Dental chews, medium (30 ct)', 24.99, { listed: true, taxed: true });
   const joint = await item('Joint support chews (60 ct)', 36, { listed: true, taxed: true, freq: 'every_month' });
