@@ -440,14 +440,16 @@ const PHONE_FIELDS: FieldSpec[] = [
   },
 ];
 
+// Plain text, not type="email": a browser's email check blocks "a@x; b@y" before the
+// save reaches the API, which splits it (COM-A15) and shows any refusal message itself.
 const EMAIL_FIELDS: FieldSpec[] = [
-  { key: 'email', label: 'Email', type: 'email' },
+  { key: 'email', label: 'Email', type: 'text' },
   {
     key: 'noEmail',
     label: 'No Email',
     type: 'checkbox',
   },
-  { key: 'secondEmail', label: 'Second contact email', type: 'email' },
+  { key: 'secondEmail', label: 'Second contact email', type: 'text' },
 ];
 
 type HeaderEdit = 'name' | 'phone' | 'email' | 'address' | 'alerts' | 'connectionNotes' | null;
