@@ -7,7 +7,7 @@ import {
   useUnsentComposeClose,
 } from './unsentComposeClose';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
+import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { gmailErrorMessage } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { useClientEmailComposeSetup } from '../hooks/useClientEmailComposeSetup';
@@ -103,6 +103,7 @@ export function ClientContactComposeModal({
   const [subject, setSubject] = useState('');
   const [userBody, setUserBody] = useState('');
   const [doNotSms, setDoNotSms] = useState(false);
+  const [textsOffReason, setTextsOffReason] = useState<string | null>(null);
 
   const showText = canText;
   const showEmail = canEmail;
@@ -138,6 +139,7 @@ export function ClientContactComposeModal({
     setSendError(null);
     setChannel(canText ? 'text' : canEmail ? 'email' : 'text');
     setDoNotSms(false);
+    setTextsOffReason(null);
   }, [open, initialSmsMessage, canText, canEmail]);
 
   useEffect(() => {
@@ -145,10 +147,14 @@ export function ClientContactComposeModal({
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
-        if (!cancelled) setDoNotSms(clientDoNotSmsFromRecord(raw));
+        if (cancelled) return;
+        setDoNotSms(clientDoNotSmsFromRecord(raw));
+        setTextsOffReason(clientTextsOffReason(raw));
       })
       .catch(() => {
-        if (!cancelled) setDoNotSms(false);
+        if (cancelled) return;
+        setDoNotSms(false);
+        setTextsOffReason(null);
       });
     return () => {
       cancelled = true;
@@ -170,7 +176,8 @@ export function ClientContactComposeModal({
     setSendError(null);
   };
 
-  const canSendText = showText && Boolean(clientId && smsMessage.trim()) && !sending;
+  const canSendText =
+    showText && !textsOffReason && Boolean(clientId && smsMessage.trim()) && !sending;
   const canSendEmail =
     showEmail &&
     Boolean(mailbox && from.trim() && to.trim() && subject.trim() && !isEmailBodyEmpty(userBody)) &&
@@ -394,7 +401,17 @@ export function ClientContactComposeModal({
           </p>
         ) : null}
 
-        {channel === 'text' && showText && doNotSms ? (
+        {channel === 'text' && showText && textsOffReason ? (
+          <p
+            role="alert"
+            data-testid="texts-off-reason"
+            style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}
+          >
+            {textsOffReason}. Texts can&apos;t be sent to this client; call or email instead.
+          </p>
+        ) : null}
+
+        {channel === 'text' && showText && doNotSms && !textsOffReason ? (
           <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
             Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
           </p>

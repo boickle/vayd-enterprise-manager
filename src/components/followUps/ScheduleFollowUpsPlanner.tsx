@@ -2005,7 +2005,9 @@ export default function ScheduleFollowUpsPlanner({
                 </>
               ) : (
                 <div className="fup-warnbox">
-                  {data.doNotSms
+                  {data.textsOffReason
+                    ? `${data.textsOffReason}.`
+                    : data.doNotSms
                     ? 'This client is marked do-not-text.'
                     : 'No mobile number on file.'}{' '}
                   {data.clientEmails.length
