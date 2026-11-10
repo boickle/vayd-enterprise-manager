@@ -2042,7 +2042,7 @@
 
 /* The amount box only needs a few digits; the dropdown beside it gets the rest so its words aren't cut off. */
 .store-coupon-discount input.settings-input[type='number'] {
-  flex: 0 0 6rem;
+  flex: 0 0 7.5rem;
 }
 
 .store-coupon-form__actions {
