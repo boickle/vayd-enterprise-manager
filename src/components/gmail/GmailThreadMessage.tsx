@@ -1,4 +1,5 @@
 import GmailAttachmentIcon from './GmailAttachmentIcon';
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml';
 import GmailMessageComposeBar from './GmailMessageComposeBar';
 import GmailOpenTrackingBadge from './GmailOpenTrackingBadge';
 import GmailScheduledSendIcon from './GmailScheduledSendIcon';
@@ -181,7 +182,7 @@ export function GmailThreadMessageArticle({
               {msg.body.html ? (
                 <div
                   className="gmail-thread-message__body gmail-thread-message__body--html"
-                  dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                 />
               ) : (
                 <div className="gmail-thread-message__body">

@@ -23,6 +23,7 @@ import {
 import { NO_SHARED_GMAIL_MESSAGE, sharedConnectedMailboxes } from '../utils/practiceGmailMailboxes';
 import { threadCacheKey, threadListPreviewFromMessages } from '../utils/gmailThreadPreview';
 import GmailOpenTrackingBadge from './gmail/GmailOpenTrackingBadge';
+import { sanitizeEmailHtml } from '../utils/sanitizeEmailHtml';
 import '../pages/GmailInbox.css';
 
 type Props = {
@@ -376,7 +377,7 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
                     {msg.body.html ? (
                       <div
                         className="gmail-thread-message__body gmail-thread-message__body--html"
-                        dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                       />
                     ) : (
                       <div className="gmail-thread-message__body">
