@@ -44,6 +44,7 @@ export function ClientLoginForm({
         if (res.resetCode) {
           navigate('/reset-password', {
             replace: true,
+            // PA-02: the reset screen sends this email with the code.
             state: { email: email.trim(), code: res.resetCode, reason: 'temp-password' },
           });
         } else {

@@ -25,7 +25,9 @@ export type ArrivalWindowSlotContext = {
 
 /**
  * Resolve arrival window isos for scheduler / doctor-day views.
- * Priority: explicit appointment effectiveWindow → doctor-day effectiveWindow → routed slot → type defaults.
+ * Priority (default): explicit appointment effectiveWindow → household/doctor-day → routed slot → type defaults.
+ * Multi-pet household clumps (`preferHouseholdWindow`): household window first so staggered sibling
+ * starts still share one arrival band on the card.
  */
 export function resolveArrivalWindowIsos(args: {
   apptEffectiveWindow?: { startIso?: string; endIso?: string } | null;
@@ -36,13 +38,9 @@ export function resolveArrivalWindowIsos(args: {
   appointmentEndIso?: string | null;
   practiceTz: string;
   allowTypeFallback?: boolean;
+  /** When true (multi-id household stop), prefer household window over per-appt. */
+  preferHouseholdWindow?: boolean;
 }): { startIso: string; endIso: string } | null {
-  const apptStart = args.apptEffectiveWindow?.startIso?.trim() || null;
-  const apptEnd = args.apptEffectiveWindow?.endIso?.trim() || null;
-  if (apptStart && apptEnd) {
-    return { startIso: apptStart, endIso: apptEnd };
-  }
-
   const h = args.household;
   const doctorDayStart =
     h?.effectiveWindow?.startIso?.trim() ||
@@ -54,8 +52,23 @@ export function resolveArrivalWindowIsos(args: {
     h?.windowEndIso?.trim() ||
     h?.primary?.effectiveWindow?.endIso?.trim() ||
     null;
-  if (doctorDayStart && doctorDayEnd) {
-    return { startIso: doctorDayStart, endIso: doctorDayEnd };
+  const householdWindow =
+    doctorDayStart && doctorDayEnd
+      ? { startIso: doctorDayStart, endIso: doctorDayEnd }
+      : null;
+
+  if (args.preferHouseholdWindow && householdWindow) {
+    return householdWindow;
+  }
+
+  const apptStart = args.apptEffectiveWindow?.startIso?.trim() || null;
+  const apptEnd = args.apptEffectiveWindow?.endIso?.trim() || null;
+  if (apptStart && apptEnd) {
+    return { startIso: apptStart, endIso: apptEnd };
+  }
+
+  if (householdWindow) {
+    return householdWindow;
   }
 
   if (args.slot?.windowStartIso != null && args.slot?.windowEndIso != null) {
@@ -106,6 +119,9 @@ export function arrivalWindowIsosFromDriveDay(
   const { h, slot } = row;
   const practiceTz = dayData.timezone || 'America/New_York';
   const primary = (h as { primary?: { appointmentStart?: string; appointmentEnd?: string; appointmentType?: Appointment['appointmentType'] } }).primary;
+  const multiPetHousehold =
+    Array.isArray((h as { sourceAppointmentIds?: unknown }).sourceAppointmentIds) &&
+    ((h as { sourceAppointmentIds: unknown[] }).sourceAppointmentIds.length > 1);
   return resolveArrivalWindowIsos({
     apptEffectiveWindow,
     household: h as ArrivalWindowHouseholdContext,
@@ -114,6 +130,7 @@ export function arrivalWindowIsosFromDriveDay(
     appointmentType: primary?.appointmentType,
     appointmentEndIso: h.endIso ?? primary?.appointmentEnd ?? null,
     practiceTz,
+    preferHouseholdWindow: multiPetHousehold,
   });
 }
 

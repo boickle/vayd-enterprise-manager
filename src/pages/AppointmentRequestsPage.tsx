@@ -214,6 +214,7 @@ const NOT_BOOKED_REASON_OTHER = 'other';
 const HIDE_TAB_COUNT_TABS = new Set<StatusFilter>(['booked', 'dismissed']);
 /** Paginate large tabs so the list and Gmail label fetches stay bounded. */
 const PAGINATED_LIST_TABS = new Set<StatusFilter>([
+  'new',
   'booked',
   'dismissed',
   'contacted',
@@ -703,11 +704,19 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         : readAppointmentRequestStaffConfirmReturnSession();
       let highlightId: number | null = null;
       let openSmsOnHighlight = false;
-      if (pendingReturn) {
+      let listReturn = pendingReturn;
+      // HOLD books return to the Holds board — don't animate the row out of New as "booked".
+      if (pendingReturn?.isHold) {
+        navigate(
+          holdsPathWithHighlight(pendingReturn.appointmentRequestSubmissionId),
+          { replace: true },
+        );
+        listReturn = null;
+      } else if (pendingReturn) {
         clearAppointmentRequestReturnSession();
         highlightId = pendingReturn.appointmentRequestSubmissionId;
         setPendingBookedExitId(highlightId);
-        openSmsOnHighlight = true;
+        openSmsOnHighlight = pendingReturn.openSms !== false;
       } else if (pendingStaffConfirmReturn) {
         clearAppointmentRequestStaffConfirmReturnSession();
         highlightId = pendingStaffConfirmReturn.submissionId;
@@ -715,13 +724,13 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       }
 
       const seedMeta =
-        pendingReturn != null
+        listReturn != null
           ? new Map<number, BookedApptSummary>([
               [
-                pendingReturn.bookedAppointmentId,
+                listReturn.bookedAppointmentId,
                 {
-                  start: pendingReturn.bookedAppointmentStart,
-                  end: pendingReturn.bookedAppointmentEnd,
+                  start: listReturn.bookedAppointmentStart,
+                  end: listReturn.bookedAppointmentEnd,
                   typeName: null,
                   providerName: null,
                   providerInternalId: null,
@@ -921,7 +930,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       loadInFlightRef.current = false;
       if (!silent) setLoading(false);
     }
-  }, [hydrateBookedApptMeta, practiceTz]);
+  }, [hydrateBookedApptMeta, navigate, practiceTz]);
 
   useEffect(() => {
     void load();

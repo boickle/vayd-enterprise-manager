@@ -98,6 +98,11 @@ import {
   readHoldsBoardReturnSession,
   type HoldsBoardReturnExitKind,
 } from '../utils/holdsBoardReturnSession';
+import {
+  clearAppointmentRequestReturnSession,
+  readAppointmentRequestReturnSession,
+  type AppointmentRequestReturnSessionV1,
+} from '../utils/appointmentRequestReturnSession';
 import './Settings.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
@@ -276,12 +281,15 @@ export default function HoldsPage() {
   const loadGenRef = useRef(0);
   const holdOutreachGenRef = useRef(0);
   const pendingHoldsReturnRef = useRef<ReturnType<typeof readHoldsBoardReturnSession>>(null);
+  const pendingApptRequestReturnRef = useRef<AppointmentRequestReturnSessionV1 | null>(null);
   const pendingDepartGroupKeyRef = useRef<string | null>(null);
   const restoredDepartScrollRef = useRef(false);
   const [pendingHoldsBoardExit, setPendingHoldsBoardExit] = useState<{
     group: HoldHouseholdGroup;
     exitKind: HoldsBoardReturnExitKind;
   } | null>(null);
+  const [pendingApptRequestSmsGroup, setPendingApptRequestSmsGroup] =
+    useState<HoldHouseholdGroup | null>(null);
   const [highlightGroupKey, setHighlightGroupKey] = useState<string | null>(null);
   const [ownerHighlightGroupKey, setOwnerHighlightGroupKey] = useState<string | null>(null);
   const pendingAssignAnchorRef = useRef<{ groupKey: string; scrollY: number } | null>(null);
@@ -353,6 +361,12 @@ export default function HoldsPage() {
         pendingHoldsReturnRef.current = pendingReturn;
       }
 
+      const pendingApptRequestReturn = readAppointmentRequestReturnSession();
+      if (pendingApptRequestReturn?.isHold) {
+        clearAppointmentRequestReturnSession();
+        pendingApptRequestReturnRef.current = pendingApptRequestReturn;
+      }
+
       const pendingDepart = readHoldsBoardDepartSession();
       if (pendingDepart) {
         clearHoldsBoardDepartSession();
@@ -406,6 +420,35 @@ export default function HoldsPage() {
               },
             );
             setPendingHoldsBoardExit({ group: match, exitKind: pending.exitKind });
+          }
+        }
+
+        const pendingApptRequest = pendingApptRequestReturnRef.current;
+        if (pendingApptRequest) {
+          pendingApptRequestReturnRef.current = null;
+          const freshGrouped = sortHoldHouseholdGroupsByAppointmentStart(
+            filterHoldHouseholdGroupsByOwner(
+              groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
+              owner,
+            ),
+          );
+          const match =
+            freshGrouped.find((g) =>
+              g.holds.some((h) => Number(h.id) === Number(pendingApptRequest.bookedAppointmentId)),
+            ) ??
+            freshGrouped.find((g) =>
+              g.holds.some(
+                (h) =>
+                  h.appointmentRequestSubmissionId != null &&
+                  Number(h.appointmentRequestSubmissionId) ===
+                    Number(pendingApptRequest.appointmentRequestSubmissionId),
+              ),
+            );
+          if (match) {
+            setHighlightGroupKey(match.key);
+            if (pendingApptRequest.openSms !== false && holdGroupHasSmsPhone(match)) {
+              setPendingApptRequestSmsGroup(match);
+            }
           }
         }
       }
@@ -521,6 +564,13 @@ export default function HoldsPage() {
     setSmsFrom(null);
     if (remindersFromLine) setSmsFromLine(remindersFromLine);
   }, [remindersFromLine]);
+
+  useEffect(() => {
+    if (!pendingApptRequestSmsGroup || loading) return;
+    const group = pendingApptRequestSmsGroup;
+    setPendingApptRequestSmsGroup(null);
+    openSmsModal(group);
+  }, [pendingApptRequestSmsGroup, loading, openSmsModal]);
 
   const openEmailModal = useCallback((group: HoldHouseholdGroup) => {
     const clientId = group.anchor.client?.id;
