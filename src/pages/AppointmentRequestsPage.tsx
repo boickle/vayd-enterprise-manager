@@ -157,6 +157,7 @@ import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
 import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { RouteButton } from '../components/appointmentRequests/RouteButton';
+import { useAuth } from '../auth/useAuth';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
@@ -167,6 +168,9 @@ import {
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
   receivedDateLabel,
+  matchesLiaisonFilter,
+  parseLiaisonFilter,
+  type LiaisonFilter,
   requestIsQuiet,
   visitSinceLabel,
   requestDataTown,
@@ -181,6 +185,7 @@ import './Settings.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const PRACTICE_ID = currentPracticeId();
+const LIAISON_FILTER_KEY = 'vayd-appt-requests-liaison-filter';
 
 type BookedApptSummary = AppointmentRequestBookedApptSummary;
 
@@ -456,6 +461,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const location = useLocation();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  const { employeeId: authEmployeeId } = useAuth() as { employeeId?: string | null };
 
   const statusFilter = useMemo(
     () => parseAppointmentRequestsTabFromLocation(location.pathname, location.search),
@@ -1177,7 +1183,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     return count;
   }, [submissions, bookedApptMeta, typeCatalog]);
 
-  const filtered = useMemo(() => {
+  const filteredByTab = useMemo(() => {
     const q = search.trim().toLowerCase();
     const sortNewestFirst = (a: AppointmentRequestSubmissionItem, b: AppointmentRequestSubmissionItem) =>
       new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
@@ -1254,6 +1260,39 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     bookedApptMeta,
     typeCatalog,
   ]);
+
+  /** Liaison filter (Everyone / Mine / Unassigned / one person), remembered on this computer. */
+  const [liaisonFilter, setLiaisonFilter] = useState<LiaisonFilter>(() => {
+    try {
+      return parseLiaisonFilter(localStorage.getItem(LIAISON_FILTER_KEY));
+    } catch {
+      return 'all';
+    }
+  });
+  const chooseLiaisonFilter = (next: LiaisonFilter) => {
+    setLiaisonFilter(next);
+    try {
+      localStorage.setItem(LIAISON_FILTER_KEY, String(next));
+    } catch {
+      /* not remembered */
+    }
+  };
+  const myEmployeeId = useMemo(() => {
+    const n = Number(authEmployeeId);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [authEmployeeId]);
+  const filtered = useMemo(
+    () =>
+      liaisonFilter === 'all'
+        ? filteredByTab
+        : filteredByTab.filter(
+            (item) =>
+              // An open row stays while staff work it, even after its liaison changes.
+              openRowIds.has(item.id) ||
+              (!isAbandonedItem(item) && matchesLiaisonFilter(item, liaisonFilter, myEmployeeId)),
+          ),
+    [filteredByTab, liaisonFilter, myEmployeeId, openRowIds],
+  );
 
   /** While searching across tabs, highlight the result tab when unambiguous; otherwise none. */
   const highlightedStatusTab = useMemo((): StatusFilter | null => {
@@ -2081,7 +2120,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         </button>
       </div>
 
-      <div style={{ marginBottom: 16, maxWidth: 420 }}>
+      <div className="appt-list-filters">
+      <label className="appt-liaison-filter">
+        <span>Liaison</span>
+        <select
+          value={String(liaisonFilter)}
+          onChange={(e) => chooseLiaisonFilter(parseLiaisonFilter(e.target.value))}
+          aria-label="Filter by liaison"
+        >
+          <option value="all">Everyone</option>
+          <option value="mine" disabled={myEmployeeId == null}>
+            Mine
+          </option>
+          <option value="unassigned">Unassigned</option>
+          {liaisons.map((l) => (
+            <option key={l.id} value={String(l.id)}>
+              {[l.firstName, l.lastName].filter(Boolean).join(' ')}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div style={{ marginBottom: 16, maxWidth: 420, flex: '1 1 320px' }}>
         <input
           type="search"
           className="settings-input"
@@ -2096,6 +2155,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             Searching all tabs ({filtered.length} match{filtered.length === 1 ? '' : 'es'})
           </p>
         ) : null}
+      </div>
       </div>
 
       {error ? (

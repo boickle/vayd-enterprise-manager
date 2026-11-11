@@ -175,3 +175,21 @@ describe('quiet requests and visits since the request', () => {
     );
   });
 });
+
+describe('liaison filter', () => {
+  it('filters by everyone, mine, unassigned, or one person', async () => {
+    const { matchesLiaisonFilter, parseLiaisonFilter } = await import('./appointmentRequestTableRow');
+    const mine = { liaisonEmployeeId: 7 };
+    const theirs = { liaisonEmployeeId: 9 };
+    const nobody = { liaisonEmployeeId: null };
+    expect([mine, theirs, nobody].filter((i) => matchesLiaisonFilter(i, 'all', 7))).toHaveLength(3);
+    expect([mine, theirs, nobody].filter((i) => matchesLiaisonFilter(i, 'mine', 7))).toEqual([mine]);
+    expect([mine, theirs, nobody].filter((i) => matchesLiaisonFilter(i, 'unassigned', 7))).toEqual([nobody]);
+    expect([mine, theirs, nobody].filter((i) => matchesLiaisonFilter(i, 9, 7))).toEqual([theirs]);
+    // Someone with no staff record has nothing that is "mine".
+    expect(matchesLiaisonFilter(mine, 'mine', null)).toBe(false);
+    expect(parseLiaisonFilter('9')).toBe(9);
+    expect(parseLiaisonFilter('mine')).toBe('mine');
+    expect(parseLiaisonFilter('junk')).toBe('all');
+  });
+});

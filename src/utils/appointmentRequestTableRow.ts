@@ -157,3 +157,25 @@ export function visitSinceLabel(
   if (visit.isHold) return `Hold ${date}`.trim();
   return `${visit.past ? 'Seen' : 'Visit'} ${date}`.trim();
 }
+
+/** Liaison filter on the Appointments list: everyone, mine, unassigned, or one person. */
+export type LiaisonFilter = 'all' | 'mine' | 'unassigned' | number;
+
+export function matchesLiaisonFilter(
+  item: { liaisonEmployeeId?: number | null },
+  filter: LiaisonFilter,
+  myEmployeeId: number | null,
+): boolean {
+  const owner = item.liaisonEmployeeId ?? null;
+  if (filter === 'all') return true;
+  if (filter === 'unassigned') return owner == null;
+  if (filter === 'mine') return myEmployeeId != null && owner === myEmployeeId;
+  return owner === filter;
+}
+
+/** Stored value ("all", "mine", "unassigned", or an employee id) back to a filter. */
+export function parseLiaisonFilter(raw: string | null | undefined): LiaisonFilter {
+  if (raw === 'mine' || raw === 'unassigned') return raw;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 'all';
+}

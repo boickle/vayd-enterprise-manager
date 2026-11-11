@@ -145,6 +145,8 @@ export function buildRequestConversation(args: {
   texts: readonly ConversationText[];
   calls: readonly ConversationCall[];
   quoCalls?: readonly ConversationQuoCall[];
+  /** First line of the thread; "Request received" unless told otherwise (holds: "Hold placed"). */
+  startTitle?: string;
 }): ConversationItem[] {
   const clientEmail = lower(args.clientEmail);
   const items: ConversationItem[] = [
@@ -153,7 +155,7 @@ export function buildRequestConversation(args: {
       channel: 'event',
       direction: 'none',
       at: args.submittedAt,
-      title: 'Request received',
+      title: args.startTitle ?? 'Request received',
       body: '',
     },
   ];

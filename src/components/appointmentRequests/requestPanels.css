@@ -585,3 +585,16 @@
   color: #334155;
   white-space: pre-wrap;
 }
+
+/* Hold tab: the hold's own card (visits, contact log, Open / convert…) beside the conversation. */
+.hold-open-card {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.hold-open-card .appt-request-row-actions {
+  width: 100%;
+}
