@@ -95,6 +95,7 @@ import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import PromotionsLayout from './pages/marketing/PromotionsLayout';
 import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
 import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
@@ -940,14 +941,16 @@ export default function App() {
                     />
                     <Route path="marketing" element={<EmailCampaignsPage />} />
                     {/* RP-08: promotions moved here from Admin; /schedule/admin/... redirects (admin-tabs.tsx). */}
-                    <Route
-                      path="marketing/membership-promotions"
-                      element={<MembershipPromotionsPage />}
-                    />
-                    <Route
-                      path="marketing/appointment-request-promotions"
-                      element={<AppointmentRequestPromotionsPage />}
-                    />
+                    <Route element={<PromotionsLayout />}>
+                      <Route
+                        path="marketing/membership-promotions"
+                        element={<MembershipPromotionsPage />}
+                      />
+                      <Route
+                        path="marketing/appointment-request-promotions"
+                        element={<AppointmentRequestPromotionsPage />}
+                      />
+                    </Route>
                     <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
                     <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
