@@ -37,6 +37,12 @@ export type AppointmentRequestSubmissionItem = {
   gmailThreadId?: string | null;
   gmailMailbox?: string | null;
   gmailLinkedAt?: string | null;
+  /** Employee who owns the request (liaison). Kept in step with the hold owner. */
+  liaisonEmployeeId?: number | null;
+  liaison?: { id: number; firstName: string | null; lastName: string | null } | null;
+  liaisonAssignedAt?: string | null;
+  /** Service zone name saved at submit; null on requests sent before Nov 2026. */
+  zoneName?: string | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -83,6 +89,8 @@ export type PatchAppointmentRequestSubmissionBody = {
   recordsReceivedAt?: string | null;
   /** Marks an auto-booked online request as staff-confirmed. */
   confirm?: boolean;
+  /** Request owner. `null` clears it. Anyone may reassign to anyone. */
+  liaisonEmployeeId?: number | null;
 };
 
 export type BookAppointmentRequestSubmissionBody = {
@@ -332,4 +340,41 @@ export async function downloadAppointmentRequestSubmissionPdf(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(objectUrl);
+}
+
+/** Texts with the request's phone number and staff call notes (emails come from Gmail). */
+export type AppointmentRequestConversationResponse = {
+  submissionId: number;
+  phone: string | null;
+  texts: Array<{ id: string; direction: 'in' | 'out'; body: string; at: string; beforeRequest: boolean }>;
+  textsError: string | null;
+  calls: Array<{
+    id: number;
+    at: string;
+    outcome: 'reached' | 'voicemail' | 'no_answer';
+    note: string | null;
+    employee: { id: number; firstName: string | null; lastName: string | null } | null;
+  }>;
+};
+
+/** GET /appointments/request-submissions/:id/conversation */
+export async function fetchAppointmentRequestConversation(
+  id: number,
+): Promise<AppointmentRequestConversationResponse> {
+  const { data } = await http.get<AppointmentRequestConversationResponse>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/conversation`,
+  );
+  return data;
+}
+
+/** POST /appointments/request-submissions/:id/calls — log a phone call (counts as contact). */
+export async function logAppointmentRequestCall(
+  id: number,
+  body: { outcome: 'reached' | 'voicemail' | 'no_answer'; note?: string | null },
+): Promise<AppointmentRequestSubmission> {
+  const { data } = await http.post<AppointmentRequestSubmission>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/calls`,
+    body,
+  );
+  return data;
 }

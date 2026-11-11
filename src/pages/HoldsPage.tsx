@@ -29,6 +29,8 @@ import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryM
 import { ClientContactLogEditor } from '../components/ClientContactLogEditor';
 import { AppointmentRequestGmailThreadLabels } from '../components/AppointmentRequestGmailThreadLabels';
 import { HoldPatientSummaryList } from '../components/HoldPatientSummaryList';
+import { AppointmentsTabStrip } from '../components/appointmentRequests/AppointmentsTabStrip';
+import { RouteButton } from '../components/appointmentRequests/RouteButton';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { useHoldsAppointmentRequestGmailLabels } from '../hooks/useHoldsAppointmentRequestGmailLabels';
 import {
@@ -703,7 +705,7 @@ export default function HoldsPage() {
   );
 
   const openReschedule = useCallback(
-    (hold: HoldListItem, group: HoldHouseholdGroup) => {
+    (hold: HoldListItem, group: HoldHouseholdGroup, opts?: { exploreAlternatives?: boolean }) => {
       setError(null);
       setNotice(null);
       setBusyGroupKey(group.key);
@@ -714,6 +716,7 @@ export default function HoldsPage() {
         practiceTz: PRACTICE_TZ,
         practiceId: PRACTICE_ID,
         returnPath: holdsPathForOwner(owner),
+        exploreAlternatives: opts?.exploreAlternatives === true,
       })
         .then((result) => {
           if (!result.ok) setNotice(result.reason);
@@ -1060,17 +1063,19 @@ export default function HoldsPage() {
         >
           <div>
             <h1 className="settings-title" style={{ marginBottom: 6 }}>
-              Holds
+              Appointments
             </h1>
             <p className="settings-muted" style={{ margin: 0, maxWidth: 720 }}>
-              Calendar holds scheduled today (Eastern time) and later — appointment
-              requests, care outreach, schedule loader, forward booking, and manual
-              holds.
+              Every hold on the calendar from today on: appointment requests, forward
+              bookings, care outreach, schedule loader, waitlist, texted offers, and
+              holds placed by hand. A hold stays here until it becomes a real visit.
             </p>
           </div>
         </div>
 
-        <div className="appt-request-status-tabs">
+        <AppointmentsTabStrip />
+
+        <div className="appt-request-status-tabs holds-owner-filters" aria-label="Whose holds">
           {OWNER_FILTERS.map((f) => (
             <button
               key={String(f.value)}
@@ -1550,14 +1555,15 @@ export default function HoldsPage() {
                             >
                               Open / convert
                             </button>
-                            <button
-                              type="button"
-                              className="btn secondary"
+                            <RouteButton
+                              hasVisit
+                              inline
                               disabled={busy}
-                              onClick={() => openReschedule(slotHold, group)}
-                            >
-                              Reschedule
-                            </button>
+                              onReschedule={() => openReschedule(slotHold, group)}
+                              onExploreAlternatives={() =>
+                                openReschedule(slotHold, group, { exploreAlternatives: true })
+                              }
+                            />
                             {slot.holds.some((h) => resolveHoldSubmissionId(h) != null) ? (
                               <button
                                 type="button"

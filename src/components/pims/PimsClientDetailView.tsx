@@ -131,6 +131,7 @@ import '../../pages/BriefWorkspacePage.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import { clientTextsOffReason } from '../../utils/doNotSmsWarning';
 import { useMayShow } from '../../permissions/PermissionContext';
+import { useMayEditClientRecords } from '../../permissions/useMayEditClientRecords';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
 const PIMS_CLIENT_DETAIL_TZ =
@@ -482,11 +483,14 @@ function ClientHouseholdDefaultsCard({
   onSave,
   collapsed,
   onToggleCollapse,
+  readOnly = false,
 }: {
   record: Record<string, unknown>;
   onSave: (body: ScoutClientWrite) => Promise<void>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** B7: roles that can't change client records see the values but no Save. */
+  readOnly?: boolean;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [statuses, setStatuses] = useState<ClientStatusRow[]>([]);
@@ -611,7 +615,11 @@ function ClientHouseholdDefaultsCard({
             Settings.
           </p>
           {error ? <p className="pims-detail__banner-error">{error}</p> : null}
-          <div className="pims-add-client-modal__grid" style={{ marginTop: 8 }}>
+          <fieldset
+            className="pims-add-client-modal__grid"
+            style={{ marginTop: 8, border: 0, padding: 0, minWidth: 0 }}
+            disabled={readOnly}
+          >
             <label>
               <span className="pims-add-client-modal__label">Primary provider</span>
               <select
@@ -706,12 +714,14 @@ function ClientHouseholdDefaultsCard({
                 </>
               )}
             </div>
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <button type="button" className="btn" disabled={saving} onClick={() => void persist()}>
-              {saving ? 'Saving…' : 'Save household defaults'}
-            </button>
-          </div>
+          </fieldset>
+          {readOnly ? null : (
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="btn" disabled={saving} onClick={() => void persist()}>
+                {saving ? 'Saving…' : 'Save household defaults'}
+              </button>
+            </div>
+          )}
         </>
       )}
     </section>
@@ -721,10 +731,14 @@ function ClientHouseholdDefaultsCard({
 function ReachEditButton({
   label,
   onClick,
+  hidden = false,
 }: {
   label: string;
   onClick: () => void;
+  /** B7: no pencil for staff who can't save this field. */
+  hidden?: boolean;
 }) {
+  if (hidden) return null;
   return (
     <button
       type="button"
@@ -781,9 +795,11 @@ function HeaderEditModal({
 function ClientCommunicationPrefsCard({
   record,
   onSave,
+  readOnly = false,
 }: {
   record: Record<string, unknown>;
   onSave: (body: ScoutClientWrite) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [doNotEmail, setDoNotEmail] = useState(flagOn(record.doNotEmail));
   const [doNotSms, setDoNotSms] = useState(flagOn(record.doNotSms) || flagOn(record.smsOptOut));
@@ -861,7 +877,7 @@ function ClientCommunicationPrefsCard({
         </p>
       ) : null}
       <div className="pims-client-detail__comms-cols">
-        <fieldset className="pims-client-detail__comms-set" disabled={saving}>
+        <fieldset className="pims-client-detail__comms-set" disabled={saving || readOnly}>
           <legend>Do not contact</legend>
           <label>
             <input
@@ -926,7 +942,7 @@ function ClientCommunicationPrefsCard({
             Do not send reminders
           </label>
         </fieldset>
-        <fieldset className="pims-client-detail__comms-set" disabled={saving}>
+        <fieldset className="pims-client-detail__comms-set" disabled={saving || readOnly}>
           <legend>Prefer</legend>
           <label>
             <input
@@ -1335,6 +1351,9 @@ export default function PimsClientDetailView({
   const mayDeactivate = useMayShow('client.deactivate');
   const mayEditAlerts = useMayShow('client.alert.edit');
   const mayEditConnectionNotes = useMayShow('client.staff_note.edit');
+  // B7: pencils, household defaults and contact preferences only for staff who can save.
+  const mayEditRecord = useMayEditClientRecords();
+  const mayAddPet = useMayShow('client.create');
   const routerNavigate = useNavigate();
   const [urlSearchParams, setUrlSearchParams] = useSearchParams();
   const [localSearchParams, setLocalSearchParams] = useState(() => new URLSearchParams());
@@ -1842,6 +1861,7 @@ export default function PimsClientDetailView({
             <ReachEditButton
               label="Edit contact"
               onClick={() => toggleHeaderEdit('name')}
+              hidden={!mayEditRecord}
             />
           </span>
         }
@@ -1973,6 +1993,7 @@ export default function PimsClientDetailView({
                     <ReachEditButton
                       label="Edit phone"
                       onClick={() => toggleHeaderEdit('phone')}
+                      hidden={!mayEditRecord}
                     />
                   ) : null}
                 </li>
@@ -1984,6 +2005,7 @@ export default function PimsClientDetailView({
                 <ReachEditButton
                   label="Edit phone"
                   onClick={() => toggleHeaderEdit('phone')}
+                  hidden={!mayEditRecord}
                 />
               </li>
             )}
@@ -2001,6 +2023,7 @@ export default function PimsClientDetailView({
                     <ReachEditButton
                       label="Edit email"
                       onClick={() => toggleHeaderEdit('email')}
+                      hidden={!mayEditRecord}
                     />
                   ) : null}
                 </li>
@@ -2012,6 +2035,7 @@ export default function PimsClientDetailView({
                 <ReachEditButton
                   label="Edit email"
                   onClick={() => toggleHeaderEdit('email')}
+                  hidden={!mayEditRecord}
                 />
               </li>
             )}
@@ -2026,6 +2050,7 @@ export default function PimsClientDetailView({
               <ReachEditButton
                 label="Edit address"
                 onClick={() => toggleHeaderEdit('address')}
+                hidden={!mayEditRecord}
               />
             </li>
             {!mailingSameAsService(record) ? (
@@ -2063,6 +2088,7 @@ export default function PimsClientDetailView({
                   <ReachEditButton
                     label="Edit client alerts"
                     onClick={() => toggleHeaderEdit('alerts')}
+                    hidden={!mayEditAlerts}
                   />
                 </div>
                 {alerts}
@@ -2084,6 +2110,7 @@ export default function PimsClientDetailView({
                   <ReachEditButton
                     label="Edit connection notes"
                     onClick={() => toggleHeaderEdit('connectionNotes')}
+                    hidden={!mayEditConnectionNotes}
                   />
                 </div>
                 {connectionNotes}
@@ -2341,6 +2368,7 @@ export default function PimsClientDetailView({
         onSave={saveFields}
         collapsed={!householdOpen}
         onToggleCollapse={toggleHouseholdOpen}
+        readOnly={!mayEditRecord}
       />
 
       <div className={`pims-emr-case-prep-wrap${summaryOpen ? '' : ' is-collapsed'}`}>
@@ -2419,13 +2447,15 @@ export default function PimsClientDetailView({
               <PawPrint size={15} aria-hidden />
               Pets ({patients.length})
             </button>
-            <button
-              type="button"
-              className="pims-detail__btn-quiet"
-              onClick={() => setAddPetOpen(true)}
-            >
-              + Add pet
-            </button>
+            {mayAddPet ? (
+              <button
+                type="button"
+                className="pims-detail__btn-quiet"
+                onClick={() => setAddPetOpen(true)}
+              >
+                + Add pet
+              </button>
+            ) : null}
           </div>
           {!petsOpen ? null : patients.length === 0 ? (
             <p className="pims-emr-story__muted">
@@ -2535,7 +2565,11 @@ export default function PimsClientDetailView({
         </div>
         {prefsOpen ? (
           <div className="pims-client-detail__comms-stack">
-            <ClientCommunicationPrefsCard record={record} onSave={saveFields} />
+            <ClientCommunicationPrefsCard
+              record={record}
+              onSave={saveFields}
+              readOnly={!mayEditRecord}
+            />
             <section className="pims-emr-story__card pims-client-detail__comms-history" aria-labelledby="pims-client-history">
               <h3 id="pims-client-history">History</h3>
               <ClientCommunicationsPanel

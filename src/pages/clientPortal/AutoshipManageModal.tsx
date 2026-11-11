@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router';
 import { listMyAutoship, patchMyAutoship, type StoreAutoship } from '../../api/onlineStore';
 import type { PatientPrescription } from '../../api/visitWorkflow';
 import { AUTOSHIP_FREQS, autoshipCadencePhrase, formatAutoshipFrequency } from '../store/storeCartState';
@@ -172,7 +171,7 @@ export default function AutoshipManageModal({
           set up auto-ship at checkout and it will show up here.
         </p>
         <p className="pp-muted pp-small" style={{ margin: 0 }}>
-          Think this is a mistake? <Link to="/store/autoship">See all your auto-ship items</Link> or give us a call.
+          Think this is a mistake? Give us a call.
         </p>
       </PortalModal>
     );

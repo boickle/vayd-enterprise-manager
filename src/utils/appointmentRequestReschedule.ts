@@ -50,6 +50,8 @@ export async function startRescheduleFromBookedAppointmentRequest(args: {
   practiceTz: string;
   navigate: NavigateFunction;
   returnToGmail?: { mailbox: string; threadId: string };
+  /** Open Routing in Explore alternatives mode (keeps the current visit until one is picked). */
+  exploreAlternatives?: boolean;
 }): Promise<{ error?: string }> {
   const apptId = args.submission.bookedAppointmentId;
   if (apptId == null) {
@@ -98,6 +100,7 @@ export async function startRescheduleFromBookedAppointmentRequest(args: {
   const built = buildRoutingRescheduleIntentFromAppointment(appt, {
     practiceTz,
     sameCalendarDayAppointments,
+    ...(args.exploreAlternatives ? { exploreAlternatives: true } : {}),
   });
   if (!built) {
     return {

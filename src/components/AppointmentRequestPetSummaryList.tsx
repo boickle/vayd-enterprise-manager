@@ -59,8 +59,13 @@ export function AppointmentRequestPetSummaryList({
               />
             ) : null}
           </div>
-          {pet.appointmentType ? (
-            <div className="appt-request-pet-summary-type">{pet.appointmentType}</div>
+          {pet.typeName || pet.appointmentType ? (
+            <div className="appt-request-pet-summary-type">
+              {pet.typeName ?? pet.appointmentType}
+              {pet.typeName && pet.reason && pet.reason !== pet.typeName ? (
+                <span className="appt-request-pet-summary-reason"> · {pet.reason}</span>
+              ) : null}
+            </div>
           ) : null}
           {pet.primaryProvider ? (
             <div className="appt-request-pet-summary-provider">

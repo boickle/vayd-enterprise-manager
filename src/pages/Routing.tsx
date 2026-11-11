@@ -57,6 +57,7 @@ import {
   geocodeRoutingAddressText,
   parseCoordinate,
 } from '../utils/verifiedAddress';
+import { findProviderByDisplayName } from '../utils/providerNameMatch';
 import { fetchPrimaryProviders } from '../api/employee';
 import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
@@ -3080,16 +3081,21 @@ export default function Routing({
       let pimsDoc = '';
       let doctorDisplayName = intent.preferredDoctorDisplayName?.trim() ?? '';
       const preferredId = intent.preferredDoctorId?.trim();
-      if (preferredId) {
+      const primaryName = intent.primaryDoctorName?.trim();
+      if (preferredId || primaryName) {
         try {
           const providerRows = await fetchPrimaryProviders();
           if (cancelled) return;
-          const match = providerRows.find(
-            (p) =>
-              String(p.id) === preferredId ||
-              String(p.pimsId ?? '') === preferredId ||
-              String((p as { pimsId?: string }).pimsId ?? '') === preferredId
-          );
+          // Preferred doctor by id; otherwise the pet's primary doctor by name.
+          const match = preferredId
+            ? providerRows.find(
+                (p) =>
+                  String(p.id) === preferredId ||
+                  String(p.pimsId ?? '') === preferredId ||
+                  String((p as { pimsId?: string }).pimsId ?? '') === preferredId
+              )
+            : findProviderByDisplayName(providerRows, primaryName ?? '');
+          if (!preferredId && match) doctorDisplayName = '';
           if (match?.pimsId) {
             pimsDoc = String(match.pimsId).trim();
             doctorDisplayName =

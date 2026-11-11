@@ -11,7 +11,7 @@ import '../support/e2e';
  *
  * The executive opens VSD (sees the seeded doctor's production) and Email campaigns (sees the seeded draft)
  * with no create, edit, send or save buttons, and no Settings or Admin in the top nav. The practice manager
- * opens Marketing ▸ Promotions ▸ Appointment Request Promotions, edits the seeded promotion, and the change
+ * opens Marketing ▸ Promotions, then the Appointment Request Promotions tab, edits the seeded promotion, and the change
  * is read back from the API. Nothing is emailed: the seed's households block contact and no send is clicked.
  */
 type Rp08World = {
@@ -109,8 +109,8 @@ describe('RP-08-5: Executive and Practice Manager in Marketing', () => {
       cy.contains('a', /^Admin$/).should('not.exist');
     });
     cy.contains('summary', 'Marketing', { timeout: 30000 }).click();
-    cy.contains('button', 'Promotions').click();
-    cy.contains('[role="menuitem"]', 'Appointment Request Promotions').click();
+    cy.contains('[role="menuitem"]', /^Promotions$/).click();
+    cy.contains('nav[aria-label="Promotions"] a', 'Appointment Request Promotions').click();
     cy.location('pathname').should('eq', '/schedule/marketing/appointment-request-promotions');
 
     cy.intercept('PATCH', `**/appointment-request-promotions/${w.promotionId}`).as('save');

@@ -82,7 +82,6 @@ import StoreCartPage from './pages/store/StoreCartPage';
 import StoreThanks from './pages/store/StoreThanks';
 import StoreGiftCardBalance from './pages/store/StoreGiftCardBalance';
 import StoreGiftCardPrint from './pages/store/StoreGiftCardPrint';
-import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
@@ -95,6 +94,7 @@ import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import PromotionsLayout from './pages/marketing/PromotionsLayout';
 import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
 import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
@@ -438,6 +438,12 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+/** The Holds board moved into Appointments (Hold tab). Keep old links working. */
+function LegacyHoldsRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: HOLDS_PATH, search, hash }} replace />;
+}
+
 function LegacyMailOrdersRedirect() {
   const { search, hash } = useLocation();
   return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
@@ -720,7 +726,8 @@ export default function App() {
           <Route path="/store" element={<StoreLayout />}>
             <Route index element={<StoreHome />} />
             <Route path="cart" element={<StoreCartPage />} />
-            <Route path="autoship" element={<StoreAutoshipPage />} />
+            {/* Owner (Nov 11, 2026): auto-ships are managed from each pet's Medications card in the portal. */}
+            <Route path="autoship" element={<Navigate to="/client-portal" replace />} />
             <Route path="gift-cards/balance" element={<StoreGiftCardBalance />} />
             <Route path="thanks/:id" element={<StoreThanks />} />
             <Route path=":id" element={<StoreProduct />} />
@@ -795,13 +802,14 @@ export default function App() {
                       />
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
+                    <Route path="appointments/holds" element={<HoldsPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
-                    <Route path="holds" element={<HoldsPage />} />
+                    <Route path="holds" element={<LegacyHoldsRedirect />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
@@ -940,14 +948,16 @@ export default function App() {
                     />
                     <Route path="marketing" element={<EmailCampaignsPage />} />
                     {/* RP-08: promotions moved here from Admin; /schedule/admin/... redirects (admin-tabs.tsx). */}
-                    <Route
-                      path="marketing/membership-promotions"
-                      element={<MembershipPromotionsPage />}
-                    />
-                    <Route
-                      path="marketing/appointment-request-promotions"
-                      element={<AppointmentRequestPromotionsPage />}
-                    />
+                    <Route element={<PromotionsLayout />}>
+                      <Route
+                        path="marketing/membership-promotions"
+                        element={<MembershipPromotionsPage />}
+                      />
+                      <Route
+                        path="marketing/appointment-request-promotions"
+                        element={<AppointmentRequestPromotionsPage />}
+                      />
+                    </Route>
                     <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
                     <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
