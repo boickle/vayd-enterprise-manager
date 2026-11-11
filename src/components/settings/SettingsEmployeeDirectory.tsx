@@ -45,6 +45,7 @@ import {
 } from '../../hooks/useOpenPhoneLineDirectory';
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import { formatYmd } from '../../utils/formatYmd';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
@@ -832,7 +833,7 @@ export default function SettingsEmployeeDirectory({
     onMessage?.(
       result.completedAt
         ? `Offboarded. Their login has ended and their work has been handed over.${rebook}`
-        : `Offboarded. Their last day is ${result.lastDay}; their login ends at midnight that night.${rebook}`,
+        : `Offboarded. Their last day is ${formatYmd(result.lastDay)}; their login ends at midnight that night.${rebook}`,
       'success'
     );
     await load();
@@ -1117,7 +1118,7 @@ export default function SettingsEmployeeDirectory({
                   {emp.isProvider ? ' · Provider' : ''}
                   {empActive(emp) ? '' : ' (Deactivated)'}
                   {empActive(emp) && lastDayById.get(emp.id)
-                    ? ` · Last day ${lastDayById.get(emp.id)}`
+                    ? ` · Last day ${formatYmd(lastDayById.get(emp.id))}`
                     : ''}
                   {quoNotLinked(emp) ? ' · Quo: not linked' : ''}
                 </option>
@@ -1567,9 +1568,9 @@ export default function SettingsEmployeeDirectory({
                             type="button"
                             className="btn secondary"
                             onClick={() => void cancelScheduledOffboard(editingRow.id)}
-                            title={`Last day ${lastDayById.get(editingRow.id)}`}
+                            title={`Last day ${formatYmd(lastDayById.get(editingRow.id))}`}
                           >
-                            Cancel offboarding (last day {lastDayById.get(editingRow.id)})
+                            Cancel offboarding (last day {formatYmd(lastDayById.get(editingRow.id))})
                           </button>
                         ) : editingRow && empActive(editingRow) ? (
                           <button
