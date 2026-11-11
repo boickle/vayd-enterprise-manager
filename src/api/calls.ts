@@ -45,6 +45,10 @@ export type ClientCall = {
    * (`absent` / `failed` = none will come). Null until it has asked.
    */
   transcriptStatus?: string | null;
+  /** Why it was dismissed, e.g. 'auto: non-clinical after 24h'. Null for a person's Dismiss. */
+  dismissedReason?: string | null;
+  /** When someone first opened the review window (then it is never auto-cleared). */
+  reviewOpenedAt?: string | null;
 };
 
 /**
@@ -59,6 +63,14 @@ export async function resolveCall(
     noteId: opts?.noteId ?? null,
     filed: opts?.filed ?? Boolean(opts?.noteId),
   });
+}
+
+/**
+ * COM-CALL (owner, Nov 11, 2026): record that the review window was opened. A non-clinical call
+ * nobody opened clears itself from the dock 24 hours after it ended; an opened one never does.
+ */
+export async function markCallReviewOpened(callId: string): Promise<void> {
+  await http.post(`/openphone/calls/${encodeURIComponent(callId)}/opened`);
 }
 
 /**

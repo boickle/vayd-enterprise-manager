@@ -15,6 +15,7 @@ const stack = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 const resolveCall = vi.hoisted(() => vi.fn(async () => undefined));
+const markCallReviewOpened = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('../../hooks/useClientCallActivity', async (orig) => ({
@@ -24,6 +25,7 @@ vi.mock('../../hooks/useClientCallActivity', async (orig) => ({
 vi.mock('../../api/calls', async (orig) => ({
   ...(await orig<typeof import('../../api/calls')>()),
   resolveCall,
+  markCallReviewOpened,
   listClientCalls: vi.fn(async () => ({ calls: [], phoneKeys: [] })),
 }));
 vi.mock('../../api/clientsStaff', () => ({ fetchClientByIdStaff: vi.fn(async () => ({})) }));
@@ -69,6 +71,7 @@ beforeEach(() => {
   stack.more = false;
   stack.dismiss.mockClear();
   resolveCall.mockClear();
+  markCallReviewOpened.mockClear();
 });
 
 it('says Summarizing in the first 3 minutes', () => {
@@ -106,4 +109,20 @@ it('says when there are more calls than the dock lists', () => {
   stack.more = true;
   render(<MyCallIndicator />);
   expect(screen.getByText(/Showing your 50 newest calls/)).toBeInTheDocument();
+});
+
+it('opening a non-clinical call to file it anyway records that it was opened (so it never auto-clears)', () => {
+  const call = waiting(30, {
+    phase: 'no_record_needed',
+    hasTranscript: true,
+    transcriptText: '[x] Can we move Tuesday?',
+    triageClinical: false,
+  });
+  stack.calls = [{ ...call, phase: 'no_record_needed' }];
+  render(<MyCallIndicator />);
+  expect(
+    screen.getByText(/clears itself a day after the call unless you open it/)
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByText('File anyway', { selector: 'button' }));
+  expect(markCallReviewOpened).toHaveBeenCalledWith('AC1');
 });

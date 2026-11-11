@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { listClientCalls, resolveCall, type ClientCall } from '../../api/calls';
+import {
+  listClientCalls,
+  markCallReviewOpened,
+  resolveCall,
+  type ClientCall,
+} from '../../api/calls';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import {
   effectiveCallPhase,
@@ -140,8 +145,8 @@ function cardCopy(call: StackedCall): {
     gripLabel: 'Nothing to file',
     state: <>Nothing for the record</>,
     note: call.call?.triageReason?.trim()
-        ? `${call.call.triageReason.trim()} — dismiss whenever you like.`
-        : 'Looked like scheduling or billing. Dismiss whenever you like.',
+        ? `${call.call.triageReason.trim()} — dismiss whenever you like. It clears itself a day after the call unless you open it.`
+        : 'Looked like scheduling or billing. Dismiss whenever you like. It clears itself a day after the call unless you open it.',
   };
 }
 
@@ -228,6 +233,8 @@ export default function MyCallIndicator() {
 
   const openReview = () => {
     const open = (call: ClientCall, clientId: number) => {
+      // An opened call is never auto-cleared as non-clinical (COM-CALL, owner Nov 11, 2026).
+      if (call.callId) void markCallReviewOpened(call.callId).catch(() => undefined);
       setReviewing({
         key: front.key,
         call,
