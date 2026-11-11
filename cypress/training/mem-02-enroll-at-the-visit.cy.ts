@@ -3,13 +3,13 @@
  * Training video, MEM-02: enroll a pet at the visit (docs/training/scripts/memberships/MEM-02-enroll-at-the-visit.md).
  * TEST stack, demo names only. Juniper (cat, 6 y) has no plan and a wellness visit in progress (open invoice).
  * Maria signs on screen; Casey Morgan (client liaison) enrols Juniper on Feline Foundations monthly. The $59 fee
- * goes on the visit invoice (owner decision, Nov 10, 2026), Maria's card on file is saved for later months, and
- * one charge at checkout pays the visit and the first month (Stripe test mode, test Visa).
+ * goes on the visit invoice (owner decision, Nov 10, 2026). Maria has no card on file: she enters a new one (Stripe
+ * test Visa), agrees to keep it on file, and checkout charges that card once for the visit and the first month.
  */
 import '../support/e2e';
 import { signInAsScheduling } from '../support/schedulingWorld';
 import { schedulingApi, schedulingWorld } from '../support/schedulingWorld';
-import { catalogId, giveSavedCard, openVisit, setBillBranch, sql } from './invKit';
+import { catalogId, openVisit, setBillBranch, sql, stripeField } from './invKit';
 import { chartUrl, drawSignature, pets, quietChart, resetMembershipWorld, settle, trace } from './memKit';
 import { finish, line, loadNarration, offCamera, pointAt, startClock, tap, typeSlowly } from './trainingKit';
 
@@ -20,7 +20,10 @@ describe('Training: MEM-02 enroll at the visit', () => {
     trace('setup');
     const w = schedulingWorld();
     resetMembershipWorld();
-    giveSavedCard(p.maria, 'maria.rivera@example.com', 'Maria Rivera');
+    // No card on file: Maria gives one at enroll and agrees to keep it (Nov 10, 2026).
+    sql(
+      `UPDATE clients SET "savedPaymentMethodId"=NULL, "cardOnFileConsentAt"=NULL, "cardOnFileConsentSource"=NULL, "cardOnFileConsentAgreementVersion"=NULL, "cardOnFileDeclinedAt"=NULL WHERE id=${p.maria}`
+    );
     // Juniper's wellness visit is in progress: charges on an open invoice, not paid yet.
     let appt = 0;
     openVisit(p.juniper, p.maria, 'Wellness visit', 40).then(({ appt: a, enc }) => {
@@ -71,10 +74,23 @@ describe('Training: MEM-02 enroll at the visit', () => {
     trace('m02-09'); line('m02-09', () => pointAt(() => cy.contains('.pmp-muted', 'Enrolling prices this visit'), 4500));
     trace('m02-10'); line('m02-10', () => {
       settle(() => cy.get('.pmp-enrol-card'));
-      pointAt(() => cy.get('.pmp-enrol-card'), 4000);
-      settle(planRow);
+      pointAt(() => cy.get('.pmp-enrol-card .pvms-field input'), 1200);
+      typeSlowly(() => cy.get('.pmp-enrol-card .pvms-field input'), 'Maria Rivera');
+      stripeField('.pmp-enrol-card .pvms-card-box', 'cardnumber', '4242424242424242');
+      stripeField('.pmp-enrol-card .pvms-card-box', 'exp-date', '1234');
+      stripeField('.pmp-enrol-card .pvms-card-box', 'cvc', '123');
+      stripeField('.pmp-enrol-card .pvms-card-box', 'postal', '27606');
     });
-    trace('m02-12'); line('m02-12', () => pointAt(planRow, 5000));
+    trace('m02-11'); line('m02-11', () => pointAt(() => cy.contains('.pmp-enrol-card .pmp-check', 'keep this card on file').find('span'), 2400));
+    trace('m02-11b'); line('m02-11b', () => {
+      tap(() => cy.contains('.pmp-enrol-card .pmp-check', 'keep this card on file').find('input'));
+      cy.contains('.pmp-enrol-card .pmp-check', 'keep this card on file').find('input').should('be.checked');
+      cy.wait(1200, { log: false }); // let the outline fade before the page scrolls to the plans
+    });
+    trace('m02-12'); line('m02-12', () => {
+      settle(planRow);
+      pointAt(planRow, 5000);
+    });
     trace('m02-13'); line('m02-13', () => tap(() => planRow().find('button')));
     trace('m02-14'); line('m02-14', () => pointAt(() => cy.contains('[role="dialog"], [role="alertdialog"]', 'Enroll in Membership - Feline Foundations - Monthly?'), 6000));
     trace('m02-15'); line('m02-15', () => tap(() => cy.contains('[role="dialog"] button, [role="alertdialog"] button', /^Enroll & add/)));
