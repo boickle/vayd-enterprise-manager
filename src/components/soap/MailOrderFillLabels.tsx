@@ -9,6 +9,23 @@ import { printMailOrderBagLabelDirect } from '../../utils/printRxLabel';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import type { MailOrder, MailOrderLine } from '../../api/onlineStore';
 
+/**
+ * The order's own notes for the bag label, without Scout's internal references (e.g. "invoice:<id>",
+ * "invoiceLine:<id>"), which printed on the label (owner, Nov 11, 2026).
+ */
+export function bagLabelOrderNotes(notes?: string | null): string {
+  return (notes || '')
+    .replace(/\b(?:invoice|invoiceLine|shippingLine|autoshipInvoice):\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The label window's Acute / Chronic: auto-ships are chronic; a refill follows its Rx; otherwise acute. */
+export function labelAcuity(line: Pick<MailOrderLine, 'autoship' | 'rxAcuity'>): 'acute' | 'chronic' {
+  if (line.autoship) return 'chronic';
+  return line.rxAcuity === 'chronic' ? 'chronic' : 'acute';
+}
+
 function clipNotes(value: string): string {
   const text = value.trim();
   if (text.length <= MAIL_ORDER_BAG_NOTES_MAX) return text;
@@ -90,7 +107,7 @@ export default function MailOrderFillLabels({
   const [status, setStatus] = useState<string | null>(null);
   const [bagNeedsDialog, setBagNeedsDialog] = useState(false);
 
-  const bagNotes = clipNotes([checkNotes, order.notes].filter(Boolean).join(' · '));
+  const bagNotes = clipNotes([checkNotes, bagLabelOrderNotes(order.notes)].filter(Boolean).join(' · '));
   const mailOrderNumber = `#${order.id}`;
   const patientWeight =
     formatBagWeightLabel(line.weightLbs, line.weightDate) ||
@@ -156,7 +173,7 @@ export default function MailOrderFillLabels({
           strength: line.strength,
           instructions: line.scriptText || '',
           refill: line.authorizedRefills ?? line.refillsRemaining ?? 0,
-          acuity: line.autoship ? 'chronic' : 'acute',
+          acuity: labelAcuity(line),
           rxNumber: line.rxNumber,
           mailOrderNumber,
           onSavePrescription: async (value) => {
