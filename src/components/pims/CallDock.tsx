@@ -69,6 +69,8 @@ type Props = {
   onDismiss?: () => void;
   /** Other calls sitting behind this one, like a bunch of post-its. */
   behind?: CallDockPeek[];
+  /** Shown under the stack, e.g. when there are more calls than the dock lists. */
+  stackNote?: string;
   onSelectBehind?: (key: string) => void;
 };
 
@@ -93,6 +95,7 @@ export default function CallDock({
   dismissLabel,
   onDismiss,
   behind = [],
+  stackNote,
   onSelectBehind,
 }: Props) {
   const [pos, setPos] = useState<Point>(() =>
@@ -220,6 +223,7 @@ export default function CallDock({
           ))}
         </div>
       ) : null}
+      {stackNote ? <p className="call-dock__stack-hint">{stackNote}</p> : null}
     </div>,
     document.body,
   );

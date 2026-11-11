@@ -1,6 +1,7 @@
 // src/App.tsx
 import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
 import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { keepNonProdTitlePrefix } from './utils/nonProdTitle';
 import { ChevronDown } from 'lucide-react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -94,6 +95,7 @@ import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import PromotionsLayout from './pages/marketing/PromotionsLayout';
 import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
 import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
@@ -437,6 +439,12 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+/** The Holds board moved into Appointments (Hold tab). Keep old links working. */
+function LegacyHoldsRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: HOLDS_PATH, search, hash }} replace />;
+}
+
 function LegacyMailOrdersRedirect() {
   const { search, hash } = useLocation();
   return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
@@ -522,6 +530,9 @@ export default function App() {
 
   const isProd = isProduction();
 
+  // Outside production, the tab title starts with "TEST · " (see utils/nonProdTitle).
+  useEffect(() => (isProd ? undefined : keepNonProdTitlePrefix()), [isProd]);
+
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
     if (location.pathname === '/store' || location.pathname.startsWith('/store/')) return '';
@@ -536,9 +547,12 @@ export default function App() {
     <div className={isProd ? 'app-root' : 'app-root app-root--nonprod'}>
       {!isProd && (
         <div className="app-nonprod-banner" role="banner" aria-live="polite">
-          Not production — you are using a development or staging environment
+          <span className="app-nonprod-banner__label">
+            NOT PRODUCTION — YOU ARE USING A DEVELOPMENT OR STAGING ENVIRONMENT
+          </span>
         </div>
       )}
+      {!isProd && <div className="app-nonprod-frame" aria-hidden="true" />}
       {token && !isClient ? <OfflineBanner /> : null}
       {token && !isClient ? <SmsDeliveryFailureBanner /> : null}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
@@ -788,13 +802,14 @@ export default function App() {
                       />
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
+                    <Route path="appointments/holds" element={<HoldsPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
-                    <Route path="holds" element={<HoldsPage />} />
+                    <Route path="holds" element={<LegacyHoldsRedirect />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
@@ -933,14 +948,16 @@ export default function App() {
                     />
                     <Route path="marketing" element={<EmailCampaignsPage />} />
                     {/* RP-08: promotions moved here from Admin; /schedule/admin/... redirects (admin-tabs.tsx). */}
-                    <Route
-                      path="marketing/membership-promotions"
-                      element={<MembershipPromotionsPage />}
-                    />
-                    <Route
-                      path="marketing/appointment-request-promotions"
-                      element={<AppointmentRequestPromotionsPage />}
-                    />
+                    <Route element={<PromotionsLayout />}>
+                      <Route
+                        path="marketing/membership-promotions"
+                        element={<MembershipPromotionsPage />}
+                      />
+                      <Route
+                        path="marketing/appointment-request-promotions"
+                        element={<AppointmentRequestPromotionsPage />}
+                      />
+                    </Route>
                     <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
                     <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>

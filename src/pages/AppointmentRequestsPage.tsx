@@ -5,7 +5,6 @@ import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   fetchAllAppointmentRequestSubmissions,
-  fetchAppointmentRequestGmailLink,
   fetchAppointmentRequestSubmission,
   fetchAppointmentRequestSubmissionsPage,
   fetchRemainingAppointmentRequestSubmissionPages,
@@ -28,7 +27,6 @@ import type { AppointmentRequestEmailSentContext } from '../components/Appointme
 import { AppointmentRequestDetailPanel } from '../components/AppointmentRequestDetailPanel';
 import { AppointmentRequestPdfDownloadLink } from '../components/AppointmentRequestPdfDownloadLink';
 import { AppointmentRequestPetSummaryList } from '../components/AppointmentRequestPetSummaryList';
-import { AppointmentRequestGmailThreadLabels } from '../components/AppointmentRequestGmailThreadLabels';
 import {
   AppointmentRequestManualBookModal,
   appointmentRequestHasSmsPhone,
@@ -42,11 +40,10 @@ import {
   requestDataCanText,
   requestDataClientId,
   requestDataClientType,
-  requestDataHadVetCareElsewhere,
   requestDataHowSoon,
   requestDataHowSoonUrgency,
-  requestDataMayWeAskForRecords,
   requestDataPetSummary,
+  requestDataEmail,
   requestDataPhone,
   requestDataPreferredDoctor,
   requestDataPreviousVeterinaryHospitals,
@@ -54,8 +51,6 @@ import {
   requestDataPrimaryProviderSummary,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
-  requestDataWantsEarlierAppointment,
-  EARLIER_APPOINTMENT_REQUEST_LABEL,
   appointmentRequestListTabForSubmission,
   fetchClientPimsIdLookup,
   resolveClientPimsIdForRequest,
@@ -68,7 +63,6 @@ import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequest
 import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClientId';
 import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
-import { AppointmentRequestAlternateAddressCallout } from '../components/AppointmentRequestAlternateAddressCallout';
 import { AppointmentRequestHandlingNeedsCallout } from '../components/AppointmentRequestHandlingNeedsCallout';
 import { EvetNameLink } from '../components/EvetNameLink';
 import { requestDataHasNewPatientSpecialHandlingNeeds } from '../utils/appointmentRequestHandlingNeeds';
@@ -97,15 +91,10 @@ import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { useAppointmentRequestGmailThreadLabels } from '../hooks/useAppointmentRequestGmailThreadLabels';
 import { getMessageLabelsForAppointmentList } from '../api/gmail';
 import {
-  APPOINTMENT_REQUEST_MAILBOX,
   applyApptRequestGmailOutcomeLabel,
-  isApptRequestOnHoldLabelId,
-  resolveApptRequestLabelIds,
 } from '../utils/gmailAppointmentRequestLabels';
 import { beginAppointmentRequestNotBookedFlow } from '../utils/appointmentRequestNotBookedFlow';
-import { beginAppointmentRequestOnHoldReleaseFlow } from '../utils/appointmentRequestOnHoldReleaseFlow';
 import {
-  buildGmailInboxReturnPath,
 } from '../utils/routingAppointmentRequestIntent';
 import {
   subscribePracticeCalendar,
@@ -116,15 +105,12 @@ import {
   initialNotesFromItem,
   isNoteDraftDirty,
   mergeNoteDraftsAfterListRefresh,
-  noteForPatch,
 } from '../utils/appointmentRequestNoteDrafts';
 import {
   appointmentRequestSubmissionIsOnHold,
   appointmentRequestSubmissionCountsAsBooked,
   appointmentRequestOnHoldOver24Hours,
   appointmentRequestBookedVisitLabels,
-  formatAppointmentRequestOnHoldBookedAt,
-  formatAppointmentRequestOnHoldElapsedSince,
   resolveAppointmentRequestBookedVisitSummary,
   type AppointmentRequestBookedApptSummary,
 } from '../utils/appointmentRequestOnHold';
@@ -167,6 +153,22 @@ import {
   type AppointmentRequestListTab,
 } from '../appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
+import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
+import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
+import { RouteButton } from '../components/appointmentRequests/RouteButton';
+import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
+import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
+import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
+import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
+import '../components/appointmentRequests/requestPanels.css';
+import '../components/appointmentRequests/apptTable.css';
+import {
+  appointmentRequestBookingPill,
+  appointmentRequestCommunicationPill,
+  receivedDateLabel,
+  requestDataTown,
+  visitDateShortLabel,
+} from '../utils/appointmentRequestTableRow';
 import {
   appointmentRequestsListPathMatches,
   resolveAppointmentsListEntryTab,
@@ -283,20 +285,6 @@ function submissionStatus(item: AppointmentRequestSubmissionItem): AppointmentRe
 /** Outreach done, not yet categorized booked or not booked — cleared when status becomes either. */
 function submissionShowsContactedChip(item: AppointmentRequestSubmissionItem): boolean {
   return submissionStatus(item) === 'contacted';
-}
-
-function ApptRequestStatusChip({
-  variant,
-  children,
-}: {
-  variant: 'booked' | 'not-booked' | 'contacted';
-  children: React.ReactNode;
-}) {
-  return (
-    <span className={`appt-request-status-chip appt-request-status-chip--${variant}`}>
-      {children}
-    </span>
-  );
 }
 
 function initialNotes(item: AppointmentRequestSubmissionItem): string {
@@ -534,7 +522,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
   const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
   const [noteSaving, setNoteSaving] = useState<Record<number, boolean>>({});
-  const [noteError, setNoteError] = useState<Record<number, string | null>>({});
 
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
   const [statusError, setStatusError] = useState<Record<number, string | null>>({});
@@ -579,10 +566,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const exitRowTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const pendingOnHoldEditReturnRef = useRef<OnHoldVisitEditReturnV1 | null>(null);
   const pendingNotBookedModalRef = useRef<number | null>(null);
-  const notBookedGmailLabelFlowRef = useRef(new Set<number>());
-  const onHoldGmailLabelFlowRef = useRef(new Set<number>());
 
-  const [expandedRowIds, setExpandedRowIds] = useState<Set<number>>(() => new Set());
+  /** Compact table: rows whose full request card is open under the summary line. */
+  const [openRowIds, setOpenRowIds] = useState<Set<number>>(() => new Set());
+  const [liaisons, setLiaisons] = useState<ClientLiaisonOption[]>([]);
+  const [liaisonSaving, setLiaisonSaving] = useState<Record<number, boolean>>({});
   const [listPage, setListPage] = useState(1);
 
   const rowsRef = useRef(rows);
@@ -603,14 +591,28 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const hydrateGenerationRef = useRef(0);
   const submissionBackfillGenRef = useRef(0);
 
-  const toggleRowExpanded = (id: number) => {
-    setExpandedRowIds((prev) => {
+  const toggleRowOpen = (id: number) => {
+    setOpenRowIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchClientLiaisons()
+      .then((list) => {
+        if (!cancelled) setLiaisons(list);
+      })
+      .catch(() => {
+        /* Liaison dropdown still shows the current owner. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [draftDetailOpen, setDraftDetailOpen] = useState(false);
   const [draftDetailLoading, setDraftDetailLoading] = useState(false);
@@ -771,7 +773,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         );
         if (!silent && !opts.isPartialBackfill) {
           setNoteSaving({});
-          setNoteError({});
         }
 
         knownSubmissionIdsRef.current = new Set(items.map((r) => r.id));
@@ -1181,7 +1182,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     if (statusFilter === 'on_hold') {
       return submissions
         .filter((item) => {
-          if (exitingRows.has(item.id)) return true;
+          if (exitingRows.has(item.id) || openRowIds.has(item.id)) return true;
           if (!appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog))
             return false;
           if (onHoldOver24Only) {
@@ -1211,14 +1212,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       return submissions
         .filter(
           (item) =>
-            exitingRows.has(item.id) || appointmentRequestNeedsStaffConfirmation(item),
+            exitingRows.has(item.id) ||
+            openRowIds.has(item.id) ||
+            appointmentRequestNeedsStaffConfirmation(item),
         )
         .sort(sortNewestFirst);
     }
 
     return submissions
       .filter((item) => {
-        if (exitingRows.has(item.id)) return true;
+        // An open row stays put while staff work it, even after its status moves on.
+        if (exitingRows.has(item.id) || openRowIds.has(item.id)) return true;
         if (submissionStatus(item) !== statusFilter) return false;
         if (
           statusFilter !== 'contacted' &&
@@ -1243,6 +1247,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     search,
     noteDrafts,
     exitingRows,
+    openRowIds,
     bookedApptMeta,
     typeCatalog,
   ]);
@@ -1338,16 +1343,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     gmailLabelContext,
   );
 
-  const gmailLabelsLoadingIds = useMemo(() => {
-    if (!canAccessGmailInbox) return new Set<number>();
-    const pending = new Set<number>();
-    for (const item of gmailThreadLinkItems) {
-      if (item.kind === 'abandoned') continue;
-      if (!gmailThreadLabelsBySubmission.has(item.id)) pending.add(item.id);
-    }
-    return pending;
-  }, [canAccessGmailInbox, gmailThreadLinkItems, gmailThreadLabelsBySubmission]);
-
   /** True when a New-tab row should show given the Gmail go-live cutoff. */
   const newTabRowVisibleAtLaunch = useCallback(
     (item: AppointmentRequestSubmissionItem): boolean => {
@@ -1389,117 +1384,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     newTabRowVisibleAtLaunch,
   ]);
 
-  const handleGmailThreadLabelsUpdated = useCallback(
-    (submissionId: number, entry: Parameters<typeof patchGmailThreadLabels>[1]) => {
-      patchGmailThreadLabels(submissionId, entry);
-    },
-    [patchGmailThreadLabels],
-  );
-
-  const handleGmailLabelsAdded = useCallback(
-    (item: AppointmentRequestSubmissionItem, addedLabelIds: string[]) => {
-      const notBookedLabelId = resolveApptRequestLabelIds(gmailUserLabels).notBooked;
-      if (!notBookedLabelId || !addedLabelIds.includes(notBookedLabelId)) return;
-      if ((item.status ?? 'new') === 'dismissed') return;
-      if (notBookedGmailLabelFlowRef.current.has(item.id)) return;
-
-      const thread = gmailThreadLabelsBySubmission.get(item.id);
-      const bookedSummary =
-        item.bookedAppointmentId != null
-          ? bookedApptMeta.get(Number(item.bookedAppointmentId))
-          : undefined;
-
-      notBookedGmailLabelFlowRef.current.add(item.id);
-      void beginAppointmentRequestNotBookedFlow({
-        submission: item,
-        returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
-        practiceTz,
-        navigate,
-        mailbox: thread?.mailbox ?? APPOINTMENT_REQUEST_MAILBOX,
-        threadId: thread?.threadId,
-        bookedApptSummary: bookedSummary ?? null,
-      })
-        .then((result) => {
-          if (result.kind === 'scheduler_remove') {
-            setNotice('Remove this visit from the calendar, then mark the request as not booked.');
-            return;
-          }
-          if (result.kind === 'needs_reason') {
-            setNotBookedItem(item);
-            setNotBookedReasonChoice('');
-            setNotBookedReasonOther('');
-            setNotBookedError(null);
-          }
-        })
-        .catch(() => {
-          setError('Could not start the not booked flow for this appointment request.');
-        })
-        .finally(() => {
-          notBookedGmailLabelFlowRef.current.delete(item.id);
-        });
-    },
-    [
-      gmailUserLabels,
-      gmailThreadLabelsBySubmission,
-      bookedApptMeta,
-      statusFilter,
-      onHoldOver24Only,
-      practiceTz,
-      navigate,
-    ],
-  );
-
-  const makeOnHoldGmailLabelRemoveGuard = useCallback(
-    (item: AppointmentRequestSubmissionItem) =>
-      async (labelId: string): Promise<boolean> => {
-        if (!isApptRequestOnHoldLabelId(labelId, gmailUserLabels)) return true;
-        if (onHoldGmailLabelFlowRef.current.has(item.id)) return false;
-
-        onHoldGmailLabelFlowRef.current.add(item.id);
-        try {
-          const thread = gmailThreadLabelsBySubmission.get(item.id);
-          const bookedSummary =
-            item.bookedAppointmentId != null
-              ? bookedApptMeta.get(Number(item.bookedAppointmentId))
-              : undefined;
-          const result = await beginAppointmentRequestOnHoldReleaseFlow({
-            submission: item,
-            returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
-            practiceTz,
-            navigate,
-            mailbox: thread?.mailbox ?? APPOINTMENT_REQUEST_MAILBOX,
-            threadId: thread?.threadId,
-            bookedApptSummary: bookedSummary ?? null,
-            bookedApptMeta,
-            typeCatalog,
-          });
-          if (result.kind === 'scheduler_edit') {
-            setNotice(
-              'Remove or convert this hold on the calendar before removing the On hold label.',
-            );
-            return false;
-          }
-          return true;
-        } catch {
-          setError('Could not verify the linked calendar hold. Try again.');
-          return false;
-        } finally {
-          onHoldGmailLabelFlowRef.current.delete(item.id);
-        }
-      },
-    [
-      gmailUserLabels,
-      gmailThreadLabelsBySubmission,
-      bookedApptMeta,
-      typeCatalog,
-      statusFilter,
-      onHoldOver24Only,
-      practiceTz,
-      navigate,
-    ],
-  );
-
-  const [gmailThreadOpeningId, setGmailThreadOpeningId] = useState<number | null>(null);
 
   useEffect(() => {
     setListPage(1);
@@ -1651,23 +1535,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     [mergeSubmission, hydrateBookedApptMeta],
   );
 
-  const flushNoteSave = useCallback(async (entryId: number, value: string) => {
-    setNoteSaving((s) => ({ ...s, [entryId]: true }));
-    setNoteError((e) => ({ ...e, [entryId]: null }));
-    try {
-      const updated = await patchAppointmentRequestSubmission(entryId, { notes: noteForPatch(value) });
-      mergeSubmission({ ...updated, kind: 'submission' });
-    } catch (e: unknown) {
-      const msg =
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        (e as Error)?.message ??
-        'Could not save note';
-      setNoteError((er) => ({ ...er, [entryId]: String(msg) }));
-    } finally {
-      setNoteSaving((s) => ({ ...s, [entryId]: false }));
-    }
-  }, [mergeSubmission]);
-
   const updateStatus = useCallback(
     async (
       item: AppointmentRequestSubmissionItem,
@@ -1705,6 +1572,29 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       }
     },
     [mergeSubmission, beginRowExit]
+  );
+
+  /** Liaison column: anyone can hand a request to anyone, or clear it. */
+  const changeLiaison = useCallback(
+    async (item: AppointmentRequestSubmissionItem, employeeId: number | null) => {
+      setLiaisonSaving((s) => ({ ...s, [item.id]: true }));
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await patchAppointmentRequestSubmission(item.id, {
+          liaisonEmployeeId: employeeId,
+        });
+        mergeSubmission({ ...updated, kind: 'submission' });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not change the liaison';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      } finally {
+        setLiaisonSaving((s) => ({ ...s, [item.id]: false }));
+      }
+    },
+    [mergeSubmission],
   );
 
   const openConfirmPreview = (item: AppointmentRequestSubmissionItem) => {
@@ -1851,20 +1741,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     }
   };
 
-  function onNoteChange(entryId: number, value: string) {
-    setNoteDrafts((d) => ({ ...d, [entryId]: value }));
-    setNoteError((er) => ({ ...er, [entryId]: null }));
-  }
-
-  function noteIsDirty(item: AppointmentRequestSubmissionItem): boolean {
-    return isNoteDraftDirty(item.id, item.notes, noteDraftsRef.current);
-  }
-
-  function saveNote(item: AppointmentRequestSubmissionItem) {
-    const value = noteDrafts[item.id] ?? initialNotes(item);
-    void flushNoteSave(item.id, value);
-  }
-
   const onBook = (item: AppointmentRequestSubmissionItem) => {
     const rd = item.requestData ?? {};
     writeAppointmentRequestListReturnTab(statusFilter);
@@ -1896,15 +1772,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   };
 
-  const openSmsModal = (item: AppointmentRequestSubmissionItem) => {
-    if (!appointmentRequestHasSmsPhone(item)) return;
-    setSmsError(null);
-    setSmsItem(item);
-    setSmsMessage('');
-    setSmsMessageLoading(true);
-    void resolveAppointmentRequestSmsMessage(item, practiceTz, { practiceId: PRACTICE_ID })
-      .then(setSmsMessage)
-      .finally(() => setSmsMessageLoading(false));
+  /** Re-Route → Explore alternatives: keep the current visit until a new time is picked. */
+  const onExploreAlternatives = (item: AppointmentRequestSubmissionItem) => {
+    writeAppointmentRequestListReturnTab(statusFilter);
+    void startRescheduleFromBookedAppointmentRequest({
+      submission: item,
+      practiceTz,
+      navigate,
+      exploreAlternatives: true,
+    }).then((result) => {
+      if (result.error) setError(result.error);
+    });
   };
 
   const closeSmsModal = () => {
@@ -1937,9 +1815,23 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   };
 
-  const openEmailClient = (item: AppointmentRequestSubmissionItem) => {
-    setEmailItem(item);
-  };
+  /** Contact from the conversation panel: mark a New request Contacted without moving the row away. */
+  const markContactedInPlace = useCallback(
+    async (item: AppointmentRequestSubmissionItem) => {
+      if (submissionStatus(item) !== 'new') return;
+      try {
+        const updated = await patchAppointmentRequestSubmission(item.id, { status: 'contacted' });
+        mergeSubmission({ ...updated, kind: 'submission' });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not mark contacted';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      }
+    },
+    [mergeSubmission],
+  );
 
   const markContactedAfterSuccessfulOutreach = useCallback(
     async (
@@ -2009,59 +1901,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const closeEmailModal = () => {
     setEmailItem(null);
   };
-
-  const renderEmailClientButton = (item: AppointmentRequestSubmissionItem) =>
-    canAccessGmailInbox ? (
-      <button
-        type="button"
-        className="btn secondary"
-        onClick={() => openEmailClient(item)}
-      >
-        Email client
-      </button>
-    ) : null;
-
-  const openGmailThread = useCallback(
-    async (item: AppointmentRequestSubmissionItem) => {
-      const cached = gmailThreadLabelsBySubmission.get(item.id);
-      setGmailThreadOpeningId(item.id);
-      try {
-        let threadId = cached?.threadId ?? item.gmailThreadId?.trim() ?? null;
-        let mailbox =
-          cached?.mailbox ?? item.gmailMailbox?.trim() ?? APPOINTMENT_REQUEST_MAILBOX;
-        if (!threadId) {
-          const link = await fetchAppointmentRequestGmailLink(item.id);
-          threadId = link.threadId?.trim() ?? null;
-          mailbox = link.mailbox?.trim() || mailbox;
-          if (threadId) {
-            handleGmailLinkResolved(item.id, { gmailThreadId: threadId, gmailMailbox: mailbox });
-          }
-        }
-        if (!threadId) {
-          setNotice('No Gmail thread found for this request yet.');
-          return;
-        }
-        navigate(buildGmailInboxReturnPath(mailbox, threadId));
-      } catch {
-        setNotice('Could not open the Gmail thread.');
-      } finally {
-        setGmailThreadOpeningId(null);
-      }
-    },
-    [gmailThreadLabelsBySubmission, navigate, handleGmailLinkResolved],
-  );
-
-  const renderGoToGmailThreadButton = (item: AppointmentRequestSubmissionItem) =>
-    canAccessGmailInbox ? (
-      <button
-        type="button"
-        className="btn secondary"
-        disabled={gmailThreadOpeningId === item.id}
-        onClick={() => void openGmailThread(item)}
-      >
-        {gmailThreadOpeningId === item.id ? 'Opening…' : 'Go to Gmail thread'}
-      </button>
-    ) : null;
 
   const handleSendSms = async (opts: { overrideNonProd: boolean }) => {
     if (!smsItem || !smsMessage.trim()) return;
@@ -2155,8 +1994,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   }
 
   return (
-    <div className="container">
-      <div className="settings-page">
+    <div className="container appt-requests-container">
+      <div className="settings-page appt-requests-page">
       <h1 className="settings-title">Appointments</h1>
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
         {isToConfirmView
@@ -2198,6 +2037,13 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             </button>
           );
         })}
+        <button
+          type="button"
+          className="appt-request-status-tab"
+          onClick={() => navigate(HOLDS_PATH)}
+        >
+          <span>Hold</span>
+        </button>
         <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load({ awaitHydration: true })} disabled={loading}>
           Refresh
         </button>
@@ -2236,7 +2082,18 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         </p>
       ) : (
         <div className="appt-request-list-wrap">
-        <ul className="appt-request-list">
+        <div className="appt-table-head" role="presentation">
+          <span>Request received</span>
+          <span />
+          <span>Client / Patient</span>
+          <span>Request</span>
+          <span>Location</span>
+          <span>Liaison</span>
+          <span>Route visit</span>
+          <span>Booking status</span>
+          <span>Communication status</span>
+        </div>
+        <ul className="appt-request-list appt-request-list--table">
           {displayList.map((item) => {
             if (isAbandonedItem(item)) {
               const rd = item.requestData ?? {};
@@ -2314,7 +2171,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Emergent / client type / Euthanasia — all mirrored or applied as Gmail
             // labels). Hide the duplicative Scout chips; keep only cues with no Gmail
             // equivalent (search-tab aid, text consent, auto-booked, convert-hold action).
-            const showScoutLabelChips = !canAccessGmailInbox;
             const bookedApptId = item.bookedAppointmentId;
             const bookedSummary =
               bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
@@ -2389,20 +2245,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     isOnHold: isOnHoldVisit,
                   })
                 : { bookedLabel: null, providerLabel: null };
-            const onHoldSinceIso = isOnHoldVisit ? bookedSummary?.appointmentBookedAtIso : null;
-            const onHoldBookedAtLabel = formatAppointmentRequestOnHoldBookedAt(onHoldSinceIso, practiceTz);
-            const onHoldElapsedLabel = formatAppointmentRequestOnHoldElapsedSince(onHoldSinceIso);
-            const onHoldOver24 =
-              isOnHoldVisit && appointmentRequestOnHoldOver24Hours(bookedSummary);
-            const clientNote = requestDataAnythingElse(rd);
-            const canText = requestDataCanText(rd);
             const howSoon = requestDataHowSoon(rd);
-            const preferredDoctor = requestDataPreferredDoctor(rd);
-            const hadVetCareElsewhere =
-              clientType === 'existing' ? requestDataHadVetCareElsewhere(rd) : null;
-            const mayWeAskForRecords = requestDataMayWeAskForRecords(rd);
-            const previousVeterinaryPractices = requestDataPreviousVeterinaryPractices(rd);
-            const previousVeterinaryHospitals = requestDataPreviousVeterinaryHospitals(rd);
             const visitAddress = formatRequestDataAddress(rd);
             const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
             const clientPimsId = resolveClientPimsIdForRequestCard(
@@ -2414,7 +2257,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const rowHighlighted = highlightEntryId === item.id;
             const exitKind = exitingRows.get(item.id);
             const rowExiting = exitKind != null;
-            const rowExpanded = expandedRowIds.has(item.id);
+            const rowOpen = openRowIds.has(item.id) || rowHighlighted;
+            const petNames = requestDataPetSummary(rd)
+              .split(',')
+              .map((p) => p.trim())
+              .filter((p) => p && p !== '—');
+            const primaryDoctor = requestDataPrimaryProviderSummary(rd);
+            const bookingPill = appointmentRequestBookingPill({
+              status,
+              isOnHold: isOnHoldVisit,
+              isBooked,
+              needsStaffConfirmation,
+              visitDateLabel: visitDateShortLabel(displayBookedSummary?.start, practiceTz),
+              notBookedReason: item.notBookedReason,
+            });
+            const commPill = appointmentRequestCommunicationPill(status, { needsStaffConfirmation });
+            const hasVisitForRoute = hasLinkedAppointment || autoBookedOnline;
 
             return (
               <li
@@ -2440,162 +2298,103 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         : 'Not Booked'}
                   </div>
                 ) : null}
-                <div className="appt-request-row-main">
-                  <div className="appt-request-row-body">
-                    {showHandlingNeedsPendingConfirmation ? (
-                      <AppointmentRequestHandlingNeedsCallout compact />
-                    ) : null}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                      {isSearchActive ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#f1f5f9',
-                            color: '#475569',
-                          }}
-                        >
-                          {statusTabLabel(item, status, { isOnHold: isOnHoldVisit })}
-                        </div>
-                      ) : null}
-                      {showScoutLabelChips && isBooked ? <ApptRequestStatusChip variant="booked">Booked</ApptRequestStatusChip> : null}
-                      {showScoutLabelChips && status === 'dismissed' ? (
-                        <ApptRequestStatusChip variant="not-booked">Not booked</ApptRequestStatusChip>
-                      ) : null}
-                      {showScoutLabelChips && submissionShowsContactedChip(item) ? (
-                        <ApptRequestStatusChip variant="contacted">Contacted</ApptRequestStatusChip>
-                      ) : null}
-                      {showScoutLabelChips && howSoonUrgency === 'emergent' ? (
-                        <span className="appt-request-urgency-chip appt-request-urgency-chip--emergent">
-                          Emergent
-                        </span>
-                      ) : showScoutLabelChips && howSoonUrgency === 'urgent' ? (
-                        <span className="appt-request-urgency-chip appt-request-urgency-chip--urgent">
+                <div
+                  className={`appt-table-row${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}`}
+                >
+                  <div className="appt-table-cell appt-table-received">
+                    <button
+                      type="button"
+                      className="appt-table-chevron"
+                      aria-expanded={rowOpen}
+                      aria-label={rowOpen ? 'Close request' : 'Open request'}
+                      onClick={() => toggleRowOpen(item.id)}
+                    >
+                      {rowOpen ? '▾' : '▸'}
+                    </button>
+                    <span>
+                      {receivedDateLabel(item.submittedAt, practiceTz)}
+                      {howSoonUrgency ? (
+                        <span className="appt-table-urgent" title={howSoon ?? undefined}>
                           Urgent
                         </span>
                       ) : null}
-                      {clientType !== 'unknown' ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: clientType === 'existing' ? '#e0e7ff' : '#dcfce7',
-                            color: clientType === 'existing' ? '#3730a3' : '#166534',
-                          }}
-                        >
-                          {clientType === 'existing' ? 'Existing client' : 'New client'}
-                        </div>
+                    </span>
+                  </div>
+                  <div className="appt-table-cell appt-table-client-type">
+                    {clientType === 'existing' ? 'Existing' : clientType === 'new' ? 'New' : ''}
+                  </div>
+                  <div className="appt-table-cell">
+                    <button
+                      type="button"
+                      className="appt-table-client"
+                      aria-expanded={rowOpen}
+                      title={rowOpen ? 'Close request' : 'Open request'}
+                      onClick={() => toggleRowOpen(item.id)}
+                    >
+                      <span className="appt-table-client-name">{name}</span>
+                      {petNames.length > 0 ? (
+                        <span className="appt-table-pets">
+                          {petNames.map((p) => (
+                            <span key={p} className="appt-table-pet">
+                              {p}
+                            </span>
+                          ))}
+                        </span>
                       ) : null}
-                      {showScoutLabelChips && isEuth ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#fce7f3',
-                            color: '#9d174d',
-                          }}
-                        >
-                          Euthanasia / end-of-life
-                        </div>
+                      {primaryDoctor ? (
+                        <span className="appt-table-primary">Primary: {primaryDoctor}</span>
                       ) : null}
-                      {canText === 'Yes' ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#ecfdf5',
-                            color: '#047857',
-                          }}
-                        >
-                          OK to text
-                        </div>
-                      ) : canText === 'No' ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#f1f5f9',
-                            color: '#475569',
-                          }}
-                        >
-                          No text consent
-                        </div>
-                      ) : null}
-                      {autoBookedOnline ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#dbeafe',
-                            color: '#1d4ed8',
-                          }}
-                        >
-                          Auto-booked online
-                        </div>
-                      ) : null}
-                      {showScoutLabelChips && isOnHoldVisit ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#fef3c7',
-                            color: '#92400e',
-                          }}
-                        >
-                          On hold
-                        </div>
-                      ) : null}
-                      {clientType === 'new' && hasLinkedAppointment && isOnHoldVisit ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#fef3c7',
-                            color: '#92400e',
-                          }}
-                        >
-                          On hold
-                        </div>
-                      ) : null}
-                    </div>
-                    {canAccessGmailInbox ? (
-                      <AppointmentRequestGmailThreadLabels
-                        thread={gmailThreadLabelsBySubmission.get(item.id)}
-                        userLabels={gmailUserLabels}
-                        labelById={gmailLabelById}
-                        loading={gmailLabelsLoadingIds.has(item.id)}
-                        onLabelsUpdated={(entry) => handleGmailThreadLabelsUpdated(item.id, entry)}
-                        onLabelsAdded={(added) => handleGmailLabelsAdded(item, added)}
-                        beforeRemoveLabel={makeOnHoldGmailLabelRemoveGuard(item)}
-                        onError={(message) => setError(message)}
-                      />
+                    </button>
+                  </div>
+                  <div className="appt-table-cell appt-table-strong">
+                    {requestDataTypeNamesLabel(rd) ?? (isEuth ? 'Euthanasia' : '—')}
+                  </div>
+                  <div className="appt-table-cell appt-table-location">
+                    <span className="appt-table-strong">{requestDataTown(rd) ?? '—'}</span>
+                    {item.zoneName ? (
+                      <span className="appt-table-zone" title="Service zone">
+                        {item.zoneName}
+                      </span>
                     ) : null}
-                    <div className="appt-request-client-block">
-                      <div className="appt-request-client-name">
+                  </div>
+                  <div className="appt-table-cell">
+                    <LiaisonSelect
+                      value={item.liaison ?? null}
+                      liaisons={liaisons}
+                      saving={Boolean(liaisonSaving[item.id])}
+                      onChange={(employeeId) => void changeLiaison(item, employeeId)}
+                      ariaLabel={`Liaison for ${name}`}
+                    />
+                  </div>
+                  <div className="appt-table-cell">
+                    <RouteButton
+                      hasVisit={hasVisitForRoute}
+                      disabled={isDismissed}
+                      onRoute={() => onBook(item)}
+                      onReschedule={hasLinkedAppointment ? () => onReschedule(item) : undefined}
+                      onExploreAlternatives={
+                        hasLinkedAppointment ? () => onExploreAlternatives(item) : undefined
+                      }
+                    />
+                  </div>
+                  <div className="appt-table-cell">
+                    <span className={`appt-table-pill appt-table-pill--${bookingPill.tone}`}>
+                      <span>{bookingPill.label}</span>
+                      {bookingPill.detail ? (
+                        <span className="appt-table-pill-detail">{bookingPill.detail}</span>
+                      ) : null}
+                    </span>
+                  </div>
+                  <div className="appt-table-cell">
+                    <span className={`appt-table-pill appt-table-pill--comm-${commPill.tone}`}>
+                      {commPill.label}
+                    </span>
+                  </div>
+                </div>
+                {rowOpen ? (
+                  <div className="appt-table-open">
+                    <RequestDetailsPanel
+                      clientName={
                         <AppointmentRequestClientNameChange
                           requestClientLabel={name}
                           linkedClientLabel={bookedSummary?.linkedClientLabel}
@@ -2614,345 +2413,132 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                               : undefined
                           }
                         />
-                        {phone ? <span className="appt-request-client-phone">{phone}</span> : null}
-                      </div>
-                      {usesAlternateVisitAddress && visitAddress ? (
-                        <AppointmentRequestAlternateAddressCallout address={visitAddress} compact />
-                      ) : visitAddress ? (
-                        <div className="appt-request-client-address">
-                          <span className="appt-request-client-address-label">Address</span>
-                          <span>{visitAddress}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                    <AppointmentRequestPetSummaryList
-                      requestData={rd}
+                      }
+                      clientType={clientType}
+                      phone={phone}
+                      email={requestDataEmail(rd)}
+                      address={visitAddress}
+                      alternateAddress={usesAlternateVisitAddress}
+                      howSoon={howSoon}
+                      visitLine={
+                        autoBookedOnline && autoBookedVisit.bookedLabel
+                          ? [autoBookedVisit.bookedLabel, autoBookedVisit.providerLabel].filter(Boolean).join(' · ')
+                          : linkedVisitLine
+                      }
+                      notBookedReason={isDismissed ? item.notBookedReason ?? null : null}
+                      callout={
+                        showHandlingNeedsPendingConfirmation ? (
+                          <AppointmentRequestHandlingNeedsCallout compact />
+                        ) : null
+                      }
+                      pets={
+                        <AppointmentRequestPetSummaryList
+                          requestData={rd}
+                          practiceId={PRACTICE_ID}
+                          practiceTz={practiceTz}
+                          linkedAppointment={linkedAppointment}
+                        />
+                      }
+                      notes={item.notes ?? ''}
+                      onSaveNotes={async (text) => {
+                        const updated = await patchAppointmentRequestSubmission(item.id, { notes: text });
+                        mergeSubmission({ ...updated, kind: 'submission' });
+                      }}
+                      fullRequest={
+                        <AppointmentRequestDetailPanel
+                          requestData={rd}
+                          practiceId={PRACTICE_ID}
+                          practiceTz={practiceTz}
+                          clientPimsId={clientPimsId}
+                          linkedAppointment={linkedAppointment}
+                          submissionId={item.id}
+                          showHandlingNeedsPendingConfirmation={showHandlingNeedsPendingConfirmation}
+                        />
+                      }
+                      pdfLink={
+                        isCompletedSubmission(item) ? (
+                          <AppointmentRequestPdfDownloadLink submissionId={item.id} clientLabel={name} />
+                        ) : null
+                      }
+                    />
+                    <RequestConversationPanel
+                      item={item}
                       practiceId={PRACTICE_ID}
                       practiceTz={practiceTz}
-                      linkedAppointment={linkedAppointment}
-                    />
-                    <dl className="appt-request-meta-list">
-                      <div className="appt-request-meta-line">
-                        <dt className="appt-request-meta-label">Submitted</dt>
-                        <dd className="appt-request-meta-value">
-                          {formatSubmittedAt(item.submittedAt, practiceTz)}
-                        </dd>
-                      </div>
-                      {autoBookedOnline && autoBookedVisit.bookedLabel ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Booked</dt>
-                          <dd className="appt-request-meta-value">{autoBookedVisit.bookedLabel}</dd>
-                        </div>
-                      ) : null}
-                      {autoBookedOnline && autoBookedVisit.providerLabel ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">With</dt>
-                          <dd className="appt-request-meta-value">{autoBookedVisit.providerLabel}</dd>
-                        </div>
-                      ) : null}
-                      {howSoon ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Timing</dt>
-                          <dd className="appt-request-meta-value">{howSoon}</dd>
-                        </div>
-                      ) : null}
-                      {requestDataWantsEarlierAppointment(rd) ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Earlier appointment</dt>
-                          <dd className="appt-request-meta-value">{EARLIER_APPOINTMENT_REQUEST_LABEL}</dd>
-                        </div>
-                      ) : null}
-                      {preferredDoctor ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Preferred doctor</dt>
-                          <dd className="appt-request-meta-value">{preferredDoctor}</dd>
-                        </div>
-                      ) : null}
-                      {hadVetCareElsewhere ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Care elsewhere since last visit</dt>
-                          <dd className="appt-request-meta-value">{hadVetCareElsewhere}</dd>
-                        </div>
-                      ) : null}
-                      {mayWeAskForRecords ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">May ask for records</dt>
-                          <dd className="appt-request-meta-value">{mayWeAskForRecords}</dd>
-                        </div>
-                      ) : null}
-                      {isCompletedSubmission(item) ? (
-                        <div className="appt-request-meta-line">
-                          <dt className="appt-request-meta-label">Request PDF</dt>
-                          <dd className="appt-request-meta-value">
-                            <AppointmentRequestPdfDownloadLink submissionId={item.id} clientLabel={name} />
-                          </dd>
-                        </div>
-                      ) : null}
-                    </dl>
-                    {previousVeterinaryPractices ? (
-                      <div className="appt-request-client-note">
-                        <span className="appt-request-client-note-label">Previous vet practices</span>
-                        <span className="appt-request-client-note-value">
-                          {previousVeterinaryPractices}
-                        </span>
-                      </div>
-                    ) : null}
-                    {previousVeterinaryHospitals ? (
-                      <div className="appt-request-client-note">
-                        <span className="appt-request-client-note-label">Other hospitals since last visit</span>
-                        <span className="appt-request-client-note-value">
-                          {previousVeterinaryHospitals}
-                        </span>
-                      </div>
-                    ) : null}
-                    {clientNote ? (
-                      <div className="appt-request-client-note">
-                        <span className="appt-request-client-note-label">Client note</span>
-                        <span className="appt-request-client-note-value">{clientNote}</span>
-                      </div>
-                    ) : null}
-                    {linkedVisitLine ? (
-                      <div
-                        style={{
-                          fontSize: '0.88rem',
-                          marginTop: 4,
-                          fontWeight: 600,
-                          color: isOnHoldVisit ? '#92400e' : 'var(--text, #1e293b)',
-                        }}
-                      >
-                        {linkedVisitLine}
-                      </div>
-                    ) : null}
-                    {isOnHoldVisit && onHoldBookedAtLabel ? (
-                      <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
-                        Hold placed {onHoldBookedAtLabel}
-                        {onHoldElapsedLabel ? ` · ${onHoldElapsedLabel} ago` : ''}
-                        {onHoldOver24 ? (
-                          <span style={{ color: '#991b1b', fontWeight: 600, marginLeft: 6 }}>
-                            Over 24 hours
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {isDismissed && item.notBookedReason ? (
-                      <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
-                        Not booked: {item.notBookedReason}
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="appt-request-expand-btn"
-                      aria-expanded={rowExpanded}
-                      onClick={() => toggleRowExpanded(item.id)}
-                    >
-                      <span
-                        className={
-                          rowExpanded
-                            ? 'appt-request-expand-chevron appt-request-expand-chevron--open'
-                            : 'appt-request-expand-chevron'
-                        }
-                        aria-hidden
-                      >
-                        ▼
-                      </span>
-                      {rowExpanded ? 'Hide full request' : 'View full request'}
-                    </button>
-                  </div>
-
-                  <div className="appt-request-row-actions">
-                    {needsManualBook ? (
-                      <>
-                        {appointmentRequestHasSmsPhone(item) ? (
-                          <button type="button" className="btn secondary" onClick={() => openSmsModal(item)}>
-                            Text client
-                          </button>
-                        ) : null}
-                        {renderEmailClientButton(item)}
-                        {renderGoToGmailThreadButton(item)}
-                        <button type="button" className="btn primary" onClick={() => onBook(item)}>
-                          Book
-                        </button>
-                        {status === 'new' ? (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            disabled={Boolean(statusUpdating[item.id])}
-                            onClick={() => void updateStatus(item, 'contacted')}
-                          >
-                            {statusUpdating[item.id] ? 'Saving…' : 'Mark contacted'}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          onClick={() => setManualBookModal({ item, relink: false })}
-                        >
-                          Link appointment…
-                        </button>
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(statusUpdating[item.id])}
-                          onClick={() => openNotBookedModal(item)}
-                        >
-                          {statusUpdating[item.id] ? 'Saving…' : 'Not booked'}
-                        </button>
-                      </>
-                    ) : isOnHoldVisit || needsStaffConfirmation ? (
-                      <>
-                        {needsStaffConfirmation ? (
-                          <button
-                            type="button"
-                            className="btn primary"
-                            disabled={Boolean(statusUpdating[item.id])}
-                            onClick={() => openConfirmPreview(item)}
-                          >
-                            {statusUpdating[item.id] ? 'Saving…' : 'Confirm'}
-                          </button>
-                        ) : null}
-                        {appointmentRequestHasSmsPhone(item) ? (
-                          <button type="button" className="btn secondary" onClick={() => openSmsModal(item)}>
-                            Text client
-                          </button>
-                        ) : null}
-                        {renderEmailClientButton(item)}
-                        {renderGoToGmailThreadButton(item)}
-                        {!needsStaffConfirmation ? (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            onClick={() => onViewAppointment(item)}
-                          >
-                            View appointment
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(statusUpdating[item.id])}
-                          onClick={() => openNotBookedModal(item)}
-                        >
-                          Not booked
-                        </button>
-                      </>
-                    ) : isBooked || hasLinkedAppointment ? (
-                      <>
-                        {needsStaffConfirmation ? (
-                          <button
-                            type="button"
-                            className="btn primary"
-                            disabled={Boolean(statusUpdating[item.id])}
-                            onClick={() => openConfirmPreview(item)}
-                          >
-                            {statusUpdating[item.id] ? 'Saving…' : 'Confirm'}
-                          </button>
-                        ) : null}
-                        {appointmentRequestHasSmsPhone(item) ? (
-                          <button type="button" className="btn secondary" onClick={() => openSmsModal(item)}>
-                            Text client
-                          </button>
-                        ) : null}
-                        {renderEmailClientButton(item)}
-                        {renderGoToGmailThreadButton(item)}
-                        {!needsStaffConfirmation ? (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            onClick={() => onViewAppointment(item)}
-                          >
-                            View appointment
-                          </button>
-                        ) : null}
-                        {isBooked ? (
-                          <button type="button" className="btn secondary" onClick={() => onReschedule(item)}>
-                            Reschedule
-                          </button>
-                        ) : null}
-                        {statusFilter === 'booked' && isBooked && hasLinkedAppointment ? (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            onClick={() => setManualBookModal({ item, relink: true })}
-                          >
-                            Re-link appointment…
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(statusUpdating[item.id])}
-                          onClick={() => openNotBookedModal(item)}
-                        >
-                          Not booked
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        {appointmentRequestHasSmsPhone(item) ? (
-                          <button type="button" className="btn secondary" onClick={() => openSmsModal(item)}>
-                            Text client
-                          </button>
-                        ) : null}
-                        {renderEmailClientButton(item)}
-                        {renderGoToGmailThreadButton(item)}
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(statusUpdating[item.id])}
-                          onClick={() => void updateStatus(item, 'new')}
-                        >
-                          Reopen
-                        </button>
-                      </>
-                    )}
-                    {statusError[item.id] ? (
-                      <span style={{ color: '#b91c1c', fontSize: 12, width: '100%' }}>
-                        {statusError[item.id]}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="appt-request-row-footer">
-                  <div className="appt-request-row-notes">
-                    <div className="appt-request-row-notes-head">
-                      <label htmlFor={`appt-request-note-${item.id}`}>Notes</label>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        style={{ fontSize: 12, padding: '4px 12px' }}
-                        disabled={isDismissed || !noteIsDirty(item) || Boolean(noteSaving[item.id])}
-                        onClick={() => saveNote(item)}
-                      >
-                        {noteSaving[item.id] ? 'Saving…' : 'Save'}
-                      </button>
-                    </div>
-                    <textarea
-                      id={`appt-request-note-${item.id}`}
-                      className="settings-input appt-request-row-notes-input"
-                      rows={2}
-                      value={noteDrafts[item.id] ?? initialNotes(item)}
-                      onChange={(e) => onNoteChange(item.id, e.target.value)}
-                      placeholder="e.g. Left voicemail; will try again tomorrow."
-                      disabled={isDismissed || Boolean(noteSaving[item.id])}
-                    />
-                    {noteError[item.id] ? (
-                      <span className="appt-request-row-notes-error">{noteError[item.id]}</span>
-                    ) : null}
-                  </div>
-                </div>
-
-                {rowExpanded ? (
-                  <div className="appt-request-row-detail">
-                    <AppointmentRequestDetailPanel
-                      requestData={rd}
-                      practiceId={PRACTICE_ID}
-                      practiceTz={practiceTz}
-                      clientPimsId={clientPimsId}
-                      linkedAppointment={linkedAppointment}
-                      submissionId={item.kind === 'abandoned' ? null : item.id}
-                      showHandlingNeedsPendingConfirmation={
-                        showHandlingNeedsPendingConfirmation
+                      onContacted={(contacted) => void markContactedInPlace(contacted)}
+                      onSubmissionUpdated={(updated) => mergeSubmission({ ...updated, kind: 'submission' })}
+                      onGmailLinked={(patch) => handleGmailLinkResolved(item.id, {
+                        gmailThreadId: patch.gmailThreadId,
+                        gmailMailbox: patch.gmailMailbox,
+                      })}
+                      actions={
+                        <>
+                          {needsStaffConfirmation ? (
+                            <button
+                              type="button"
+                              className="req-action req-action--primary"
+                              disabled={Boolean(statusUpdating[item.id])}
+                              onClick={() => openConfirmPreview(item)}
+                            >
+                              {statusUpdating[item.id] ? 'Saving…' : 'Confirm appointment'}
+                            </button>
+                          ) : null}
+                          {needsManualBook ? (
+                            <button type="button" className="req-action req-action--primary" onClick={() => onBook(item)}>
+                              Route
+                            </button>
+                          ) : null}
+                          {hasLinkedAppointment && !needsStaffConfirmation ? (
+                            <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
+                              {isOnHoldVisit ? 'Open hold' : 'View appointment'}
+                            </button>
+                          ) : null}
+                          {hasLinkedAppointment && !isDismissed ? (
+                            <RouteButton
+                              hasVisit
+                              inline
+                              onReschedule={() => onReschedule(item)}
+                              onExploreAlternatives={() => onExploreAlternatives(item)}
+                            />
+                          ) : null}
+                          {isDismissed ? (
+                            <button
+                              type="button"
+                              className="req-action"
+                              disabled={Boolean(statusUpdating[item.id])}
+                              onClick={() => void updateStatus(item, 'new')}
+                            >
+                              Reopen
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="req-action req-action--quiet"
+                              disabled={Boolean(statusUpdating[item.id])}
+                              onClick={() => openNotBookedModal(item)}
+                            >
+                              Not booked…
+                            </button>
+                          )}
+                          <MoreActionsMenu
+                            items={[
+                              ...(!isDismissed
+                                ? [
+                                    {
+                                      label: hasLinkedAppointment ? 'Re-link appointment…' : 'Link existing appointment…',
+                                      onClick: () => setManualBookModal({ item, relink: hasLinkedAppointment }),
+                                    },
+                                  ]
+                                : []),
+                              ...(status === 'contacted'
+                                ? [{ label: 'Move back to New', onClick: () => void updateStatus(item, 'new') }]
+                                : []),
+                            ]}
+                          />
+                          {statusError[item.id] ? (
+                            <span className="req-action-error">{statusError[item.id]}</span>
+                          ) : null}
+                        </>
                       }
                     />
                   </div>

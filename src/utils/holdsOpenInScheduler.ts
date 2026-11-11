@@ -343,6 +343,8 @@ export async function beginHoldReschedule(args: {
   practiceId: number;
   /** Where "Dismiss" in the reschedule workspace should return (the Holds board). */
   returnPath?: string;
+  /** Open Routing in Explore alternatives mode instead of a straight reschedule. */
+  exploreAlternatives?: boolean;
 }): Promise<BeginHoldRescheduleResult> {
   const { hold, householdHolds, navigate, practiceTz, practiceId, returnPath } = args;
   const appt = await fetchAppointmentById(hold.id, { practiceId });
@@ -373,6 +375,7 @@ export async function beginHoldReschedule(args: {
     practiceTz,
     allowAddressOnly: true,
     sameCalendarDayAppointments,
+    ...(args.exploreAlternatives ? { exploreAlternatives: true } : {}),
   });
   if (!intent) {
     return {

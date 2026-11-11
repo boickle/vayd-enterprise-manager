@@ -22,9 +22,8 @@ import { LABS_HOME, isLabsNavPath } from '../utils/labsNav';
 import { useCan, useMayShow, usePermissions } from '../permissions/PermissionContext';
 import { canOpenSettings } from '../permissions/settingsTabAccess';
 import {
-  APPOINTMENT_REQUEST_PROMOTIONS_PATH,
   EMAIL_CAMPAIGNS_PATH,
-  MEMBERSHIP_PROMOTIONS_PATH,
+  PROMOTIONS_PATH,
   isEmailCampaignsNavPath,
   isMarketingNavPath,
   isPromotionsNavPath,
@@ -87,7 +86,6 @@ function SchedulingSubmenuLinks({
     location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
     !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
-  const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
@@ -148,19 +146,6 @@ function SchedulingSubmenuLinks({
         Appointments
       </Link>
       <Link
-        to={HOLDS_PATH}
-        className={`schedule-app__settings-link${
-          holdsActive ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={(e) => {
-          if (blockScheduleNavLeave(e)) return;
-          onNavigate();
-        }}
-      >
-        Holds
-      </Link>
-      <Link
         to={EXIT_SURVEY_PATH}
         className={`schedule-app__settings-link${
           exitSurveyActive ? ' schedule-app__settings-link--active' : ''
@@ -191,13 +176,12 @@ function SchedulingSubmenuLinks({
 }
 
 /**
- * Marketing menu (RP-08, owner decision D3 menus): Promotions opens a submenu with Membership
- * Promotions and Appointment Request Promotions; Email campaigns is the campaigns list.
+ * Marketing menu (RP-08, owner decision D3 menus; Nov 11: two links only): Promotions opens the
+ * Promotions page, whose tabs are Membership Promotions and Appointment Request Promotions (like
+ * Labs). Email campaigns is the campaigns list.
  */
 function MarketingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
-  const onPromotions = isPromotionsNavPath(location.pathname);
-  const [promotionsOpen, setPromotionsOpen] = useState(onPromotions);
   const linkClass = (active: boolean) =>
     `schedule-app__settings-link${active ? ' schedule-app__settings-link--active' : ''}`;
   const onClick = (e: { preventDefault: () => void }) => {
@@ -206,46 +190,14 @@ function MarketingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   };
   return (
     <>
-      <button
-        type="button"
-        className={`${linkClass(onPromotions)} schedule-app__settings-submenu-trigger`}
-        aria-haspopup="menu"
-        aria-expanded={promotionsOpen}
-        onClick={() => setPromotionsOpen((open) => !open)}
+      <Link
+        to={PROMOTIONS_PATH}
+        className={linkClass(isPromotionsNavPath(location.pathname))}
+        role="menuitem"
+        onClick={onClick}
       >
         Promotions
-        <ChevronDown
-          size={14}
-          aria-hidden
-          className={`schedule-app__settings-submenu-chevron${
-            promotionsOpen ? ' schedule-app__settings-submenu-chevron--open' : ''
-          }`}
-        />
-      </button>
-      {promotionsOpen ? (
-        <div
-          className="schedule-app__settings-submenu-children"
-          role="menu"
-          aria-label="Promotions"
-        >
-          <Link
-            to={MEMBERSHIP_PROMOTIONS_PATH}
-            className={linkClass(location.pathname.startsWith(MEMBERSHIP_PROMOTIONS_PATH))}
-            role="menuitem"
-            onClick={onClick}
-          >
-            Membership Promotions
-          </Link>
-          <Link
-            to={APPOINTMENT_REQUEST_PROMOTIONS_PATH}
-            className={linkClass(location.pathname.startsWith(APPOINTMENT_REQUEST_PROMOTIONS_PATH))}
-            role="menuitem"
-            onClick={onClick}
-          >
-            Appointment Request Promotions
-          </Link>
-        </div>
-      ) : null}
+      </Link>
       <Link
         to={EMAIL_CAMPAIGNS_PATH}
         className={linkClass(isEmailCampaignsNavPath(location.pathname))}

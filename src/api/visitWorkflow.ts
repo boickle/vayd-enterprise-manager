@@ -1163,11 +1163,14 @@ export async function listPatientPrescriptions(
   return data;
 }
 
-/** Mark a prescription as no longer taking (or clear that mark). */
+/**
+ * Mark a prescription as no longer taking (or clear that mark), change its refills, or link a chronic med
+ * to a catalog item (inventoryItemId) so the client can reorder it in the portal.
+ */
 export async function updatePatientPrescription(
   id: number,
   /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
-  body: { discontinued?: boolean; refill?: number; patientId?: number }
+  body: { discontinued?: boolean; refill?: number; patientId?: number; inventoryItemId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,

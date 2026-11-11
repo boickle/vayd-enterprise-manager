@@ -22,8 +22,14 @@ const QUICK_DUE = 10;
 export function addedSummary(
   r: Pick<AddWeeklyCountItemsResult, 'added' | 'alreadyOnSheet' | 'notCountable'>
 ): string {
-  const parts = [`Added ${r.added} item${r.added === 1 ? '' : 's'} to the weekly count`];
-  if (r.alreadyOnSheet) parts.push(`${r.alreadyOnSheet} already on it`);
+  const parts: string[] = [];
+  if (r.added > 0 || !r.alreadyOnSheet) parts.push(`Added ${r.added} item${r.added === 1 ? '' : 's'} to the weekly count`);
+  if (r.alreadyOnSheet) {
+    // Nothing new to add: say it will be counted, not "Added 0" (which reads like a failure).
+    if (r.added > 0) parts.push(`${r.alreadyOnSheet} already on it`);
+    else if (r.alreadyOnSheet === 1) parts.push("Already on this week's count, so it will be counted there");
+    else parts.push(`All ${r.alreadyOnSheet} already on this week's count, so they will be counted there`);
+  }
   if (r.notCountable) parts.push(`${r.notCountable} not a countable stock item`);
   return parts.join(' · ');
 }

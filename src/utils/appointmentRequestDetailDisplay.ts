@@ -257,6 +257,8 @@ function petRowSummariesFromPetSpecificData(
       patientPimsId: pet ? patientPimsIdFromRequestPet(pet) : null,
       appointmentType,
       appointmentTypeId,
+      typeName: specific ? pickStr(specific.appointmentTypeName) : null,
+      reason: specific ? pickStr(specific.needsToday) : null,
       usesCalmingMedications: pickStr(specific.needsCalmingMedications) === 'Yes',
       primaryProvider: pet && !isNew ? petPrimaryProviderName(pet) : null,
       clientDetails: buildAppointmentRequestPetClientDetails(requestData, specific, {
@@ -280,6 +282,10 @@ export type AppointmentRequestPetRowSummary = {
   patientPimsId: string | null;
   appointmentType: string | null;
   appointmentTypeId: number | null;
+  /** Booking type on the form for this pet ("Standard"), not the client-facing reason. */
+  typeName?: string | null;
+  /** What the client picked as the reason ("Wellness visit / check-up"). */
+  reason?: string | null;
   /** Client reported calming meds — pet books as the flagged Pre-Meds type. */
   usesCalmingMedications?: boolean;
   primaryProvider: string | null;
@@ -326,6 +332,8 @@ export function requestDataPetRowSummaries(
       patientPimsId: patientPimsIdFromRequestPet(pet),
       appointmentType,
       appointmentTypeId,
+      typeName: specific ? pickStr(specific.appointmentTypeName) : null,
+      reason: specific ? pickStr(specific.needsToday) : null,
       usesCalmingMedications:
         pickStr(specific?.needsCalmingMedications) === 'Yes',
       primaryProvider: isNew ? null : petPrimaryProviderName(pet),
@@ -632,4 +640,17 @@ export function buildAppointmentRequestDetailSections(
   if (otherPersons) other.push(asRow('Others on account', otherPersons, 'note'));
 
   return { client, address, pets, veterinaryHistory, scheduling, other };
+}
+
+/**
+ * Request column on the Appointments list: the booking type names on the form ("Standard",
+ * "Standard, Recheck"), falling back to the client-facing request label.
+ */
+export function requestDataTypeNamesLabel(requestData: Record<string, unknown>): string | null {
+  const names: string[] = [];
+  for (const row of requestDataPetRowSummaries(requestData)) {
+    const n = row.typeName?.trim();
+    if (n && !names.includes(n)) names.push(n);
+  }
+  return names.length > 0 ? names.join(', ') : pickStr(requestData.appointmentType);
 }
