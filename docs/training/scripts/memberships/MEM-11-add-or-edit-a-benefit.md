@@ -2,10 +2,12 @@
 
 > **Dry run:** passed Nov 9, 2026 (`cypress/training/mem-11-add-or-edit-a-benefit.cy.ts`; its narration file is the final wording). Changes from this draft: the catalog pick is its own line; demo item is Ear cytology (the test catalog has no nail trim).
 
-- **Audience:** lead CLs and managers (medical director and billing for their own patients). Filmed as Robin Hale.
+- **Audience:** everyone; only lead CLs, managers and admins can add or edit (permission narrowed Nov 10, 2026). Filmed as Robin Hale (manager). File roles: CL, Tech, DVM, Manager.
 - **Length:** about 1¼ minutes.
 - **Watch first:** MEM-10.
 - **The one thing to remember:** it changes this pet only, never the plan.
+
+> **Owner review, Nov 10, 2026:** line m11-02b says only lead CLs, managers and admins add or change benefits; everyone else asks them.
 
 ## Why (opening)
 

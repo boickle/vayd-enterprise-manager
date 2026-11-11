@@ -1,15 +1,17 @@
 [
   { "id": "m14-01", "text": "When a family cancels partway through the year, Scout compares what they've paid this membership year with the covered services they've used." },
   { "id": "m14-02", "text": "Remember: read the preview to the owner before you cancel. If they used more than they paid, the difference is charged to their card." },
+  { "id": "m14-02b", "text": "Only lead client liaisons, managers and admins can cancel a membership. If a family asks you, pass it on to them." },
   { "id": "m14-03", "text": "Maria is moving out of our area, and wants to cancel Maple's plan. Click Cancel." },
   { "id": "m14-04", "text": "First, the sentence the owner will see. Read it to her." },
-  { "id": "m14-05", "text": "Paid this membership year, covered services used, and what's left unused. Under the membership agreement, the unused part isn't refunded." },
+  { "id": "m14-05", "text": "Maria has paid sixty-nine dollars this membership year, and Maple has already used four hundred thirty-two dollars in covered services: her wellness exam, trip fee, vaccine and heartworm test. Under the membership agreement, she owes the difference." },
   { "id": "m14-06", "text": "Below that, each payment and each covered service that went into the numbers." },
-  { "id": "m14-07", "text": "Only if the practice decides to make an exception, tick Refund the unused part, and say why. It's recorded in the audit trail." },
+  { "id": "m14-07", "text": "If a family has used less than they paid, the unused part isn't refunded, unless the practice makes an exception." },
   { "id": "m14-08", "text": "Type why she's canceling." },
-  { "id": "m14-09", "text": "Click Cancel membership." },
-  { "id": "m14-10", "text": "Scout confirms what happens: the membership ends now, nothing is charged, and nothing is refunded." },
-  { "id": "m14-11", "text": "Click Cancel membership to confirm." },
-  { "id": "m14-12", "text": "Scout opens Maria's account on the settlement record. The membership is inactive, Stripe billing stops, and she gets an email with the breakdown." },
+  { "id": "m14-09", "text": "Click Cancel and charge." },
+  { "id": "m14-10", "text": "Scout confirms what happens: the membership ends now, and the amount owed is charged to Maria's card." },
+  { "id": "m14-11", "text": "Click it again to confirm." },
+  { "id": "m14-12", "text": "Scout opens Maria's account on the settlement record, with the amount charged for the covered services. Stripe billing stops, and she gets an email with the breakdown." },
+  { "id": "m14-12b", "text": "Back on Maple's chart, the Membership section now says she isn't on a plan." },
   { "id": "m14-13", "text": "The most common mistakes: cancelling in the Stripe dashboard, which Scout never hears about, and using Cancel when a pet has died. That has its own steps. Remember: read the preview to the owner before you cancel." }
 ]

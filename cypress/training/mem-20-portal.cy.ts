@@ -77,10 +77,16 @@ describe('Training: MEM-20 portal', () => {
       pointAt(() => cy.get('.pp-renewal-banner').first(), 5000);
     });
     trace('m20-09'); line('m20-09', () => tap(() => cy.get('.pp-switcher').contains('.pp-switch', 'Juniper')));
+    // The banner sits at the top: point at it without scrolling in the same line (a scroll moved the page under
+    // the outline and left an empty box, owner review Nov 10).
     trace('m20-10'); line('m20-10', () => {
       settle(() => cy.get('.pp-pv-banner'));
-      pointAt(() => cy.get('.pp-pv-banner'), 5500);
+      pointAt(() => cy.get('.pp-pv-banner'), 8000);
+    });
+    trace('m20-10b'); line('m20-10b', () => {
       settle(() => cy.contains('button', 'See my membership savings'));
+      cy.wait(600);
+      pointAt(() => cy.contains('button', 'See my membership savings').parent(), 3500);
     });
     trace('m20-11'); line('m20-11', () => {
       const sv = () => cy.contains('button', 'See my membership savings');

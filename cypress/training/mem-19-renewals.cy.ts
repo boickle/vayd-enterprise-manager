@@ -27,6 +27,8 @@ describe('Training: MEM-19 renewals', () => {
     trace('m19-02'); line('m19-02');
     trace('m19-03'); line('m19-03', () => pointAt(() => cy.contains('h1', "Review Maple's membership").parent(), 5000));
     trace('m19-04'); line('m19-04', () => pointAt(() => cy.get('.renewal-review__card'), 5000));
+    // Owner review, Nov 10: say why renewing is worth it.
+    trace('m19-04b'); line('m19-04b', () => pointAt(() => cy.get('.renewal-review__card'), 9000));
     trace('m19-05'); line('m19-05', () => {
       tap(() => cy.get('.renewal-review__change-plan'));
       cy.contains('h2', 'Choose a plan for next year').should('exist');

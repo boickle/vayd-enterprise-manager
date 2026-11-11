@@ -28,6 +28,7 @@ describe('Training: MEM-11 add or edit a benefit', () => {
     startClock();
     trace('m11-01'); line('m11-01');
     trace('m11-02'); line('m11-02');
+    trace('m11-02b'); line('m11-02b');
     trace('m11-03'); line('m11-03', () => {
       tap(() => cy.contains('button', 'Add benefit'));
       cy.contains('Add a benefit to this pet only').should('exist');

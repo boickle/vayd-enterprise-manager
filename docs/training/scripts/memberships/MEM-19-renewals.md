@@ -8,6 +8,8 @@
 - **Watch first:** MEM-06.
 - **The one thing to remember:** changes and cancellations take effect at the anniversary, not now.
 
+> **Owner review, Nov 10, 2026:** line m19-04b says why renewing is worth it (wellness exam and trip fee, vaccines and lab work covered; priority scheduling; 7-day portal support; half off other exams). "Save my choice" was white on white; fixed.
+
 ## Why (opening)
 
 "Every membership renews on its anniversary. Fourteen days before, the owner gets an email with a link to review it. When they call about it, this is the page they see."

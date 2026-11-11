@@ -6,7 +6,7 @@
  * refunds the covered part of the visit.
  */
 import '../support/e2e';
-import { signInAsScheduling } from '../support/schedulingWorld';
+import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
 import { chartUrl, enrolPet, fileAgreement, paidVisit, pets, PLAN, quietChart, resetMembershipWorld, settle, trace } from './memKit';
 import { sql } from './memKit';
 import { finish, line, loadNarration, offCamera, pointAt, startClock, tap } from './trainingKit';
@@ -29,15 +29,37 @@ describe('Training: MEM-05 owner paid online', () => {
     // "Owner paid — refund visit" only for those (Nov 10, 2026).
     cy.then(() => sql(`UPDATE wellness_plans SET "createdByEmployeeId"=NULL WHERE "patientId"=${p.juniper} AND "isDeleted"=false`));
     fileAgreement(p.juniper, p.maria, 0);
-    signInAsScheduling('cl', chartUrl(p.juniper));
-    quietChart();
-    cy.contains('button', 'Owner paid — refund visit', { timeout: 60000 }).should('be.visible');
+    // The task Scout opens for an online signup after a paid visit (online-signup-membership.service), on the
+    // Client Liaison queue. Made here because enrolPet goes through the staff API.
+    const w = schedulingWorld();
+    cy.then(() => sql(`UPDATE tasks SET "isDeleted"=true WHERE "practiceId"=${w.practiceId} AND title LIKE 'Refund Juniper''s visit%'`));
+    sql(`SELECT id FROM employee_role WHERE slug='client_liaison' AND "isDeleted"=false ORDER BY id LIMIT 1`).then((rid) =>
+      schedulingApi('manager', 'POST', '/tasks', {
+        title: "Refund Juniper's visit — owner enrolled online",
+        body: 'The owner enrolled Juniper online after the visit. Open Juniper\'s chart → Membership → "Owner paid — refund visit".',
+        queueRoleId: Number(String(rid).trim()), branchIds: [], priority: 1,
+        startAt: new Date().toISOString(), dueAt: new Date(Date.now() + 3_600_000).toISOString(), source: 'system',
+        links: [{ entityType: 'patient', entityId: p.juniper }, { entityType: 'client', entityId: p.maria }],
+      })
+    );
+    signInAsScheduling('cl', '/schedule/tasks');
+    cy.get('.pims-tasks__tab--unassigned', { timeout: 60000 }).click();
+    cy.contains('.pims-task-card', "Refund Juniper's visit", { timeout: 60000 }).should('be.visible');
     cy.wait(1500);
 
     trace('clock');
     startClock();
     trace('m05-01'); line('m05-01');
     trace('m05-02'); line('m05-02');
+    const task = () => cy.contains('.pims-task-card', "Refund Juniper's visit");
+    trace('m05-02b'); line('m05-02b', () => pointAt(task, 7000));
+    trace('m05-02c'); line('m05-02c', () => pointAt(() => task().contains('button', 'Assign to me'), 4000));
+    offCamera(() => {
+      signInAsScheduling('cl', chartUrl(p.juniper));
+      quietChart();
+      cy.contains('button', 'Owner paid — refund visit', { timeout: 60000 }).should('be.visible');
+      cy.wait(1500);
+    });
     trace('m05-03'); line('m05-03', () => pointAt(() => cy.get('.pmp-summary'), 5000));
     trace('m05-04'); line('m05-04', () => {
       tap(() => cy.contains('button', 'Owner paid — refund visit'));

@@ -5,6 +5,8 @@
 - **Watch first:** MEM-03.
 - **The one thing to remember:** don't enroll them again. Just refund the visit.
 
+> **Owner review, Nov 10, 2026:** opens on the Tasks page: the staff signup email and the task "Refund Juniper's visit — owner enrolled online" are how staff know; the refund runs from the chart, never the email.
+
 ## Why (opening)
 
 "Some families sign up online right after a visit. Their membership is already paid, but the visit they just had still needs re-pricing, and the covered part refunded."

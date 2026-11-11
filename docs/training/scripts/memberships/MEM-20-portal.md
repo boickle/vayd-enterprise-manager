@@ -8,6 +8,8 @@
 - **The one thing to remember:** everything about a member pet is on that pet's card in the portal: benefits,
   savings and renewal.
 
+> **Owner review, Nov 10, 2026:** the post-visit banner gets its own, slower line; the scroll to the savings button is a separate line (the old take showed an empty outlined box).
+
 ## Why (opening)
 
 "Members ask what's included, what's left, and how much they've saved. They can see all of it in the portal, so you can walk them to it."

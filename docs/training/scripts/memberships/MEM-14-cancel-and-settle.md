@@ -1,12 +1,14 @@
 # MEM-14. Cancel a membership and settle paid vs used
 
-- **Audience:** lead CLs, billing and managers (the roles that can cancel). Filmed as Robin Hale (practice manager).
+- **Audience:** lead CLs, managers and admins (only they can cancel, Nov 10, 2026). Filmed as Robin Hale (manager). File roles: Manager.
 - **Length:** about 1 minute (at 1.25×).
 - **Watch first:** MEM-10.
 - **The one thing to remember:** read the preview to the owner before you cancel. If they used more than they paid,
   the difference is charged to their card.
 - **Changed Nov 9, 2026 (owner decisions):** no partial refund by default (the agreement stands); staff may refund the
   unused part as an exception with a reason; cancelling asks for confirmation; covered visit services now count.
+
+> **Owner review, Nov 10, 2026:** re-done for the amount-owed case: Maple paid $69 once and used more in covered services at a paid visit, so cancelling charges the difference; ends on Maple's chart showing the membership inactive. Line m14-02b says who can cancel.
 
 ## Why (opening)
 

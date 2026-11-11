@@ -49,15 +49,19 @@
  },
  {
   "id": "m20-10",
-  "text": "Juniper had a visit today, so the portal offers to re-price it at member rates if Maria joins before the window closes."
+  "text": "Juniper had a visit today. The banner at the top offers to re-price that visit at member rates, if Maria joins within twenty-four hours. Review and join opens the sign-up."
+ },
+ {
+  "id": "m20-10b",
+  "text": "Further down Juniper's page, there's a savings comparison for pets who aren't members yet."
  },
  {
   "id": "m20-11",
-  "text": "For non-members, See my membership savings"
+  "text": "Maria clicks See my membership savings."
  },
  {
   "id": "m20-12",
-  "text": "shows each pet who isn't a member yet, with the seventy-five dollar credit for each extra pet."
+  "text": "The page shows each pet who isn't a member yet, with the seventy-five dollar credit for each extra pet."
  },
  {
   "id": "m20-12b",
