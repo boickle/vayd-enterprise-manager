@@ -3,9 +3,9 @@ import { http } from './http';
 
 /**
  * `transcribing` is the gap between hanging up and Quo posting the transcript — usually
- * under a couple of minutes, and the state the pill has to explain so it doesn't look stuck.
- * Silent calls often never get a transcript at all; after this wait we stop claiming Quo
- * is still writing.
+ * under a couple of minutes. Past this wait the dock says the summary is taking longer than
+ * 3 minutes and Scout is still checking (COM-CALL, owner Nov 10, 2026: it never gives up on
+ * its own; the person can Dismiss).
  */
 export const TRANSCRIPT_WAIT_MS = 3 * 60 * 1000;
 
@@ -40,6 +40,15 @@ export type ClientCall = {
   dismissedAt: string | null;
   /** Present on /mine so the dock can label a card without another fetch. */
   clientName?: string | null;
+  /**
+   * What Quo said when Scout's background catch-up asked for the transcript
+   * (`absent` / `failed` = none will come). Null until it has asked.
+   */
+  transcriptStatus?: string | null;
+  /** Why it was dismissed, e.g. 'auto: non-clinical after 24h'. Null for a person's Dismiss. */
+  dismissedReason?: string | null;
+  /** When someone first opened the review window (then it is never auto-cleared). */
+  reviewOpenedAt?: string | null;
 };
 
 /**
@@ -57,6 +66,14 @@ export async function resolveCall(
 }
 
 /**
+ * COM-CALL (owner, Nov 11, 2026): record that the review window was opened. A non-clinical call
+ * nobody opened clears itself from the dock 24 hours after it ended; an opened one never does.
+ */
+export async function markCallReviewOpened(callId: string): Promise<void> {
+  await http.post(`/openphone/calls/${encodeURIComponent(callId)}/opened`);
+}
+
+/**
  * Recent calls for a client, newest first. Called on mount so a chart opened mid-call — or
  * opened after the transcript already landed — still shows the pill.
  */
@@ -67,16 +84,19 @@ export async function claimCallsForClient(clientId: number): Promise<{ claimed: 
   return { claimed: Number(data?.claimed) || 0 };
 }
 
-/** My own unfiled calls, for the stacked dock that follows me around the app. */
-export async function listMyCalls(
-  opts?: { sinceMinutes?: number },
-): Promise<{ calls: ClientCall[] }> {
-  const { data } = await http.get<{ calls: ClientCall[] }>('/openphone/calls/mine', {
-    params: opts?.sinceMinutes ? { sinceMinutes: opts.sinceMinutes } : undefined,
-  });
-  return { calls: Array.isArray(data?.calls) ? data.calls : [] };
+/**
+ * My own undecided calls (not filed or dismissed), however old, for the stacked dock that
+ * follows me around the app. The server sends the newest 50; `more` says there are older ones.
+ */
+export async function listMyCalls(): Promise<{ calls: ClientCall[]; more: boolean }> {
+  const { data } = await http.get<{ calls: ClientCall[]; more?: boolean }>('/openphone/calls/mine');
+  return { calls: Array.isArray(data?.calls) ? data.calls : [], more: data?.more === true };
 }
 
+/**
+ * Calls for a client, newest first. Answered calls nobody has filed or dismissed come back
+ * however old; `sinceMinutes` only bounds the rest (filed, dismissed, unanswered).
+ */
 export async function listClientCalls(
   clientId: number,
   opts?: { sinceMinutes?: number },
