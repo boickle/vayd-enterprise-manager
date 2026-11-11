@@ -550,3 +550,38 @@
   font-weight: 500;
   color: #94a3b8;
 }
+
+/* Call tab: dial through Quo; logging by hand is the fallback. */
+.req-convo-callbox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.req-convo-dial {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.req-convo-callhelp {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+/* Quo call transcript under the call's summary. */
+.req-convo-transcript {
+  margin-top: 6px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #fde68a;
+  font-size: 0.82rem;
+  color: #334155;
+  white-space: pre-wrap;
+}

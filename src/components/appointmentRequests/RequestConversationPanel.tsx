@@ -20,9 +20,18 @@ import {
   type ConversationCall,
   type ConversationItem,
 } from '../../utils/appointmentRequestConversation';
-import { requestDataCanText, requestDataPhone } from '../../utils/appointmentRequestDisplay';
+import {
+  clientDisplayNameFromRequestData,
+  requestDataCanText,
+  requestDataClientId,
+  requestDataPhone,
+} from '../../utils/appointmentRequestDisplay';
 import { resolveAppointmentRequestSmsMessage } from '../../utils/appointmentRequestSmsMessage';
 import { isProduction } from '../../utils/env';
+import { buildPhoneDialHref } from '../../utils/quoContact';
+import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
+import { markClientCallStarted } from '../../hooks/useClientCallActivity';
+import { requestDataPetRowSummaries } from '../../utils/appointmentRequestDetailDisplay';
 
 type Mode = 'email' | 'text' | 'call';
 
@@ -69,6 +78,7 @@ const LONG_BODY = 420;
 
 function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   if (entry.channel === 'event') {
     return (
       <div className="req-convo-event">
@@ -92,12 +102,30 @@ function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
             {expanded ? 'Show less' : 'Show more'}
           </button>
         ) : null}
+        {entry.transcript ? (
+          <>
+            <button
+              type="button"
+              className="req-convo-more"
+              aria-expanded={showTranscript}
+              onClick={() => setShowTranscript((v) => !v)}
+            >
+              {showTranscript ? 'Hide transcript' : 'Show transcript'}
+            </button>
+            {showTranscript ? <div className="req-convo-transcript">{entry.transcript}</div> : null}
+          </>
+        ) : null}
       </div>
       <div className="req-convo-meta">
         <span className={`req-convo-channel req-convo-channel--${entry.channel}`}>
           {channelLabel}
         </span>
-        {entry.direction === 'in' ? 'Client' : entry.author || 'Us'} · {whenLabel(entry.at, tz)}
+        {entry.channel === 'call' && entry.author
+          ? entry.author
+          : entry.direction === 'in'
+            ? 'Client'
+            : entry.author || 'Us'}{' '}
+        · {whenLabel(entry.at, tz)}
       </div>
     </div>
   );
@@ -130,6 +158,33 @@ export function RequestConversationPanel({
   );
   const [draft, setDraft] = useState('');
   const [callOutcome, setCallOutcome] = useState<ConversationCall['outcome']>('reached');
+  /** Call tab: dial through Quo (default) or log a call made from another phone. */
+  const [logCallOpen, setLogCallOpen] = useState(false);
+  const fromLine = useOutboundCallFromLine();
+  const dialHref = phone ? buildPhoneDialHref(phone, { fromLine }) : '';
+  const refreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(
+    () => () => {
+      refreshTimers.current.forEach((t) => clearTimeout(t));
+    },
+    []
+  );
+  /** The call dock follows the call; the conversation looks again once Quo has had time to finish it. */
+  const onDial = () => {
+    const clientId = Number(requestDataClientId(rd));
+    const firstPet = requestDataPetRowSummaries(rd).find((p) => p.patientId)?.patientId;
+    if (Number.isFinite(clientId) && clientId > 0) {
+      markClientCallStarted(
+        clientId,
+        clientDisplayNameFromRequestData(rd),
+        firstPet != null ? Number(firstPet) : null
+      );
+    }
+    refreshTimers.current.forEach((t) => clearTimeout(t));
+    refreshTimers.current = [90_000, 180_000, 300_000].map((ms) =>
+      setTimeout(() => setConvoKey((k) => k + 1), ms)
+    );
+  };
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -158,6 +213,7 @@ export function RequestConversationPanel({
         emails: email.messages,
         texts: convo?.texts ?? [],
         calls: convo?.calls ?? [],
+        quoCalls: convo?.quoCalls ?? [],
       }),
     [item.submittedAt, email.clientEmail, email.messages, convo]
   );
@@ -263,8 +319,8 @@ export function RequestConversationPanel({
             onClick={() => setShowEarlier((v) => !v)}
           >
             {showEarlier
-              ? 'Hide earlier texts'
-              : `Show ${earlierCount} earlier text${earlierCount === 1 ? '' : 's'}`}
+              ? 'Hide earlier messages'
+              : `Show ${earlierCount} earlier message${earlierCount === 1 ? '' : 's'}`}
           </button>
         ) : null}
         {shown.map((entry) => (
@@ -291,7 +347,7 @@ export function RequestConversationPanel({
                 setSendError(null);
               }}
             >
-              {m === 'email' ? '✉ Email' : m === 'text' ? '💬 Text' : '📞 Call note'}
+              {m === 'email' ? '✉ Email' : m === 'text' ? '💬 Text' : '📞 Call'}
             </button>
           ))}
         </div>
@@ -321,6 +377,27 @@ export function RequestConversationPanel({
               'This request has no phone number.'
             )}
           </div>
+        ) : !logCallOpen ? (
+          <div className="req-convo-callbox">
+            {phone ? (
+              <a className="req-convo-send req-convo-dial" href={dialHref} onClick={onDial}>
+                📞 Call {phone} in Quo
+              </a>
+            ) : (
+              <div className="req-convo-to">This request has no phone number.</div>
+            )}
+            <p className="req-convo-callhelp">
+              Quo places and transcribes the call. It shows up here a minute or two after you hang
+              up, with a short summary, whether or not you file it to a pet&apos;s chart.
+            </p>
+            <button
+              type="button"
+              className="req-convo-suggest"
+              onClick={() => setLogCallOpen(true)}
+            >
+              Called from another phone? Log it
+            </button>
+          </div>
         ) : (
           <div className="req-convo-outcomes" role="radiogroup" aria-label="Call outcome">
             {(Object.keys(CALL_OUTCOME_LABELS) as ConversationCall['outcome'][]).map((o) => (
@@ -335,54 +412,64 @@ export function RequestConversationPanel({
                 {CALL_OUTCOME_LABELS[o]}
               </button>
             ))}
-            {phone ? <span className="req-convo-phone">☎ {phone}</span> : null}
+            <button
+              type="button"
+              className="req-convo-suggest req-convo-phone"
+              onClick={() => setLogCallOpen(false)}
+            >
+              ← Call in Quo instead
+            </button>
           </div>
         )}
 
-        <textarea
-          className="req-convo-input"
-          rows={mode === 'email' ? 5 : 3}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={
-            mode === 'call'
-              ? 'What was said (optional)'
-              : mode === 'email'
-                ? 'Write an email…'
-                : 'Write a text…'
-          }
-          aria-label={
-            mode === 'call' ? 'Call note' : `${mode === 'email' ? 'Email' : 'Text'} message`
-          }
-        />
-        <div className="req-convo-compose-foot">
-          {mode !== 'call' ? (
-            <button
-              type="button"
-              className="req-convo-suggest"
-              onClick={() => void suggest()}
-              disabled={suggesting}
-            >
-              {suggesting ? 'Writing…' : 'Suggested message'}
-            </button>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            className="req-convo-send"
-            disabled={sendDisabled}
-            onClick={() => void send()}
-          >
-            {sending
-              ? 'Sending…'
-              : mode === 'call'
-                ? 'Save call'
-                : mode === 'email'
-                  ? 'Send email'
-                  : 'Send text'}
-          </button>
-        </div>
+        {mode === 'call' && !logCallOpen ? null : (
+          <>
+            <textarea
+              className="req-convo-input"
+              rows={mode === 'email' ? 5 : 3}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={
+                mode === 'call'
+                  ? 'What was said (optional)'
+                  : mode === 'email'
+                    ? 'Write an email…'
+                    : 'Write a text…'
+              }
+              aria-label={
+                mode === 'call' ? 'Call note' : `${mode === 'email' ? 'Email' : 'Text'} message`
+              }
+            />
+            <div className="req-convo-compose-foot">
+              {mode !== 'call' ? (
+                <button
+                  type="button"
+                  className="req-convo-suggest"
+                  onClick={() => void suggest()}
+                  disabled={suggesting}
+                >
+                  {suggesting ? 'Writing…' : 'Suggested message'}
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                className="req-convo-send"
+                disabled={sendDisabled}
+                onClick={() => void send()}
+              >
+                {sending
+                  ? 'Sending…'
+                  : mode === 'call'
+                    ? 'Save call'
+                    : mode === 'email'
+                      ? 'Send email'
+                      : 'Send text'}
+              </button>
+            </div>
+          </>
+        )}
         {sendError ? <div className="req-convo-error">{sendError}</div> : null}
       </div>
 

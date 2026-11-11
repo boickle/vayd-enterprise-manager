@@ -350,6 +350,18 @@ export type AppointmentRequestConversationResponse = {
   phone: string | null;
   texts: Array<{ id: string; direction: 'in' | 'out'; body: string; at: string; beforeRequest: boolean }>;
   textsError: string | null;
+  /** Quo calls with the request's phone: transcript and AI summary when Quo transcribed it. */
+  quoCalls?: Array<{
+    id: number;
+    direction: 'in' | 'out';
+    status: string | null;
+    at: string;
+    durationSeconds: number | null;
+    staff: { id: number; firstName: string | null; lastName: string | null } | null;
+    transcript: string | null;
+    summary: string | null;
+    beforeRequest: boolean;
+  }>;
   calls: Array<{
     id: number;
     at: string;

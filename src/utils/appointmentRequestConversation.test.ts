@@ -176,3 +176,21 @@ describe('conversationSummary', () => {
     ).toBe('waiting');
   });
 });
+
+describe('quoCallTitle', () => {
+  it('describes answered, missed and unanswered calls', async () => {
+    const { quoCallTitle } = await import('./appointmentRequestConversation');
+    expect(quoCallTitle({ direction: 'in', status: 'completed', durationSeconds: 240 })).toBe(
+      'Incoming call · 4 min'
+    );
+    expect(quoCallTitle({ direction: 'out', status: 'completed', durationSeconds: 30 })).toBe(
+      'Outgoing call · 30 sec'
+    );
+    expect(quoCallTitle({ direction: 'in', status: 'missed', durationSeconds: 0 })).toBe(
+      'Missed call'
+    );
+    expect(quoCallTitle({ direction: 'out', status: 'no-answer', durationSeconds: 0 })).toBe(
+      'No answer'
+    );
+  });
+});

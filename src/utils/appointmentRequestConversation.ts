@@ -20,7 +20,39 @@ export type ConversationItem = {
   author?: string | null;
   /** Text sent before the request came in: folded under "Show earlier texts". */
   beforeRequest?: boolean;
+  /** Quo call transcript, behind "Show transcript". */
+  transcript?: string | null;
 };
+
+export type ConversationQuoCall = {
+  id: number;
+  direction: 'in' | 'out';
+  status: string | null;
+  at: string;
+  durationSeconds: number | null;
+  staff: { firstName: string | null; lastName: string | null } | null;
+  transcript: string | null;
+  summary: string | null;
+  beforeRequest: boolean;
+};
+
+/** "Incoming call · 4 min", "Outgoing call · 30 sec", "Missed call". */
+export function quoCallTitle(
+  c: Pick<ConversationQuoCall, 'direction' | 'status' | 'durationSeconds'>
+): string {
+  const status = (c.status ?? '').toLowerCase();
+  const secs = c.durationSeconds ?? 0;
+  if (
+    status.includes('miss') ||
+    status.includes('no-answer') ||
+    status.includes('no_answer') ||
+    (c.direction === 'in' && secs === 0)
+  ) {
+    return c.direction === 'in' ? 'Missed call' : 'No answer';
+  }
+  const len = secs >= 60 ? `${Math.round(secs / 60)} min` : `${secs} sec`;
+  return `${c.direction === 'in' ? 'Incoming' : 'Outgoing'} call · ${len}`;
+}
 
 export type ConversationText = {
   id: string;
@@ -112,6 +144,7 @@ export function buildRequestConversation(args: {
   emails: readonly GmailThreadMessage[];
   texts: readonly ConversationText[];
   calls: readonly ConversationCall[];
+  quoCalls?: readonly ConversationQuoCall[];
 }): ConversationItem[] {
   const clientEmail = lower(args.clientEmail);
   const items: ConversationItem[] = [
@@ -167,6 +200,20 @@ export function buildRequestConversation(args: {
       title: CALL_OUTCOME_LABELS[c.outcome] ?? c.outcome,
       author: personName(c.employee),
       body: c.note ?? '',
+    });
+  }
+
+  for (const q of args.quoCalls ?? []) {
+    items.push({
+      key: `quo-${q.id}`,
+      channel: 'call',
+      direction: q.direction,
+      at: q.at,
+      title: quoCallTitle(q),
+      author: personName(q.staff),
+      body: q.summary ?? '',
+      transcript: q.transcript,
+      beforeRequest: q.beforeRequest,
     });
   }
 
