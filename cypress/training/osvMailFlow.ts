@@ -98,6 +98,16 @@ export function showPrintedLabels() {
   });
 }
 
+/** Off camera: waits (up to a minute) until the order's shipping label is bought. */
+export function waitForLabel(id: () => number, tries = 30): Cypress.Chainable<unknown> {
+  return sql(`SELECT ("labelUrl" IS NOT NULL OR "trackingCode" IS NOT NULL)::text FROM mail_orders WHERE id=${id()}`).then((v) => {
+    if (String(v).trim() === 'true') return;
+    if (tries <= 0) throw new Error(`No shipping label on order #${id()} after a minute`);
+    cy.wait(2000);
+    return waitForLabel(id, tries - 1);
+  });
+}
+
 export const hidePrintedLabels = () => cy.window().then((win) => win.document.getElementById('training-labels')?.remove());
 
 /**
@@ -137,7 +147,12 @@ export function visitMailOrder() {
   cy.get('label.client-fin__refill input', { timeout: 20000 }).first().should('not.be.disabled').type('5');
   cy.get('select[aria-label="Acute or chronic prescription"]', { timeout: 20000 }).first().should('not.be.disabled').select('chronic');
   cy.contains('button.client-fin__btn-approve', /^Approve$/).click();
-  cy.get('button.soap-invoice-line-expand[aria-expanded="false"]', { timeout: 20000 }).first().click();
+  cy.contains(/Approve the sig/i, { timeout: 20000 }).should('not.exist');
+  cy.wait(800);
+  // The line sometimes folds after approval and sometimes stays open: open it only if the mail toggle is hidden.
+  cy.get('body').then(($b) => {
+    if (!$b.find('.mail-mode__toggle:visible').length) cy.get('button.soap-invoice-line-expand[aria-expanded="false"]', { timeout: 20000 }).first().click();
+  });
   cy.get('.mail-mode__toggle', { timeout: 20000 }).first().contains('button', /^Mail order/).click();
   cy.contains('h3', 'Send to mail queue', { timeout: 15000 });
   cy.contains('label', 'Shipping / pick-up type').find('select').select('ship-499');

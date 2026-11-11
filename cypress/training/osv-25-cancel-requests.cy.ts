@@ -6,7 +6,7 @@
  */
 import '../support/e2e';
 import { look, osv, press, resetStoreData, signIn } from './osvTraining';
-import { openOrder, payVisitBillInCash, resetRefills, visitMailOrder } from './osvMailFlow';
+import { openOrder, openOrderQuietly, payVisitBillInCash, resetRefills, visitMailOrder } from './osvMailFlow';
 import { finish, line, loadNarration, offCamera, startClock, tap, typeSlowly } from './trainingKit';
 
 describe('Training: OSV-25 cancel requests', () => {
@@ -24,7 +24,8 @@ describe('Training: OSV-25 cancel requests', () => {
     cy.contains('Mail Order Queue', { timeout: 40000 });
     cy.contains('button', /^Fill$/).click();
     cy.wait(1000);
-    cy.then(() => cy.contains(`#${orderId}`, { timeout: 20000 }).first().click());
+    openOrderQuietly(() => orderId);
+    cy.contains('label', /^Filling from office/, { timeout: 20000 }).find('select').contains('option', /Raleigh/, { timeout: 30000 });
     cy.contains('label', /^Filling from office/).find('select').then(($s) => {
       const v = [...($s[0] as HTMLSelectElement).options].find((x) => /Raleigh/.test(x.text))!.value;
       cy.wrap($s).select(v);
@@ -60,7 +61,8 @@ describe('Training: OSV-25 cancel requests', () => {
     });
     line('n10-choices', () => look(() => cy.get('section.mail-queue__cancel-decision').find('button').first().parent(), 5000));
     line('n11-cancel', () => press(() => cy.get('section.mail-queue__cancel-decision').contains('button', /^Cancel and refund$/)));
-    line('n12-done');
+    line('n12-done', () => look(() => cy.contains(/confirm the return to refund the client/i, { timeout: 30000 }).parent(), 5000));
+    line('n12b-shelf');
     line('n13-mistakes');
     line('n14-remember');
     finish();

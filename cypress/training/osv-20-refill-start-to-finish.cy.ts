@@ -6,7 +6,7 @@
  */
 import '../support/e2e';
 import { buyAsMaria, look, osv, press, resetStoreData, signIn, sql } from './osvTraining';
-import { openOrder, openOrderQuietly, resetRefills, selectByText } from './osvMailFlow';
+import { openOrder, openOrderQuietly, waitForLabel, resetRefills, selectByText } from './osvMailFlow';
 import { finish, line, loadNarration, offCamera, startClock, tap, typeSlowly } from './trainingKit';
 
 describe('Training: OSV-20 refill start to finish', () => {
@@ -66,7 +66,7 @@ describe('Training: OSV-20 refill start to finish', () => {
     });
     line('r13-label', () => press(() => cy.contains('button', /^Print cheapest label$/, { timeout: 60000 }).should('not.be.disabled')));
     offCamera(() => {
-      cy.contains('button', 'Void / refund this label', { timeout: 60000 });
+      waitForLabel(() => orderId);
       signIn('manager', '/schedule/mail-orders');
       cy.contains('Mail Order Queue', { timeout: 40000 });
       cy.contains('button', /^Check$/).click();
