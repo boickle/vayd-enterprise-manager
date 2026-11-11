@@ -20,6 +20,7 @@ import {
   requestDataPreferredPatientIds,
   resolveClientPatientFromRequestData,
   requestDataClientPimsId,
+  requestDataWantsEarlierAppointment,
 } from './appointmentRequestDisplay';
 import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
 
@@ -60,6 +61,8 @@ export type RoutingAppointmentRequestIntentV1 = {
     patientPimsId: string | null;
     clientDetails?: string | null;
   }>;
+  /** Client asked to join the waitlist for a sooner time — Book pre-ticks the waitlist box. */
+  joinWaitlistIfSooner?: boolean;
   /** When true, successful book navigates back to the appointment requests list. */
   returnToListAfterBook?: boolean;
   /** Tab to restore when leaving routing / scheduler back to the list. */
@@ -229,6 +232,7 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
     howSoon: requestDataHowSoon(rd) ?? undefined,
     description: requestDataAnythingElse(rd),
     clientPimsId: requestDataClientPimsId(rd) ?? undefined,
+    ...(requestDataWantsEarlierAppointment(rd) ? { joinWaitlistIfSooner: true } : {}),
     pets: petSummaries.map((pet) => ({
       name: pet.name,
       appointmentType: pet.appointmentType,

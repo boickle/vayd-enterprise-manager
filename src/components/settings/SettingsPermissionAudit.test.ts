@@ -1,4 +1,5 @@
-// Permission Audit Log "What changed": role changes and offboards read as words, not raw data (B3, Nov 10).
+// Permission Audit Log "What changed": role changes and offboards (B3, Nov 10), grants and licenses
+// (B5, Nov 11) read as words, not raw data.
 import { describe, expect, it } from 'vitest';
 import { describeDetail } from './SettingsPermissionAudit';
 
@@ -43,19 +44,49 @@ describe('Permission Audit Log details', () => {
       staff
     );
     expect(lines).toEqual([
-      'Last day: 2026-11-20',
+      'Last day: Nov 20, 2026',
       'Tasks go to: Tess Holt',
       'Their pets and households go to: Maya Ortiz',
       'Now work with Maya Ortiz: 1 person who worked with them',
     ]);
   });
 
-  it('leaves grant rows as they were', () => {
+  it('reads a grant as what was given, how far and until when', () => {
     const lines = describeDetail(
-      { action: 'grant', permissionKey: 'membership.cancel' },
+      {
+        action: 'grant',
+        permissionKey: 'membership.cancel',
+        scope: 'all',
+        expiresAt: '2026-11-25T00:00:00.000Z',
+      },
       label,
       staff
     );
-    expect(lines).toEqual(['action: grant', 'permissionKey: Cancel a membership']);
+    expect(lines).toEqual(['Extra permission given: Cancel a membership', 'Ends: Nov 25, 2026']);
+    expect(
+      describeDetail(
+        { action: 'grant', permissionKey: 'membership.cancel', scope: 'own', expiresAt: null },
+        label,
+        staff
+      )
+    ).toEqual(['Extra permission given: Cancel a membership (their own only)', 'No end date']);
+  });
+
+  it('reads a removed grant', () => {
+    expect(
+      describeDetail({ action: 'revoke', permissionKey: 'membership.cancel' }, label, staff)
+    ).toEqual(['Extra permission removed: Cancel a membership']);
+  });
+
+  it('reads a license change in words', () => {
+    const lines = describeDetail(
+      {
+        before: { isLicensed: false, licenseType: null },
+        after: { isLicensed: true, licenseType: 'technician' },
+      },
+      label,
+      staff
+    );
+    expect(lines).toEqual(['License: Not licensed → Licensed technician']);
   });
 });

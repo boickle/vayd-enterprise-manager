@@ -338,6 +338,8 @@ export type SchedulerBookPrefill = {
   forwardBookingEntryId?: number;
   /** Appointment request list → routing book — POST …/request-submissions/:id/book after create. */
   appointmentRequestSubmissionId?: number;
+  /** Client asked on the request to join the waitlist for a sooner time — pre-tick the box. */
+  joinWaitlistIfSooner?: boolean;
   /** Per-pet type + notes when booking an appointment request from routing. */
   appointmentRequestVisitPatches?: AppointmentRequestBookVisitPatch[];
   /** Group forward booking — one row per pet to mark complete after routing book. */
@@ -1046,8 +1048,9 @@ export function SchedulerBookModal({
   }, [startLocal, durationMin]);
 
   useEffect(() => {
-    if (!open) setJoinWaitlistIfSooner(false);
-  }, [open]);
+    // Booking a request where the client asked for the waitlist starts ticked.
+    setJoinWaitlistIfSooner(open && prefill?.joinWaitlistIfSooner === true);
+  }, [open, prefill?.joinWaitlistIfSooner]);
 
   useEffect(() => {
     if (!showBookScheduleOverride || !providerId.trim() || !bookOverrideAnchorDate) {

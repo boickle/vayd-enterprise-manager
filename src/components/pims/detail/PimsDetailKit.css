@@ -1,12 +1,18 @@
 /* Shared chrome for the client and patient detail views. */
 
-.pims-detail {
+/* .pims-client-edit-modal is portaled to <body>, outside .pims-detail, so it
+   needs the same tokens or the blue Save button renders white-on-transparent. */
+.pims-detail,
+.pims-client-edit-modal {
   --pims-ink: #0f172a;
   --pims-ink-soft: #475569;
   --pims-muted: #64748b;
   --pims-line: #e2e8f0;
   --pims-line-soft: #f1f5f9;
   --pims-accent: #2563eb;
+}
+
+.pims-detail {
   padding: 0 0 40px;
 }
 

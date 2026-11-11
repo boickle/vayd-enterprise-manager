@@ -307,6 +307,8 @@ export type MailOrderLine = {
   approvalTaskWatcherNames?: string[];
   approvalTaskOpen?: boolean;
   refillNote?: string | null;
+  /** Acute or chronic on the pet's Rx for this item (the label window starts from it). */
+  rxAcuity?: string | null;
   /** Refills the approving doctor wants the filler to put on this Rx. */
   authorizedRefills?: number | null;
   authorizedRefillExpiration?: string | null;
