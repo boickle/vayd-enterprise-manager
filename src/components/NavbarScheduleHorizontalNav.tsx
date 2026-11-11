@@ -86,7 +86,6 @@ function SchedulingSubmenuLinks({
     location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
     !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
-  const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
@@ -145,19 +144,6 @@ function SchedulingSubmenuLinks({
         }}
       >
         Appointments
-      </Link>
-      <Link
-        to={HOLDS_PATH}
-        className={`schedule-app__settings-link${
-          holdsActive ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={(e) => {
-          if (blockScheduleNavLeave(e)) return;
-          onNavigate();
-        }}
-      >
-        Holds
       </Link>
       <Link
         to={EXIT_SURVEY_PATH}

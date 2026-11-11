@@ -439,6 +439,12 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+/** The Holds board moved into Appointments (Hold tab). Keep old links working. */
+function LegacyHoldsRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: HOLDS_PATH, search, hash }} replace />;
+}
+
 function LegacyMailOrdersRedirect() {
   const { search, hash } = useLocation();
   return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
@@ -796,13 +802,14 @@ export default function App() {
                       />
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
+                    <Route path="appointments/holds" element={<HoldsPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
-                    <Route path="holds" element={<HoldsPage />} />
+                    <Route path="holds" element={<LegacyHoldsRedirect />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />

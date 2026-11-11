@@ -75,7 +75,7 @@ const EMAIL_BODY_FONT =
   'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;';
 
 /** Rich HTML + plain-text fallback for the outgoing reply, with signature + Gmail-style quote. */
-function buildEmailBodies(
+export function buildEmailBodies(
   message: string,
   original: GmailThreadMessage | null,
   signatureHtml: string,
@@ -107,7 +107,7 @@ function buildEmailBodies(
   return { html, text };
 }
 
-function applySignatureForFrom(
+export function applySignatureForFrom(
   mailbox: string,
   aliases: GmailSendAsAlias[],
   fromFormatted: string,
