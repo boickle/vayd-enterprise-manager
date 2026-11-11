@@ -1,6 +1,7 @@
 // src/App.tsx
 import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
 import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { keepNonProdTitlePrefix } from './utils/nonProdTitle';
 import { ChevronDown } from 'lucide-react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -522,6 +523,9 @@ export default function App() {
 
   const isProd = isProduction();
 
+  // Outside production, the tab title starts with "TEST · " (see utils/nonProdTitle).
+  useEffect(() => (isProd ? undefined : keepNonProdTitlePrefix()), [isProd]);
+
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
     if (location.pathname === '/store' || location.pathname.startsWith('/store/')) return '';
@@ -536,9 +540,12 @@ export default function App() {
     <div className={isProd ? 'app-root' : 'app-root app-root--nonprod'}>
       {!isProd && (
         <div className="app-nonprod-banner" role="banner" aria-live="polite">
-          Not production — you are using a development or staging environment
+          <span className="app-nonprod-banner__label">
+            NOT PRODUCTION — YOU ARE USING A DEVELOPMENT OR STAGING ENVIRONMENT
+          </span>
         </div>
       )}
+      {!isProd && <div className="app-nonprod-frame" aria-hidden="true" />}
       {token && !isClient ? <OfflineBanner /> : null}
       {token && !isClient ? <SmsDeliveryFailureBanner /> : null}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
