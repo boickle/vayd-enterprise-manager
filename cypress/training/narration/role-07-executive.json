@@ -1,0 +1,17 @@
+[
+ {"id": "r07-01", "text": "The exec team needs to see how the practice is doing, without any risk of changing something. That's the Executive role."},
+ {"id": "r07-02", "text": "The one thing to remember: an executive sees every report and Marketing, and changes nothing, unless you grant them Marketing edit rights."},
+ {"id": "r07-03", "text": "This is Blair, on the exec team. Marketing is here. Settings and Admin aren't."},
+ {"id": "r07-04", "text": "There's no booking or new-client button on the left. Executives read; they don't book."},
+ {"id": "r07-05", "text": "Open Analytics."},
+ {"id": "r07-06", "text": "Every report category is here,"},
+ {"id": "r07-07", "text": "for every doctor."},
+ {"id": "r07-08", "text": "Open Marketing."},
+ {"id": "r07-09", "text": "It has promotions,"},
+ {"id": "r07-10", "text": "and email campaigns. Open those."},
+ {"id": "r07-11", "text": "Blair can read campaigns and their results, but there's no New campaign button."},
+ {"id": "r07-12", "text": "Executives can open client records to read them, but the buttons that change things, like Deactivate or Send reset password, aren't there."},
+ {"id": "r07-13", "text": "To let one executive edit campaigns and promotions, a practice admin grants them that one permission on their Access tab."},
+ {"id": "r07-14", "text": "The most common mistake is giving an exec an admin login just to see reports. The Executive role shows everything, without the risk."},
+ {"id": "r07-15", "text": "Remember: executives see every report and Marketing, and change nothing unless you grant Marketing edit rights."}
+]

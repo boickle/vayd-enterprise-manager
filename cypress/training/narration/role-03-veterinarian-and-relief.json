@@ -1,0 +1,70 @@
+[
+ {
+  "id": "r03-01",
+  "text": "Vets do the medicine, so their Scout is built around visits, records and prescriptions. Here's what they see, and what a relief vet doesn't."
+ },
+ {
+  "id": "r03-02",
+  "text": "The one thing to remember: a vet needs the Veterinarian role at their office and a veterinary license. The role opens the screens; the license lets them sign and prescribe."
+ },
+ {
+  "id": "r03-03",
+  "text": "This is Dr. Ortiz, a staff veterinarian. Home, Scheduling, Catalog, Pharmacy, Labs, Tasks and Settings."
+ },
+ {
+  "id": "r03-04",
+  "text": "Open Analytics."
+ },
+ {
+  "id": "r03-04b",
+  "text": "Pick the last seven days."
+ },
+ {
+  "id": "r03-05",
+  "text": "Vets see the services they delivered: their own production,"
+ },
+ {
+  "id": "r03-06",
+  "text": "plus appointment and inventory reports."
+ },
+ {
+  "id": "r03-07",
+  "text": "In Settings,"
+ },
+ {
+  "id": "r03-08",
+  "text": "vets manage the clinical setup they own, like euthanasia consent and aftercare."
+ },
+ {
+  "id": "r03-09",
+  "text": "On a client's bill,"
+ },
+ {
+  "id": "r03-10",
+  "text": "a vet can void a payment on their own visits."
+ },
+ {
+  "id": "r03-11",
+  "text": "Now Dr. Park, a relief vet. The same clinical screens, but no Settings in the top bar."
+ },
+ {
+  "id": "r03-12",
+  "text": "If he opens Settings anyway, Scout says so: none of his roles includes a Settings permission."
+ },
+ {
+  "id": "r03-13",
+  "text": "His Analytics has only inventory: no production or finance reports."
+ },
+ {
+  "id": "r03-14",
+  "text": "On a visit, a relief vet examines, writes and signs records and prescribes, just like a staff vet. He can't void payments, see controlled-drug reports, or manage tasks for others."
+ },
+ {
+  "id": "r03-15",
+  "text": "The most common mistake is giving a new vet the role but not the license, or the license but no office."
+ },
+ {
+  "id": "r03-16",
+  "text": "Remember: a vet needs the Veterinarian role at their office, and a veterinary license."
+ }
+]

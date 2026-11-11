@@ -1,0 +1,16 @@
+[
+ {"id": "p03-01", "text": "A role opens the screens. A license is what lets someone sign records and prescribe. Here's how to set one."},
+ {"id": "p03-02", "text": "The one thing to remember: only a practice admin or the medical director sets a license, and never their own."},
+ {"id": "p03-03", "text": "Sam Chen just passed his LVT exam. Pick Sam,"},
+ {"id": "p03-04", "text": "and open his Access tab."},
+ {"id": "p03-05", "text": "The License box says what each license allows. A licensed technician may sign quick visits and medical notes, and enter prescription directions for the vet."},
+ {"id": "p03-06", "text": "Click Licensed technician."},
+ {"id": "p03-07", "text": "It saves straight away, and the change is logged at the bottom, with who made it."},
+ {"id": "p03-08", "text": "A vet gets Veterinarian here. A role alone never lets someone sign a SOAP. They need the license too."},
+ {"id": "p03-09", "text": "Now look at your own Access tab. Pick yourself,"},
+ {"id": "p03-10", "text": "and open Access."},
+ {"id": "p03-11", "text": "Your own license is greyed out. Nobody changes their own access."},
+ {"id": "p03-12", "text": "The medical director can set licenses too, for everyone but themselves."},
+ {"id": "p03-13", "text": "The most common mistake is giving someone the Veterinarian role and forgetting the license, so they can't sign."},
+ {"id": "p03-14", "text": "Remember: only a practice admin or the medical director sets a license, and never their own."}
+]

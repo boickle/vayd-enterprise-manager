@@ -1,0 +1,21 @@
+[
+ {"id": "r01-01", "text": "The Practice Admin and the Practice Manager run the practice day to day. Here's what each sees, and the few things only the admin can do."},
+ {"id": "r01-02", "text": "The one thing to remember: only the Practice Admin sets licenses, grants individual permissions and changes what a role can do. Neither can change their own access."},
+ {"id": "r01-03", "text": "This is Quinn, our Practice Admin. Every menu is here, except Admin, which is only for platform logins."},
+ {"id": "r01-04", "text": "Marketing has promotions"},
+ {"id": "r01-05", "text": "and email campaigns."},
+ {"id": "r01-06", "text": "Analytics,"},
+ {"id": "r01-07", "text": "shows every report, for every doctor: financial, appointments, memberships, inventory and more."},
+ {"id": "r01-08", "text": "On someone's Access tab, the admin sets the license,"},
+ {"id": "r01-09", "text": "and grants extra permissions."},
+ {"id": "r01-10", "text": "On the Roles page, the admin also changes what a role can do."},
+ {"id": "r01-11", "text": "Now Jamie, our Practice Manager. The same menus."},
+ {"id": "r01-12", "text": "On the same Access tab, the license is greyed out,"},
+ {"id": "r01-13", "text": "and there's no Grant."},
+ {"id": "r01-14", "text": "On the Roles page, the manager gives and removes roles,"},
+ {"id": "r01-15", "text": "but there's no role editor here. Only the admin changes what a role can do."},
+ {"id": "r01-16", "text": "In Analytics, the manager sees every report, for every doctor, like the admin."},
+ {"id": "r01-17", "text": "And like everyone, the manager can't change their own access."},
+ {"id": "r01-18", "text": "The most common mistake is asking the manager to set a license or grant a permission. Those go to the Practice Admin, or for a license, the medical director."},
+ {"id": "r01-19", "text": "Remember: only the Practice Admin sets licenses, grants permissions and changes roles, and nobody changes their own access."}
+]

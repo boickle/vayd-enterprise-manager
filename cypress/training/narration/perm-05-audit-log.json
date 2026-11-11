@@ -1,0 +1,19 @@
+[
+ {"id": "p05-01", "text": "When someone can suddenly do more, or less, than yesterday, the first question is: who changed what? Scout keeps that record for you."},
+ {"id": "p05-02", "text": "The one thing to remember: every role, license and permission change is logged, with who made it, for whom, and the before and after."},
+ {"id": "p05-03", "text": "Start on the person. Pick Sam Chen,"},
+ {"id": "p05-04", "text": "and open Access."},
+ {"id": "p05-05", "text": "Recent changes shows his latest role, license and permission changes."},
+ {"id": "p05-06", "text": "For everything, open the full log."},
+ {"id": "p05-07", "text": "Each row says when, who made the change, and what it was."},
+ {"id": "p05-08", "text": "Who it was for,"},
+ {"id": "p05-09", "text": "and what changed, before and after."},
+ {"id": "p05-10", "text": "Grants show their reason, like this one: covering while a manager is away."},
+ {"id": "p05-11", "text": "Each role also shows its own recent changes. Open the Staff menu,"},
+ {"id": "p05-12", "text": "choose Roles,"},
+ {"id": "p05-13", "text": "and pick Technician."},
+ {"id": "p05-14", "text": "Its recent changes are under the people who have it."},
+ {"id": "p05-15", "text": "Skim the log once a week for the first month after go-live."},
+ {"id": "p05-16", "text": "The most common mistake is fixing a missing permission without checking the log first. Often someone's role was just changed."},
+ {"id": "p05-17", "text": "Remember: every role, license and permission change is logged, with who made it, for whom, and the before and after."}
+]

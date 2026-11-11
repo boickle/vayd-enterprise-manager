@@ -1,0 +1,20 @@
+[
+ {"id": "r05-01", "text": "Client liaisons are the front desk: booking, checking out and taking payments. Anything that reverses money or a membership goes to the lead."},
+ {"id": "r05-02", "text": "The one thing to remember: client liaisons book, check out and take payments. Voids, account credits, membership cancellations and bank deposits belong to the lead client liaison."},
+ {"id": "r05-03", "text": "This is Lou, a client liaison."},
+ {"id": "r05-04", "text": "Booking, new clients, Room Loaders, tasks and forward booking are right here. There's no Create deposit."},
+ {"id": "r05-05", "text": "On a client's paid bill,"},
+ {"id": "r05-06", "text": "Lou sees the payment, but there's no Void."},
+ {"id": "r05-07", "text": "Open Analytics."},
+ {"id": "r05-08", "text": "Lou sees appointment, communication, membership and patient reports. No payments."},
+ {"id": "r05-09", "text": "Now Dana, our lead client liaison. She has Create deposit."},
+ {"id": "r05-10", "text": "On the same bill,"},
+ {"id": "r05-11", "text": "she can void the payment,"},
+ {"id": "r05-12", "text": "void the invoice,"},
+ {"id": "r05-13", "text": "or add account credit."},
+ {"id": "r05-14", "text": "Her Analytics"},
+ {"id": "r05-15", "text": "adds the financial reports, starting with payments."},
+ {"id": "r05-16", "text": "A lead client liaison can also cancel or change a membership, issue gift cards, reopen an invoice, and manage message templates and CL seats in Settings."},
+ {"id": "r05-17", "text": "The most common mistake is giving a client liaison the lead role just to void one payment. Ask the lead, or grant that one permission for a set time."},
+ {"id": "r05-18", "text": "Remember: client liaisons book, check out and take payments. Reversing money or memberships belongs to the lead."}
+]

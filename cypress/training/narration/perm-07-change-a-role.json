@@ -1,0 +1,18 @@
+[
+ {"id": "p07-01", "text": "Each role comes with a sensible set of permissions. When your practice needs something different, the role editor changes it for that role."},
+ {"id": "p07-02", "text": "The one thing to remember: a change to a role applies to everyone with that role. And Not enforced yet means that switch does nothing today."},
+ {"id": "p07-03", "text": "Open the role you want to change: Client Liaison."},
+ {"id": "p07-04", "text": "Every change here applies to everyone with this role."},
+ {"id": "p07-05", "text": "Search for the permission."},
+ {"id": "p07-06", "text": "Each permission says Yes, No, or Their own only. Default is what Scout ships with. Client liaisons don't create bank deposits by default."},
+ {"id": "p07-07", "text": "Only show changes lists what this practice has changed."},
+ {"id": "p07-08", "text": "Here, nothing yet."},
+ {"id": "p07-09", "text": "Untick it,"},
+ {"id": "p07-09b", "text": "and search for export."},
+ {"id": "p07-10", "text": "Some permissions say Not enforced yet. Scout doesn't check them yet, so changing them does nothing. Don't rely on them."},
+ {"id": "p07-11", "text": "Hover the tag for the reason."},
+ {"id": "p07-12", "text": "To make a change, pick the new setting, then Save. Reset puts one back to the default, and Discard throws away unsaved changes."},
+ {"id": "p07-13", "text": "We'll leave this one as it is."},
+ {"id": "p07-14", "text": "The most common mistakes: changing a role to fix one person, which changes it for everyone, and switching off a permission marked Not enforced yet, and thinking it's blocked."},
+ {"id": "p07-15", "text": "Remember: a role change applies to everyone with that role."}
+]

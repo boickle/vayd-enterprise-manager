@@ -1,0 +1,14 @@
+[
+ {"id": "r06-01", "text": "Each office's stock has one owner: its inventory manager. Here's what that person sees."},
+ {"id": "r06-02", "text": "The one thing to remember: an inventory manager runs stock at their own office: counts, par levels, orders and suppliers."},
+ {"id": "r06-03", "text": "This is Lee, an inventory manager at the Raleigh office."},
+ {"id": "r06-04", "text": "Pharmacy is their main screen."},
+ {"id": "r06-05", "text": "The weekly count list,"},
+ {"id": "r06-06", "text": "ordering and moving stock, and setup like par levels."},
+ {"id": "r06-07", "text": "In Settings, they manage offices' stock locations."},
+ {"id": "r06-08", "text": "Analytics,"},
+ {"id": "r06-09", "text": "shows expiring lots, activity and inventory totals."},
+ {"id": "r06-10", "text": "Automatic inventory tasks, like count reminders and par reviews, go to the inventory manager at that office."},
+ {"id": "r06-11", "text": "The most common mistake is giving the Inventory Manager role without an office, so nobody gets that office's count reminders."},
+ {"id": "r06-12", "text": "Remember: an inventory manager runs stock at their own office: counts, par levels, orders and suppliers."}
+]
