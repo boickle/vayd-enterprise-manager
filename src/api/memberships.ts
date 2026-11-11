@@ -701,6 +701,8 @@ export async function createPatientMembership(input: {
   feeToProvider?: boolean;
   clientId?: number;
   paymentMethodId?: string;
+  /** Owner agreed to keep the new card as the household's card on file. */
+  saveCardOnFile?: boolean;
 }): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>('/memberships/patient-memberships', {
     practiceId: currentPracticeId(),

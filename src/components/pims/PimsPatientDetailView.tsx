@@ -179,6 +179,7 @@ import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent'
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
 import SendRxLabelButton from '../soap/SendRxLabelButton';
 import RxRefillControls from './RxRefillControls';
+import ChronicMedRefillsModal, { chronicRefillLabel } from './ChronicMedRefillsModal';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import RecordHistoryLink from '../records/RecordHistoryLink';
 import PatientRecordHistoryPanel from '../records/PatientRecordHistoryPanel';
@@ -1309,6 +1310,8 @@ export default function PimsPatientDetailView({
   }, [patientId]);
   /** Every prescription on this patient — Scout-written (SOAP orders, EMR pins) and eVet. */
   const [prescriptions, setPrescriptions] = useState<PatientPrescription[]>([]);
+  /** Chronic med whose refills window is open (top of the EMR). */
+  const [refillsRxId, setRefillsRxId] = useState<number | null>(null);
   const [resolvingProblemId, setResolvingProblemId] = useState<string | null>(null);
   const [discontinuingRxId, setDiscontinuingRxId] = useState<number | null>(null);
   const [treatments, setTreatments] = useState<TreatmentWithItems[]>([]);
@@ -2708,6 +2711,15 @@ export default function PimsPatientDetailView({
                         {rx.inventoryItemId != null ? (
                           <span className="pims-emr-story__chip-catalog"> · catalog</span>
                         ) : null}
+                        {' · '}
+                        <button
+                          type="button"
+                          className={`chronic-rx-refills-btn${(Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
+                          title="Refills and online reorder"
+                          onClick={() => setRefillsRxId(rx.id)}
+                        >
+                          {chronicRefillLabel(rx)}
+                        </button>
                       </span>
                       <button
                         type="button"
@@ -2720,6 +2732,21 @@ export default function PimsPatientDetailView({
                   ))}
                 </ul>
               )}
+              {(() => {
+                const refillsRx =
+                  refillsRxId != null ? chronicMedications.find((m) => m.id === refillsRxId) ?? null : null;
+                return refillsRx && Number(patientId) > 0 ? (
+                  <ChronicMedRefillsModal
+                    rx={refillsRx}
+                    practiceId={practiceId}
+                    patientId={Number(patientId)}
+                    onClose={() => setRefillsRxId(null)}
+                    onChanged={(patch) =>
+                      setPrescriptions((prev) => prev.map((m) => (m.id === refillsRx.id ? { ...m, ...patch } : m)))
+                    }
+                  />
+                ) : null;
+              })()}
               {showRecordHistoryTab && Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
                 <EvetProblemSuggestions
                   patientId={Number(patientId)}

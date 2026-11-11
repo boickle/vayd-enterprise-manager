@@ -1,0 +1,112 @@
+.chronic-rx-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 16px;
+}
+.chronic-rx-modal {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 14px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.chronic-rx-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.chronic-rx-modal__head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.chronic-rx-modal__close {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  padding: 4px;
+}
+.chronic-rx-modal__body {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.chronic-rx-modal__body h4 {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #64748b);
+}
+.chronic-rx-modal__status {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.chronic-rx-modal__muted {
+  font-size: 0.85rem;
+  color: var(--muted, #64748b);
+  margin: 4px 0;
+}
+.chronic-rx-modal__note {
+  font-size: 0.85rem;
+  margin: 8px 0 0;
+}
+.chronic-rx-modal__search {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chronic-rx-modal__result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+}
+.chronic-rx-modal__result:hover {
+  border-color: var(--primary, #2f7d6d);
+}
+.chronic-rx-modal__link {
+  font-weight: 600;
+  color: var(--primary, #2f7d6d);
+}
+/* The refills button beside a chronic med on the SOAP and the EMR. */
+.chronic-rx-refills-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--primary, #2f7d6d);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.chronic-rx-refills-btn.is-none {
+  color: #b45309;
+}
+.chronic-rx-refills-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
