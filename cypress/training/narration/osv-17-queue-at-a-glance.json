@@ -1,0 +1,15 @@
+[
+  { "id": "q01-why", "text": "The Mail Order Queue is the mail team's to-do list. Every order moves through the same steps until it's done." },
+  { "id": "q02-open", "text": "Open shows every order still in progress." },
+  { "id": "q03-steps", "text": "Each order shows its steps: approval, payment, fill, ship or pickup, check, and contacting the client." },
+  { "id": "q04-cancel", "text": "Start each day with cancel requests. Someone asked to stop an order the team already started." },
+  { "id": "q05-approval", "text": "Needs approval is waiting on a doctor. The doctor decides on their task, not here." },
+  { "id": "q06-pending", "text": "Pending client means the ball is in the client's court. We asked them something, and we're waiting on their answer." },
+  { "id": "q07-payment", "text": "Needs payment is waiting on the client to pay." },
+  { "id": "q08-fill", "text": "Fill, ship or pickup, and check are the mail team's work. Oldest first." },
+  { "id": "q09-check", "text": "Check needs a second person, never the one who filled it." },
+  { "id": "q10-contacted", "text": "Contacted is the last step: tell the client it's on the way, or ready to pick up." },
+  { "id": "q11-search", "text": "Search finds any order by number, client, pet or medicine." },
+  { "id": "q12-mistakes", "text": "The most common mistakes: marking an order pending while waiting on a doctor or manager, and leaving cancel requests waiting." },
+  { "id": "q13-remember", "text": "Remember: cancel requests first, then fill, ship and check, oldest first. Pending is only for the client." }
+]

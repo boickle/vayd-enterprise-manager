@@ -1,0 +1,15 @@
+[
+  { "id": "l01-why", "text": "Every fill prints two labels: the prescription label for the medicine, and a bag label for the check." },
+  { "id": "l02-order", "text": "Juniper's thyroid tablets are ready to fill." },
+  { "id": "l03-notes", "text": "Type your notes for the checker first. They print on the bag label." },
+  { "id": "l04-print", "text": "Then print the Rx and bag labels." },
+  { "id": "l05-review", "text": "Check the directions, refills and doctor before printing." },
+  { "id": "l06-dymo", "text": "With the DYMO plugged in, Print on DYMO prints both labels, one after the other." },
+  { "id": "l07-dialog", "text": "No DYMO? Use the system print dialog. It prints the same two labels." },
+  { "id": "l08-rx", "text": "The first is the prescription label. It goes on the medicine." },
+  { "id": "l09-bag", "text": "The second is the bag label: the order number, client, pet, the pet’s weight when we have one, and your notes." },
+  { "id": "l10-where", "text": "Set the bag label in front of the filled medicine and the stock bottle, so the checker can compare them." },
+  { "id": "l11-only", "text": "Bag label only reprints just the bag label." },
+  { "id": "l12-mistakes", "text": "The most common mistakes: printing before typing the checker notes, and sticking the bag label on the medicine." },
+  { "id": "l13-remember", "text": "Remember: notes first, then print. Rx label on the medicine, bag label in front of it for the check." }
+]

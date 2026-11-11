@@ -1,0 +1,15 @@
+[
+  { "id": "k01-why", "text": "Some families pick up at an office instead of having it shipped." },
+  { "id": "k02-choose", "text": "In the cart, Maria chooses pickup at the Brunswick office." },
+  { "id": "k03-place", "text": "Place order." },
+  { "id": "k04-fill", "text": "It's filled like any order." },
+  { "id": "k05-filled", "text": "Mark filled." },
+  { "id": "k06-pickup", "text": "Instead of ship, it's ready for pickup. No shipping label." },
+  { "id": "k07-bag", "text": "Bag it for the office, then send it to check." },
+  { "id": "k08-check", "text": "A second person checks it, as always." },
+  { "id": "k09-tell", "text": "Then let the client know it's ready to pick up." },
+  { "id": "k09b-email", "text": "Click Email client. It's already worded for a pickup." },
+  { "id": "k10-send", "text": "Send the email." },
+  { "id": "k11-mistakes", "text": "The most common mistakes: buying a shipping label for a pickup order, and sending the bag to the wrong office." },
+  { "id": "k12-remember", "text": "Remember: pickup orders skip the label, but still get a second check and a message to the client." }
+]

@@ -1,0 +1,17 @@
+[
+  { "id": "a01-why", "text": "When a prescription has no refills left, a doctor approves the order before anyone fills it." },
+  { "id": "a02-filter", "text": "Maria ordered Juniper's thyroid tablets. It's in Needs approval." },
+  { "id": "a03-order", "text": "Open it." },
+  { "id": "a04-norefills", "text": "No refills, so it needs the doctor." },
+  { "id": "a05-send-to", "text": "Send the approval task to Juniper's doctor." },
+  { "id": "a06-send", "text": "Send task." },
+  { "id": "a07-task", "text": "Dr. Lane opens the task." },
+  { "id": "a08-directions", "text": "She checks the directions, which came from the last prescription," },
+  { "id": "a09-chronic", "text": "marks it chronic," },
+  { "id": "a10-approve", "text": "and approves it." },
+  { "id": "a11-fill", "text": "Back in the queue, it's in Fill." },
+  { "id": "a11b-open", "text": "Open it: approved." },
+  { "id": "a12-same", "text": "From here it's like any order: fill and print the labels, ship, a second check, then tell the client." },
+  { "id": "a13-mistakes", "text": "The most common mistakes: filling before the doctor approves, and asking the doctor in a text instead of sending the task." },
+  { "id": "a14-remember", "text": "Remember: no refills means the doctor approves first, on the task." }
+]

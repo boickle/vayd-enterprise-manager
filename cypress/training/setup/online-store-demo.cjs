@@ -149,6 +149,8 @@ async function login(email, role, ids) {
     [P, juniper, thyroid, `${TAG}-rx-juniper`, 'Thyroid tablets 0.4 mg (90 ct)'],
   );
   await q(`UPDATE prescriptions SET "employee_Id" = $1 WHERE "pimsId" LIKE $2`, [lane, `${TAG}-rx-%`]);
+  // Both are long-term meds: chronic, so they show under Chronic medications and print as chronic.
+  await q(`UPDATE prescriptions SET acuity = 'chronic', "discontinuedAt" = NULL WHERE "pimsId" LIKE $1`, [`${TAG}-rx-%`]);
   // Tom Chen: an old eVet bill still open.
   await q(`DELETE FROM invoices WHERE "pimsType" = 'EVET' AND "pimsId" = $1`, [`${TAG}-evet-chen`]);
   await q(

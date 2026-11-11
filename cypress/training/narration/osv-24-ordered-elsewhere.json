@@ -1,0 +1,13 @@
+[
+  { "id": "x01-why", "text": "Some items aren't on our shelf. We order them on the vendor's site, like Royal Canin food through My Royal Canin, and the vendor ships it straight to the client." },
+  { "id": "x02-order", "text": "Open the order in Fill." },
+  { "id": "x03-source", "text": "Choose Ordered on another site." },
+  { "id": "x04-vendor", "text": "Name the site." },
+  { "id": "x05-ref", "text": "Place the order on their site, then type their order number here." },
+  { "id": "x06-filled", "text": "Mark filled." },
+  { "id": "x07-noship", "text": "Nothing leaves our building, so there's no label to buy. It goes straight to check." },
+  { "id": "x08-default", "text": "Items we always order this way can be set in the catalog to pass through by default, with the vendor filled in." },
+  { "id": "x09-tell", "text": "Then tell the client when to expect it, as for any order." },
+  { "id": "x10-mistakes", "text": "The most common mistakes: marking it filled before ordering on the vendor's site, and leaving out their order number." },
+  { "id": "x11-remember", "text": "Remember: order on their site first, then record the site and their order number." }
+]

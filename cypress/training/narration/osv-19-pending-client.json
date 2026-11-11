@@ -1,0 +1,15 @@
+[
+  { "id": "p01-why", "text": "Pending client is for one thing: we asked the client a question, and we're waiting on their answer." },
+  { "id": "p02-order", "text": "Maple's order is ready to fill, but we need to confirm her address." },
+  { "id": "p03-panel", "text": "Text or email the client right from the order." },
+  { "id": "p04-type", "text": "Ask your question." },
+  { "id": "p05-send", "text": "Send text puts the order on hold, waiting on the client." },
+  { "id": "p06-tag", "text": "It leaves Fill and moves to Pending client." },
+  { "id": "p07-list", "text": "This list shows every order waiting on a client." },
+  { "id": "p08-answer", "text": "When the client answers, by text, phone or email, open the order," },
+  { "id": "p09-clear", "text": "and clear the hold. It goes back to its step." },
+  { "id": "p10-mark", "text": "If you asked by phone, Mark pending puts it on hold without a text." },
+  { "id": "p11-not", "text": "Waiting on a doctor or a manager is not pending. Leave the order in its step, add a note, and ask them." },
+  { "id": "p12-mistakes", "text": "The most common mistakes: marking an order pending while waiting on a manager, and forgetting to clear the hold when the client answers." },
+  { "id": "p13-remember", "text": "Remember: pending means the ball is in the client's court. Clear the hold as soon as they answer." }
+]

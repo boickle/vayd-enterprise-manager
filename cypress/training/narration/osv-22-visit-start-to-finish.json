@@ -1,0 +1,21 @@
+[
+  { "id": "v01-why", "text": "Items sent home by mail from a visit land in the same queue. Here's one from start to finish." },
+  { "id": "v02-filter", "text": "This one came from Juniper's visit today." },
+  { "id": "v03-order", "text": "The doctor approved the directions on the bill, so there's no approval task." },
+  { "id": "v04-payment", "text": "It waits in Needs payment until the visit bill is paid." },
+  { "id": "v04b-wait", "text": "A bill from the last hour may be a visit still going. Give it an hour before sending the client a pay link." },
+  { "id": "v05-paid", "text": "Once the bill is paid, it moves to Fill." },
+  { "id": "v06-office", "text": "Fill it from the office you took it from," },
+  { "id": "v06b-location", "text": "and the location," },
+  { "id": "v07-filled", "text": "print the labels, and mark it filled." },
+  { "id": "v08-ship", "text": "Then ship it: weigh the package," },
+  { "id": "v09-rates", "text": "get rates," },
+  { "id": "v10-label", "text": "and print the cheapest label." },
+  { "id": "v11-checked", "text": "A second person checks it." },
+  { "id": "v12-tell", "text": "Last, tell the client it's on the way." },
+  { "id": "v12b-email", "text": "Click Email client," },
+  { "id": "v12c-send", "text": "and send it." },
+  { "id": "v13-done", "text": "Done." },
+  { "id": "v14-mistakes", "text": "The most common mistakes: filling a visit order before the bill is paid, and sending it to the doctor again when it was already approved on the bill." },
+  { "id": "v15-remember", "text": "Remember: visit orders are approved on the bill. They wait for payment, then fill, ship, check, and tell the client like any order." }
+]

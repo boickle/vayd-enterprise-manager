@@ -1,0 +1,16 @@
+[
+  { "id": "n01-why", "text": "Sometimes a client asks to cancel a mail item after the mail team has started. The CL asks; the mail team decides." },
+  { "id": "n02-bill", "text": "On Juniper's visit bill, the heartworm chewable is already filled in the mail queue." },
+  { "id": "n03-request", "text": "Click Request cancellation." },
+  { "id": "n04-reason", "text": "Choose why," },
+  { "id": "n05-note", "text": "add a note for the mail team," },
+  { "id": "n06-send", "text": "and send it." },
+  { "id": "n07-waiting", "text": "The bill shows it's waiting on the mail team." },
+  { "id": "n08-queue", "text": "In the queue, Cancel requests shows it. Check it first thing." },
+  { "id": "n09-open", "text": "Open it to see who asked, and why." },
+  { "id": "n10-choices", "text": "Choose what fits: cancel and refund, cancel without a refund, already shipped, or keep the order." },
+  { "id": "n11-cancel", "text": "It's filled but not shipped, and the bill was paid, so cancel and refund." },
+  { "id": "n12-done", "text": "Put the medicine back where it came from." },
+  { "id": "n13-mistakes", "text": "The most common mistakes: pulling the item off the bill after the mail team started, and leaving cancel requests waiting." },
+  { "id": "n14-remember", "text": "Remember: once the mail team has started, request the cancellation. The mail team decides, first thing each day." }
+]

@@ -112,7 +112,7 @@ export function resetStoreData() {
  * Setup (before startClock, plain clicks): Maria buys one item in the store for a pet and pays with the test Visa
  * (saving it). `tab` is the store tab that lists the item. Yields the new order id.
  */
-export function buyAsMaria(o: { tab: string; item: string; pet: string; autoship: boolean; qty?: number }) {
+export function buyAsMaria(o: { tab: string; item: string; pet: string; autoship: boolean; qty?: number; pickup?: string }) {
   signIn('client', '/store');
   cy.contains('button', new RegExp(`^${o.tab}$`), { timeout: 30000 }).click();
   cy.contains('a.vayd-store__card', o.item, { timeout: 30000 }).click();
@@ -130,8 +130,10 @@ export function buyAsMaria(o: { tab: string; item: string; pet: string; autoship
     expect($b.text().includes('Card on file') || $b.find('.vayd-store__card-box iframe').length > 0).to.eq(true);
   });
   cy.wait(800);
+  // Office pickup instead of shipping (e.g. pickup: 'Brunswick Office').
+  if (o.pickup) cy.contains('button', `Pick up at ${o.pickup}`).click();
   cy.get('body').then(($b) => {
-    if ($b.text().includes('Yes — send it here')) cy.contains('label', 'Yes — send it here').click();
+    if (!o.pickup && $b.text().includes('Yes — send it here')) cy.contains('label', 'Yes — send it here').click();
     if (!$b.text().includes('Card on file')) enterTestCard('4242424242424242', 'Maria Rivera');
   });
   cy.contains('button', /^Place order$/).should('not.be.disabled').click();

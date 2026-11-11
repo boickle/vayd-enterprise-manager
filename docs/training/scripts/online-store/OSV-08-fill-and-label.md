@@ -20,7 +20,7 @@
 | 5 | Fill | Point at the one thing to remember | "Fill from the office and location you actually took it from. That's what comes off the shelf count." | — |
 | 6 | Item | Point at each item: **From our stock** (or **Ordered on another site**), **Directions**, **Print Rx + bag labels**, **Bag label only** | "For each item: where it came from, the directions, and its labels." | — |
 | 7 | Juniper's thyroid order | Under **LOT / EXPIRATION \***, point at **Lot TH24117 · exp 2027-09-04 · QOH 6** (already chosen when there's one lot), then at **Finish filling: Thyroid tablets 0.4 mg (90 ct) · Lot TH24117** | "Some medicines track lots. Pick the lot you took from the shelf; it's printed on the label and comes off that lot's count." | Thyroid tablets lot-tracked, lot TH24117 (6) in Raleigh office (setup script) |
-| 8 | Item | Point at **Re-send…** and **Mark pending** | "If anything looks wrong, don't fill it. A prescription goes back to the doctor with Re-send… and a note. Anything else, Mark pending and ask a manager." | — |
+| 8 | Item | Point at **Re-send…** and **Mark pending** | "If anything looks wrong, don't fill it. A prescription goes back to the doctor with Re-send… and a note. Anything else, leave it in Fill, add a note, and ask a manager. Mark pending is only for when we're waiting on the client." | — |
 | 9 | Fill | Type in **Notes for the checker** | "Anything the checker should know." | — |
 | 10 | Fill | Click **Mark filled** | "Mark filled." | — |
 | 11 | **Ship** | Point at **✓ Filled** | "Now it's filled." | — |

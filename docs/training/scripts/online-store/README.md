@@ -40,6 +40,16 @@ These videos build on the invoicing series (INV-01, INV-03, INV-09, INV-10) and 
 | [OSV-14](OSV-14-gift-cards.md) | Gift cards: issue, check, outstanding | Managers, lead CLs | Nice |
 | [OSV-15](OSV-15-list-an-item.md) | List an item in the store | Managers | Must |
 | [OSV-16](OSV-16-coupons.md) | Coupons | Managers | Nice |
+| [OSV-17](OSV-17-queue-at-a-glance.md) | The Mail Order Queue at a glance | Mail order team | Must |
+| [OSV-18](OSV-18-labels.md) | Rx and bag labels: how they print and where each goes | Mail order team | Must |
+| [OSV-19](OSV-19-pending-client.md) | Pending client: when we’re waiting on the client | Mail order team, CLs | Must |
+| [OSV-20](OSV-20-refill-start-to-finish.md) | Start to finish: an online flea and tick refill | Mail order team | Must |
+| [OSV-21](OSV-21-needs-the-doctor.md) | Start to finish: an online order that needs the doctor | Mail order team, doctors | Must |
+| [OSV-22](OSV-22-visit-start-to-finish.md) | Start to finish: a mail order from a visit | Mail order team | Must |
+| [OSV-23](OSV-23-pickup.md) | Pickup orders | Mail order team | Must |
+| [OSV-24](OSV-24-ordered-elsewhere.md) | Ordered on another site (e.g. My Royal Canin) | Mail order team | Must |
+| [OSV-25](OSV-25-cancel-requests.md) | Cancel requests | Mail order team, CLs | Must |
+| [OSV-26](OSV-26-chronic-meds.md) | Chronic medications: refills and reordering in the portal | Doctors, techs, CLs, mail team | Must |
 
 OSV-13 (abandoned carts), OSV-17 (Ecwid move) and OSV-18 (common mistakes) were cut by the owner on Nov 7, 2026.
 

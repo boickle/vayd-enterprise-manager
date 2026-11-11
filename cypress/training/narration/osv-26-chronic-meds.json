@@ -1,0 +1,23 @@
+[
+  { "id": "c01-why", "text": "Chronic medications at the top of the chart are what families can reorder in their portal." },
+  { "id": "c02-chart", "text": "Here's Maple's chart." },
+  { "id": "c03-add", "text": "To add one, click Medication," },
+  { "id": "c04-search", "text": "search the inventory," },
+  { "id": "c05-pick", "text": "and pick the item. Pick it from inventory, not free text, so the family can reorder it." },
+  { "id": "c06-catalog", "text": "Catalog means it's linked." },
+  { "id": "c07-refills", "text": "Each one shows its refills." },
+  { "id": "c08-window", "text": "Click them to open the refills window." },
+  { "id": "c09-add", "text": "A doctor adds refills here." },
+  { "id": "c09b-save", "text": "Save refills." },
+  { "id": "c10-saved", "text": "Saved." },
+  { "id": "c11-free", "text": "This one was typed as free text, so the family can't reorder it online." },
+  { "id": "c12-link", "text": "Search the inventory," },
+  { "id": "c12b-pick", "text": "and link it." },
+  { "id": "c13-linked", "text": "Now it's linked. The SOAP's chronic medications work the same way." },
+  { "id": "c14-portal", "text": "In her portal, Maria sees them, with refills left, and Reorder." },
+  { "id": "c15-reorder", "text": "She reorders the flea and tick chewable." },
+  { "id": "c16-place", "text": "Place order." },
+  { "id": "c17-queue", "text": "With refills on file, it goes straight to Fill, with the directions from the prescription." },
+  { "id": "c18-mistakes", "text": "The most common mistakes: typing a medication we sell as free text, and leaving no refills on a medication meant to continue." },
+  { "id": "c19-remember", "text": "Remember: pick chronic medications from inventory, and keep their refills current." }
+]

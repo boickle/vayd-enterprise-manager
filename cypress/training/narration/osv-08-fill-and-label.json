@@ -36,8 +36,12 @@
   "text": "This medicine tracks lots. With one lot on the shelf, it's picked for you. It's printed on the label, and comes off that lot's count."
  },
  {
+  "id": "f13-notes",
+  "text": "Type notes for the checker first. They print on the bag label."
+ },
+ {
   "id": "f10-labels",
-  "text": "Print the prescription and bag labels."
+  "text": "Then print the prescription and bag labels."
  },
  {
   "id": "f11-wrong",
@@ -45,11 +49,7 @@
  },
  {
   "id": "f12-pending",
-  "text": "Anything else, mark it pending and ask a manager."
- },
- {
-  "id": "f13-notes",
-  "text": "Add anything the checker should know."
+  "text": "Anything else, leave it in Fill, add a note, and ask a manager. Mark pending is only for when we're waiting on the client."
  },
  {
   "id": "f14-filled",
