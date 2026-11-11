@@ -3150,6 +3150,7 @@ export default function PimsPatientDetailView({
           <PatientMembershipPanel
             patientId={Number(patientId)}
             patientName={pname || null}
+            patientPassedAway={Boolean(inactiveBanner?.memorial)}
             clientId={clientId ? Number(clientId) : null}
             patientSpecies={speciesName || null}
             patientAgeYears={

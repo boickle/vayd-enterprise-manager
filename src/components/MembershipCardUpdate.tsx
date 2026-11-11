@@ -43,8 +43,11 @@ export default function MembershipCardUpdate({
   nameOnCard,
   buttonClassName,
   onSaved,
+  subscriptionId,
 }: {
   membershipId: number;
+  /** The membership's Stripe subscription id. A change (e.g. after Link) reloads the card (P-25b). */
+  subscriptionId?: string | null;
   mine?: boolean;
   nameOnCard?: string | null;
   buttonClassName?: string;
@@ -70,7 +73,7 @@ export default function MembershipCardUpdate({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, subscriptionId]);
 
   const onReady = useCallback((create: () => Promise<string>) => {
     createRef.current = create;

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import {
+  describeAccessChange,
   fetchPermissionAudit,
   fetchPermissionCatalog,
   type PermissionAuditEntry,
@@ -59,12 +60,48 @@ function extractErr(err: unknown): string {
   return Array.isArray(msg) ? msg.join(', ') : String(msg);
 }
 
+/** An offboarding (last day, who takes over) as plain words. */
+function describeOffboard(
+  detail: Record<string, unknown>,
+  staffName: (id: unknown) => string
+): string[] {
+  const lines: string[] = [];
+  if (detail.lastDay) lines.push(`Last day: ${formatValue(detail.lastDay)}`);
+  if (detail.taskToEmployeeId != null)
+    lines.push(`Tasks go to: ${staffName(detail.taskToEmployeeId)}`);
+  if (detail.primaryDoctorToId != null) {
+    lines.push(`Their pets and households go to: ${staffName(detail.primaryDoctorToId)}`);
+  }
+  if (Array.isArray(detail.worksWith) && detail.worksWith.length) {
+    const byDoctor = new Map<string, number>();
+    for (const w of detail.worksWith as Array<{ doctorId?: unknown }>) {
+      const to = w?.doctorId != null ? staffName(w.doctorId) : 'no doctor';
+      byDoctor.set(to, (byDoctor.get(to) ?? 0) + 1);
+    }
+    for (const [to, n] of byDoctor) {
+      lines.push(
+        `Now work with ${to}: ${n === 1 ? '1 person' : `${n} people`} who worked with them`
+      );
+    }
+  }
+  if (detail.householdClientId != null)
+    lines.push(`Their household: Client #${formatValue(detail.householdClientId)}`);
+  return lines;
+}
+
 /** Turns the stored detail blob into short "x: a → b" lines. */
-function describeDetail(
+export function describeDetail(
   detail: PermissionAuditEntry['detail'],
-  labelOf: (key: string) => string
+  labelOf: (key: string) => string,
+  staffName: (id: unknown) => string = (id) => `#${formatValue(id)}`
 ): string[] {
   if (!detail) return [];
+  if (detail.action === 'roles') {
+    return [
+      describeAccessChange({ permissionKey: 'staff.role.assign', detail } as PermissionAuditEntry),
+    ];
+  }
+  if ('offboardingId' in detail) return describeOffboard(detail, staffName);
   const lines: string[] = [];
   const changes = detail.changes as Record<string, { from: unknown; to: unknown }> | undefined;
   if (changes && typeof changes === 'object') {
@@ -200,6 +237,11 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
     );
   }
 
+  const staffName = useCallback(
+    (id: unknown) => staffNameById.get(Number(id)) ?? `#${formatValue(id)}`,
+    [staffNameById]
+  );
+
   function recordOf(row: PermissionAuditEntry): string {
     if (!row.entityType) return '—';
     const label = ENTITY_LABELS[row.entityType] ?? row.entityType;
@@ -231,7 +273,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
         row.patientId != null ? String(row.patientId) : '',
         row.amount ?? '',
         row.reason ?? '',
-        describeDetail(row.detail, labelOf).join('; '),
+        describeDetail(row.detail, labelOf, staffName).join('; '),
       ]
         .map(csvCell)
         .join(',')
@@ -342,7 +384,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const details = describeDetail(row.detail, labelOf);
+                  const details = describeDetail(row.detail, labelOf, staffName);
                   return (
                     <tr key={row.id}>
                       <td className="perm-audit-nowrap">{formatWhen(row.created)}</td>

@@ -52,6 +52,12 @@ import {
   appointmentIsCalendarOnlyStaffItem,
   householdPersonalBlockFlag,
 } from './calendarOnlyStaffAppointment';
+import {
+  HOUSEHOLD_DRIVE_MERGE_GAP_MS,
+  scheduledIntervalsClumped,
+} from './householdDriveMergeGap';
+
+export { HOUSEHOLD_DRIVE_MERGE_GAP_MS, scheduledIntervalsClumped } from './householdDriveMergeGap';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -396,16 +402,6 @@ function assignEtaKeysForSameAddress(households: SchedulerDriveHousehold[]): voi
   }
 }
 
-/** Overlap or back-to-back scheduled times — same visit clump (multi-pet); otherwise separate stops. */
-function scheduledIntervalsClumped(
-  aStart: number,
-  aEnd: number,
-  bStart: number,
-  bEnd: number
-): boolean {
-  return aStart <= bEnd && bStart <= aEnd;
-}
-
 function appointmentScheduledIntervalMs(
   a: DoctorDayAppt
 ): { start: number; end: number } | null {
@@ -419,8 +415,8 @@ function appointmentScheduledIntervalMs(
 }
 
 /**
- * Same client + location can host multiple same-day visits. Only merge when scheduled times
- * overlap or touch (multi-pet one stop); morning + afternoon stay separate households.
+ * Same client + location can host multiple same-day visits. Merge when scheduled times
+ * overlap/touch or fall within the API 1hr household merge gap; morning + afternoon stay separate.
  */
 function splitApptsByScheduledTimeClumps(
   bucket: { appt: DoctorDayAppt; index: number }[]
@@ -494,6 +490,9 @@ function householdFromApptClump(
   let windowStartIso: string | undefined;
   let windowEndIso: string | undefined;
   let effectiveWindow: { startIso: string; endIso: string } | undefined;
+  /** Window from the earliest-start sibling — shared household arrival (not a union of staggered ±N). */
+  let earliestStartMs = Number.POSITIVE_INFINITY;
+  let earliestStartWindow: { startIso: string; endIso: string } | undefined;
 
   for (const { appt: a, index: idx } of clump) {
     firstApptIndex = Math.min(firstApptIndex, idx);
@@ -515,22 +514,19 @@ function householdFromApptClump(
     const apptId = (a as { id?: string | number }).id;
     if (apptId != null) sourceAppointmentIds.push(apptId);
     const ew = (a as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
-    if (ew?.startIso && ew?.endIso) {
-      if (!effectiveWindow) {
-        effectiveWindow = { startIso: ew.startIso, endIso: ew.endIso };
-        windowStartIso = ew.startIso;
-        windowEndIso = ew.endIso;
-      } else {
-        const w0 = DateTime.fromISO(effectiveWindow.startIso);
-        const w1 = DateTime.fromISO(effectiveWindow.endIso);
-        const n0 = DateTime.fromISO(ew.startIso);
-        const n1 = DateTime.fromISO(ew.endIso);
-        if (n0.isValid && (!w0.isValid || n0 < w0)) effectiveWindow.startIso = ew.startIso;
-        if (n1.isValid && (!w1.isValid || n1 > w1)) effectiveWindow.endIso = ew.endIso;
-        windowStartIso = effectiveWindow.startIso;
-        windowEndIso = effectiveWindow.endIso;
+    if (ew?.startIso && ew?.endIso && sDt?.isValid) {
+      const startMs = sDt.toMillis();
+      if (startMs < earliestStartMs) {
+        earliestStartMs = startMs;
+        earliestStartWindow = { startIso: ew.startIso, endIso: ew.endIso };
       }
     }
+  }
+
+  if (earliestStartWindow) {
+    effectiveWindow = { ...earliestStartWindow };
+    windowStartIso = earliestStartWindow.startIso;
+    windowEndIso = earliestStartWindow.endIso;
   }
 
   return {
