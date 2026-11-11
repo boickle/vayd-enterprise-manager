@@ -296,3 +296,22 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+
+/* Open request nobody has worked in 10 days. */
+.appt-table-quiet {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: normal;
+}
+
+/* A pet on this open request was already seen (or has a visit coming) since it came in. */
+.appt-table-pill--seen {
+  background: #ffedd5;
+  color: #9a3412;
+  border: 1px dashed #fb923c;
+}

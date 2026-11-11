@@ -163,3 +163,52 @@ describe('RequestConversationPanel', () => {
     expect(onContacted).toHaveBeenCalled();
   });
 });
+
+describe('RequestConversationPanel filter', () => {
+  it('shows only texts, only calls, or everything', async () => {
+    api.fetchAppointmentRequestConversation.mockResolvedValue({
+      submissionId: 5,
+      phone: '7203775237',
+      texts: [
+        {
+          id: 's1',
+          direction: 'in',
+          body: 'Tomorrow morning works!',
+          at: '2026-11-10T14:24:00Z',
+          beforeRequest: false,
+        },
+      ],
+      textsError: null,
+      calls: [
+        {
+          id: 9,
+          at: '2026-11-10T13:00:00Z',
+          outcome: 'reached',
+          note: 'Spoke with Laura',
+          employee: null,
+        },
+      ],
+    });
+    render(
+      <RequestConversationPanel
+        item={item}
+        practiceId={1}
+        practiceTz="America/New_York"
+        onContacted={() => {}}
+        onSubmissionUpdated={() => {}}
+      />
+    );
+    await screen.findByText('Tomorrow morning works!');
+    expect(screen.getByText('Spoke with Laura')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /^Text/ }));
+    expect(screen.getByText('Tomorrow morning works!')).toBeTruthy();
+    expect(screen.queryByText('Spoke with Laura')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /^Calls/ }));
+    expect(screen.queryByText('Tomorrow morning works!')).toBeNull();
+    expect(screen.getByText('Spoke with Laura')).toBeTruthy();
+    // The status still reflects everything.
+    expect(screen.getByText(/Owner texted back/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
+    expect(screen.getByText('Tomorrow morning works!')).toBeTruthy();
+  });
+});

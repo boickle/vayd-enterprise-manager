@@ -26,6 +26,14 @@ import { isProduction } from '../../utils/env';
 
 type Mode = 'email' | 'text' | 'call';
 
+type ChannelFilter = 'all' | 'email' | 'text' | 'call';
+const CHANNEL_FILTERS: { key: ChannelFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'email', label: 'Email' },
+  { key: 'text', label: 'Text' },
+  { key: 'call', label: 'Calls' },
+];
+
 type Props = {
   item: AppointmentRequestSubmissionItem;
   practiceId: number;
@@ -114,6 +122,8 @@ export function RequestConversationPanel({
   const [convoError, setConvoError] = useState<string | null>(null);
   const [convoKey, setConvoKey] = useState(0);
   const [showEarlier, setShowEarlier] = useState(false);
+  /** Show only emails, only texts, only calls, or everything (default). */
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all');
 
   const [mode, setMode] = useState<Mode>(() =>
     email.clientEmail ? 'email' : canText ? 'text' : 'call'
@@ -151,8 +161,16 @@ export function RequestConversationPanel({
       }),
     [item.submittedAt, email.clientEmail, email.messages, convo]
   );
-  const earlierCount = allItems.filter((i) => i.beforeRequest).length;
-  const shown = showEarlier ? allItems : allItems.filter((i) => !i.beforeRequest);
+  const filtered = allItems.filter(
+    (i) => channelFilter === 'all' || i.channel === 'event' || i.channel === channelFilter
+  );
+  const earlierCount = filtered.filter((i) => i.beforeRequest).length;
+  const shown = showEarlier ? filtered : filtered.filter((i) => !i.beforeRequest);
+  const channelCounts = {
+    email: allItems.filter((i) => i.channel === 'email').length,
+    text: allItems.filter((i) => i.channel === 'text').length,
+    call: allItems.filter((i) => i.channel === 'call').length,
+  };
   const summary = conversationSummary(allItems);
   const loading = email.loading || (convo == null && convoError == null);
 
@@ -214,6 +232,23 @@ export function RequestConversationPanel({
     <section className="req-convo" aria-label="Conversation">
       <header className="req-convo-head">
         <h3>Conversation</h3>
+        <div className="req-convo-filter" role="radiogroup" aria-label="Show">
+          {CHANNEL_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              role="radio"
+              aria-checked={channelFilter === f.key}
+              className={`req-convo-filter-btn${channelFilter === f.key ? ' req-convo-filter-btn--on' : ''}`}
+              onClick={() => setChannelFilter(f.key)}
+            >
+              {f.label}
+              {f.key !== 'all' ? (
+                <span className="req-convo-filter-count">{channelCounts[f.key]}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
         <span className={`req-convo-status req-convo-status--${summary.tone}`}>
           {summary.label}
           {summary.at ? ` · ${whenLabel(summary.at, practiceTz)}` : ''}

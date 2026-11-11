@@ -8,6 +8,7 @@ import {
   fetchAppointmentRequestSubmission,
   fetchAppointmentRequestSubmissionsPage,
   fetchRemainingAppointmentRequestSubmissionPages,
+  bookAppointmentRequestSubmission,
   patchAppointmentRequestSubmission,
   sendAppointmentRequestSubmissionSms,
   type AppointmentRequestSubmission,
@@ -166,6 +167,8 @@ import {
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
   receivedDateLabel,
+  requestIsQuiet,
+  visitSinceLabel,
   requestDataTown,
   visitDateShortLabel,
 } from '../utils/appointmentRequestTableRow';
@@ -1815,6 +1818,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   };
 
+  /** "Seen since this request": link that visit to the request (Booked, or On hold for a hold). */
+  const linkVisitSince = useCallback(
+    async (item: AppointmentRequestSubmissionItem, appointmentId: number) => {
+      setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await bookAppointmentRequestSubmission(item.id, { appointmentId });
+        mergeSubmission({ ...updated, kind: 'submission', visitSinceRequest: null });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not link the visit';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      } finally {
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      }
+    },
+    [mergeSubmission],
+  );
+
   /** Contact from the conversation panel: mark a New request Contacted without moving the row away. */
   const markContactedInPlace = useCallback(
     async (item: AppointmentRequestSubmissionItem) => {
@@ -2044,6 +2068,14 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         >
           <span>Hold</span>
         </button>
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() => navigate(`${APPOINTMENT_REQUESTS_LIST_PATH}/cleanup`)}
+          title="Close out open requests older than 10 days"
+        >
+          Clean up old requests
+        </button>
         <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load({ awaitHydration: true })} disabled={loading}>
           Refresh
         </button>
@@ -2272,6 +2304,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               notBookedReason: item.notBookedReason,
             });
             const commPill = appointmentRequestCommunicationPill(status, { needsStaffConfirmation });
+            const quiet = requestIsQuiet(item);
+            // A pet on this open request was already seen (or has a visit coming) since it came in.
+            const visitSince =
+              (status === 'new' || status === 'contacted') && !hasLinkedAppointment
+                ? (item.visitSinceRequest ?? null)
+                : null;
             const hasVisitForRoute = hasLinkedAppointment || autoBookedOnline;
 
             return (
@@ -2316,6 +2354,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       {howSoonUrgency ? (
                         <span className="appt-table-urgent" title={howSoon ?? undefined}>
                           Urgent
+                        </span>
+                      ) : null}
+                      {quiet ? (
+                        <span className="appt-table-quiet" title="Nobody has worked this request in 10 days">
+                          No activity 10+ days
                         </span>
                       ) : null}
                     </span>
@@ -2378,12 +2421,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     />
                   </div>
                   <div className="appt-table-cell">
+                    {visitSince ? (
+                      <span
+                        className="appt-table-pill appt-table-pill--seen"
+                        title={`${visitSince.typeName ?? 'Visit'} since this request — open it to link the visit`}
+                      >
+                        <span>{visitSince.isHold ? 'Hold since request' : visitSince.past ? 'Seen since request' : 'Visit since request'}</span>
+                        <span className="appt-table-pill-detail">{visitSinceLabel(visitSince, practiceTz)}</span>
+                      </span>
+                    ) : (
                     <span className={`appt-table-pill appt-table-pill--${bookingPill.tone}`}>
                       <span>{bookingPill.label}</span>
                       {bookingPill.detail ? (
                         <span className="appt-table-pill-detail">{bookingPill.detail}</span>
                       ) : null}
                     </span>
+                    )}
                   </div>
                   <div className="appt-table-cell">
                     <span className={`appt-table-pill appt-table-pill--comm-${commPill.tone}`}>
@@ -2483,8 +2536,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                               {statusUpdating[item.id] ? 'Saving…' : 'Confirm appointment'}
                             </button>
                           ) : null}
+                          {visitSince ? (
+                            <button
+                              type="button"
+                              className="req-action req-action--primary"
+                              disabled={Boolean(statusUpdating[item.id])}
+                              onClick={() => void linkVisitSince(item, visitSince.appointmentId)}
+                            >
+                              Link this visit ({visitSinceLabel(visitSince, practiceTz)})
+                            </button>
+                          ) : null}
                           {needsManualBook ? (
-                            <button type="button" className="req-action req-action--primary" onClick={() => onBook(item)}>
+                            <button
+                              type="button"
+                              className={`req-action${visitSince ? '' : ' req-action--primary'}`}
+                              onClick={() => onBook(item)}
+                            >
                               Route
                             </button>
                           ) : null}

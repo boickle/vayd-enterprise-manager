@@ -43,6 +43,8 @@ export type AppointmentRequestSubmissionItem = {
   liaisonAssignedAt?: string | null;
   /** Service zone name saved at submit; null on requests sent before Nov 2026. */
   zoneName?: string | null;
+  /** Open requests only: a visit (or upcoming hold) for one of the pets since the request came in. */
+  visitSinceRequest?: VisitSinceRequest | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -376,5 +378,44 @@ export async function logAppointmentRequestCall(
     `/appointments/request-submissions/${encodeURIComponent(String(id))}/calls`,
     body,
   );
+  return data;
+}
+
+/** A visit for one of the request's pets after the request came in. */
+export type VisitSinceRequest = {
+  appointmentId: number;
+  start: string;
+  typeName: string | null;
+  isHold: boolean;
+  past: boolean;
+};
+
+export type AppointmentRequestCleanupItem = {
+  id: number;
+  submittedAt: string;
+  status: string;
+  clientName: string;
+  petNames: string[];
+  notes: string | null;
+  visit: VisitSinceRequest | null;
+  proposal: 'booked' | 'not_booked';
+};
+
+/** GET /appointments/request-submissions/cleanup — open requests older than N days, with proposals. */
+export async function fetchAppointmentRequestCleanup(
+  practiceId: number,
+  olderThanDays = 10,
+): Promise<{ olderThanDays: number; items: AppointmentRequestCleanupItem[] }> {
+  const { data } = await http.get('/appointments/request-submissions/cleanup', {
+    params: { practiceId, olderThanDays },
+  });
+  return data;
+}
+
+/** POST /appointments/request-submissions/cleanup/apply */
+export async function applyAppointmentRequestCleanup(
+  items: Array<{ id: number; action: 'booked' | 'not_booked'; appointmentId?: number | null }>,
+): Promise<{ booked: number; notBooked: number; skipped: number }> {
+  const { data } = await http.post('/appointments/request-submissions/cleanup/apply', { items });
   return data;
 }

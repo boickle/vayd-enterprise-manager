@@ -515,3 +515,38 @@
   font-weight: 400;
   color: #475569;
 }
+
+/* All / Email / Text / Calls switch above the conversation. */
+.req-convo-filter {
+  display: inline-flex;
+  margin-right: auto;
+  margin-left: 12px;
+  padding: 2px;
+  border-radius: 9px;
+  background: #f1f5f9;
+  gap: 2px;
+}
+
+.req-convo-filter-btn {
+  border: none;
+  background: transparent;
+  padding: 3px 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.req-convo-filter-btn--on {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.req-convo-filter-count {
+  margin-left: 4px;
+  font-weight: 500;
+  color: #94a3b8;
+}

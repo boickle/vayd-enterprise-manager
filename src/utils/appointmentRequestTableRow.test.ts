@@ -119,8 +119,16 @@ describe('Request column type names', () => {
         { id: '2991115', name: 'Ernie' },
       ],
       petSpecificData: {
-        '2744437': { needsToday: 'Wellness visit / check-up', appointmentTypeId: 1, appointmentTypeName: 'Standard' },
-        '2991115': { needsToday: 'Wellness visit / check-up', appointmentTypeId: 1, appointmentTypeName: 'Standard' },
+        '2744437': {
+          needsToday: 'Wellness visit / check-up',
+          appointmentTypeId: 1,
+          appointmentTypeName: 'Standard',
+        },
+        '2991115': {
+          needsToday: 'Wellness visit / check-up',
+          appointmentTypeId: 1,
+          appointmentTypeName: 'Standard',
+        },
       },
     };
     expect(requestDataTypeNamesLabel(rd)).toBe('Standard');
@@ -128,5 +136,42 @@ describe('Request column type names', () => {
   it('falls back to the request label when pets have no type', async () => {
     const { requestDataTypeNamesLabel } = await import('./appointmentRequestDetailDisplay');
     expect(requestDataTypeNamesLabel({ appointmentType: 'Euthanasia' })).toBe('Euthanasia');
+  });
+});
+
+describe('quiet requests and visits since the request', () => {
+  it('flags an open request with no activity in 10 days', async () => {
+    const { requestIsQuiet } = await import('./appointmentRequestTableRow');
+    const now = Date.parse('2026-11-20T12:00:00Z');
+    expect(requestIsQuiet({ status: 'new', submittedAt: '2026-11-05T12:00:00Z' }, now)).toBe(true);
+    expect(requestIsQuiet({ status: 'new', submittedAt: '2026-11-15T12:00:00Z' }, now)).toBe(false);
+    // Recent staff activity counts.
+    expect(
+      requestIsQuiet(
+        {
+          status: 'contacted',
+          submittedAt: '2026-11-01T12:00:00Z',
+          followUpAt: '2026-11-18T12:00:00Z',
+        },
+        now
+      )
+    ).toBe(false);
+    // Closed requests are never "quiet".
+    expect(requestIsQuiet({ status: 'booked', submittedAt: '2026-10-01T12:00:00Z' }, now)).toBe(
+      false
+    );
+  });
+  it('labels the visit since the request', async () => {
+    const { visitSinceLabel } = await import('./appointmentRequestTableRow');
+    const tz = 'America/New_York';
+    expect(visitSinceLabel({ start: '2026-11-09T15:00:00Z', isHold: false, past: true }, tz)).toBe(
+      'Seen 11/9/26'
+    );
+    expect(visitSinceLabel({ start: '2026-12-01T15:00:00Z', isHold: false, past: false }, tz)).toBe(
+      'Visit 12/1/26'
+    );
+    expect(visitSinceLabel({ start: '2026-12-01T15:00:00Z', isHold: true, past: false }, tz)).toBe(
+      'Hold 12/1/26'
+    );
   });
 });
