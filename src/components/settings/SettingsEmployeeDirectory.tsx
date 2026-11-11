@@ -56,6 +56,14 @@ import SignaturePad from '../SignaturePad';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import {
+  fetchQuoUsers,
+  fetchUnlinkedQuoCallers,
+  quoUserMatchingEmail,
+  QUO_NONE,
+  type QuoUsersResponse,
+  type UnlinkedQuoCaller,
+} from '../../api/quoUsers';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
 const ALL_OFFICES = 'all';
@@ -81,6 +89,17 @@ function empActive(e: Employee): boolean {
   const r = e as Record<string, unknown>;
   if (r.isActive === false || r.isDeleted === true) return false;
   return true;
+}
+
+/**
+ * COM-CALL: the Quo choice on file — a Quo user id, QUO_NONE for "Doesn't use Quo", or '' when
+ * nobody has chosen yet.
+ */
+export function savedQuoChoice(e: Employee | Record<string, unknown> | null | undefined): string {
+  const r = (e ?? {}) as Record<string, unknown>;
+  const uid = typeof r.openPhoneUserId === 'string' ? r.openPhoneUserId.trim() : '';
+  if (uid) return uid;
+  return r.doesNotUseQuo === true ? QUO_NONE : '';
 }
 
 function str(v: unknown): string {
@@ -212,6 +231,13 @@ export default function SettingsEmployeeDirectory({
   const [quoLinePhone, setQuoLinePhone] = useState('');
   /** Typing a number that isn't one of the Quo lines. */
   const [quoCustom, setQuoCustom] = useState(false);
+  /** COM-CALL: practice Quo users and whether Quo is on (then a Quo choice is required). */
+  const [quoInfo, setQuoInfo] = useState<QuoUsersResponse | null>(null);
+  const [unlinkedCallers, setUnlinkedCallers] = useState<UnlinkedQuoCaller[]>([]);
+  /** Quo choice on file for the person being edited ('' = none yet). */
+  const [quoSaved, setQuoSaved] = useState('');
+  /** What the user picked in the form; null while untouched. */
+  const [quoPicked, setQuoPicked] = useState<string | null>(null);
   const [worksWithDoctorId, setWorksWithDoctorId] = useState<number | null>(null);
   const [worksWithDefault, setWorksWithDefault] = useState(false);
   const [creatingLogin, setCreatingLogin] = useState(false);
@@ -265,6 +291,19 @@ export default function SettingsEmployeeDirectory({
   const quoSelectValue = quoCustom || (quoLinePhone.trim() && !quoMatch)
     ? '__custom__'
     : (quoMatch?.phone ?? '');
+  /**
+   * COM-CALL: email matching only suggests. With nothing on file, the Quo user whose email matches
+   * is pre-selected and marked "(matches email — confirm)"; nothing is saved until Save.
+   */
+  const quoSuggestion =
+    quoInfo?.quoEnabled && !quoSaved
+      ? quoUserMatchingEmail(quoInfo.users, loginUser?.email ?? email)
+      : undefined;
+  const quoChoice = quoPicked ?? (quoSaved || quoSuggestion?.id || '');
+  const quoSuggestedShown = quoPicked == null && !quoSaved && quoSuggestion != null;
+  const quoChoiceRequired =
+    quoInfo?.quoEnabled === true &&
+    (modalMode === 'add' || loadedEmployee == null || empActive(loadedEmployee));
 
   const applyStaffLogin = (login: StaffLogin | null) => {
     setLoginUser(login);
@@ -318,6 +357,25 @@ export default function SettingsEmployeeDirectory({
     void load();
   }, [load]);
 
+  // COM-CALL: who can edit staff profiles sees the Quo user field and the unlinked-caller notice.
+  useEffect(() => {
+    if (!canManageStaff) return;
+    let cancelled = false;
+    void fetchQuoUsers()
+      .then((info) => {
+        if (!cancelled) setQuoInfo(info);
+      })
+      .catch(() => undefined);
+    void fetchUnlinkedQuoCallers()
+      .then((list) => {
+        if (!cancelled) setUnlinkedCallers(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageStaff, rows]);
+
   const openAdd = () => {
     setEditingId(null);
     setFirstName('');
@@ -334,6 +392,8 @@ export default function SettingsEmployeeDirectory({
     setIsProvider(false);
     applyStaffLogin(null);
     setQuoLinePhone('');
+    setQuoSaved('');
+    setQuoPicked(null);
     setLoadedEmployee(null);
     setAddress1('');
     setAddress2('');
@@ -396,6 +456,8 @@ export default function SettingsEmployeeDirectory({
     setPhone2(str(r.phone2));
     setQuoLinePhone(str(r.quoLinePhone));
     setQuoCustom(false);
+    setQuoSaved(savedQuoChoice(full));
+    setQuoPicked(null);
     setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
   };
 
@@ -602,6 +664,8 @@ export default function SettingsEmployeeDirectory({
       isActive: true,
       isDeleted: false,
     };
+    // COM-CALL: with Quo on, the profile always sends its Quo choice (the API refuses a blank one).
+    if (quoInfo?.quoEnabled) payload.quoUserChoice = quoChoice;
     return payload;
   };
 
@@ -639,6 +703,13 @@ export default function SettingsEmployeeDirectory({
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
+    if (quoChoiceRequired && !quoChoice) {
+      onMessage?.(
+        'Choose this person’s Quo user, or “Doesn’t use Quo”. Their calls reach their call dock through it.',
+        'error'
+      );
+      return;
+    }
     if (modalMode === 'add') {
       const fn = firstName.trim();
       const ln = lastName.trim();
@@ -979,6 +1050,46 @@ export default function SettingsEmployeeDirectory({
   );
   const emailLocked = loginUser != null;
 
+  /** COM-CALL: active staff with neither a Quo user nor "Doesn't use Quo". */
+  const quoNotLinked = (emp: Employee): boolean =>
+    quoInfo?.quoEnabled === true && empActive(emp) && !savedQuoChoice(emp);
+  const quoNotLinkedCount = sorted.filter(quoNotLinked).length;
+
+  const quoKnownIds = new Set((quoInfo?.users ?? []).map((u) => u.id));
+  const quoUserField = quoInfo?.quoEnabled ? (
+    <label className="settings-employee-modal__full">
+      <span className="label">Quo user{quoChoiceRequired ? ' (required)' : ''}</span>
+      <select
+        className="input"
+        aria-label="Quo user"
+        value={quoChoice}
+        required={quoChoiceRequired}
+        onChange={(e) => setQuoPicked(e.target.value)}
+      >
+        <option value="">Choose…</option>
+        {(quoInfo.users ?? []).map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.name}
+            {u.email && u.email !== u.name ? ` · ${u.email}` : ''}
+            {quoSuggestedShown && quoSuggestion?.id === u.id ? ' (matches email — confirm)' : ''}
+          </option>
+        ))}
+        {quoChoice && quoChoice !== QUO_NONE && !quoKnownIds.has(quoChoice) ? (
+          <option value={quoChoice}>Quo user {quoChoice} (not in Quo’s list)</option>
+        ) : null}
+        <option value={QUO_NONE}>Doesn’t use Quo</option>
+      </select>
+      <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+        {quoSuggestedShown
+          ? 'Picked because the email matches. Check it’s the right person, then Save. '
+          : ''}
+        Calls this person answers or makes in Quo land in their call dock. Each Quo user belongs to
+        one person.
+        {quoInfo.error ? ` ${quoInfo.error}` : ''}
+      </p>
+    </label>
+  ) : null;
+
   return (
     <div className="settings-employee-directory">
       <p className="settings-section-description" style={{ marginTop: 0 }}>
@@ -1008,6 +1119,7 @@ export default function SettingsEmployeeDirectory({
                   {empActive(emp) && lastDayById.get(emp.id)
                     ? ` · Last day ${lastDayById.get(emp.id)}`
                     : ''}
+                  {quoNotLinked(emp) ? ' · Quo: not linked' : ''}
                 </option>
               ))}
               {showDeactivated
@@ -1044,6 +1156,27 @@ export default function SettingsEmployeeDirectory({
           </div>
         </div>
         {loadError && <div className="settings-error-message">{loadError}</div>}
+        {canManageStaff && unlinkedCallers.length > 0 ? (
+          <div className="settings-error-message" role="alert">
+            {unlinkedCallers.map((u) => (
+              <p key={u.quoUserId} style={{ margin: '0 0 4px' }}>
+                Calls from Quo user {u.name || u.email || u.quoUserId}
+                {u.name && u.email ? ` (${u.email})` : ''} aren’t linked to anyone
+                {u.waitingCalls > 0
+                  ? ` — ${u.waitingCalls} waiting to be filed`
+                  : ''}
+                . Link them on a staff profile (Quo user).
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {quoNotLinkedCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Quo: not linked for {quoNotLinkedCount} active{' '}
+            {quoNotLinkedCount === 1 ? 'person' : 'people'} (marked in the Staff list). Open their
+            Profile and choose their Quo user, or “Doesn’t use Quo”.
+          </p>
+        ) : null}
 
         {editingId == null ? (
           <div className="settings-card">
@@ -1264,6 +1397,7 @@ export default function SettingsEmployeeDirectory({
                           </p>
                         </label>
                       ) : null}
+                      {quoUserField}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                         <input
                           type="checkbox"
@@ -1668,6 +1802,7 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">Email</span>
                     <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                   </label>
+                  {quoUserField}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                     <input type="checkbox" checked={isProvider} onChange={(e) => setIsProvider(e.target.checked)} />
                     <span>Scheduling provider</span>

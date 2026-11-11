@@ -4,6 +4,7 @@ import { listClientCalls, resolveCall, type ClientCall } from '../../api/calls';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import {
   effectiveCallPhase,
+  isSummaryOverdue,
   useMyCallStack,
   type StackedCall,
 } from '../../hooks/useClientCallActivity';
@@ -46,7 +47,7 @@ function peekLabel(call: StackedCall): string {
     return isIncoming(call) ? 'Incoming' : 'Calling';
   }
   if (phase === 'active') return isIncoming(call) ? 'On inbound' : 'On a call';
-  if (phase === 'transcribing') return 'Summarizing';
+  if (phase === 'transcribing') return isSummaryOverdue(call) ? 'Still checking' : 'Summarizing';
   if (phase === 'transcript_ready') return 'Ready to file';
   if (phase === 'no_record_needed') return 'Nothing to file';
   return 'Call';
@@ -92,6 +93,20 @@ function cardCopy(call: StackedCall): {
         : 'Hang up when you are done. The summary follows you around the site.',
     };
   }
+  if (phase === 'transcribing' && isSummaryOverdue(call)) {
+    // COM-CALL (owner, Nov 10, 2026): never give up on our own; say so and let them Dismiss.
+    const noneComing = ['absent', 'failed'].includes(
+      String(call.call?.transcriptStatus ?? '').toLowerCase()
+    );
+    return {
+      tone: 'live',
+      gripLabel: 'Still checking',
+      state: <>Summary taking longer than 3 minutes — still checking</>,
+      note: noneComing
+        ? 'Quo says it won’t write up this call (it may have been silent). Dismiss when you’re done — that means don’t file.'
+        : 'Scout keeps checking Quo for a week. It turns to “Summary ready” when it arrives. Dismiss if there’s nothing to file.',
+    };
+  }
   if (phase === 'transcribing') {
     return {
       tone: 'live',
@@ -120,15 +135,11 @@ function cardCopy(call: StackedCall): {
         : 'Read it over, then file it to a chart, client-only, or skip it.',
     };
   }
-  const timedOut =
-    call.phase === 'transcribing' && phase === 'no_record_needed';
   return {
     tone: 'muted',
     gripLabel: 'Nothing to file',
     state: <>Nothing for the record</>,
-    note: timedOut
-      ? 'No transcript arrived — the call may have been silent. Dismiss whenever you like.'
-      : call.call?.triageReason?.trim()
+    note: call.call?.triageReason?.trim()
         ? `${call.call.triageReason.trim()} — dismiss whenever you like.`
         : 'Looked like scheduling or billing. Dismiss whenever you like.',
   };
@@ -143,7 +154,7 @@ function cardCopy(call: StackedCall): {
  */
 export default function MyCallIndicator() {
   const navigate = useNavigate();
-  const { calls, dismiss, refresh } = useMyCallStack();
+  const { calls, more, dismiss, refresh } = useMyCallStack();
   const [frontKey, setFrontKey] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<{
     key: string;
@@ -230,6 +241,7 @@ export default function MyCallIndicator() {
       return;
     }
     if (front.clientId == null) return;
+    // Undecided calls come back however old; 240 only bounds decided ones.
     void listClientCalls(front.clientId, { sinceMinutes: 240 })
       .then(({ calls: rows }) => {
         const match =
@@ -285,6 +297,11 @@ export default function MyCallIndicator() {
           canDismiss ? (phase === 'transcript_ready' ? 'Don’t file' : 'Dismiss') : undefined
         }
         behind={peeks}
+        stackNote={
+          more
+            ? 'Showing your 50 newest calls. File or dismiss some to see older ones.'
+            : undefined
+        }
         onSelectBehind={setFrontKey}
         onDismiss={
           // Clinical summaries stay until filed or skipped in the review modal, unless there
