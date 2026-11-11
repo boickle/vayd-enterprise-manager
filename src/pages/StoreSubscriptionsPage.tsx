@@ -578,9 +578,9 @@ export default function StoreSubscriptionsPage() {
                 </label>
                 {!canChangeMoney ? (
                   <p className="settings-muted" data-testid="autoship-locked-note">
-                    Looks wrong? On the order in the queue, use Re-send… to send it to the doctor with a note
-                    (prescriptions), or Mark pending and ask a manager (other items). Only managers change the item or
-                    quantity.
+                    Looks wrong? Don't fill it. On the order in the queue, use Re-send… to send it to the doctor with
+                    a note (prescriptions), or leave it in Fill, add a note and ask a manager (other items). Only
+                    managers change the item or quantity.
                   </p>
                 ) : null}
                 <div className="autoship-edit__row">
