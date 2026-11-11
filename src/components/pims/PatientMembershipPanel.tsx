@@ -420,6 +420,8 @@ export default function PatientMembershipPanel({
   // Enrolment billing: the card Stripe charges for the first period and bills after (owner decision, Nov 9, 2026).
   const [enrolCardOnFile, setEnrolCardOnFile] = useState<ClientCardOnFile['card']>(null);
   const [enrolUseCardOnFile, setEnrolUseCardOnFile] = useState(true);
+  // Unticked until the owner says yes, as at checkout.
+  const [enrolKeepCard, setEnrolKeepCard] = useState(false);
   const enrolCreateCardRef = useRef<(() => Promise<string>) | null>(null);
 
   // Plan change / enrolment.
@@ -1011,6 +1013,7 @@ export default function PatientMembershipPanel({
         feeToProvider,
         clientId: clientId != null ? Number(clientId) : undefined,
         paymentMethodId,
+        saveCardOnFile: paymentMethodId ? enrolKeepCard : undefined,
       });
       setMembership(created);
       await refreshAudit(created.id);
@@ -1040,6 +1043,7 @@ export default function PatientMembershipPanel({
         const card = res?.card && !res.card.expired ? res.card : null;
         setEnrolCardOnFile(card);
         setEnrolUseCardOnFile(Boolean(card));
+        setEnrolKeepCard(false);
       })
       .catch(() => {
         if (!cancelled) {
@@ -1630,12 +1634,26 @@ export default function PatientMembershipPanel({
                   </div>
                 ) : null}
                 {!enrolCardOnFile || !enrolUseCardOnFile ? (
-                  <PostVisitCardEntry
-                    name={null}
-                    onReady={(create) => {
-                      enrolCreateCardRef.current = create;
-                    }}
-                  />
+                  <>
+                    <PostVisitCardEntry
+                      name={null}
+                      onReady={(create) => {
+                        enrolCreateCardRef.current = create;
+                      }}
+                    />
+                    <label className="pmp-check">
+                      <input
+                        type="checkbox"
+                        checked={enrolKeepCard}
+                        onChange={(e) => setEnrolKeepCard(e.target.checked)}
+                        disabled={busy}
+                      />
+                      <span>
+                        Owner is happy for us to keep this card on file for future visits, refills, and
+                        memberships. Ask first; tick when they say yes. Checkout can then use it today.
+                      </span>
+                    </label>
+                  </>
                 ) : null}
               </div>
               {enrolPlans.length === 0 ? (

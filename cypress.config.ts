@@ -245,6 +245,38 @@ export default defineConfig({
         },
       });
 
+      // ── H-PA: platform auth world ──────────────────────────────────────────
+      // Runs vayd-api's test/scripts/pa-e2e-seed.ts: a client with an example.com email and no login (one active pet,
+      // one passed away), a practice manager login with a password, and a login with a temporary password. The
+      // database is REQUIRED (PA_DB or CYPRESS_PA_DB); its name must contain "test" and not be vayd_api_local (the
+      // script refuses otherwise), and the API the dev server talks to must use the same one. PA_API_DIR overrides the
+      // API checkout (default ../vayd-api).
+      const paApiDir = path.resolve(process.env.PA_API_DIR || '../vayd-api');
+      const paDb = process.env.PA_DB || process.env.CYPRESS_PA_DB || '';
+      const paWorldFile = path.join(os.tmpdir(), 'pa-world-current.json');
+      const runPaSeed = (command: 'seed' | 'clean') => {
+        if (!paDb) throw new Error('Set PA_DB to a test database (e.g. vayd_api_test_pa_e2e) before using the PA seed.');
+        execFileSync('npx', ['ts-node', '-T', 'test/scripts/pa-e2e-seed.ts', command, paDb, paWorldFile], {
+          cwd: paApiDir,
+          env: { ...process.env, DB_DATABASE: paDb, NODE_ENV: 'test', NODE_OPTIONS: '--no-experimental-strip-types' },
+          stdio: ['ignore', 'inherit', 'inherit'],
+        });
+      };
+      on('task', {
+        /** Seeds the platform auth world (shape: cypress/support/paWorld.ts) and returns it. */
+        seedPaWorld() {
+          runPaSeed('seed');
+          return JSON.parse(fs.readFileSync(paWorldFile, 'utf8'));
+        },
+        cleanPaWorld() {
+          if (fs.existsSync(paWorldFile)) {
+            runPaSeed('clean');
+            fs.unlinkSync(paWorldFile);
+          }
+          return null;
+        },
+      });
+
       return config;
     },
     viewportWidth: 1280,

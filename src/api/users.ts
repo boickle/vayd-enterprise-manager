@@ -1,14 +1,15 @@
 // src/api/users.ts
 import { http } from './http';
 
-// Issue a password reset link to the given email
+// Issue a password reset link to the given email (PA-04: the one public reset-request route).
 export async function requestPasswordReset(email: string) {
-  return http.post('/users/reset-password/request', { email });
+  return http.post('/auth/request-reset', { email });
 }
 
-// Complete a password reset using the token from the email link
-export async function completePasswordReset(token: string, newPassword: string) {
-  return http.post('/users/reset-password/complete', { token, newPassword });
+// Complete a password reset with the emailed link's token or a 6-digit code.
+// PA-02: a code is only accepted with the login's email, so send it whenever it is known.
+export async function completePasswordReset(token: string, newPassword: string, email?: string) {
+  return http.post('/users/reset-password/complete', email ? { email, token, newPassword } : { token, newPassword });
 }
 
 // Admin-only create user (your controller protects this with AuthGuard)
@@ -34,10 +35,6 @@ export async function createClientUser(email: string, password?: string) {
 }
 
 // Optional helpers
-export async function loginUser(email: string, password: string) {
-  return http.post('/users/login', { email, password });
-}
-
 export async function getCurrentUser() {
   return http.get('/users');
 }
