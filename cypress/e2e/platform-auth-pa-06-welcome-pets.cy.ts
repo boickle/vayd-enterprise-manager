@@ -8,7 +8,7 @@
  * test API on the same database, and EMAIL_CAPTURE_PATH set so the email is captured (never delivered).
  */
 import '../support/e2e';
-import { cleanPaWorld, paWorld, seedPaWorld } from '../support/paWorld';
+import { cleanPaWorld, paWorld, seedPaWorld, emailMeantFor } from '../support/paWorld';
 
 describe('PA-06-4: the portal invite names only the active pet', () => {
   before(() => {
@@ -36,7 +36,7 @@ describe('PA-06-4: the portal invite names only the active pet', () => {
 
     cy.capturedEmails().then((emails) => {
       const mail = (emails as Array<{ to: string | string[]; html?: string; text?: string }>).find((e) =>
-        [e.to].flat().map((a) => String(a).toLowerCase()).includes(client.email.toLowerCase()),
+        emailMeantFor(e, client.email),
       );
       expect(mail, 'invite email to the client').to.exist;
       const body = `${mail?.html ?? ''} ${mail?.text ?? ''}`;

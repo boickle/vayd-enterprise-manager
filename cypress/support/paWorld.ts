@@ -64,3 +64,18 @@ export function seedPaWorld(): Cypress.Chainable<PaWorld> {
 export function cleanPaWorld() {
   return cy.task('cleanPaWorld', null, { timeout: 120000 });
 }
+
+/**
+ * True when a captured email was meant for `address`. Outside production the API re-addresses every email to
+ * EMAIL_REDIRECT and adds "In production this would have gone to: …" (vayd-api nonprod-recipient.util.ts),
+ * so the intended recipient is read from that line when the To: is the redirect inbox.
+ */
+export function emailMeantFor(
+  mail: { to?: string | string[]; html?: string; text?: string },
+  address: string,
+): boolean {
+  const want = address.toLowerCase();
+  if ([mail.to ?? []].flat().some((a) => String(a).toLowerCase() === want)) return true;
+  const m = /would have gone to:\s*([^<\n]+)/i.exec(`${mail.text ?? ''}\n${mail.html ?? ''}`);
+  return !!m && m[1].split(',').some((a) => a.trim().toLowerCase() === want);
+}

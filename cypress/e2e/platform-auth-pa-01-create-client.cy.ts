@@ -8,7 +8,7 @@
  * test API on the same database, and EMAIL_CAPTURE_PATH set so the welcome email is captured (never delivered).
  */
 import '../support/e2e';
-import { cleanPaWorld, paWorld, seedPaWorld } from '../support/paWorld';
+import { cleanPaWorld, paWorld, seedPaWorld, emailMeantFor } from '../support/paWorld';
 
 describe('PA-01-6: public create-account page gives nothing away and the emailed link works', () => {
   before(() => {
@@ -40,7 +40,7 @@ describe('PA-01-6: public create-account page gives nothing away and the emailed
 
     cy.capturedEmails().then((emails) => {
       const mail = (emails as Array<{ to: string | string[]; html?: string; text?: string }>).find((e) =>
-        [e.to].flat().map((a) => String(a).toLowerCase()).includes(client.email.toLowerCase()),
+        emailMeantFor(e, client.email),
       );
       expect(mail, 'welcome email to the client').to.exist;
       const m = /(https?:\/\/[^\s"<]+[?&]token=[^\s"<]+)/.exec(`${mail?.html ?? ''} ${mail?.text ?? ''}`);
