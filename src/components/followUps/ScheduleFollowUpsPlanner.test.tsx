@@ -946,6 +946,19 @@ describe('Rest of household', () => {
     expect(screen.getByText('Already on the calendar for this household')).toBeTruthy();
   });
 
+  it('a pet already booked on a household visit can also go on a new card, and stays on its visit', async () => {
+    renderPlanner();
+    await screen.findByText(/Today.s visit · needs a plan/);
+    // Greta is on the Dec 2 visit: no way off it here, but she can be added elsewhere.
+    fireEvent.click(screen.getByRole('button', { name: 'Greta: add another visit' }));
+    expect(screen.getByText(/Stays on the Dec 2 visit\. Also book Greta in/)).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /Take off this card/ })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: /A new follow-up card/ }));
+    // Still on the Dec 2 visit, and now on the new card too.
+    expect(screen.getByRole('button', { name: 'Greta: add another visit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Greta: move or add another visit' })).toBeTruthy();
+  });
+
   it('says the household could not load instead of "everyone else is booked"', async () => {
     vi.mocked(loadPlannerDataMock).mockResolvedValueOnce({
       ...fixture,
