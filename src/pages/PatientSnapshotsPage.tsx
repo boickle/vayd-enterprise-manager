@@ -13,6 +13,7 @@ import {
 } from '../api/patients';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 import { petSexLabel } from './clientPortal/portalShared';
+import { fullSizePhotoUrl } from '../utils/snapshotPhotoUrl';
 import './PatientSnapshotsPage.css';
 
 const FACTS: Array<{ key: keyof PortalSnapshot; label: string }> = [
@@ -88,7 +89,11 @@ async function renderCardPng(card: HTMLElement): Promise<Blob> {
       const src = img.currentSrc || img.src;
       if (!src || swaps.has(src)) return;
       try {
-        const blob = await withTimeout(fetch(src).then((r) => (r.ok ? r.blob() : Promise.reject())), 8000, 'photo');
+        const blob = await withTimeout(
+          fetch(fullSizePhotoUrl(src)).then((r) => (r.ok ? r.blob() : Promise.reject())),
+          15_000,
+          'photo'
+        );
         swaps.set(src, await blobToDataUrl(blob));
       } catch {
         /* leave the original — html2canvas will try CORS */
@@ -206,7 +211,11 @@ function SnapshotCard({
   return (
     <article className="snap-card" ref={cardRef}>
       <div className="snap-card__photo">
-        {photo ? <img src={photo.url} alt="" /> : <div className="snap-card__ph">No photo yet</div>}
+        {photo ? (
+          <img src={photo.url} alt="" loading="lazy" decoding="async" />
+        ) : (
+          <div className="snap-card__ph">No photo yet</div>
+        )}
         {row.socialMediaConsent ? (
           <span className="snap-card__flag snap-card__flag--yes">OK to share</span>
         ) : (
@@ -237,7 +246,7 @@ function SnapshotCard({
               onClick={() => setPhotoId(p.id)}
               aria-label="Show this photo"
             >
-              <img src={p.url} alt="" />
+              <img src={p.url} alt="" loading="lazy" decoding="async" />
             </button>
           ))}
         </div>
