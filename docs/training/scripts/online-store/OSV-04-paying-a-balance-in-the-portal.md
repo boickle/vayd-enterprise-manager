@@ -1,25 +1,27 @@
 # OSV-04. Paying an open bill in the portal, and old eVet bills
 
 - **Audience:** CLs.
-- **Length:** 2 minutes.
+- **Length:** about 1.5 minutes.
 - **Watch first:** INV-10 (open balances, including old eVet invoices).
-- **The one thing to remember:** old eVet bills can't be paid online yet; take those payments by phone.
+- **The one thing to remember:** every balance, eVet or Scout, can be paid in the portal, by phone, or with a pay link.
+- **Shows the app after go-live:** recorded with eVet sync off (`EVET_SYNC_ENABLED=false` on the training API). Owner, Nov 10, 2026: re-recorded so the video matches what ships.
 
 ## Why (opening)
 
-"Families see their balance on their pet's page in the portal. Some old bills from eVet can't be paid there yet, and the portal says so."
+"Families see their balance in the client portal, and they can pay it there, old eVet bills included."
 
 ## Steps
 
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
-| 1 | Tom Chen's portal, **Biscuit** | Point at "Good evening, Tom" and Biscuit's card | "This is Tom Chen's portal." | Tom Chen's portal login (training setup) |
-| 2 | Biscuit's card | Point at **Your balance: $85.00** | "Tom owes $85." | Old eVet invoice #48213, $85 open (training setup) |
-| 3 | Balance | Point at "$85.00 is on older bills from our previous system, which can't be paid online yet. Please call us to pay them." | "All of it is on an old eVet bill. The portal tells him to call." | — |
-| 4 | Balance | Point at the one thing to remember | "Old eVet bills can't be paid online yet. Take those payments by phone." | — |
-| 5 | Scout, Tom's client page | Click **Financial**, then the open eVet bill | "On our side, the bill is here." | — |
-| 6 | Billing | Take the payment the usual way (INV-10) | "Take it here, like any other bill." | — |
-| 7 | Maria's portal | Point at her balance and **Pay now** with **Card on file** | "A Scout bill, like Maria's, can be paid online with her saved card." | A Scout bill for Maria (open) |
+| 1 | Tom Chen's portal, **Biscuit** | Point at "Good evening, Tom" | "This is Tom Chen's portal." | Tom Chen's portal login (training setup) |
+| 2 | Biscuit's card | Point at **Your balance: $85.00** | "Tom owes $85, on an old eVet bill." | Old eVet invoice #48213, $85 open (training setup; the spec removes an earlier take's payment) |
+| 3 | Balance | Click **Pay now** | "He clicks pay now." | — |
+| 4 | Card fields | Type Stripe's test Visa 4242 | "He has no card saved, so he enters one." | No saved card for Tom |
+| 5 | Balance | Click **Pay $85.00** | "Pay." | — |
+| 6 | Balance | Point at the paid note | "It's paid." | — |
+| 7 | Scout, Tom's **Financial** tab | Point at #48213 eVet, **Paid**, $0.00 due | "In Scout, the eVet bill shows paid, and his balance is zero." | — |
+| 8 | — | — | "If a family calls instead, take the payment here, like any other bill. Or send a pay link by email or text." | — |
 
 ## What else the client can do here
 
@@ -32,11 +34,10 @@
 
 ## Closing
 
-"The most common mistakes: telling a family to pay an old eVet bill online, and taking a phone payment without recording it on the bill. Remember: old eVet bills can't be paid online yet; take those payments by phone."
+"The most common mistakes: telling a family an old eVet bill can't be paid online, and taking a phone payment without recording it on the bill. Remember: every balance, eVet or Scout, can be paid in the portal, by phone, or with a pay link."
 
-## Notes from the check in the app (Nov 7, 2026)
+## Notes
 
-- **Walked:** Tom's portal showed "Your balance: $85.00" and the held-bill message word for word. This is OS-06's behaviour while eVet sync is on.
-- **Not walked:** step 7 (Maria paying a Scout bill online). The OS-06 Cypress run on Nov 7 covered it. Walk it in the dry run with test card 4242.
-- **After eVet sync is turned off** at cutover, old eVet bills become payable online and step 3's message goes away. Re-record then, or cut steps 2 to 6.
+- **Nov 10, 2026 (re-record):** walked with eVet sync off. Tom paid $85 with test card 4242; Scout showed #48213 Paid, ledger balance $0.00, payment "Card (client portal)".
+- **Before go-live** (eVet sync still on) the portal holds eVet bills back with "…can't be paid online yet. Please call us to pay them." This video doesn't show that message.
 - **Wording to confirm:** the card shows "We appreciate your prompt payment!" just above an unpaid balance. See the review file.

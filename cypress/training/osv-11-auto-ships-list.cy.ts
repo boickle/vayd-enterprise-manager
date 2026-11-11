@@ -3,10 +3,10 @@
  * Training video OSV-11: the Auto-ships list. TEST stack, Stripe TEST mode.
  * Setup: Maria puts Maple on two auto-ships in the store (joint chews monthly, heartworm every 6 months), and the
  * heartworm one is marked "failing" in the TEST database, as Stripe's card-failed event would. Riley Brooks (mail order
- * team) pauses one and opens Edit; Robin Hale (manager) opens Edit to show what managers can change.
+ * team) updates the failing card with Card, pauses one and opens Edit; Robin Hale (manager) opens Edit to show what managers can change.
  */
 import '../support/e2e';
-import { buyAsMaria, look, osv, press, resetStoreData, signIn, sql } from './osvTraining';
+import { buyAsMaria, enterTestCard, look, osv, press, resetStoreData, signIn, sql } from './osvTraining';
 import { finish, line, loadNarration, offCamera, startClock, tap } from './trainingKit';
 
 describe('Training: OSV-11 auto-ships list', () => {
@@ -33,7 +33,21 @@ describe('Training: OSV-11 auto-ships list', () => {
     line('s03-remember');
     line('s04-problems', () => tap(() => cy.contains('button', /^Payment problems$/)));
     line('s05-failing', () => look(() => cy.contains('.mail-queue__badge', 'Payment failing', { timeout: 20000 }), 4000));
-    line('s06-active', () => tap(() => cy.contains('button', /^Active$/)));
+    line('s05b-card', () => tap(() => row(/Heartworm/).contains('button', /^Card$/)));
+    line('s05c-enter', () => {
+      cy.get('[aria-labelledby="autoship-card-title"] .vayd-store__card-box', { timeout: 20000 });
+      enterTestCard('4242424242424242', 'Maria Rivera');
+    });
+    line('s05d-save', () => tap(() => cy.get('[aria-labelledby="autoship-card-title"]').contains('button', /^Use this new card$/)));
+    line('s05e-done', () => {
+      look(() => cy.get('.vayd-store__card-panel-ok', { timeout: 30000 }), 3000);
+      // Stripe's paid event would clear the flag; the training stack gets no events, so the TEST database gets it.
+      sql(`UPDATE online_store_subscriptions SET "paymentStatus"=NULL WHERE "clientId"=${o.clients.rivera} AND "inventoryItemId"=${o.items.hw} AND active`);
+    });
+    line('s06-active', () => {
+      cy.get('[aria-labelledby="autoship-card-title"] .settings-modal-close').click();
+      tap(() => cy.contains('button', /^Active$/));
+    });
     line('s07-pause', () => press(() => row(/Joint support chews/).contains('button', /^Pause$/)));
     line('s08-resume', () => look(() => cy.contains('label', 'Resume on', { timeout: 20000 }), 3500));
     line('s08b-confirm', () => press(() => cy.contains('button', /^Pause until /)));
@@ -57,7 +71,7 @@ describe('Training: OSV-11 auto-ships list', () => {
     line('s12-robin', () => press(() => row(/Heartworm/).contains('button', /^Edit$/)));
     line('s13-price', () => look(() => cy.contains('Price differences charge the card on file', { timeout: 20000 }), 5000));
     line('s14-cancel', () => press(() => cy.get('.edit-autoship-list-modal__footer').contains('button', /^Cancel$/)));
-    line('s15-card', () => look(() => row(/Heartworm/).find('.autoship-list__actions'), 4500));
+    line('s15-card', () => look(() => row(/Heartworm/).contains('button', /^Cancel$/), 3000));
     line('s16-mistakes');
     line('s17-remember');
     finish();

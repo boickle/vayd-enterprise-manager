@@ -3,7 +3,7 @@
 - **Audience:** CLs.
 - **Length:** 2 to 3 minutes.
 - **Watch first:** OSV-01.
-- **The one thing to remember:** "Payment failing" means the client updates the card in the portal; nothing else fixes it.
+- **The one thing to remember:** "Payment failing" means update the card: the client does it in the portal, or calls and staff enter it with **Card** on the Auto-ships page (OSV-11). Saving the card retries the missed charge.
 
 ## Why (opening)
 
@@ -23,7 +23,7 @@
 | 8 | Auto-ship | Point at **Order an extra now** | "Or order one extra right now." | — |
 | 9 | Auto-ship | Click **Done** | "Done closes it." | — |
 | 10 | Same window, card declined | Point at the red banner "Payment failing: update your card." with **Update card** | "If her card is declined, she sees this banner." | The auto-ship marked "failing" (training setup) |
-| 11 | Auto-ship | Point at the one thing to remember | "Payment failing means one thing: update the card here. Nothing else fixes it." | — |
+| 11 | Auto-ship | Point at the one thing to remember | "Payment failing means the card needs updating. She can do it here, or call us and we'll enter it for her." | — |
 | 12 | Auto-ship | Click **Update card** | "Update card opens her card on file for this auto-ship." | — |
 | 13 | Store top bar | Click **Auto-ship** | "She can also see all of her auto-ships here." | — |
 | 14 | **Auto-ship items** | Point at each item: **Qty**, **Frequency**, **Pause**, **Cancel** | "Each one can be changed here too." | — |
@@ -40,7 +40,7 @@
 
 ## Closing
 
-"The most common mistakes: cancelling an auto-ship when the card failed, and taking the new card number over the phone instead of having the client update it. Remember: Payment failing means the client updates the card in the portal; nothing else fixes it."
+"The most common mistake: cancelling an auto-ship because the card failed. Update the card instead, so the pet doesn't miss a dose. Remember: payment failing means update the card, in the portal or by phone with the Card button on the Auto-ships page. Saving it retries the charge."
 
 ## Notes from the check in the app (Nov 7, 2026)
 

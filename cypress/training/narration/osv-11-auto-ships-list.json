@@ -3,7 +3,11 @@
   { "id": "s02-rows", "text": "Each one shows who it's for, the item, the price and how often it ships." },
   { "id": "s03-remember", "text": "Check payment problems every week. Only managers change the price, quantity or item." },
   { "id": "s04-problems", "text": "Payment problems shows failing cards, auto-ships Stripe ended, and cancels Stripe hasn't confirmed." },
-  { "id": "s05-failing", "text": "Payment failing: the client needs to update the card. Call them." },
+  { "id": "s05-failing", "text": "Payment failing: the card needs updating. Call the client. They can update it in the portal, or read you a new card." },
+  { "id": "s05b-card", "text": "To enter it for them, click Card." },
+  { "id": "s05c-enter", "text": "Type in the new card." },
+  { "id": "s05d-save", "text": "Use this new card. Saving it retries the missed charge right away." },
+  { "id": "s05e-done", "text": "The card is updated." },
   { "id": "s06-active", "text": "Back to active." },
   { "id": "s07-pause", "text": "Pause holds an auto-ship, for a trip, for example." },
   { "id": "s08-resume", "text": "Pick when it starts again." },
@@ -16,7 +20,7 @@
   { "id": "s12-robin", "text": "Robin, a manager, opens the same auto-ship." },
   { "id": "s13-price", "text": "Robin can change the item and quantity. A change in price charges or refunds the difference." },
   { "id": "s14-cancel", "text": "Close without changing." },
-  { "id": "s15-card", "text": "Card shows the card it charges. Cancel stops it for good." },
-  { "id": "s16-mistakes", "text": "The most common mistakes: cancelling when the card failed, instead of calling the client, and changing a price as a team member." },
+  { "id": "s15-card", "text": "Cancel stops an auto-ship for good." },
+  { "id": "s16-mistakes", "text": "The most common mistakes: cancelling when the card failed, instead of updating the card, and changing a price as a team member." },
   { "id": "s17-remember", "text": "Remember: check payment problems every week. Only managers change an auto-ship's price, quantity or item." }
 ]

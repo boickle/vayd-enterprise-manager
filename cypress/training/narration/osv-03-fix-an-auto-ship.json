@@ -12,11 +12,11 @@
   { "id": "a11-extra", "text": "And she can order one extra right now." },
   { "id": "a12-done", "text": "Done closes the window." },
   { "id": "a13-banner", "text": "If her card is declined, she sees this red banner: payment failing." },
-  { "id": "a14-remember", "text": "Payment failing means one thing: she updates her card here. Nothing else fixes it." },
+  { "id": "a14-remember", "text": "Payment failing means the card needs updating. She can do it here, or call us and we'll enter it for her." },
   { "id": "a15-update", "text": "Update card." },
-  { "id": "a16-card", "text": "She enters the new card right here, for this auto-ship." },
+  { "id": "a16-card", "text": "She enters the new card right here, for this auto-ship. Saving it retries the missed charge right away." },
   { "id": "a17-all", "text": "In the store, Auto-ship at the top lists all of her auto-ships." },
   { "id": "a18-row", "text": "Each one can be changed, paused or cancelled here too." },
-  { "id": "a19-mistakes", "text": "The most common mistakes: cancelling an auto-ship because the card failed, and taking a new card number over the phone instead of having the client update it." },
-  { "id": "a20-remember", "text": "Remember: payment failing means the client updates the card in the portal. Nothing else fixes it." }
+  { "id": "a19-mistakes", "text": "The most common mistake: cancelling an auto-ship because the card failed. Update the card instead, so the pet doesn't miss a dose." },
+  { "id": "a20-remember", "text": "Remember: payment failing means update the card, in the portal or by phone with the Card button on the Auto-ships page. Saving it retries the charge." }
 ]
