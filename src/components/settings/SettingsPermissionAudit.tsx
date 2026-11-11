@@ -13,6 +13,7 @@ import {
 } from '../../api/permissions';
 import { PermissionDenied } from '../../permissions/PermissionGate';
 import { useCan } from '../../permissions/PermissionContext';
+import { formatYmd } from '../../utils/formatYmd';
 import './SettingsPermissionScreens.css';
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -66,7 +67,7 @@ function describeOffboard(
   staffName: (id: unknown) => string
 ): string[] {
   const lines: string[] = [];
-  if (detail.lastDay) lines.push(`Last day: ${formatValue(detail.lastDay)}`);
+  if (detail.lastDay) lines.push(`Last day: ${formatYmd(String(detail.lastDay))}`);
   if (detail.taskToEmployeeId != null)
     lines.push(`Tasks go to: ${staffName(detail.taskToEmployeeId)}`);
   if (detail.primaryDoctorToId != null) {
@@ -89,6 +90,37 @@ function describeOffboard(
   return lines;
 }
 
+const GRANT_SCOPE_WORDS: Record<string, string> = {
+  own: 'their own only',
+  team: 'their team',
+};
+
+/** One extra permission given or taken away (B5, Nov 11): what, how far, and until when. */
+function describeGrant(detail: Record<string, unknown>, labelOf: (key: string) => string): string[] {
+  const what = typeof detail.permissionKey === 'string' ? labelOf(detail.permissionKey) : 'a permission';
+  if (detail.action === 'revoke') return [`Extra permission removed: ${what}`];
+  const scope = GRANT_SCOPE_WORDS[String(detail.scope ?? '')];
+  const lines = [`Extra permission given: ${what}${scope ? ` (${scope})` : ''}`];
+  lines.push(detail.expiresAt ? `Ends: ${formatYmd(String(detail.expiresAt))}` : 'No end date');
+  return lines;
+}
+
+type LicenseState = { isLicensed?: unknown; licenseType?: unknown };
+
+function isLicenseChange(
+  detail: Record<string, unknown>
+): detail is { before: LicenseState; after: LicenseState } {
+  const has = (v: unknown) => !!v && typeof v === 'object' && 'isLicensed' in (v as object);
+  return has(detail.before) && has(detail.after);
+}
+
+function licenseWords(state: LicenseState): string {
+  if (state.isLicensed !== true) return 'Not licensed';
+  if (state.licenseType === 'veterinarian') return 'Licensed veterinarian';
+  if (state.licenseType === 'technician') return 'Licensed technician';
+  return 'Licensed';
+}
+
 /** Turns the stored detail blob into short "x: a → b" lines. */
 export function describeDetail(
   detail: PermissionAuditEntry['detail'],
@@ -102,6 +134,10 @@ export function describeDetail(
     ];
   }
   if ('offboardingId' in detail) return describeOffboard(detail, staffName);
+  if (detail.action === 'grant' || detail.action === 'revoke') return describeGrant(detail, labelOf);
+  if (isLicenseChange(detail)) {
+    return [`License: ${licenseWords(detail.before)} → ${licenseWords(detail.after)}`];
+  }
   const lines: string[] = [];
   const changes = detail.changes as Record<string, { from: unknown; to: unknown }> | undefined;
   if (changes && typeof changes === 'object') {

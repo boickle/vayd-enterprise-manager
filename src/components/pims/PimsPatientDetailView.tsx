@@ -184,6 +184,7 @@ import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import RecordHistoryLink from '../records/RecordHistoryLink';
 import PatientRecordHistoryPanel from '../records/PatientRecordHistoryPanel';
 import { usePermissions } from '../../permissions/PermissionContext';
+import { useMayEditClientRecords } from '../../permissions/useMayEditClientRecords';
 import {
   Card,
   DetailHeader,
@@ -332,11 +333,15 @@ function HeaderEditButton({
   label,
   expanded,
   onClick,
+  hidden = false,
 }: {
   label: string;
   expanded: boolean;
   onClick: () => void;
+  /** B7: no pencil for staff who can't save the patient. */
+  hidden?: boolean;
 }) {
+  if (hidden) return null;
   return (
     <button
       type="button"
@@ -1325,6 +1330,8 @@ export default function PimsPatientDetailView({
       (permissionsEffective.employeeId != null || permissionsEffective.isPlatformAdmin)
   );
   const [headerEdit, setHeaderEdit] = useState<'pet' | 'alerts' | null>(null);
+  // B7: pencils, Deactivate, Weight edit and Upload records only for staff who can save.
+  const mayEditPatient = useMayEditClientRecords();
   const [dateStart, setDateStart] = useState('2000-01-01');
   const [dateEnd, setDateEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
@@ -2513,6 +2520,7 @@ export default function PimsPatientDetailView({
               label="Edit pet info and alerts"
               expanded={headerEdit === 'pet'}
               onClick={() => setHeaderEdit((cur) => (cur === 'pet' ? null : 'pet'))}
+              hidden={!mayEditPatient}
             />
           </span>
         }
@@ -2645,6 +2653,7 @@ export default function PimsPatientDetailView({
                     label="Edit patient alerts"
                     expanded={headerEdit === 'alerts'}
                     onClick={() => setHeaderEdit((cur) => (cur === 'alerts' ? null : 'alerts'))}
+                    hidden={!mayEditPatient}
                   />
                 </div>
                 {patientAlert}
@@ -2791,15 +2800,17 @@ export default function PimsPatientDetailView({
               Appointment
             </button>
             <PimsPatientMergeButton patientId={patientId} patientName={pname} />
-            <button
-              type="button"
-              className="pims-detail__btn-danger"
-              onClick={handleToggleActive}
-              disabled={busy}
-            >
-              {isActive ? <UserX size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
-              {isActive ? 'Deactivate' : 'Reactivate'}
-            </button>
+            {mayEditPatient ? (
+              <button
+                type="button"
+                className="pims-detail__btn-danger"
+                onClick={handleToggleActive}
+                disabled={busy}
+              >
+                {isActive ? <UserX size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
+                {isActive ? 'Deactivate' : 'Reactivate'}
+              </button>
+            ) : null}
           </>
         }
       />
@@ -3261,6 +3272,7 @@ export default function PimsPatientDetailView({
                   },
                 ]}
                 values={{ weight: pickStr(record.weight) ?? '' }}
+                editable={mayEditPatient}
                 columns={1}
                 emptyHint="No weight on file."
                 onSave={(v) => {
@@ -4109,7 +4121,7 @@ export default function PimsPatientDetailView({
                             </div>
                           );
                         })}
-                      {key === 'documents' && (
+                      {key === 'documents' && mayEditPatient && (
                         <div className="pims-patient-detail__doc-upload">
                           <label
                             className="pims-detail__btn-secondary"
