@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   createScoutEmployeeRole,
   fetchAllEmployees,
@@ -698,7 +699,9 @@ export default function SettingsScoutRoles({
                       </li>
                     ))}
                   </ul>
-                  <a href="/schedule/settings?tab=permission-audit">See the full Permission Audit Log</a>
+                  <Link to="/schedule/settings?tab=permission-audit">
+                    See the full Permission Audit Log
+                  </Link>
                 </div>
               )}
 

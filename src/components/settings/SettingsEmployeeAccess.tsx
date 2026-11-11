@@ -7,6 +7,7 @@
 // you are back to auditing checkbox grids one employee at a time. To narrow
 // someone's access, change their role.
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import {
   ACCESS_CHANGE_KEYS,
   addEmployeePermissionGrant,
@@ -393,7 +394,9 @@ export default function SettingsEmployeeAccess({
               </li>
             ))}
           </ul>
-          <a href="/schedule/settings?tab=permission-audit">See the full Permission Audit Log</a>
+          <Link to="/schedule/settings?tab=permission-audit">
+            See the full Permission Audit Log
+          </Link>
         </div>
       )}
 

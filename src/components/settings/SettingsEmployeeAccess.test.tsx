@@ -4,6 +4,7 @@
  * "recent changes" list at the bottom shows role, license and grant changes with a link to the audit log.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, vi } from 'vitest';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 
@@ -123,7 +124,7 @@ describe('SettingsEmployeeAccess own-tab lock (RP-04-6)', () => {
   it('disables license radios and grant controls on your own tab and says who to ask', async () => {
     state.myEmployeeId = 5;
     state.platform = false;
-    render(<SettingsEmployeeAccess employeeId={5} />);
+    render(<SettingsEmployeeAccess employeeId={5} />, { wrapper: MemoryRouter });
     await screen.findByText('License');
 
     for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled();
@@ -135,7 +136,9 @@ describe('SettingsEmployeeAccess own-tab lock (RP-04-6)', () => {
 
   it('leaves the controls on for someone else, and for a platform superadmin on their own tab', async () => {
     state.myEmployeeId = 9;
-    const { unmount } = render(<SettingsEmployeeAccess employeeId={5} />);
+    const { unmount } = render(<SettingsEmployeeAccess employeeId={5} />, {
+      wrapper: MemoryRouter,
+    });
     await screen.findByText('License');
     for (const radio of screen.getAllByRole('radio')) expect(radio).toBeEnabled();
     expect(screen.queryByText(/Ask a practice admin to change your own access/)).toBeNull();
@@ -143,7 +146,7 @@ describe('SettingsEmployeeAccess own-tab lock (RP-04-6)', () => {
 
     state.myEmployeeId = 5;
     state.platform = true;
-    render(<SettingsEmployeeAccess employeeId={5} />);
+    render(<SettingsEmployeeAccess employeeId={5} />, { wrapper: MemoryRouter });
     await screen.findByText('License');
     for (const radio of screen.getAllByRole('radio')) expect(radio).toBeEnabled();
     state.platform = false;
@@ -154,7 +157,9 @@ describe('SettingsEmployeeAccess wording (RP-A8-1)', () => {
   it('names a practice admin or the medical director as who sets a license', async () => {
     state.myEmployeeId = 9;
     state.canLicense = false;
-    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />, {
+      wrapper: MemoryRouter,
+    });
     await screen.findByText('License');
     const gate = container.querySelector('.perm-blocked');
     expect(gate).toHaveAttribute(
@@ -166,7 +171,9 @@ describe('SettingsEmployeeAccess wording (RP-A8-1)', () => {
 
   it('describes signing and prescription directions the way EMR-07 and EMR-07b allow', async () => {
     state.myEmployeeId = 9;
-    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />, {
+      wrapper: MemoryRouter,
+    });
     await screen.findByText('License');
     const intro = container.querySelector('.settings-card .settings-card-subtitle');
     expect(intro).toHaveTextContent(
@@ -180,7 +187,9 @@ describe('SettingsEmployeeAccess wording (RP-A8-1)', () => {
 describe('SettingsEmployeeAccess grant end date (RP-A4-1)', () => {
   /** Picks a permission and an end day, then confirms the grant with a reason. */
   async function grantUntil(day: string) {
-    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />, {
+      wrapper: MemoryRouter,
+    });
     await screen.findByText('License');
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'invoice.discount' } });
     fireEvent.change(container.querySelector('input[type="date"]') as HTMLInputElement, {
@@ -229,7 +238,9 @@ describe('SettingsEmployeeAccess grant end date (RP-A4-1)', () => {
         expiresAt: '2026-07-16T03:59:59.999Z',
       },
     ];
-    const { container } = render(<SettingsEmployeeAccess employeeId={5} />);
+    const { container } = render(<SettingsEmployeeAccess employeeId={5} />, {
+      wrapper: MemoryRouter,
+    });
     await screen.findByText('License');
     expect(container).toHaveTextContent('ends 11/30/2026');
     expect(container).toHaveTextContent('ends 7/15/2026');
@@ -240,7 +251,7 @@ describe('SettingsEmployeeAccess grant end date (RP-A4-1)', () => {
 describe('SettingsEmployeeAccess recent changes', () => {
   it('lists role and license changes at the bottom and links to the audit log', async () => {
     state.myEmployeeId = 9;
-    render(<SettingsEmployeeAccess employeeId={5} />);
+    render(<SettingsEmployeeAccess employeeId={5} />, { wrapper: MemoryRouter });
     const card = await screen.findByTestId('recent-access-changes');
     expect(card).toHaveTextContent('Roles: added Client Liaison');
     expect(card).toHaveTextContent('Pat Manager');

@@ -3,6 +3,7 @@
  * "(Deactivated)"; the bottom of each role lists who was added or removed, linking to the audit log.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { vi } from 'vitest';
 import SettingsScoutRoles from './SettingsScoutRoles';
 
@@ -79,7 +80,7 @@ vi.mock('../../api/permissions', async (orig) => {
 });
 
 it('hides deactivated assignees until "Show deactivated (N)" is ticked, then labels them', async () => {
-  render(<SettingsScoutRoles practiceId={1} appointmentTypes={[]} />);
+  render(<SettingsScoutRoles practiceId={1} appointmentTypes={[]} />, { wrapper: MemoryRouter });
 
   await screen.findByRole('checkbox', { name: /Sam Tech/ });
   expect(screen.queryByRole('checkbox', { name: /Dee Gone/ })).toBeNull();
@@ -93,7 +94,7 @@ it('hides deactivated assignees until "Show deactivated (N)" is ticked, then lab
 });
 
 it('lists who was added to and removed from this role, with a link to the audit log', async () => {
-  render(<SettingsScoutRoles practiceId={1} appointmentTypes={[]} />);
+  render(<SettingsScoutRoles practiceId={1} appointmentTypes={[]} />, { wrapper: MemoryRouter });
   const card = await screen.findByTestId('recent-role-changes');
   expect(card).toHaveTextContent('Sam Tech was added to this role');
   expect(card).toHaveTextContent('Dee Gone was removed from this role');
