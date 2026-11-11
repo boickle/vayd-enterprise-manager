@@ -34,8 +34,9 @@ describe('PA-01-6: public create-account page gives nothing away and the emailed
       const text = JSON.stringify(response?.body);
       ['tempPassword', 'resetCode', 'password'].forEach((k) => expect(text).not.to.contain(k));
     });
-    cy.contains('Check').should('be.visible');
-    cy.contains(client.email).should('be.visible');
+    // The non-production banner is fixed at the top; scroll each line clear of it before checking it shows.
+    cy.contains('Check').scrollIntoView({ offset: { top: -120, left: 0 } }).should('be.visible');
+    cy.contains(client.email).scrollIntoView({ offset: { top: -120, left: 0 } }).should('be.visible');
 
     cy.capturedEmails().then((emails) => {
       const mail = (emails as Array<{ to: string | string[]; html?: string; text?: string }>).find((e) =>

@@ -445,9 +445,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // PA-02: the user object carries no reset secrets; the code comes beside it.
     const resetRequired = !!user?.requiresPasswordReset;
     const resetCode: string | null = data?.resetCode ?? null;
+    // PA-02: a temporary-password sign-in must change the password first. Keep no session for it (the reset
+    // screen sends the email with the code), so the app can't open behind the reset screen, and end the
+    // session the API issued.
+    const mustResetFirst = resetRequired && !!resetCode;
+    if (mustResetFirst && refreshToken) {
+      http.post('/auth/logout', { refreshToken }).catch(() => undefined);
+    }
 
-    // Persist tokens/email if accessToken is present (even if reset is required)
-    if (accessToken) {
+    // Persist tokens/email if accessToken is present
+    if (accessToken && !mustResetFirst) {
       try {
         localStorage.setItem('accessToken', accessToken);
         if (refreshToken) {
@@ -549,6 +556,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setClientInfo(null);
     }
 
+    if (mustResetFirst) {
+      return { token: null, accessToken: null, refreshToken: null, user, resetRequired, resetCode };
+    }
     return { 
       token: accessToken, // Keep for backward compatibility
       accessToken, 
