@@ -8247,6 +8247,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       ...(ari && !isReschedule && !fbi
         ? {
             appointmentRequestSubmissionId: ari.appointmentRequestSubmissionId,
+            ...(ari.joinWaitlistIfSooner ? { joinWaitlistIfSooner: true } : {}),
             ...(ariVisitPatches?.length
               ? { appointmentRequestVisitPatches: ariVisitPatches }
               : {}),
