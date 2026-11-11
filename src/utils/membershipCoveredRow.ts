@@ -22,8 +22,8 @@ export function membershipCoveredLabel(lines: readonly CoveredLineLike[]): strin
   return 'Included in membership';
 }
 
-/** "−$75.00" (true minus sign, before the dollar sign) for a covered amount stored as -75 or 75. */
+/** "$75.00 covered" for a covered amount stored as -75 or 75 (owner, Nov 11, 2026: reads better than "−$75.00"). */
 export function membershipCoveredAmount(amount: number | string | null | undefined): string {
   const n = Math.abs(Number(amount) || 0);
-  return `−$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} covered`;
 }
