@@ -9,9 +9,11 @@ import './ChronicMedRefillsModal.css';
 
 /** Refills shown beside a chronic med on the SOAP and the top of the EMR, e.g. "3 refills left". */
 export function chronicRefillLabel(
-  rx: Pick<PatientPrescription, 'refill' | 'refillExpiration'>,
+  rx: Pick<PatientPrescription, 'refill' | 'refillExpiration' | 'prn'>,
   now = Date.now(),
 ): string {
+  // Owner (Nov 11, 2026): an item that needs no prescription has no refills to count.
+  if (rx.prn) return 'PRN';
   const left = Math.max(0, Number(rx.refill) || 0);
   if (left > 0 && rx.refillExpiration && new Date(rx.refillExpiration).getTime() < now) return 'Refills expired';
   if (left === 0) return 'No refills';
@@ -104,7 +106,7 @@ export default function ChronicMedRefillsModal({
     }
   };
 
-  const current = { refill, refillExpiration: rx.refillExpiration };
+  const current = { refill, refillExpiration: rx.refillExpiration, prn: rx.prn };
   return (
     <div
       className="chronic-rx-modal__overlay"
@@ -123,6 +125,14 @@ export default function ChronicMedRefillsModal({
           </button>
         </div>
         <div className="chronic-rx-modal__body">
+          {rx.prn ? (
+            <section>
+              <h4>Refills</h4>
+              <p className="chronic-rx-modal__status" data-testid="chronic-rx-refills">
+                PRN: this item needs no prescription, so there are no refills. The family can reorder it any time.
+              </p>
+            </section>
+          ) : (
           <section>
             <h4>Refills</h4>
             <p className="chronic-rx-modal__status" data-testid="chronic-rx-refills">
@@ -139,6 +149,7 @@ export default function ChronicMedRefillsModal({
               }}
             />
           </section>
+          )}
           <section>
             <h4>Online reorder</h4>
             {linkedId != null ? (

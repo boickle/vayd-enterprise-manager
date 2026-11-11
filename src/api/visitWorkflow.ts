@@ -869,6 +869,8 @@ export type PatientPrescription = {
   rxNumber: number | null;
   quantity?: number | null;
   autoshipStartedAt?: string | null;
+  /** The catalog item needs no prescription: show PRN, refills don't apply (owner, Nov 11, 2026). */
+  prn?: boolean;
 };
 
 /** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */

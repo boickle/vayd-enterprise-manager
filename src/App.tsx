@@ -82,7 +82,6 @@ import StoreCartPage from './pages/store/StoreCartPage';
 import StoreThanks from './pages/store/StoreThanks';
 import StoreGiftCardBalance from './pages/store/StoreGiftCardBalance';
 import StoreGiftCardPrint from './pages/store/StoreGiftCardPrint';
-import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
@@ -727,7 +726,8 @@ export default function App() {
           <Route path="/store" element={<StoreLayout />}>
             <Route index element={<StoreHome />} />
             <Route path="cart" element={<StoreCartPage />} />
-            <Route path="autoship" element={<StoreAutoshipPage />} />
+            {/* Owner (Nov 11, 2026): auto-ships are managed from each pet's Medications card in the portal. */}
+            <Route path="autoship" element={<Navigate to="/client-portal" replace />} />
             <Route path="gift-cards/balance" element={<StoreGiftCardBalance />} />
             <Route path="thanks/:id" element={<StoreThanks />} />
             <Route path=":id" element={<StoreProduct />} />
