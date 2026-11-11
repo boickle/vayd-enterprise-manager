@@ -75,3 +75,13 @@ declare global {
   }
 }
 
+
+// Training videos: hide the orange "not production" frame around the window (the app draws it outside
+// production; see src/App.tsx). Training specs only, so other tests see the app as staff do.
+if (Cypress.spec.relative.startsWith('cypress/training/')) {
+  Cypress.on('window:load', (win) => {
+    const style = win.document.createElement('style');
+    style.textContent = '.app-nonprod-frame{display:none!important}';
+    win.document.head.appendChild(style);
+  });
+}
