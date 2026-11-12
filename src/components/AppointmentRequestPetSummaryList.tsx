@@ -1,11 +1,9 @@
 import { BookPatientChartButton } from './BookPatientChartButton';
-import { EvetNameLink } from './EvetNameLink';
 import { requestDataPetRowSummaries } from '../utils/appointmentRequestDetailDisplay';
 import {
   enrichPetRowSummariesFromLinkedAppointment,
   type LinkedAppointmentEvetIds,
 } from '../utils/appointmentRequestLinkedEvet';
-import { evetPatientLink } from '../utils/evet';
 
 export function AppointmentRequestPetSummaryList({
   requestData,
@@ -30,17 +28,7 @@ export function AppointmentRequestPetSummaryList({
       {pets.map((pet) => (
         <li key={pet.key} className="appt-request-pet-summary-item">
           <div className="appt-request-pet-summary-head">
-            {pet.patientPimsId ? (
-              <EvetNameLink
-                href={evetPatientLink(pet.patientPimsId)}
-                className="appt-request-pet-summary-name appt-request-evet-link"
-                title="Open patient in eVet"
-              >
-                {pet.name}
-              </EvetNameLink>
-            ) : (
-              <span className="appt-request-pet-summary-name">{pet.name}</span>
-            )}
+            <span className="appt-request-pet-summary-name">{pet.name}</span>
             <span
               className={`appt-request-detail-pet-badge${
                 pet.isNew ? '' : ' appt-request-detail-pet-badge--existing'

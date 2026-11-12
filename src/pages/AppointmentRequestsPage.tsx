@@ -60,14 +60,11 @@ import {
 } from '../utils/appointmentRequestDisplay';
 import {
   linkedEvetIdsFromBookedApptSummary,
-  resolveClientPimsIdForRequestCard,
 } from '../utils/appointmentRequestLinkedEvet';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
 import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClientId';
-import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
 import { AppointmentRequestHandlingNeedsCallout } from '../components/AppointmentRequestHandlingNeedsCallout';
-import { EvetNameLink } from '../components/EvetNameLink';
 import { requestDataHasNewPatientSpecialHandlingNeeds } from '../utils/appointmentRequestHandlingNeeds';
 import {
   buildRoutingAppointmentRequestIntentFromSubmission,
@@ -2620,11 +2617,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const howSoon = requestDataHowSoon(rd);
             const visitAddress = formatRequestDataAddress(rd);
             const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
-            const clientPimsId = resolveClientPimsIdForRequestCard(
-              rd,
-              clientPimsIdByInternalId,
-              linkedAppointment,
-            );
             const howSoonUrgency = requestDataHowSoonUrgency(rd);
             const rowHighlighted = highlightEntryId === item.id;
             const exitKind = exitingRows.get(item.id);
@@ -2853,19 +2845,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           requestClientLabel={name}
                           linkedClientLabel={bookedSummary?.linkedClientLabel}
                           isNewClient={clientType === 'new'}
-                          linkedNameWrapper={
-                            clientPimsId
-                              ? (currentName) => (
-                                  <EvetNameLink
-                                    href={evetClientLink(clientPimsId)}
-                                    className="appt-request-evet-link"
-                                    title="Open client in eVet"
-                                  >
-                                    {currentName}
-                                  </EvetNameLink>
-                                )
-                              : undefined
-                          }
                         />
                       }
                       clientType={clientType}
@@ -2903,7 +2882,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           requestData={rd}
                           practiceId={PRACTICE_ID}
                           practiceTz={practiceTz}
-                          clientPimsId={clientPimsId}
                           linkedAppointment={linkedAppointment}
                           submissionId={item.id}
                           showHandlingNeedsPendingConfirmation={showHandlingNeedsPendingConfirmation}
