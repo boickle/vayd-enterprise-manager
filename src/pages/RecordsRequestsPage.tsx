@@ -87,7 +87,8 @@ export default function RecordsRequestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('open');
-  const [search, setSearch] = useState('');
+  // ?q= prefills the search (the Appointments list links here with the client's name).
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [lookupId, setLookupId] = useState<number | null>(null);
   const [reviewId, setReviewId] = useState<number | null>(null);

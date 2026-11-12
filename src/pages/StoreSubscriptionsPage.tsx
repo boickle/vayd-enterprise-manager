@@ -7,6 +7,7 @@ import {
   patchStoreSubscription,
   type StoreItemRow,
   type StoreStaffSubscription,
+  refreshMailNavCounts,
 } from '../api/onlineStore';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
 import AutoshipCardPanel from './store/AutoshipCardPanel';
@@ -101,6 +102,10 @@ export default function StoreSubscriptionsPage() {
   const { token } = useAuth();
   const practiceId = practiceIdFromToken(token);
   const [rows, setRows] = useState<StoreStaffSubscription[]>([]);
+  // Keep the Auto-ships tab's red count (payment problems) in step after a change here.
+  useEffect(() => {
+    refreshMailNavCounts();
+  }, [rows]);
   const [storeItems, setStoreItems] = useState<StoreItemRow[]>([]);
   const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'payment' | 'all'>('active');
   const [q, setQ] = useState('');

@@ -12,6 +12,8 @@ import { MEMBERSHIP_COMPARISON_PATH } from '../membership-comparison-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
+import { useAppointmentReplyCounts } from '../hooks/useAppointmentReplyCounts';
+import { ReplyBadges } from './appointmentRequests/ReplyBadges';
 import {
   CATALOG_HOME,
   INVENTORY_HOME,
@@ -74,9 +76,12 @@ function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
 function SchedulingSubmenuLinks({
   onNavigate,
   showRouting = false,
+  replyCounts,
 }: {
   onNavigate: () => void;
   showRouting?: boolean;
+  /** Unread client replies on appointment requests (red mine / blue others). */
+  replyCounts?: { mine: number; others: number };
 }) {
   const location = useLocation();
   const routingActive =
@@ -86,7 +91,6 @@ function SchedulingSubmenuLinks({
     location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
     !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
-  const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
@@ -145,19 +149,7 @@ function SchedulingSubmenuLinks({
         }}
       >
         Appointments
-      </Link>
-      <Link
-        to={HOLDS_PATH}
-        className={`schedule-app__settings-link${
-          holdsActive ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={(e) => {
-          if (blockScheduleNavLeave(e)) return;
-          onNavigate();
-        }}
-      >
-        Holds
+        {replyCounts ? <ReplyBadges mine={replyCounts.mine} others={replyCounts.others} /> : null}
       </Link>
       <Link
         to={EXIT_SURVEY_PATH}
@@ -230,6 +222,7 @@ export default function NavbarScheduleHorizontalNav() {
   const { abilities, role } = auth as { abilities?: string[]; role?: string | string[] };
   const scheduleNavEnabled = location.pathname.startsWith('/schedule');
   const { assignedCount, watchingCount } = useTaskNavBadges(scheduleNavEnabled);
+  const replyCounts = useAppointmentReplyCounts(scheduleNavEnabled);
 
   const roles = useMemo(() => {
     const arr = Array.isArray(role) ? role : role ? [role] : [];
@@ -550,9 +543,14 @@ export default function NavbarScheduleHorizontalNav() {
               onClick={(e) => toggleDetailsMenu(schedulingToolsMenuRef.current, e)}
             >
               Scheduling
+              <ReplyBadges mine={replyCounts.mine} others={replyCounts.others} />
             </summary>
             <div className="schedule-app__settings-dropdown" role="menu" aria-label="Scheduling">
-              <SchedulingSubmenuLinks onNavigate={closeSchedulingMenu} showRouting={showRouting} />
+              <SchedulingSubmenuLinks
+                onNavigate={closeSchedulingMenu}
+                showRouting={showRouting}
+                replyCounts={replyCounts}
+              />
             </div>
           </details>
         );
@@ -765,7 +763,11 @@ export default function NavbarScheduleHorizontalNav() {
                     return (
                       <div key="more-scheduling" className="navbar-schedule-more-section">
                         <p className="navbar-schedule-more-section-title">Scheduling</p>
-                        <SchedulingSubmenuLinks onNavigate={closeMoreMenu} showRouting={showRouting} />
+                        <SchedulingSubmenuLinks
+                          onNavigate={closeMoreMenu}
+                          showRouting={showRouting}
+                          replyCounts={replyCounts}
+                        />
                       </div>
                     );
                   case 'settings':

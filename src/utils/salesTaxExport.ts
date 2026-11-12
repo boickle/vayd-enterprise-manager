@@ -214,7 +214,7 @@ export async function downloadSalesTaxPdf(report: SalesTaxReport): Promise<void>
 }
 
 export async function downloadSalesTaxExcel(report: SalesTaxReport): Promise<void> {
-  const { default: writeXlsxFile } = await import('write-excel-file');
+  const { default: writeXlsxFile } = await import('write-excel-file/browser');
   const sections = salesTaxSections(report);
   const toSheet = (section: ReportSection) => {
     const data = [
@@ -251,9 +251,11 @@ export async function downloadSalesTaxExcel(report: SalesTaxReport): Promise<voi
     if (s.title.startsWith('Warnings')) return 'Warnings';
     return sheetNames[6];
   });
-  await writeXlsxFile(sections.map(toSheet), {
-    sheets: names,
-    columns: sections.map((s) => s.columns.map((_, i) => ({ width: i === 0 ? 44 : 16 }))),
-    fileName: `sales-tax-${report.start}-to-${report.end}.xlsx`,
-  });
+  await writeXlsxFile(
+    sections.map((s, n) => ({
+      data: toSheet(s) as never,
+      sheet: names[n],
+      columns: s.columns.map((_, i) => ({ width: i === 0 ? 44 : 16 })),
+    })),
+  ).toFile(`sales-tax-${report.start}-to-${report.end}.xlsx`);
 }

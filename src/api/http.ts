@@ -1,4 +1,5 @@
 // src/api/http.ts
+import { clearAllScribeDeviceCopies } from '../utils/scribeDeviceCopy';
 import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
 import { leaveImpersonation, readImpersonation } from '../auth/impersonationSession';
 
@@ -290,6 +291,7 @@ export function forceLogout() {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('vayd_token'); // Remove old token for migration
+    clearAllScribeDeviceCopies();
     clearRefreshLock();
     localStorage.setItem('logout_broadcast', String(Date.now()));
     console.log('[Token Refresh] 🚪 Tokens cleared from localStorage, logout_broadcast set');

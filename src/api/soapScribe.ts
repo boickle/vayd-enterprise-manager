@@ -43,6 +43,8 @@ export type ScribeSuggestion = {
   narrativePlan: string | null;
   clientEmailSubject: string | null;
   clientEmailBody: string | null;
+  /** Notes from the server about this pass, e.g. the start of a very long visit was cut. */
+  warnings?: string[];
 };
 
 /** Roster entry sent to the backend for a multi-pet structuring pass (docs/ai-scribe.md
@@ -73,6 +75,7 @@ export type MultiPatientScribeSuggestion = {
   patients: MultiPatientSuggestionEntry[];
   clientEmailSubject: string | null;
   clientEmailBody: string | null;
+  warnings?: string[];
 };
 
 export type ScribeSession = {
@@ -529,10 +532,18 @@ export async function fetchPracticeDeskContext(opts?: { date?: string | null }):
 
 export type ScribeSocketStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error';
 
+export type ScribeServerStopReason = 'max_length' | 'resumed_elsewhere';
+
 export type ScribeSocketHandlers = {
   onTranscript?: (evt: { text: string; isFinal: boolean }) => void;
   onError?: (message: string) => void;
   onStatusChange?: (status: ScribeSocketStatus) => void;
+  /** The connection dropped mid-take; it is reconnecting into the same take (SCR-A2). */
+  onConnectionLost?: () => void;
+  /** Back on the same take after a drop. */
+  onReconnected?: () => void;
+  /** The server ended the take by itself, e.g. at the 2-hour cap (SCR-A16). */
+  onServerStopped?: (reason: ScribeServerStopReason) => void;
 };
 
 export type ScribeSocketHandle = {
@@ -544,6 +555,11 @@ export type ScribeSocketHandle = {
   dispose: () => void;
 };
 
+/** How long a dropped take keeps trying to reconnect before it is ended (server allows 10 min). */
+export const SCRIBE_RECONNECT_GIVE_UP_MS = 2 * 60 * 1000;
+/** Audio kept while offline and sent after the reconnect, so words said during the drop still count. */
+const MAX_BUFFERED_AUDIO_CHARS = 4 * 1024 * 1024;
+
 function normalizeApiOrigin(): string {
   return apiBaseUrl.replace(/\/+$/, '');
 }
@@ -553,9 +569,76 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
   const token = getToken();
   let socket: Socket | null = null;
   let sessionId: string | null = null;
+  let encounterId: string | null = null;
   let disposed = false;
+  let stopping = false;
+  /** The connection dropped and is coming back into the same take. */
+  let reconnecting = false;
+  let giveUpTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Transcript the server sent when it ended the take by itself. */
+  let serverFinal: string | null = null;
+  let buffered: string[] = [];
+  let bufferedChars = 0;
 
   const setStatus = (s: ScribeSocketStatus) => handlers.onStatusChange?.(s);
+
+  const clearGiveUp = () => {
+    if (giveUpTimer) clearTimeout(giveUpTimer);
+    giveUpTimer = null;
+  };
+
+  /** Ends a take that can't come back: the panel saves what it already has. */
+  const fail = (message: string) => {
+    clearGiveUp();
+    reconnecting = false;
+    buffered = [];
+    bufferedChars = 0;
+    try {
+      socket?.io.reconnection(false);
+      socket?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    setStatus('error');
+    handlers.onError?.(message);
+  };
+
+  const flushBuffered = () => {
+    if (!socket?.connected || !sessionId) return;
+    const chunks = buffered;
+    buffered = [];
+    bufferedChars = 0;
+    for (const audioBase64 of chunks) socket.emit('scribe.audio', { sessionId, audioBase64 });
+  };
+
+  /** Back online after a drop: continue the same take (the server joins the text). */
+  const resume = (s: Socket) => {
+    if (!sessionId || !encounterId) return;
+    s.emit(
+      'scribe.start',
+      {
+        practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+        soapEncounterId: encounterId,
+        resumeSessionId: sessionId,
+      },
+      (ack: { ok: boolean; error?: string; sessionId?: string }) => {
+        if (disposed || !reconnecting) return;
+        if (!ack?.ok || !ack.sessionId) {
+          fail(
+            ack?.error ||
+              'Lost the connection to the scribe and could not continue this take. What was transcribed so far is kept; press Record to keep going.'
+          );
+          return;
+        }
+        clearGiveUp();
+        reconnecting = false;
+        sessionId = ack.sessionId;
+        flushBuffered();
+        setStatus('recording');
+        handlers.onReconnected?.();
+      }
+    );
+  };
 
   const ensureSocket = (): Socket => {
     if (socket) return socket;
@@ -563,7 +646,10 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
     socket = io(`${base}/scribe`, {
       auth: { token: token?.trim() ?? '' },
       transports: ['websocket'],
-      reconnection: false,
+      // Reconnect after a Wi-Fi drop (SCR-A2); house calls run on phone hotspots.
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
     socket.on(
       'scribe.transcript',
@@ -576,24 +662,59 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
       if (payload.sessionId && payload.sessionId !== sessionId) return;
       handlers.onError?.(payload.message);
     });
+    socket.on(
+      'scribe.stopped',
+      (payload: { sessionId?: string; reason?: ScribeServerStopReason; transcript?: string }) => {
+        if (!payload?.sessionId || payload.sessionId !== sessionId) return;
+        // This browser took the take over on a new connection; nothing to end here.
+        if (payload.reason === 'resumed_elsewhere') return;
+        serverFinal = payload.transcript ?? '';
+        handlers.onServerStopped?.(payload.reason ?? 'max_length');
+      }
+    );
     socket.on('connect_error', (err: unknown) => {
+      // While reconnecting a dropped take, failed attempts are expected; keep trying.
+      if (reconnecting) return;
       const msg =
         err && typeof err === 'object' && 'message' in err
           ? String((err as { message?: unknown }).message)
           : String(err);
+      try {
+        socket?.io.reconnection(false);
+      } catch {
+        /* ignore */
+      }
       setStatus('error');
       handlers.onError?.(`Could not connect to the scribe service (${msg}).`);
     });
-    socket.on('disconnect', () => {
-      if (disposed) return;
-      if (sessionId) {
-        setStatus('error');
-        handlers.onError?.(
-          'Lost the connection to the scribe. What was transcribed so far is kept; press Record to keep going.'
-        );
+    socket.on('disconnect', (reason: string) => {
+      if (disposed || stopping) return;
+      if (sessionId && serverFinal == null) {
+        // The server dropped us on purpose (e.g. login no longer valid): no reconnect.
+        if (reason === 'io server disconnect') {
+          fail(
+            'Lost the connection to the scribe. What was transcribed so far is kept; press Record to keep going.'
+          );
+          return;
+        }
+        if (!reconnecting) {
+          reconnecting = true;
+          handlers.onConnectionLost?.();
+          clearGiveUp();
+          giveUpTimer = setTimeout(
+            () =>
+              fail(
+                'The connection did not come back, so this take was ended. What was transcribed so far is kept; press Record to keep going.'
+              ),
+            SCRIBE_RECONNECT_GIVE_UP_MS
+          );
+        }
         return;
       }
-      setStatus('idle');
+      if (!sessionId) setStatus('idle');
+    });
+    socket.on('connect', () => {
+      if (reconnecting && socket) resume(socket);
     });
     return socket;
   };
@@ -605,6 +726,7 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
           reject(new Error('Not signed in.'));
           return;
         }
+        encounterId = soapEncounterId;
         setStatus('connecting');
         const s = ensureSocket();
         const doStart = () => {
@@ -628,16 +750,36 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
       }),
 
     sendAudio: (base64Pcm16: string) => {
-      if (!socket?.connected || !sessionId) return;
+      if (!sessionId) return;
+      if (reconnecting || !socket?.connected) {
+        // Offline mid-take: keep the audio (up to a limit) and send it once back on the take.
+        if (!reconnecting) return;
+        if (bufferedChars + base64Pcm16.length > MAX_BUFFERED_AUDIO_CHARS) {
+          const dropped = buffered.shift();
+          bufferedChars -= dropped?.length ?? 0;
+        }
+        buffered.push(base64Pcm16);
+        bufferedChars += base64Pcm16.length;
+        return;
+      }
       socket.emit('scribe.audio', { sessionId, audioBase64: base64Pcm16 });
     },
 
     stop: () =>
       new Promise<string>((resolve) => {
-        if (!socket?.connected || !sessionId) {
+        clearGiveUp();
+        if (serverFinal != null) {
+          // The server already ended and saved this take (SCR-A16 cap).
+          const text = serverFinal;
+          setStatus('idle');
+          resolve(text);
+          return;
+        }
+        if (!socket?.connected || !sessionId || reconnecting) {
           resolve('');
           return;
         }
+        stopping = true;
         setStatus('stopping');
         const id = sessionId;
         socket.emit(
@@ -649,14 +791,17 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
           }
         );
         // Safety net in case the ack never arrives (server crash, etc.)
-        setTimeout(() => resolve(''), 5000);
+        setTimeout(() => resolve(''), 8000);
       }),
 
     dispose: () => {
       disposed = true;
       sessionId = null;
+      clearGiveUp();
+      buffered = [];
       try {
         socket?.removeAllListeners();
+        socket?.io.reconnection(false);
         socket?.disconnect();
       } catch {
         /* ignore */

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-0000000000a1",
+    "practiceId": 1,
+    "soapEncounterId": "00000000-0000-4000-8000-0000000000e1",
+    "status": "stopped",
+    "transcript": "The dog has been shaking his head for two weeks. Ears are red with brown debris.",
+    "lastSuggestion": null,
+    "errorMessage": null,
+    "endedAt": "2026-11-11T15:00:00.000Z",
+    "created": "2026-11-11T14:50:00.000Z",
+    "updated": "2026-11-11T15:00:00.000Z"
+  }
+]

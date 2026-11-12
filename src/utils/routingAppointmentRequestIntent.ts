@@ -14,6 +14,7 @@ import {
   requestDataAppointmentTypeForRouting,
   requestDataHowSoon,
   requestDataPreferredDoctor,
+  requestDataPrimaryProviderSummary,
   requestDataServiceMinutes,
   requestDataUsesAlternateVisitAddress,
   requestDataClientId,
@@ -46,6 +47,11 @@ export type RoutingAppointmentRequestIntentV1 = {
   alternateAddressText?: string;
   preferredDoctorId?: string;
   preferredDoctorDisplayName?: string;
+  /**
+   * No preferred doctor on the form: the pet's primary doctor by name (requests store the
+   * primary's name, not an id). Routing matches it against the provider list.
+   */
+  primaryDoctorName?: string;
   appointmentTypeName?: string;
   appointmentTypeId?: number;
   howSoon?: string;
@@ -186,6 +192,9 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
   const preferredPatientIds = requestDataPreferredPatientIds(rd);
   const mins = requestDataServiceMinutes(rd) ?? 45;
   const doctorId = pickStr(rd.preferredDoctorId);
+  // Route defaults to the client's preferred doctor, else the (first) pet's primary doctor.
+  const primaryDoctorName =
+    requestDataPrimaryProviderSummary(rd)?.split(',')[0]?.trim() || null;
   const alternateAddress = formatRequestDataAddress(rd);
   const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
   const apptType = requestDataAppointmentTypeForRouting(rd);
@@ -223,6 +232,7 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
         : {}),
     preferredDoctorId: doctorId ?? undefined,
     preferredDoctorDisplayName: requestDataPreferredDoctor(rd) ?? undefined,
+    ...(!doctorId && primaryDoctorName ? { primaryDoctorName } : {}),
     ...(!usesPerPetTypes
       ? {
           appointmentTypeName: apptType.label ?? undefined,

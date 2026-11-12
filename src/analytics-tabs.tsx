@@ -352,7 +352,9 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     label: 'Survey Results',
     category: 'nps',
     element: <SurveyResultsPage />,
-    role: ADMIN,
+    // Owner, Nov 11, 2026: practice managers see Survey Results too (API: survey.results.view).
+    role: STAFF,
+    permissions: ['survey.results.view'],
   },
 ];
 

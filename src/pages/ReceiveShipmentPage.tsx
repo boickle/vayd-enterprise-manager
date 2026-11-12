@@ -251,6 +251,11 @@ export default function ReceiveShipmentPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // The finalize result sits beside Shipments received (where the page scrolls to) and stays until the next message.
+  const [finalizedNote, setFinalizedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (toast || error) setFinalizedNote(null);
+  }, [toast, error]);
   const [parsing, setParsing] = useState(false);
   const [invoiceFileName, setInvoiceFileName] = useState<string | null>(null);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
@@ -1153,8 +1158,7 @@ export default function ReceiveShipmentPage() {
       await finalizeShipment(practiceId, shipment.id);
       resetReceiveForm();
       await reloadReceived();
-      setToast(toastMessage);
-      window.setTimeout(() => setToast(null), 5000);
+      setFinalizedNote(toastMessage);
       window.requestAnimationFrame(() => {
         receivedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
@@ -2652,6 +2656,23 @@ export default function ReceiveShipmentPage() {
 
       <div ref={receivedSectionRef} style={{ marginTop: 32 }}>
         <h3 style={{ marginBottom: 8 }}>Shipments received</h3>
+        {finalizedNote ? (
+          <div
+            className="settings-message"
+            role="status"
+            style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'flex-start' }}
+          >
+            <span style={{ flex: 1 }}>{finalizedNote}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+              onClick={() => setFinalizedNote(null)}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         {received.length === 0 ? (
           <p className="settings-muted">No finalized shipments yet.</p>
         ) : (

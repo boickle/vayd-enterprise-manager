@@ -340,3 +340,14 @@
   line-height: 1.4;
   color: var(--muted);
 }
+
+.auto-tasks__warning {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--error);
+  border-left: 3px solid var(--error);
+  background: rgba(220, 38, 38, 0.06);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}

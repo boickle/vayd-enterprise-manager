@@ -3631,7 +3631,16 @@ export default function ClientFinancialWorkspace({
     .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
   const previewTax = displayLines.reduce((sum, l) => sum + (Number(l.taxAmount) || 0), 0);
   const previewTotal = Math.round((previewSubtotal + previewTax) * 100) / 100;
-  const remaining = selected
+  // Appointment deposit (Nov 12, 2026): what is still to collect on the deposit, not on charges.
+  const isDepositBill = selected?.depositForAppointmentId != null;
+  const depositPaid = isDepositBill
+    ? (selected?.tenders ?? [])
+        .filter((t) => !t.voidedAt && t.method !== 'account_credit' && (t as { isDeleted?: boolean }).isDeleted !== true)
+        .reduce((sum, t) => sum + (Number(t.amount) || 0) - (Number(t.refundedAmount) || 0), 0)
+    : 0;
+  const remaining = isDepositBill
+    ? Math.max(0, Math.round(((Number(selected?.depositAmount) || 0) - depositPaid) * 100) / 100)
+    : selected
     ? Math.max(
         0,
         (hasUnsavedDeletes ? previewTotal : Number(selected.total) || 0) -
@@ -6289,7 +6298,15 @@ export default function ClientFinancialWorkspace({
                 </p>
               ) : null}
 
-              {visibleLines.length === 0 &&
+              {isDepositBill ? (
+                <p className="client-fin__deposit-note" data-testid="deposit-bill-note">
+                  <strong>Appointment deposit</strong>: {money(Number(selected.depositAmount) || 0)} asked
+                  for, {money(depositPaid)} paid
+                  {remaining > 0.009 ? `, ${money(remaining)} still to collect` : ''}. What is paid stays on
+                  the account as credit: at checkout use <strong>Account credit</strong>; if the client
+                  cancels or doesn&apos;t show, pay the cancel fee with Account credit.
+                </p>
+              ) : visibleLines.length === 0 &&
               !(canEdit && displayPetSections.length) &&
               !selected.removedLines?.length ? (
                 <p className="client-fin__muted">No lines yet.</p>

@@ -60,6 +60,9 @@ import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import {
   fetchQuoUsers,
   fetchUnlinkedQuoCallers,
+  dismissUnlinkedQuoCalls,
+  fetchActiveStaffWithLoginOff,
+  unlinkedCallerLabel,
   quoUserMatchingEmail,
   QUO_NONE,
   type QuoUsersResponse,
@@ -235,6 +238,9 @@ export default function SettingsEmployeeDirectory({
   /** COM-CALL: practice Quo users and whether Quo is on (then a Quo choice is required). */
   const [quoInfo, setQuoInfo] = useState<QuoUsersResponse | null>(null);
   const [unlinkedCallers, setUnlinkedCallers] = useState<UnlinkedQuoCaller[]>([]);
+  const [dismissingQuoUser, setDismissingQuoUser] = useState<string | null>(null);
+  /** Active staff whose login is turned off in Admin → Users (offboard them). */
+  const [loginOffIds, setLoginOffIds] = useState<Set<number>>(new Set());
   /** Quo choice on file for the person being edited ('' = none yet). */
   const [quoSaved, setQuoSaved] = useState('');
   /** What the user picked in the form; null while untouched. */
@@ -370,6 +376,11 @@ export default function SettingsEmployeeDirectory({
     void fetchUnlinkedQuoCallers()
       .then((list) => {
         if (!cancelled) setUnlinkedCallers(list);
+      })
+      .catch(() => undefined);
+    void fetchActiveStaffWithLoginOff()
+      .then((ids) => {
+        if (!cancelled) setLoginOffIds(new Set(ids));
       })
       .catch(() => undefined);
     return () => {
@@ -1055,6 +1066,8 @@ export default function SettingsEmployeeDirectory({
   const quoNotLinked = (emp: Employee): boolean =>
     quoInfo?.quoEnabled === true && empActive(emp) && !savedQuoChoice(emp);
   const quoNotLinkedCount = sorted.filter(quoNotLinked).length;
+  const loginOff = (emp: Employee): boolean => empActive(emp) && loginOffIds.has(Number(emp.id));
+  const loginOffCount = sorted.filter(loginOff).length;
 
   const quoKnownIds = new Set((quoInfo?.users ?? []).map((u) => u.id));
   const quoUserField = quoInfo?.quoEnabled ? (
@@ -1120,6 +1133,7 @@ export default function SettingsEmployeeDirectory({
                   {empActive(emp) && lastDayById.get(emp.id)
                     ? ` · Last day ${formatYmd(lastDayById.get(emp.id))}`
                     : ''}
+                  {loginOff(emp) ? ' · Login off — offboard?' : ''}
                   {quoNotLinked(emp) ? ' · Quo: not linked' : ''}
                 </option>
               ))}
@@ -1158,18 +1172,58 @@ export default function SettingsEmployeeDirectory({
         </div>
         {loadError && <div className="settings-error-message">{loadError}</div>}
         {canManageStaff && unlinkedCallers.length > 0 ? (
-          <div className="settings-error-message" role="alert">
-            {unlinkedCallers.map((u) => (
-              <p key={u.quoUserId} style={{ margin: '0 0 4px' }}>
-                Calls from Quo user {u.name || u.email || u.quoUserId}
-                {u.name && u.email ? ` (${u.email})` : ''} aren’t linked to anyone
-                {u.waitingCalls > 0
-                  ? ` — ${u.waitingCalls} waiting to be filed`
-                  : ''}
-                . Link them on a staff profile (Quo user).
-              </p>
-            ))}
+          <div className="settings-message settings-warning-message" role="status" style={{ display: 'block' }}>
+            {unlinkedCallers.map((u) => {
+              const who = unlinkedCallerLabel(u);
+              const oldLogin = u.inQuo === false || !!u.formerStaffName;
+              return (
+                <div key={u.quoUserId} style={{ margin: '0 0 8px' }}>
+                  <p style={{ margin: '0 0 4px' }}>
+                    Calls taken in Quo by <strong>{who}</strong> don’t reach anyone’s call dock
+                    {u.waitingCalls > 0
+                      ? ` — ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'}`
+                      : ''}
+                    .{' '}
+                    {oldLogin
+                      ? 'If someone now uses this Quo login, choose it as their Quo user on their profile. Otherwise dismiss the calls.'
+                      : 'Choose this Quo user on their staff profile (Quo user).'}
+                  </p>
+                  {u.waitingCalls > 0 ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={dismissingQuoUser === u.quoUserId}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          `Dismiss ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'} from ${who}? ` +
+                            'They won’t be filed to any chart. Calls another staff member took are not affected.'
+                        );
+                        if (!ok) return;
+                        setDismissingQuoUser(u.quoUserId);
+                        try {
+                          await dismissUnlinkedQuoCalls(u.quoUserId);
+                          setUnlinkedCallers(await fetchUnlinkedQuoCallers());
+                        } catch (e) {
+                          setLoadError(extractErr(e));
+                        } finally {
+                          setDismissingQuoUser(null);
+                        }
+                      }}
+                    >
+                      {dismissingQuoUser === u.quoUserId ? 'Dismissing…' : 'Dismiss these calls'}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
+        ) : null}
+        {loginOffCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Login off for {loginOffCount} active {loginOffCount === 1 ? 'person' : 'people'}{' '}
+            (marked “Login off” in the Staff list). They can’t sign in but still appear on
+            schedules and staff lists. Open their profile and offboard them.
+          </p>
         ) : null}
         {quoNotLinkedCount > 0 ? (
           <p className="settings-muted" style={{ margin: '4px 0 8px' }}>

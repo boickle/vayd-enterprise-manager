@@ -16,8 +16,6 @@ import {
 import { AppointmentRequestAlternateAddressCallout } from './AppointmentRequestAlternateAddressCallout';
 import { AppointmentRequestHandlingNeedsCallout } from './AppointmentRequestHandlingNeedsCallout';
 import { ClientUploadedRecordsList } from './ClientUploadedRecordsList';
-import { EvetNameLink } from './EvetNameLink';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 
 function FactGrid({ rows }: { rows: AppointmentRequestDetailRow[] }) {
   if (rows.length === 0) return null;
@@ -75,17 +73,7 @@ function PetCard({
 }) {
   const reasonRow = pet.facts.find((r) => r.label === 'Reason for visit');
   const factRows = pet.facts.filter((r) => r.label !== 'Reason for visit');
-  const petName = pet.patientPimsId ? (
-    <EvetNameLink
-      href={evetPatientLink(pet.patientPimsId)}
-      className="appt-request-detail-pet-name appt-request-evet-link"
-      title="Open patient in eVet"
-    >
-      {pet.name}
-    </EvetNameLink>
-  ) : (
-    pet.name
-  );
+  const petName = pet.name;
 
   return (
     <article className="appt-request-detail-pet-card">
@@ -153,7 +141,6 @@ export function AppointmentRequestDetailPanel({
   requestData,
   practiceId,
   practiceTz,
-  clientPimsId = null,
   linkedAppointment = null,
   submissionId = null,
   showHandlingNeedsPendingConfirmation = false,
@@ -161,7 +148,6 @@ export function AppointmentRequestDetailPanel({
   requestData: Record<string, unknown>;
   practiceId: number;
   practiceTz: string;
-  clientPimsId?: string | null;
   linkedAppointment?: LinkedAppointmentEvetIds | null;
   submissionId?: number | null;
   /** Auto-booked new patient with handling needs awaiting CL confirmation. */
@@ -212,19 +198,7 @@ export function AppointmentRequestDetailPanel({
       <div className="appt-request-detail-top-grid">
         {sections.client.length > 0 ? (
           <InfoCard title="Client">
-            {clientPimsId && clientNameRow ? (
-              <div className="appt-request-detail-client-evet-name">
-                <EvetNameLink
-                  href={evetClientLink(clientPimsId)}
-                  className="appt-request-evet-link appt-request-evet-link--detail-client"
-                  title="Open client in eVet"
-                >
-                  {clientNameRow.value}
-                </EvetNameLink>
-              </div>
-            ) : clientNameRow ? (
-              <FactGrid rows={[clientNameRow]} />
-            ) : null}
+            {clientNameRow ? <FactGrid rows={[clientNameRow]} /> : null}
             <FactGrid rows={clientFactRows} />
             <NoteBlocks rows={clientNotes} />
           </InfoCard>

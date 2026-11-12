@@ -2355,6 +2355,18 @@ a.soap-header-client:hover {
   line-height: 1.4;
   color: var(--soap-muted);
 }
+.soap-scribe-alert {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #8a4b00;
+  background: #fff4e0;
+  border: 1px solid #f0c27a;
+}
 .soap-scribe-live-dot {
   width: 9px;
   height: 9px;

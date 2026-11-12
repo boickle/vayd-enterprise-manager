@@ -1445,8 +1445,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   );
 
   const refreshDetailBundle = useCallback(
-    async (sel: { itemType: ItemType; itemId: number }) => {
-      setDetailLoading(true);
+    // keepOpen: reload in place (no "Loading…" swap), so the popup keeps its scroll position.
+    async (sel: { itemType: ItemType; itemId: number }, opts?: { keepOpen?: boolean }) => {
+      if (!opts?.keepOpen) setDetailLoading(true);
       setDetailError(null);
       setStockError(null);
       setBranchPricesError(null);
@@ -5079,7 +5080,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     item={detail.item}
                     priceBreaks={detail.priceBreaks}
                     onChanged={async () => {
-                      await refreshDetailBundle(selected);
+                      await refreshDetailBundle(selected, { keepOpen: true });
                     }}
                   />
                 </>

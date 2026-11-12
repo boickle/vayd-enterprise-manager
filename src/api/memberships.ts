@@ -1196,6 +1196,10 @@ export type MembershipRenewalPreview = {
   /** Still billed through the old (Square) system: ask for a card and plan. */
   needsCard: boolean;
   planOptions: MembershipRenewalPlanOption[];
+  /** What the pet keeps by staying: the renewal plan's signup-card lines. */
+  benefits?: string[];
+  /** Covered services this membership year at full price; null when unknown. */
+  coveredThisYear?: number | null;
   recommendedPackageId: number;
   /** What renews: the owner's choice if any, else the recommended plan. */
   nextPackageId: number;
