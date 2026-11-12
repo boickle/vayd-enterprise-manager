@@ -54,7 +54,7 @@
 
 - **Pay-link change (Nov 6) checked:** it doesn't change any step here. The checkout takes credit with **Account credit**, as in step 9. Only the ledger's pay-link line changed (INV-13).
 - **Checked:** steps 1 to 15 were run in Stripe test mode. The payments came out as $50 gift card, $30 account credit and $82 card.
-- **Step 16 checked on screen:** the ledger's **Method** list reads "Card on file · Visa •••• 4242 · exp 11/27", "Card over the phone (virtual terminal)", Cash, Check, Gift card and Account credit.
+- **Step 16 checked on screen:** the ledger's **Method** list reads "Card on file · Visa •••• 4242 · exp 11/27", "Type card manually", Cash, Check, Gift card and Account credit.
   - Cash and Check come from the practice's payment types, which the demo seed now has (`invoicing-demo.sql`). With no payment types set up, the list would also offer CareCredit and Other instead.
   - Choosing **Cash** shows **Amount**, **Cash received** and **Record Cash**. (Choosing a card shows "Charges Visa •••• 4242 · exp 11/27 for $60.00." and **Charge card on file**.)
   - **Timing:** the saved card loads a moment after the ledger opens. If Cash is picked before **Card on file** has appeared in the list, the screen flips back to the card. The recording waits for it. A small rough edge in the app; reported.

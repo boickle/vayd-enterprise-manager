@@ -122,7 +122,7 @@ export function giveSavedCard(clientId: number, email: string, name: string, pm 
     expect(cus, 'Stripe customer').to.match(/^cus_/);
     expect(pmId, 'Stripe payment method').to.match(/^pm_/);
     sql(
-      `UPDATE clients SET email='${email}', "stripeCustomerId"='${cus}', "savedPaymentMethodId"='${pmId}', "cardOnFileConsentAt"=now(), "cardOnFileConsentAgreementVersion"='2026-10-07', "cardOnFileConsentSource"='training', "cardOnFileDeclinedAt"=NULL WHERE id=${clientId}`
+      `UPDATE clients SET email='${email}', "stripeCustomerId"='${cus}', "savedPaymentMethodId"='${pmId}', "cardOnFileConsentAt"=now(), "cardOnFileConsentAgreementVersion"='2026-11-12', "cardOnFileConsentSource"='training', "cardOnFileDeclinedAt"=NULL WHERE id=${clientId}`
     );
   });
 }

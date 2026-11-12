@@ -27,7 +27,7 @@
 | 11 | Remove card | Type "Owner asked us to remove it" in **Why is the card being removed?** and click **Remove card**; point at "Card removed." and "No card on file" | "Say why, then remove it." | — |
 | 12 | Voice-over | — | "If a membership or auto-ship is still billed on that card, the window names it first. The card is kept for that one only, so it keeps billing." | — |
 | 13 | Clients → Tom Chen → **Financial** tab | Point at "Visa: **Expired, ending 0341**. Ask the owner for a new card." | "This card has expired. Scout keeps it on the record, but won't charge it." | Tom has a saved card that expired last month, consent recorded |
-| 14 | Biscuit's Checkout page | Point at the greyed-out **Card on file** showing "Expired, ending 0341" | "At checkout it's greyed out. Take a new card with Tap to Pay or Card over phone, and ask to save it." | Chen bill: Office exam $75 |
+| 14 | Biscuit's Checkout page | Point at the greyed-out **Card on file** showing "Expired, ending 0341" | "At checkout it's greyed out. Take a new card with Tap to Pay or Type card manually, and ask to save it." | Chen bill: Office exam $75 |
 
 ## What else you can do here
 

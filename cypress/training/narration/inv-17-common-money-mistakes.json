@@ -1,16 +1,58 @@
 [
- {"id":"inv17-01","text":"Most money problems come from a few habits. Remember: charge once, check the invoice, and refund before you void."},
- {"id":"inv17-02","text":"One: clicking charge again because the screen is slow. Wait for the note: Charged the card on file."},
- {"id":"inv17-03","text":"Two: retrying a declined card. Check the total and what's paid first, then ask for another card."},
- {"id":"inv17-04","text":"Three: charging a member full price. Look for covered and the member discount, or use Reprice."},
- {"id":"inv17-05","text":"Four: charging the card when the family has credit or a gift card. Apply those first."},
- {"id":"inv17-06","text":"In the field, you'll usually take a card with Tap to Pay on the Stripe reader."},
- {"id":"inv17-07","text":"This demo has no reader connected, so we'll use Card over phone. It works the same way."},
- {"id":"inv17-08","text":"Click Card over phone."},
- {"id":"inv17-09","text":"Five: saving a card without asking. Only keep the card if the owner agrees."},
- {"id":"inv17-10","text":"Click Cancel."},
- {"id":"inv17-11","text":"Six: checks left in the car. Deposit cash and checks the same day."},
- {"id":"inv17-12","text":"Seven: voiding a paid bill. Scout stops you. Refund the card payment first."},
- {"id":"inv17-13","text":"Eight: a plain refund when items came back. Use Return items, so stock and the chart are right, and the money goes back card first, then credit."},
- {"id":"inv17-14","text":"Remember: charge once, check the invoice, and refund before you void."}
+  {
+    "id": "inv17-01",
+    "text": "Most money problems come from a few habits. Remember: charge once, check the invoice, and refund before you void."
+  },
+  {
+    "id": "inv17-02",
+    "text": "One: clicking charge again because the screen is slow. Wait for the note: Charged the card on file."
+  },
+  {
+    "id": "inv17-03",
+    "text": "Two: retrying a declined card. Check the total and what's paid first, then ask for another card."
+  },
+  {
+    "id": "inv17-04",
+    "text": "Three: charging a member full price. Look for covered and the member discount, or use Reprice."
+  },
+  {
+    "id": "inv17-05",
+    "text": "Four: charging the card when the family has credit or a gift card. Apply those first."
+  },
+  {
+    "id": "inv17-06",
+    "text": "In the field, you'll usually take a card with Tap to Pay on the Stripe reader."
+  },
+  {
+    "id": "inv17-07",
+    "text": "This demo has no reader connected, so we'll type the card in instead."
+  },
+  {
+    "id": "inv17-08",
+    "text": "Click Type card manually."
+  },
+  {
+    "id": "inv17-09",
+    "text": "Five: saving a card without asking. Only keep the card if the owner agrees."
+  },
+  {
+    "id": "inv17-10",
+    "text": "Click Cancel."
+  },
+  {
+    "id": "inv17-11",
+    "text": "Six: checks left in the car. Deposit cash and checks the same day."
+  },
+  {
+    "id": "inv17-12",
+    "text": "Seven: voiding a paid bill. Scout stops you. Refund the card payment first."
+  },
+  {
+    "id": "inv17-13",
+    "text": "Eight: a plain refund when items came back. Use Return items, so stock and the chart are right, and the money goes back card first, then credit."
+  },
+  {
+    "id": "inv17-14",
+    "text": "Remember: charge once, check the invoice, and refund before you void."
+  }
 ]
