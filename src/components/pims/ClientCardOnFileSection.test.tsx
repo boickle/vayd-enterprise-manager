@@ -40,6 +40,7 @@ vi.mock('./ClientCardSetupEntry', async () => {
 });
 
 import ClientCardOnFileSection from './ClientCardOnFileSection';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const withCard = {
   card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030, expired: false },
@@ -74,6 +75,14 @@ describe('Card on file section', () => {
     expect(screen.getByText(/Owner agreed .*Tap to Pay at a visit, agreement 2026-10-07/)).toBeTruthy();
   });
 
+  it('PAY-C5-1: an expired card is shown as "Expired, ending 4242", not as a card to use', async () => {
+    getClientCardOnFile.mockResolvedValue({ ...withCard, card: { ...withCard.card, expired: true } });
+    render(ui());
+    expect(await screen.findByText('Expired, ending 4242')).toBeTruthy();
+    expect(screen.queryByText(/expires 12\/30/)).toBeNull();
+    expect(screen.queryByText('No card on file')).toBeNull();
+  });
+
   it('says "No card on file" when there is none', async () => {
     getClientCardOnFile.mockResolvedValue(noCard);
     render(ui());
@@ -103,6 +112,15 @@ describe('Card on file section', () => {
     expect(await screen.findByText(/Visa ending 1111/)).toBeTruthy();
   });
 
+  it('PAY-C3-1: Replace card shows the practice-wide staff wording', async () => {
+    granted.add('card_on_file.manage');
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace card' }));
+    const text = document.querySelector('.client-card__consent')?.textContent ?? '';
+    expect(text).toContain(CARD_ON_FILE_STAFF_WORDING);
+    expect(text).toMatch(/visits, refills, memberships and online store orders/);
+  });
+
   it('Remove card asks for a reason first, then removes', async () => {
     granted.add('card_on_file.manage');
     render(ui());
@@ -114,6 +132,29 @@ describe('Card on file section', () => {
     fireEvent.click(go);
     await waitFor(() => expect(removeClientCardOnFile).toHaveBeenCalledWith(5, 'Owner asked'));
     expect(await screen.findByText('No card on file')).toBeTruthy();
+  });
+
+  it('PAY-C2-4: the Remove window names the membership that keeps the card', async () => {
+    granted.add('card_on_file.manage');
+    getClientCardOnFile.mockResolvedValue({ ...withCard, stillUsedBy: ["Pippin's Gold membership"] });
+    removeClientCardOnFile.mockResolvedValue({
+      ...noCard,
+      removed: { last4: '4242', brand: 'visa', detached: false, stillUsedBy: ["Pippin's Gold membership"] },
+    });
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove card' }));
+    expect(screen.getByText(/Still used by Pippin's Gold membership\. The card is kept for it only/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Owner asked' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove card' }).pop() as HTMLButtonElement);
+    expect(await screen.findByText("Card removed. Kept only for Pippin's Gold membership.")).toBeTruthy();
+  });
+
+  it('PAY-C2-4: no membership or auto-ship on the card: the Remove window says it is removed everywhere', async () => {
+    granted.add('card_on_file.manage');
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove card' }));
+    expect(screen.queryByText(/Still used by/)).toBeNull();
+    expect(screen.getByText(/Removes the card everywhere/)).toBeTruthy();
   });
 
   it('notes a membership billed on a different card, with a link to the pet', async () => {

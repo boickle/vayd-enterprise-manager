@@ -12,11 +12,14 @@ import {
   fetchClientLiaisons,
   fetchHolds,
   HOLD_SOURCE_LABELS,
+  markHoldRepliesRead,
   type ClientLiaisonOption,
   type HoldListItem,
   type HoldOwnerFilter,
 } from '../api/holds';
 import { fetchSchedulingOutreachSmsFrom, sendClientSms } from '../api/clientSms';
+import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
+import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import { fetchPracticeMainPhone } from '../api/clientPortal';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
@@ -69,6 +72,7 @@ import {
   holdHouseholdSharedSource,
   holdHouseholdWithin3BusinessDays,
   holdIsWithin3BusinessDays,
+  holdGroupUnreadReplies,
   sortHoldHouseholdGroupsByAppointmentStart,
   type HoldHouseholdGroup,
   type HoldVisitSlotGroup,
@@ -664,6 +668,23 @@ export default function HoldsPage() {
     [load]
   );
 
+  /** Open or close a row; opening reads its unread client replies (SCH-R10). */
+  const toggleGroupRow = useCallback(
+    (group: HoldHouseholdGroup) => {
+      const unread = holdGroupUnreadReplies(group);
+      if (unread && !openGroupKeys.has(group.key)) {
+        void markHoldRepliesRead(unread.holdId)
+          .then(() => {
+            notifyAppointmentRepliesChanged();
+            return load({ silent: true });
+          })
+          .catch(() => undefined);
+      }
+      toggleGroupOpen(group.key);
+    },
+    [openGroupKeys, toggleGroupOpen, load],
+  );
+
   const openInScheduler = useCallback(
     (hold: HoldListItem, groupKey: string) => {
       void beginHoldOpenInScheduler({
@@ -1094,7 +1115,7 @@ export default function HoldsPage() {
                         className="appt-table-chevron"
                         aria-expanded={groupOpen}
                         aria-label={groupOpen ? 'Close hold' : 'Open hold'}
-                        onClick={() => toggleGroupOpen(group.key)}
+                        onClick={() => toggleGroupRow(group)}
                       >
                         {groupOpen ? '▾' : '▸'}
                       </button>
@@ -1115,9 +1136,18 @@ export default function HoldsPage() {
                         className="appt-table-client"
                         aria-expanded={groupOpen}
                         title={groupOpen ? 'Close hold' : 'Open hold'}
-                        onClick={() => toggleGroupOpen(group.key)}
+                        onClick={() => toggleGroupRow(group)}
                       >
                         <span className="appt-table-client-name">{resolveHoldClientLabel(hold)}</span>
+                        {(() => {
+                          const unread = holdGroupUnreadReplies(group);
+                          return unread ? (
+                            <ReplyBadges
+                              mine={unread.mine ? unread.count : 0}
+                              others={unread.mine ? 0 : unread.count}
+                            />
+                          ) : null;
+                        })()}
                         {petNames.length > 0 ? (
                           <span className="appt-table-pets">
                             {petNames.map((p) => (

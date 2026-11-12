@@ -10,8 +10,8 @@ export function notifyAppointmentRepliesChanged(): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(APPT_REPLIES_CHANGED_EVENT));
 }
 
-type Counts = { mine: number; others: number };
-const ZERO: Counts = { mine: 0, others: 0 };
+type Counts = { mine: number; others: number; holdMine: number; holdOthers: number };
+const ZERO: Counts = { mine: 0, others: 0, holdMine: 0, holdOthers: 0 };
 
 /** One fetch loop and one socket shared by every badge on the screen (nav, quick action). */
 const shared = {

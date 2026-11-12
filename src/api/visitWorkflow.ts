@@ -1823,6 +1823,8 @@ export type InvoiceCardOnFile = {
   brand: string | null;
   expMonth: number | null;
   expYear: number | null;
+  /** PAY-C5: the card has expired. It is shown, never charged. */
+  expired?: boolean;
 };
 
 export type InvoiceCardOnFileLookup = {
@@ -2247,6 +2249,10 @@ export type ClientCardOnFile = {
   agreementVersion: string | null;
   currentAgreementVersion: string;
   declinedAt: string | null;
+  /** Memberships and auto-ships billed on this card; Remove card keeps it for them only (PAY-C2). */
+  stillUsedBy?: string[];
+  /** Only on the Remove card reply: what was removed, and who still uses it. */
+  removed?: { last4: string | null; brand: string | null; detached: boolean; stillUsedBy: string[] };
 };
 
 export async function getClientCardOnFile(clientId: number): Promise<ClientCardOnFile> {

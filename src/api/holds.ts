@@ -38,6 +38,8 @@ export type HoldClientRef = {
   lastName: string | null;
   phone1: string | null;
   email: string | null;
+  /** Second email on the client record; searched in the hold's email history too. */
+  secondEmail?: string | null;
   address1: string | null;
   city: string | null;
   state: string | null;
@@ -69,6 +71,13 @@ export type HoldListItem = {
   instructions: string | null;
   pimsId: string | null;
   appointmentRequestSubmissionId: number | null;
+  /** Unread client texts on this hold (a hold with no request); null when none. */
+  unreadReplies?: {
+    count: number;
+    lastAt: string;
+    lastChannel: 'email' | 'text';
+    lastPreview: string | null;
+  } | null;
   forwardBooking: {
     id: number;
     createdVia: string | null;
@@ -194,4 +203,9 @@ export async function logHoldCall(
   body: { outcome: 'reached' | 'voicemail' | 'no_answer'; note?: string | null }
 ): Promise<void> {
   await http.post(`/holds/${encodeURIComponent(String(appointmentId))}/calls`, body);
+}
+
+/** POST /holds/:id/replies — opening a hold reads its unread client replies. */
+export async function markHoldRepliesRead(appointmentId: number): Promise<void> {
+  await http.post(`/holds/${encodeURIComponent(String(appointmentId))}/replies`);
 }

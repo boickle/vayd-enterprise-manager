@@ -985,6 +985,7 @@ export default function PimsTaskDetailView({
         <TaskReassignModal
           task={task}
           employees={employees}
+          myEmployeeId={myEmployeeId}
           onClose={() => setReassignOpen(false)}
           onSaved={(updated) => {
             if (updated) setTask(updated);

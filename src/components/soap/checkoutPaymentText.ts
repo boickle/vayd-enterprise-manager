@@ -15,6 +15,7 @@ export function cardText(brand?: string | null, last4?: string | null): string {
 
 /** Button text: "Card on file · Visa •4242" when the card is known. */
 export function cardOnFileButtonText(card: InvoiceCardOnFile | null): string {
+  if (card?.expired) return 'Card on file';
   if (card && (card.last4 || card.brand)) return `Card on file · ${cardText(card.brand, card.last4)}`;
   return 'Card on file';
 }
@@ -68,4 +69,9 @@ export function paidTenderLines(
     out.push({ id: t.id, label, amount });
   }
   return out;
+}
+
+/** PAY-C5: "Expired, ending 4242" for a card on file that can no longer be charged. */
+export function expiredCardText(card: { last4: string | null }): string {
+  return card.last4 ? `Expired, ending ${card.last4}` : 'Expired';
 }
