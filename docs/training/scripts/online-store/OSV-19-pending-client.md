@@ -17,8 +17,9 @@
 | `p05-send` | Send text puts the order on hold, waiting on the client. |
 | `p06-tag` | It leaves Fill and moves to Pending client. |
 | `p07-list` | This list shows every order waiting on a client. |
-| `p08-answer` | When the client answers, by text, phone or email, open the order, |
-| `p09-clear` | and clear the hold. It goes back to its step. |
+| `p07b-reply` | When Maria texts back, a red number shows here, and on the Mail Order Queue tab. |
+| `p08-answer` | Open it. It says Client replied, and her text is marked New. |
+| `p09-clear` | She confirmed the address, so clear the hold. It goes back to its step. |
 | `p10-mark` | If you asked by phone, Mark pending puts it on hold without a text. |
 | `p11-not` | Waiting on a doctor or a manager is not pending. Leave the order in its step, add a note, and ask them. |
 | `p12-mistakes` | The most common mistakes: marking an order pending while waiting on a manager, and forgetting to clear the hold when the client answers. |

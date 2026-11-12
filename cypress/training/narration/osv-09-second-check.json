@@ -13,11 +13,11 @@
  },
  {
   "id": "c04-filler",
-  "text": "Riley filled it, so Robin checks it."
+  "text": "Riley filled it, so Robin, a licensed technician, checks it."
  },
  {
   "id": "c05-remember",
-  "text": "A second person checks each pet's items against the label before it leaves."
+  "text": "Every prescription needs a licensed vet or technician on the fill or the check."
  },
  {
   "id": "c06-slip",
@@ -57,10 +57,10 @@
  },
  {
   "id": "c12-mistakes",
-  "text": "The most common mistakes: checking your own fill, and telling the client before the check."
+  "text": "The most common mistakes: checking your own fill without giving a reason, and telling the client before the check."
  },
  {
   "id": "c13-remember",
-  "text": "Remember: a second person checks each pet's items against the label before it leaves."
+  "text": "Remember: a licensed vet or technician fills or checks every prescription. Check your own fill only when no one else is here, and say why."
  }
 ]

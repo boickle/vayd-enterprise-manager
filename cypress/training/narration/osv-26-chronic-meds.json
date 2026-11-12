@@ -5,7 +5,7 @@
   { "id": "c04-search", "text": "search the inventory," },
   { "id": "c05-pick", "text": "and pick the item. Pick it from inventory, not free text, so the family can reorder it." },
   { "id": "c06-catalog", "text": "Catalog means it's linked." },
-  { "id": "c07-refills", "text": "Each one shows its refills." },
+  { "id": "c07-refills", "text": "Each one shows its refills. Items that need no prescription, like joint chews, show PRN." },
   { "id": "c08-window", "text": "Click them to open the refills window." },
   { "id": "c09-add", "text": "A doctor adds refills here." },
   { "id": "c09b-save", "text": "Save refills." },

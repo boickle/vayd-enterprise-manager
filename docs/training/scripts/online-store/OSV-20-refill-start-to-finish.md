@@ -24,7 +24,7 @@
 | `r11-weight` | Weigh the package, |
 | `r12-rates` | get rates, |
 | `r13-label` | and print the cheapest label, once. |
-| `r14-check` | A second person checks it. Robin compares the medicine with the labels, |
+| `r14-check` | Then the check. Robin, a licensed technician, compares the medicine with the labels, |
 | `r15-checked` | and checks it off. |
 | `r16-tell` | Last, tell the client it's on the way. |
 | `r17-email` | Click Email client, |

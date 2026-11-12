@@ -21,7 +21,8 @@
 | `n09-open` | Open it to see who asked, and why. |
 | `n10-choices` | Choose what fits: cancel and refund, cancel without a refund, already shipped, or keep the order. |
 | `n11-cancel` | It's filled but not shipped, and the bill was paid, so cancel and refund. |
-| `n12-done` | For a paid visit bill, Scout opens the bill's return. Confirm the return there to refund the client. |
-| `n12b-shelf` | Then put the medicine back where it came from. |
+| `n12-done` | Scout opens the return on the bill. Back on the shelf is ticked, so it goes back into stock. |
+| `n12b-shelf` | It was paid in cash, so the refund goes on Maria's account as credit. A card payment would go back to the card. Confirm it. |
+| `n12c-refunded` | Returned. The bill now shows the refund. |
 | `n13-mistakes` | The most common mistakes: pulling the item off the bill after the mail team started, and leaving cancel requests waiting. |
 | `n14-remember` | Remember: once the mail team has started, request the cancellation. The mail team decides, first thing each day. |

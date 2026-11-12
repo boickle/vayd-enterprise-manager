@@ -39,3 +39,4 @@
 - **Walked** as Robin Hale: **I checked Maple** → **✓ Checked** → **Email client** / **Text client** / **Do not contact client**. The database showed `second_check`.
 - **Not clicked:** **Email client**. On the stack it goes to the capture file; the message has a "Send for real (non-prod)" switch that should stay off.
 - **Q4:** Scout already blocks the filler (server and screen); the override now needs a typed reason. The reason box wasn't walked live (the demo has no licensed tech who fills); its tests pass.
+- **Nov 11, 2026 (owner):** every prescription needs a licensed vet or technician on the fill or the check (Scout refuses an unlicensed fill plus an unlicensed check). A licensed person may check their own fill when no one else is there, with a reason. In the demo Robin Hale is a licensed technician. The narration no longer calls checking your own fill a mistake, only doing it without a reason.

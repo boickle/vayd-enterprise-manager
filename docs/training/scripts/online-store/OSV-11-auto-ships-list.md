@@ -49,3 +49,4 @@
 - **Nov 10, 2026:** owner: staff may take a new card by phone and enter it with **Card**; saving retries the missed charge (Stripe). Walked as a CL: Card updated to Visa ending 4242. The training stack gets no Stripe events, so the spec clears "Payment failing" itself after the save.
 - **B4 fixed (owner, Nov 7):** walked live on Nov 8 as Riley: Item and Qty greyed out, with the note. Ships with the next push to build-doctor-flow.
 - **Demo data:** mark one auto-ship "failing" for step 3 (`"paymentStatus"='failing'`).
+- **Nov 11, 2026 (owner):** the Auto-ships tab shows a red count of auto-ships with a payment problem (card failing, cancel not confirmed, or ended by Stripe in the last 30 days); new line `s01b-badge` points at it.

@@ -149,6 +149,12 @@ async function login(email, role, ids) {
     [P, juniper, thyroid, `${TAG}-rx-juniper`, 'Thyroid tablets 0.4 mg (90 ct)'],
   );
   await q(`UPDATE prescriptions SET "employee_Id" = $1 WHERE "pimsId" LIKE $2`, [lane, `${TAG}-rx-%`]);
+  // Owner (Nov 11, 2026): a prescription item needs a licensed filler or checker. Robin Hale (practice manager
+  // and mail order manager) is a licensed technician in the demo, so her checks of Riley's fills count.
+  await q(`UPDATE employees SET "isLicensed" = true, "licenseType" = 'technician' WHERE id = $1`, [w.employees.manager]);
+  // The pharmacy RX line, so mail order texts show on the order (the stack's made-up OpenPhone line).
+  await q(`DELETE FROM practice_settings WHERE "practiceId" = $1 AND key = 'inventory.mailOrderRxLinePhone'`, [P]);
+  await q(`INSERT INTO practice_settings ("practiceId", key, value) VALUES ($1, 'inventory.mailOrderRxLinePhone', '+19195550100')`, [P]);
   // Both are long-term meds: chronic, so they show under Chronic medications and print as chronic.
   await q(`UPDATE prescriptions SET acuity = 'chronic', "discontinuedAt" = NULL WHERE "pimsId" LIKE $1`, [`${TAG}-rx-%`]);
   // Tom Chen: an old eVet bill still open.

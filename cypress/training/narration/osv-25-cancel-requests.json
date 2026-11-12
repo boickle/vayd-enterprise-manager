@@ -10,8 +10,9 @@
   { "id": "n09-open", "text": "Open it to see who asked, and why." },
   { "id": "n10-choices", "text": "Choose what fits: cancel and refund, cancel without a refund, already shipped, or keep the order." },
   { "id": "n11-cancel", "text": "It's filled but not shipped, and the bill was paid, so cancel and refund." },
-  { "id": "n12-done", "text": "For a paid visit bill, Scout opens the bill's return. Confirm the return there to refund the client." },
-  { "id": "n12b-shelf", "text": "Then put the medicine back where it came from." },
+  { "id": "n12-done", "text": "Scout opens the return on the bill. Back on the shelf is ticked, so it goes back into stock." },
+  { "id": "n12b-shelf", "text": "It was paid in cash, so the refund goes on Maria's account as credit. A card payment would go back to the card. Confirm it." },
+  { "id": "n12c-refunded", "text": "Returned. The bill now shows the refund." },
   { "id": "n13-mistakes", "text": "The most common mistakes: pulling the item off the bill after the mail team started, and leaving cancel requests waiting." },
   { "id": "n14-remember", "text": "Remember: once the mail team has started, request the cancellation. The mail team decides, first thing each day." }
 ]

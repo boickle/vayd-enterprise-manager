@@ -17,7 +17,7 @@
 | `k05-filled` | Mark filled. |
 | `k06-pickup` | Instead of ship, it's ready for pickup. No shipping label. |
 | `k07-bag` | Bag it for the office, then send it to check. |
-| `k08-check` | A second person checks it, as always. |
+| `k08-check` | It's still checked, as always. |
 | `k09-tell` | Then let the client know it's ready to pick up. |
 | `k09b-email` | Click Email client. It's already worded for a pickup. |
 | `k10-send` | Send the email. |

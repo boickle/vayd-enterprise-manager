@@ -13,7 +13,7 @@
   { "id": "r11-weight", "text": "Weigh the package," },
   { "id": "r12-rates", "text": "get rates," },
   { "id": "r13-label", "text": "and print the cheapest label, once." },
-  { "id": "r14-check", "text": "A second person checks it. Robin compares the medicine with the labels," },
+  { "id": "r14-check", "text": "Then the check. Robin, a licensed technician, compares the medicine with the labels," },
   { "id": "r15-checked", "text": "and checks it off." },
   { "id": "r16-tell", "text": "Last, tell the client it's on the way." },
   { "id": "r17-email", "text": "Click Email client," },

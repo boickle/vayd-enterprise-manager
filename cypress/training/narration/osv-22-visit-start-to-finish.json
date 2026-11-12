@@ -11,7 +11,7 @@
   { "id": "v08-ship", "text": "Then ship it: weigh the package," },
   { "id": "v09-rates", "text": "get rates," },
   { "id": "v10-label", "text": "and print the cheapest label." },
-  { "id": "v11-checked", "text": "A second person checks it." },
+  { "id": "v11-checked", "text": "Robin, a licensed technician, checks it." },
   { "id": "v12-tell", "text": "Last, tell the client it's on the way." },
   { "id": "v12b-email", "text": "Click Email client," },
   { "id": "v12c-send", "text": "and send it." },

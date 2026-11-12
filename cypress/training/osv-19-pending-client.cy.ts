@@ -5,13 +5,17 @@
  * order goes on hold, then she answers and Riley clears the hold.
  */
 import '../support/e2e';
-import { buyAsMaria, look, press, resetStoreData, signIn } from './osvTraining';
+import { buyAsMaria, look, osv, press, resetStoreData, signIn, sql } from './osvTraining';
 import { openOrder, resetRefills } from './osvMailFlow';
-import { finish, line, loadNarration, startClock, tap, typeSlowly } from './trainingKit';
+import { finish, line, loadNarration, offCamera, startClock, tap, typeSlowly } from './trainingKit';
 
 describe('Training: OSV-19 pending client', () => {
   it('OSV-19', () => {
     let orderId = 0;
+    const o = osv();
+    // Client replies the fake OpenPhone hands back (training stack only); emptied for each take.
+    const inbox = String(Cypress.env('SCH_SMS_CAPTURE')).replace(/[^/]+$/, 'sms-inbox.jsonl');
+    cy.writeFile(inbox, '');
     loadNarration();
     resetStoreData();
     resetRefills();
@@ -34,7 +38,27 @@ describe('Training: OSV-19 pending client', () => {
     line('p05-send', () => press(() => cy.contains('button', /Send text \+ put into waiting status/)));
     line('p06-tag', () => tap(() => cy.contains('button', /^Pending client/)));
     line('p07-list', () => look(() => cy.contains('.mail-queue__badge', 'Pending client', { timeout: 20000 }).first(), 3000));
-    line('p08-answer', () => openOrder(() => orderId));
+    offCamera(() => {
+      // Maria texts back: what Quo would send the API (message.received), and the text for the message list.
+      sql(`SELECT phone1 FROM clients WHERE id=${o.clients.rivera}`).then((p) => {
+        const from = `+1${String(p).replace(/\D/g, '').slice(-10)}`;
+        const text = 'Yes, 100 Test Lane is still right. Thank you!';
+        cy.writeFile(inbox, JSON.stringify({ at: new Date().toISOString(), from, text }) + '\n', { flag: 'a+' });
+        cy.request('POST', `${Cypress.env('API_URL')}/webhooks/openphone/message`, {
+          type: 'message.received',
+          data: { object: { direction: 'incoming', from, to: '+19195550100', text } },
+        });
+      });
+      cy.reload();
+      cy.contains('Mail Order Queue', { timeout: 40000 });
+      cy.get('[data-testid="pending-client-replies"]', { timeout: 30000 });
+      cy.wait(1200);
+    });
+    line('p07b-reply', () => look(() => cy.get('[data-testid="pending-client-replies"]').parent(), 4000));
+    line('p08-answer', () => {
+      openOrder(() => orderId);
+      look(() => cy.get('[data-testid="mail-text-new"]', { timeout: 30000 }).parent(), 4500);
+    });
     line('p09-clear', () => press(() => cy.contains('button', /^Clear hold$/)));
     line('p10-mark', () => {
       cy.contains('button', /^Fill$/).click();

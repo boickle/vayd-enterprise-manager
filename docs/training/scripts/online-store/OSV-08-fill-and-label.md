@@ -55,3 +55,4 @@
 - **Order:** it's fill, then label, then the second check (OSV-09). **Ready for check** stays disabled until there's a label.
 - **Demo data:** the office needs an address. Without one, rates fail with "Raleigh office needs a ZIP in Settings → Locations before you can quote shipping." The setup script sets 410 Glenwood Ave, Raleigh, NC 27603.
 - **Lot picking:** now in step 7 (thyroid is lot-tracked in the demo setup).
+- **Nov 11, 2026 (owner):** a prescription needs a licensed vet or technician on the fill or the check; a licensed person may check their own fill with a reason. The opening line no longer says the check must be a second person.

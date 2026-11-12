@@ -22,7 +22,7 @@
 | `v08-ship` | Then ship it: weigh the package, |
 | `v09-rates` | get rates, |
 | `v10-label` | and print the cheapest label. |
-| `v11-checked` | A second person checks it. |
+| `v11-checked` | Robin, a licensed technician, checks it. |
 | `v12-tell` | Last, tell the client it's on the way. |
 | `v12b-email` | Click Email client, |
 | `v12c-send` | and send it. |

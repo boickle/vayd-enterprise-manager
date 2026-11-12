@@ -6,7 +6,7 @@
   { "id": "k05-filled", "text": "Mark filled." },
   { "id": "k06-pickup", "text": "Instead of ship, it's ready for pickup. No shipping label." },
   { "id": "k07-bag", "text": "Bag it for the office, then send it to check." },
-  { "id": "k08-check", "text": "A second person checks it, as always." },
+  { "id": "k08-check", "text": "It's still checked, as always." },
   { "id": "k09-tell", "text": "Then let the client know it's ready to pick up." },
   { "id": "k09b-email", "text": "Click Email client. It's already worded for a pickup." },
   { "id": "k10-send", "text": "Send the email." },

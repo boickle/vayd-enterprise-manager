@@ -29,6 +29,7 @@ describe('Training: OSV-11 auto-ships list', () => {
     startClock();
 
     line('s01-why');
+    line('s01b-badge', () => look(() => cy.get('[aria-label="Auto-ships with a payment problem"]', { timeout: 30000 }), 3500));
     line('s02-rows', () => look(() => cy.get('.mail-queue__list'), 4500));
     line('s03-remember');
     line('s04-problems', () => tap(() => cy.contains('button', /^Payment problems$/)));

@@ -16,7 +16,7 @@
 | `c04-search` | search the inventory, |
 | `c05-pick` | and pick the item. Pick it from inventory, not free text, so the family can reorder it. |
 | `c06-catalog` | Catalog means it's linked. |
-| `c07-refills` | Each one shows its refills. |
+| `c07-refills` | Each one shows its refills. Items that need no prescription, like joint chews, show PRN. |
 | `c08-window` | Click them to open the refills window. |
 | `c09-add` | A doctor adds refills here. |
 | `c09b-save` | Save refills. |

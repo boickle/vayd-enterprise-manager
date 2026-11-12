@@ -25,7 +25,6 @@
 | 10 | Same window, card declined | Point at the red banner "Payment failing: update your card." with **Update card** | "If her card is declined, she sees this banner." | The auto-ship marked "failing" (training setup) |
 | 11 | Auto-ship | Point at the one thing to remember | "Payment failing means the card needs updating. She can do it here, or call us and we'll enter it for her." | — |
 | 12 | Auto-ship | Click **Update card** | "Update card opens her card on file for this auto-ship." | — |
-| 13 | Store top bar | Click **Auto-ship** | "She can also see all of her auto-ships here." | — |
 | 14 | **Auto-ship items** | Point at each item: **Qty**, **Frequency**, **Pause**, **Cancel** | "Each one can be changed here too." | — |
 
 ## What else the client can do here
@@ -48,3 +47,4 @@
 - **Not clicked:** **Update card**, **Pause for a while**, **Cancel auto-ship** and **Order an extra now**, which call Stripe. Do them once in the dry run.
 - **Setting "failing" for the video:** set `online_store_subscriptions."paymentStatus"='failing'` on the auto-ship in the training database before step 10, and back to null after. (In real use the Stripe card-failed event sets it.)
 - **Wording to confirm:** the **Auto-ship items** page shows the raw next-bill date (for example "next bill 2027-05-07") and "36.00 before tax" with no $. See the review file.
+- **Nov 11, 2026:** the store's Auto-ship page was removed (owner). Clients see and manage every auto-ship from the pet's **Medications** card in the portal; the video no longer shows the store page.

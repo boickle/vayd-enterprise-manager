@@ -61,8 +61,9 @@ describe('Training: OSV-25 cancel requests', () => {
     });
     line('n10-choices', () => look(() => cy.get('section.mail-queue__cancel-decision').find('button').first().parent(), 5000));
     line('n11-cancel', () => press(() => cy.get('section.mail-queue__cancel-decision').contains('button', /^Cancel and refund$/)));
-    line('n12-done', () => look(() => cy.contains(/confirm the return to refund the client/i, { timeout: 30000 }).parent(), 5000));
-    line('n12b-shelf');
+    line('n12-done', () => look(() => cy.contains('Back on the shelf', { timeout: 30000 }).parent(), 5000));
+    line('n12b-shelf', () => press(() => cy.contains('button', /^Keep \$[\d.,]+ as account credit$/, { timeout: 30000 })));
+    line('n12c-refunded', () => look(() => cy.contains('tr', /Return #/, { timeout: 30000 }).first(), 3500));
     line('n13-mistakes');
     line('n14-remember');
     finish();

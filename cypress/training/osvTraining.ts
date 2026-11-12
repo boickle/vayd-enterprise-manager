@@ -129,7 +129,8 @@ export function buyAsMaria(o: { tab: string; item: string; pet: string; autoship
   cy.get('body', { timeout: 30000 }).should(($b) => {
     expect($b.text().includes('Card on file') || $b.find('.vayd-store__card-box iframe').length > 0).to.eq(true);
   });
-  cy.wait(800);
+  // The saved card can take a moment to replace the card-entry box: wait before deciding which one it is.
+  cy.wait(2500);
   // Office pickup instead of shipping (e.g. pickup: 'Brunswick Office').
   if (o.pickup) cy.contains('button', `Pick up at ${o.pickup}`).click();
   cy.get('body').then(($b) => {

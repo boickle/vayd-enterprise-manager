@@ -56,14 +56,7 @@ describe('Training: OSV-03 fix an auto-ship in the portal', () => {
     line('a14-remember');
     line('a15-update', () => tap(() => cy.contains('[data-testid="autoship-payment-failing"] button', 'Update card')));
     line('a16-card', () => pointAt(() => modal().find('.vayd-store__card-panel', { timeout: 20000 }).first(), 4000));
-    offCamera(() => {
-      failing(null);
-      cy.visit('/store');
-      cy.contains('.vayd-store__nav a', /^Auto-ship$/, { timeout: 30000 });
-      cy.wait(600);
-    });
-    line('a17-all', () => tap(() => cy.contains('.vayd-store__nav a', /^Auto-ship$/)));
-    line('a18-row', () => pointAt(() => cy.contains('For Maple', { timeout: 30000 }).parent(), 5000));
+    offCamera(() => failing(null));
     line('a19-mistakes');
     line('a20-remember');
     finish();

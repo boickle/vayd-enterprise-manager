@@ -1,5 +1,6 @@
 [
   { "id": "s01-why", "text": "Every auto-ship in the practice is on one list. A failing card shows up here before a pet runs out." },
+  { "id": "s01b-badge", "text": "The red number on Auto-ships counts the ones with a payment problem." },
   { "id": "s02-rows", "text": "Each one shows who it's for, the item, the price and how often it ships." },
   { "id": "s03-remember", "text": "Check payment problems every week. Only managers change the price, quantity or item." },
   { "id": "s04-problems", "text": "Payment problems shows failing cards, auto-ships Stripe ended, and cancels Stripe hasn't confirmed." },
