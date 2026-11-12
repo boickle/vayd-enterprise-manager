@@ -861,6 +861,19 @@ export async function getUncountedShelfLot(
   return data;
 }
 
+/** Whether this shelf has had its first count. Add lot and receiving don't count it. */
+export async function getShelfCountStatus(
+  practiceId: number,
+  inventoryItemId: number,
+  branchLocationId: number
+): Promise<{ counted: boolean }> {
+  const { data } = await http.get<{ counted: boolean }>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/uncounted-shelf-lot`,
+    { params: { branchLocationId } }
+  );
+  return data;
+}
+
 export async function getFirstCountProgress(practiceId: number): Promise<FirstCountProgress> {
   const { data } = await http.get<FirstCountProgress>(
     `/practice/${practiceId}/inventory-first-counts/progress`
