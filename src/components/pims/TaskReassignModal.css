@@ -177,3 +177,12 @@
 .task-reassign-modal__chip button:hover:not(:disabled) {
   background: #dbeafe;
 }
+
+.task-reassign-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 14px;
+  color: #0f172a;
+}
