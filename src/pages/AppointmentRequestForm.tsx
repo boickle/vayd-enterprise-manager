@@ -15,6 +15,13 @@ import {
 } from '../components/NewClientAppointmentTypePicker';
 import { NewClientHowSoonPicker, type HowSoonChoiceValue } from '../components/NewClientHowSoonPicker';
 import { NewClientSpeciesPicker, type NewClientSpeciesChoice } from '../components/NewClientSpeciesPicker';
+import { HouseholdPetsSection } from '../components/HouseholdPetsSection';
+import {
+  createEmptyHouseholdPet,
+  householdPetsPayload,
+  validateHouseholdPets,
+  type HouseholdPet,
+} from '../utils/appointmentRequestHouseholdPets';
 import { PetVisitQuestionsBlock } from '../components/PetVisitQuestionsBlock';
 import { VisitCostEstimatePanel } from '../components/VisitCostEstimatePanel';
 import {
@@ -489,6 +496,10 @@ type FormData = {
     needsExtraHandling?: 'Yes' | 'No' | '';
     handlingNeedsExplicitNone?: boolean;
   }>;
+  /** "Other pets at home" question — required on the pets step for new and logged-in clients. */
+  hasOtherPetsAtHome?: 'Yes' | 'No' | '';
+  /** Pets on file only, no visit requested. Never counted toward visit length/cost. */
+  householdPets?: HouseholdPet[];
   previousVeterinaryPractices?: string;
   okayToContactPreviousVets?: 'Yes' | 'No' | '';
   petBehaviorAtPreviousVisits?: string; // Legacy field
@@ -754,6 +765,8 @@ export default function AppointmentRequestForm() {
     newClientPets: isLoggedIn ? [] : [defaultNewClientPet.pet],
     petSpecificData: isLoggedIn ? undefined : { [defaultNewClientPet.pet.id]: defaultNewClientPet.petSpecific },
     existingClientNewPets: [],
+    hasOtherPetsAtHome: '',
+    householdPets: [],
     lookingForEuthanasia: '',
     lookingForEuthanasiaExisting: '',
     isThisTheAddressWhereWeWillCome: '',
@@ -1469,6 +1482,20 @@ export default function AppointmentRequestForm() {
     // Fallback for backward compatibility
     return appointmentTypeValue === 'Euthanasia' || appointmentTypeValue.toLowerCase().includes('euthanasia');
   };
+
+  /**
+   * The "other pets at home" prompt (with its "add to this visit" upsell) is skipped
+   * for end-of-life requests: wrong moment to ask.
+   */
+  const visitIncludesEuthanasia = (fd: FormData): boolean =>
+    fd.lookingForEuthanasia === 'Yes' ||
+    fd.lookingForEuthanasiaExisting === 'Yes' ||
+    Object.values(fd.petSpecificData || {}).some(
+      (d) =>
+        isEuthanasiaAppointmentType(d?.needsToday || '') ||
+        isEuthanasiaAppointmentType(d?.appointmentTypeName || ''),
+    );
+  const showHouseholdPets = !visitIncludesEuthanasia(formData);
 
   // Helper to check if appointment type name matches common patterns (for placeholders)
   const matchesAppointmentTypeName = (appointmentTypeValue: string, patterns: string[]): boolean => {
@@ -3891,6 +3918,9 @@ export default function AppointmentRequestForm() {
 
   const validateNewClientPetInfo = (newErrors: Record<string, string>) => {
     if (!isLoggedIn) {
+      if (showHouseholdPets) {
+        Object.assign(newErrors, validateHouseholdPets(formData.hasOtherPetsAtHome, formData.householdPets));
+      }
       const newClientPets = filterCompletedAppointmentRequestPets(formData.newClientPets);
       if (newClientPets.length === 0) {
         newErrors.newClientPets = 'Please add at least one pet';
@@ -3961,6 +3991,9 @@ export default function AppointmentRequestForm() {
   };
 
   const validateExistingClientPets = (newErrors: Record<string, string>) => {
+    if (isLoggedIn && showHouseholdPets) {
+      Object.assign(newErrors, validateHouseholdPets(formData.hasOtherPetsAtHome, formData.householdPets));
+    }
     if (formData.selectedPetIds.length === 0) {
       newErrors.selectedPetIds = 'Please select at least one pet';
     } else {
@@ -4273,6 +4306,7 @@ export default function AppointmentRequestForm() {
           client_type: 'new',
           is_logged_in: false,
           pet_count: formData.newClientPets?.length || 0,
+          household_pet_count: householdPetsPayload(formData.hasOtherPetsAtHome, formData.householdPets)?.length ?? 0,
         });
         handleSubmit();
         break;
@@ -4510,6 +4544,104 @@ export default function AppointmentRequestForm() {
     }
     return ids;
   };
+
+  const updateHouseholdPet = (petId: string, patch: Partial<HouseholdPet>) => {
+    setFormData((prev) => ({
+      ...prev,
+      householdPets: (prev.householdPets || []).map((p) => (p.id === petId ? { ...p, ...patch } : p)),
+    }));
+  };
+
+  /** Moves a household pet into the visit as a full new-pet card, prefilled with what the client typed. */
+  const moveHouseholdPetToVisit = (pet: HouseholdPet, clientType: 'new' | 'existing') => {
+    const { pet: visitPet, petSpecific } = createEmptyNewClientPetEntry(
+      clientType === 'existing'
+        ? `existing-new-pet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        : undefined,
+    );
+    const prefilled = {
+      ...visitPet,
+      name: pet.name,
+      speciesChoice: pet.speciesChoice,
+      species: pet.speciesChoice === 'Other' ? 'Other' : pet.species,
+      speciesId: pet.speciesId,
+      otherSpecies: pet.otherSpecies,
+      age: pet.age ?? '',
+    };
+    setFormData((prev) => {
+      const remaining = (prev.householdPets || []).filter((p) => p.id !== pet.id);
+      return {
+        ...prev,
+        ...(clientType === 'existing'
+          ? {
+              existingClientNewPets: [...(prev.existingClientNewPets || []), prefilled],
+              selectedPetIds: [...prev.selectedPetIds, prefilled.id],
+            }
+          : { newClientPets: [...(prev.newClientPets || []), prefilled] }),
+        petSpecificData: { ...(prev.petSpecificData || {}), [prefilled.id]: petSpecific },
+        householdPets: remaining,
+        // Moving the last one re-asks the question, so the client can list any others.
+        hasOtherPetsAtHome: remaining.length > 0 ? prev.hasOtherPetsAtHome : '',
+      };
+    });
+    trackFormEvent('appointment_form_household_pet_added_to_visit', {
+      client_type: clientType,
+      is_logged_in: isLoggedIn,
+    });
+    window.setTimeout(() => {
+      document
+        .querySelector(`[data-pet-id="${prefilled.id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
+
+  const renderHouseholdPetsSection = (clientType: 'new' | 'existing') =>
+    !showHouseholdPets ? null : (
+    <HouseholdPetsSection
+      clientType={clientType}
+      answer={formData.hasOtherPetsAtHome || ''}
+      onAnswer={(answer) =>
+        setFormData((prev) => ({
+          ...prev,
+          hasOtherPetsAtHome: answer,
+          householdPets:
+            answer === 'No'
+              ? []
+              : (prev.householdPets || []).length > 0
+                ? prev.householdPets
+                : [createEmptyHouseholdPet()],
+        }))
+      }
+      pets={formData.householdPets || []}
+      onAdd={() =>
+        setFormData((prev) => ({
+          ...prev,
+          householdPets: [...(prev.householdPets || []), createEmptyHouseholdPet()],
+        }))
+      }
+      onRemove={(petId) =>
+        setFormData((prev) => {
+          const remaining = (prev.householdPets || []).filter((p) => p.id !== petId);
+          return {
+            ...prev,
+            householdPets: remaining,
+            hasOtherPetsAtHome: remaining.length > 0 ? prev.hasOtherPetsAtHome : '',
+          };
+        })
+      }
+      onUpdate={updateHouseholdPet}
+      onSpeciesChoice={(petId, choice) => {
+        const resolved = resolveSpeciesFromChoice(speciesList, choice);
+        updateHouseholdPet(petId, {
+          speciesChoice: choice,
+          species: resolved.species,
+          speciesId: resolved.speciesId,
+        });
+      }}
+      onAddToVisit={(pet) => moveHouseholdPetToVisit(pet, clientType)}
+      errors={errors}
+    />
+  );
 
   const renderRecordsFields = (source: 'new' | 'existing') => (
     <ClientRecordUploadFields
@@ -4783,6 +4915,10 @@ export default function AppointmentRequestForm() {
           return pets.length > 0 ? pets : undefined;
         })(),
         newPetInfo: formData.newPetInfo || undefined,
+        hasOtherPetsAtHome: formData.hasOtherPetsAtHome || undefined,
+        householdPets: showHouseholdPets
+          ? householdPetsPayload(formData.hasOtherPetsAtHome, formData.householdPets)
+          : undefined,
         
         // All pets data (for logged-in users, include all pets even if not selected)
         allPets: isLoggedIn
@@ -6500,6 +6636,8 @@ export default function AppointmentRequestForm() {
                 )}
               </div>
 
+              {renderHouseholdPetsSection('new')}
+
               {/* How soon — shown in compact new-client-pet-info page */}
               <div
                 style={{
@@ -7072,6 +7210,8 @@ export default function AppointmentRequestForm() {
                 </div>
               )}
             </div>
+
+            {renderHouseholdPetsSection('new')}
 
             {/* How soon do your pets need to be seen? - Single question for all pets */}
             <div style={{ marginTop: '24px', marginBottom: '20px' }}>
@@ -7861,6 +8001,8 @@ export default function AppointmentRequestForm() {
                 </div>
               </div>
             )}
+
+            {isLoggedIn && renderHouseholdPetsSection('existing')}
 
             {/* How soon do your pets need to be seen? - Single question for all pets */}
             <div style={{ marginBottom: '20px' }}>
