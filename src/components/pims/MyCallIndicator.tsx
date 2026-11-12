@@ -310,6 +310,8 @@ export default function MyCallIndicator() {
             : undefined
         }
         onSelectBehind={setFrontKey}
+        hidden={reviewing != null}
+        urgent={front.optimistic || phase === 'ringing' || phase === 'active'}
         onDismiss={
           // Clinical summaries stay until filed or skipped in the review modal, unless there
           // is no client to file them to.
