@@ -330,10 +330,24 @@
   color: #6b7280;
 }
 
-.chart-print-doc__preview-frame {
-  width: 100%;
-  height: min(70vh, 760px);
+.chart-print-doc__preview-pdf .room-loader-pdf-canvas-pages {
+  max-height: min(68vh, 760px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f3f4f6;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  background: #f3f4f6;
+}
+
+.chart-print-doc__preview-pdf .room-loader-pdf-canvas-page {
+  display: block;
+  width: 100%;
+  max-width: 680px;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
 }

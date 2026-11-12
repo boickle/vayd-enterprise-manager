@@ -9,6 +9,7 @@ import {
 } from '../../api/patients';
 import { useAuth } from '../../auth/useAuth';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
+import { RoomLoaderPdfCanvas } from '../RoomLoaderPdfCanvas';
 import {
   applyKindDefaults,
   applyProvider,
@@ -918,11 +919,9 @@ export default function ChartPrintDocumentModal({
                 ? 'This document is on the chart. To change it, go back and edit, then print or send the new version.'
                 : 'Check the document below. Nothing is filed yet. Print, Email, or Download & file puts this exact PDF on the chart.'}
             </p>
-            <iframe
-              className="chart-print-doc__preview-frame"
-              src={preview.url}
-              title={`Preview of ${preview.title}`}
-            />
+            {/* Drawn by pdf.js rather than the browser's PDF viewer: that viewer has its own Print and
+                Download buttons, which would skip filing on the chart. */}
+            <RoomLoaderPdfCanvas url={preview.url} className="chart-print-doc__preview-pdf" />
 
             {error && <p className="chart-print-doc__error">{error}</p>}
             {ok && <p className="chart-print-doc__ok">{ok}</p>}
