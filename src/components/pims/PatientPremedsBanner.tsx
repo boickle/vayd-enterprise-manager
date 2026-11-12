@@ -8,13 +8,15 @@ type Props = {
   /** Who last set it, e.g. "Deirdre F." */
   by?: string | null;
   onSave: (body: ScoutPatientWrite) => Promise<void>;
+  /** Show the note only, with no way to change it (Executive and Observer, Nov 12, 2026). */
+  readOnly?: boolean;
 };
 
 /**
  * Top-of-chart "Needs pre-meds for visits". When on, booking a visit for this pet starts
  * with "Needs pre-meds" checked.
  */
-export default function PatientPremedsBanner({ needsPremeds, note, by, onSave }: Props) {
+export default function PatientPremedsBanner({ needsPremeds, note, by, onSave, readOnly = false }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note ?? '');
   const [busy, setBusy] = useState(false);
@@ -76,6 +78,8 @@ export default function PatientPremedsBanner({ needsPremeds, note, by, onSave }:
     </div>
   ) : null;
 
+  if (!needsPremeds && readOnly) return null;
+
   if (!needsPremeds) {
     return (
       <div className="pims-emr-premeds pims-emr-premeds--off">
@@ -102,7 +106,7 @@ export default function PatientPremedsBanner({ needsPremeds, note, by, onSave }:
         <span className="pims-emr-premeds__label">
           <Pill size={14} aria-hidden /> Needs pre-meds for every visit
         </span>
-        {!editing ? (
+        {!editing && !readOnly ? (
           <span className="pims-emr-premeds__actions">
             <button type="button" disabled={busy} onClick={() => setEditing(true)}>
               Edit

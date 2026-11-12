@@ -820,7 +820,13 @@ export default function MailOrdersPage() {
 
   useEffect(() => {
     const id = Number(searchParams.get('orderId'));
-    if (Number.isFinite(id) && id > 0) setOpenId(id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (id === openId) return;
+    // Opened from a link: don't carry the last order's weight or rates over.
+    const row = rows.find((r) => r.id === id);
+    setOpenId(id);
+    setRates({ rates: [], carriers: [], notes: [] });
+    setWeight(row?.packageWeightOz != null ? String(row.packageWeightOz) : '');
   }, [searchParams]);
 
   useEffect(() => {
@@ -1273,6 +1279,9 @@ export default function MailOrdersPage() {
             setRows((rs) => [created, ...rs]);
             setStaffOpen(false);
             setOpenId(created.id);
+            // A new order starts with no weight or rates, not the last order's.
+            setRates({ rates: [], carriers: [], notes: [] });
+            setWeight(created.packageWeightOz != null ? String(created.packageWeightOz) : '');
             const nextParams = new URLSearchParams(searchParams);
             nextParams.set('orderId', String(created.id));
             setSearchParams(nextParams, { replace: true });
