@@ -179,4 +179,55 @@ describe('HoldConversationPanel', () => {
       })
     );
   });
+
+  it('SCH-R15: also searches the second email, same shared mailboxes, and drops duplicate messages', async () => {
+    gmail.fetchGmailMailboxes.mockResolvedValue({
+      mailboxes: [{ email: 'info@vetatyourdoor.com', connected: true }],
+    });
+    gmail.fetchGmailMessages.mockImplementation(async (_mb: string, o: { q: string }) => ({
+      threads: [
+        o.q.includes('partner@example.com')
+          ? { threadId: 'thB', id: 'mB', date: '2026-11-08T15:00:00Z', labelIds: [] }
+          : { threadId: 'thA', id: 'mA', date: '2026-11-07T15:00:00Z', labelIds: [] },
+        // The same thread comes back for both addresses: shown once.
+        { threadId: 'thShared', id: 'mS', date: '2026-11-06T15:00:00Z', labelIds: [] },
+      ],
+      untaggedQueue: [],
+    }));
+    const mk = (id: string, threadId: string, date: string, text: string) => ({
+      id,
+      threadId,
+      date,
+      subject: 'Luna',
+      from: { name: null, email: 'x@example.com' },
+      snippet: text,
+      labelIds: [],
+      body: { text, html: null },
+    });
+    gmail.fetchGmailThread.mockImplementation(async (_mb: string, threadId: string) => ({
+      messages: [
+        threadId === 'thA'
+          ? mk('mA', 'thA', '2026-11-07T15:00:00Z', 'From the primary address')
+          : threadId === 'thB'
+            ? mk('mB', 'thB', '2026-11-08T15:00:00Z', 'From the second address')
+            : mk('mS', 'thShared', '2026-11-06T15:00:00Z', 'Both addresses on this one'),
+      ],
+    }));
+    const both = {
+      ...hold,
+      client: { ...hold.client, email: 'amanda@example.com', secondEmail: 'partner@example.com' },
+    } as HoldListItem;
+    render(<HoldConversationPanel hold={both} canText practiceTz="America/New_York" />);
+
+    expect(await screen.findByText('From the second address')).toBeTruthy();
+    expect(screen.getByText('From the primary address')).toBeTruthy();
+    expect(screen.getAllByText('Both addresses on this one')).toHaveLength(1);
+    const queries = gmail.fetchGmailMessages.mock.calls.map((c: unknown[]) => (c[1] as { q: string }).q);
+    expect(queries.some((q: string) => q.includes('amanda@example.com'))).toBe(true);
+    expect(queries.some((q: string) => q.includes('partner@example.com'))).toBe(true);
+    // Shared mailboxes only.
+    expect(new Set(gmail.fetchGmailMessages.mock.calls.map((c: unknown[]) => c[0]))).toEqual(
+      new Set(['info@vetatyourdoor.com']),
+    );
+  });
 });
