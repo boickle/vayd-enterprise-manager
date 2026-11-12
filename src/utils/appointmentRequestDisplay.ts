@@ -832,6 +832,11 @@ export function appointmentRequestListTabForSubmission(
     return 'on_hold';
   }
   if (appointmentRequestSubmissionCountsAsBooked(item, bookedApptMeta, typeCatalog)) {
+    // SCH-R9: the linked visit was cancelled on the calendar, so the request is open again.
+    const apptId = item.bookedAppointmentId;
+    if (apptId != null && bookedApptMeta.get(Number(apptId))?.appointmentCancelled === true) {
+      return 'contacted';
+    }
     // Booked, but communication or records still open: it stays In progress.
     return requestWorkIsFinished(item) ? 'booked' : 'contacted';
   }

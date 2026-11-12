@@ -163,7 +163,13 @@ import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDe
 import { SoapRecordModal, type SoapRecordRef } from '../components/soap/SoapHeaderRecords';
 import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
 import { requestDataPetRowSummaries } from '../utils/appointmentRequestDetailDisplay';
-import { enrichPetRowSummariesFromLinkedAppointment } from '../utils/appointmentRequestLinkedEvet';
+import {
+  clientPatientsFromSearchRows,
+  enrichPetRowSummariesFromLinkedAppointment,
+  requestPetsNeedClientPatients,
+  type LinkedClientPatient,
+} from '../utils/appointmentRequestLinkedEvet';
+import { searchPatients, extractPatientListFromSearchResponse } from '../api/patients';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
 import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
@@ -175,6 +181,7 @@ import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
+  appointmentRequestClientTypeBadge,
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
   appointmentRequestRecordsPill,
@@ -613,6 +620,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   rowsRef.current = rows;
   const noteDraftsRef = useRef(noteDrafts);
   noteDraftsRef.current = noteDrafts;
+  /** Booked visit's client id → that client's patients (for multi-pet requests). */
+  const [clientPatientsByClient, setClientPatientsByClient] = useState<
+    Map<string, LinkedClientPatient[]>
+  >(new Map());
+  const clientPatientsAskedRef = useRef<Set<string>>(new Set());
   const bookedApptMetaRef = useRef(bookedApptMeta);
   bookedApptMetaRef.current = bookedApptMeta;
   const typeCatalogRef = useRef<ReturnType<typeof buildAppointmentTypeCatalogFromTypes> | null>(null);
@@ -1164,6 +1176,29 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
   const submissions = useMemo(() => rows.filter(isCompletedSubmission), [rows]);
   const abandoned = useMemo(() => rows.filter(isAbandonedItem), [rows]);
+
+  // SCH-R7: a booked request with a new pet that has no Scout id yet: load the booked visit's
+  // client's patients once, so every pet on the request can be matched by name.
+  useEffect(() => {
+    for (const item of submissions) {
+      if (item.bookedAppointmentId == null) continue;
+      const clientId = bookedApptMeta.get(Number(item.bookedAppointmentId))?.clientInternalId;
+      if (!clientId || clientPatientsAskedRef.current.has(clientId)) continue;
+      const summary = bookedApptMeta.get(Number(item.bookedAppointmentId));
+      const pets = enrichPetRowSummariesFromLinkedAppointment(
+        requestDataPetRowSummaries(item.requestData ?? {}),
+        linkedEvetIdsFromBookedApptSummary(summary),
+      );
+      if (pets.length < 2 || !requestPetsNeedClientPatients(pets)) continue;
+      clientPatientsAskedRef.current.add(clientId);
+      void searchPatients({ clientId, activeOnly: false })
+        .then((res) => {
+          const list = clientPatientsFromSearchRows(extractPatientListFromSearchResponse(res.data));
+          setClientPatientsByClient((prev) => new Map(prev).set(clientId, list));
+        })
+        .catch(() => clientPatientsAskedRef.current.delete(clientId));
+    }
+  }, [submissions, bookedApptMeta]);
   const isSearchActive = search.trim().length > 0;
   /** Gmail waits until debounce catches up — avoids fetching for stale partial queries. */
   const searchGmailFetchReady = isSearchActive && debouncedSearch === search.trim();
@@ -2570,6 +2605,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const name = clientDisplayNameFromRequestData(rd);
             const phone = requestDataPhone(rd);
             const clientType = requestDataClientType(rd);
+            const clientTypeBadge = appointmentRequestClientTypeBadge(
+              clientType,
+              requestDataPetRowSummaries(rd)
+            );
             const isEuth = isEuthanasiaRequestData(rd);
             const status = submissionStatus(item);
             const isDismissed = status === 'dismissed';
@@ -2609,7 +2648,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               isBooked,
               hasLinkedAppointment,
             });
-            const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
+            const linkedAppointment = linkedEvetIdsFromBookedApptSummary(
+              bookedSummary,
+              bookedSummary?.clientInternalId
+                ? clientPatientsByClient.get(bookedSummary.clientInternalId)
+                : undefined,
+            );
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const displayBookedSummary =
               bookedApptId != null
@@ -2745,11 +2789,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     </span>
                   </div>
                   <div className="appt-table-cell appt-table-client-type">
-                    {clientType === 'existing' ? (
+                    {clientTypeBadge === 'existing' ? (
                       'Existing'
-                    ) : clientType === 'new' ? (
+                    ) : clientTypeBadge === 'new_client' ? (
                       <span className="appt-table-new-pill" title="New client: not in Scout yet">
                         New
+                        <br />
+                        Client
+                      </span>
+                    ) : clientTypeBadge === 'new_patient' ? (
+                      <span
+                        className="appt-table-new-pill"
+                        title="Existing client with a new pet: the pet isn't in Scout yet"
+                      >
+                        New
+                        <br />
+                        Patient
                       </span>
                     ) : (
                       ''

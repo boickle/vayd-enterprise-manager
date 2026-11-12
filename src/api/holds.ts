@@ -38,6 +38,8 @@ export type HoldClientRef = {
   lastName: string | null;
   phone1: string | null;
   email: string | null;
+  /** Second email on the client record; searched in the hold's email history too. */
+  secondEmail?: string | null;
   address1: string | null;
   city: string | null;
   state: string | null;

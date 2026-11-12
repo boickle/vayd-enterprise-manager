@@ -270,3 +270,16 @@ export function replyTimeLabel(
   const today = DateTime.fromJSDate(now).setZone(practiceTz);
   return dt.hasSame(today, 'day') ? dt.toFormat('h:mm a') : dt.toFormat('LLL d');
 }
+
+/**
+ * The client-type cell on an Appointments line (owner, Nov 12, 2026): NEW CLIENT, or NEW PATIENT
+ * when an existing client is bringing a pet that isn't in Scout yet, else Existing.
+ */
+export function appointmentRequestClientTypeBadge(
+  clientType: 'new' | 'existing' | 'unknown',
+  pets: ReadonlyArray<{ isNew: boolean }>
+): 'new_client' | 'new_patient' | 'existing' | null {
+  if (clientType === 'new') return 'new_client';
+  if (clientType === 'existing') return pets.some((p) => p.isNew) ? 'new_patient' : 'existing';
+  return null;
+}

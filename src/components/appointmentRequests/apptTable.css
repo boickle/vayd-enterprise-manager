@@ -432,12 +432,14 @@
 /* New client: stands out in the row (owner, Nov 12, 2026). */
 .appt-table-new-pill {
   display: inline-block;
-  padding: 2px 9px;
-  border-radius: 999px;
+  padding: 3px 8px;
+  border-radius: 8px;
   background: #ea580c;
   color: #fff;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-align: center;
+  line-height: 1.15;
 }

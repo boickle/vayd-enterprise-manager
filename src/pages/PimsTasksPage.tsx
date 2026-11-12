@@ -1408,6 +1408,7 @@ export default function PimsTasksPage() {
         <TaskReassignModal
           task={reassignTask}
           employees={employees}
+          myEmployeeId={myEmployeeId}
           onClose={() => setReassignTask(null)}
           onSaved={() => {
             setReassignTask(null);

@@ -51,6 +51,13 @@ describe('appointmentRequestListTabForSubmission (booked requests)', () => {
     ).toBe('contacted');
   });
 
+  it('SCH-R9: a booked request whose visit was cancelled is back In progress', () => {
+    const meta = new Map([[99, { appointmentCancelled: true } as never]]);
+    expect(
+      appointmentRequestListTabForSubmission(booked({ communicationStatus: 'complete', records: null }), meta)
+    ).toBe('contacted');
+  });
+
   it('a hold is On hold whatever the other columns say', () => {
     expect(
       appointmentRequestListTabForSubmission(
