@@ -41,3 +41,7 @@
 - **Returns:** the return mistake (step 9) is back in now that the return-balance bug is fixed (INV-11, Nov 7).
 - **Create deposit** is hidden from a plain CL (checked Nov 7, INV-16), so step 7 is recorded as the manager.
 - **Ready to record.**
+
+## Change after recording (Nov 12, 2026)
+
+- Step 6's consent box now uses the practice-wide staff wording (PAY-C3). See the README, "Saved cards changes".

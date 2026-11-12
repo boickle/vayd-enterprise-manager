@@ -61,3 +61,7 @@
 ## Pass 2 (Wave 11 checkout)
 
 On the second bill: **Card on file · Visa •4242** is green (a card is saved). Click it, point at the confirm button **Charge $22.50 to Visa •4242** ("Scout shows the amount and the card before it charges anything"), then click **Charge** to confirm. Nothing is charged until that click.
+
+## Change after recording (Nov 12, 2026)
+
+- The consent box (steps 2 and 12) and the Card over the phone box (step 6) now read "Owner agrees we may keep this card on file and charge it for visits, refills, memberships and online store orders." with "Ask before you tap. Tick this box when they say yes." at checkout (PAY-C3). The box starts unticked: you tick it on yes. Step 2 and 12 narration should say "Tick it when they say yes." Stripe no longer finds saved cards by email (PAY-C1). See the README, "Saved cards changes".
