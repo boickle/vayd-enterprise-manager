@@ -314,6 +314,10 @@ export async function recordClientEmailDecision(
     gmailMessageId?: string;
     gmailThreadId?: string;
     skipReason?: string;
+    /** Chronic meds whose "order from our store" block went out inside this recap. */
+    storeMedRxIds?: number[];
+    /** No recap, and the doctor unticked the separate ordering email for these meds. */
+    storeMedsDeclinedRxIds?: number[];
   }
 ): Promise<VisitWrapUp> {
   const { data } = await http.post<VisitWrapUp>(
@@ -321,4 +325,19 @@ export async function recordClientEmailDecision(
     { practiceId: pid(), ...body }
   );
   return data;
+}
+
+/** The recap's "order from our store" block for chronic meds added to these pets. */
+export type StoreMedsBlock = { rxIds: number[]; html: string; text: string };
+
+/** Null when none of these pets has a new chronic med we sell online. */
+export async function fetchStoreMedsBlock(
+  encounterId: string,
+  patientIds: number[]
+): Promise<StoreMedsBlock | null> {
+  const { data } = await http.post<StoreMedsBlock | null | ''>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/store-meds-block`,
+    { practiceId: pid(), patientIds }
+  );
+  return data && typeof data === 'object' && Array.isArray(data.rxIds) && data.rxIds.length ? data : null;
 }

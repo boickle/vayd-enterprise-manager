@@ -48,6 +48,8 @@ export const DISCOUNT_MANUAL_CAP_PERCENT_KEY =
   'discounts.manualCapPercent' as const;
 
 export type ReminderSettings = {
+  /** Go-live: calls that started before this date (YYYY-MM-DD) never reach a call dock. */
+  'calls.dockStartsOn'?: string;
   'reminders.enableEmail'?: string;
   'reminders.enableSms'?: string;
   'reminders.appointmentCadence'?: CadenceEntry[];

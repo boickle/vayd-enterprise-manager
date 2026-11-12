@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
-import { sendClientSms } from '../../api/clientSms';
+import { fetchPreferredSmsFrom, sendClientSms, type PreferredSmsFrom } from '../../api/clientSms';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { Message } from '../../api/clientPortal';
 import {
@@ -38,6 +38,8 @@ type Props = {
   historyOnly?: boolean;
   pets: ClientReachPet[];
   defaultPatientIds?: number[];
+  /** The visit this text is about, when opened from one: its doctor's line comes first. */
+  appointmentId?: number | null;
   doNotSms?: boolean;
   onClose: () => void;
   onPostedToEmr?: () => void;
@@ -73,6 +75,7 @@ export function ClientSmsWorkspaceModal({
   historyOnly = false,
   pets,
   defaultPatientIds,
+  appointmentId = null,
   doNotSms,
   onClose,
   onPostedToEmr,
@@ -96,6 +99,8 @@ export function ClientSmsWorkspaceModal({
   const [overrideNonProd, setOverrideNonProd] = useState(false);
   const [openLineKeys, setOpenLineKeys] = useState<Set<string>>(() => new Set());
   const [fromPhone, setFromPhone] = useState('');
+  /** Owner, Nov 11, 2026: start on the visit's or primary provider's own Quo line. */
+  const [preferredFrom, setPreferredFrom] = useState<PreferredSmsFrom | null | undefined>(undefined);
   const isHistory = mode === 'history';
 
   function firstSendablePhone(): string {
@@ -123,6 +128,23 @@ export function ClientSmsWorkspaceModal({
     setOverrideNonProd(false);
     setFromPhone('');
   }, [open, initialPhone, historyOnly, phones, defaultPatientIds]);
+
+  const preferredPatientId = defaultPatientIds && defaultPatientIds.length === 1 ? defaultPatientIds[0] : null;
+  useEffect(() => {
+    if (!open || historyOnly) return;
+    let cancelled = false;
+    setPreferredFrom(undefined);
+    fetchPreferredSmsFrom({ clientId, patientId: preferredPatientId, appointmentId })
+      .then((r) => {
+        if (!cancelled) setPreferredFrom(r);
+      })
+      .catch(() => {
+        if (!cancelled) setPreferredFrom(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, historyOnly, clientId, preferredPatientId, appointmentId]);
 
   useEffect(() => {
     if (!open) return;
@@ -215,8 +237,17 @@ export function ClientSmsWorkspaceModal({
     quoLines.find((line) => phonesMatchForQuo(line.phone, fromPhone)) ??
     (fromPhone ? resolveLineDirectoryEntry(directory, fromPhone) : null);
 
+  const providerLine = preferredFrom?.phone
+    ? quoLines.find((q) => phonesMatchForQuo(q.phone, preferredFrom.phone ?? ''))
+    : undefined;
   useEffect(() => {
     if (!open || isHistory || fromPhone || quoLines.length === 0) return;
+    // Wait for the provider lookup so the line doesn't jump after it answers.
+    if (preferredFrom === undefined) return;
+    if (providerLine) {
+      setFromPhone(providerLine.phone);
+      return;
+    }
     const clientPhones = phones.map((p) => p.phone);
     const lastPracticeLine = messages
       .map((m) => practiceLineOnMessage(m, clientPhones))
@@ -226,7 +257,7 @@ export function ClientSmsWorkspaceModal({
       quoLines[0]?.phone ??
       '';
     if (preferred) setFromPhone(preferred);
-  }, [open, isHistory, fromPhone, quoLines, messages, phones]);
+  }, [open, isHistory, fromPhone, quoLines, messages, phones, preferredFrom, providerLine]);
   const phoneLabel =
     phoneFilter === 'all'
       ? 'All numbers'
@@ -417,6 +448,13 @@ export function ClientSmsWorkspaceModal({
                 ))}
               </select>
             )}
+            {providerLine && phonesMatchForQuo(fromPhone, providerLine.phone) && preferredFrom?.providerName ? (
+              <p className="client-reach-sms__hint" data-testid="send-from-provider">
+                {preferredFrom.source === 'appointment'
+                  ? `${preferredFrom.providerName}'s line (the visit's doctor)`
+                  : `${preferredFrom.providerName}'s line (primary doctor)`}
+              </p>
+            ) : null}
           </label>
         ) : null}
 

@@ -45,7 +45,8 @@ export type SchedulerContextMenuAction =
   | { kind: 'recordsRequest' }
   | { kind: 'recordsCall'; contact: RecordsRequestPendingContact }
   | { kind: 'recordsEmail'; contact: RecordsRequestPendingContact }
-  | { kind: 'checkout' };
+  | { kind: 'checkout' }
+  | { kind: 'deposit' };
 
 type OpenGroup = 'scheduling' | 'forms' | 'visit' | 'patient' | 'client';
 
@@ -349,6 +350,7 @@ export function SchedulerAppointmentContextMenu({
         />
         <CtxSubRow label="View Client" onPick={() => onAction({ kind: 'viewClientInfo' })} />
         <CtxSubRow label="Add/Review Charges" onPick={() => onAction({ kind: 'checkout' })} />
+        <CtxSubRow label="Appointment Deposit" onPick={() => onAction({ kind: 'deposit' })} />
       </CtxParentRow>
     </div>
   );
