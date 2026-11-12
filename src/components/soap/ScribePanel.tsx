@@ -42,9 +42,12 @@ import { PE_SYSTEMS, peExamFromValue, type PeExamState, type PeSystemFinding } f
 import ScribeConsentModal from './ScribeConsentModal';
 import type { SuggestedPlanItem } from './ScribeSuggestedPlanItems';
 import { formatSoapSectionSpacing } from '../../utils/soapSectionSpacing';
+import { soapTextIsBlank } from '../../utils/soapChartDraft';
 import {
   fillEmptySoapNarratives,
+  markScribeSuggestionApplied,
   narrativesFromScribeSuggestion,
+  scribeSuggestionWasApplied,
 } from '../../utils/soapNarrativesFromScribe';
 import {
   cleanSubjectiveAfterVisit,
@@ -60,7 +63,7 @@ import {
   type DeferredScribeProblem,
 } from '../../utils/deferredScribeProblems';
 import { vitalsFromValue, type Vitals } from '../../utils/soapVitals';
-import { appConfirm } from '../../utils/appDialog';
+import { appConfirm, appConfirmChoice } from '../../utils/appDialog';
 
 type NumericVitalKey = 'tempF' | 'weight' | 'hr' | 'rr' | 'bcs' | 'painScore';
 
@@ -195,7 +198,8 @@ const OVERWRITE_CONFIRM =
 
 const DELETE_TRANSCRIPT_CONFIRM =
   'Delete the saved transcript for this visit?\n\n' +
-  'The SOAP notes you already have are kept, but the transcript text is gone and cannot be used to re-load the SOAP.\n\n' +
+  'The SOAP notes you already have are kept, but the transcript text is gone and cannot be used to re-load the SOAP. ' +
+  'On a household visit it is removed from every pet\'s chart that got the same transcript, and from the copy kept on this device.\n\n' +
   'Proceed?';
 
 /** Turn structured plan-item suggestions into matcher rows (never create $0 orders). */
@@ -610,14 +614,21 @@ export default function ScribePanel({
           setSuggestion(last);
         }
 
-        const filled = fillEmptySoapNarratives(
-          {
-            objectiveNotes: currentObjectiveNotesRef.current,
-            reasoning: currentReasoningRef.current,
-            planNotes: currentPlanNotesRef.current,
-          },
-          narrativesFromScribeSuggestion(last, patientId)
-        );
+        // SCR-04: fill blank fields only from a run that was never put on this chart (the tab
+        // died before saving). A field the doctor cleared after an apply stays cleared.
+        const fromScribe = narrativesFromScribeSuggestion(last, patientId);
+        const alreadyApplied = scribeSuggestionWasApplied(soapEncounterId, fromScribe);
+        const filled = alreadyApplied
+          ? { next: fromScribe, changed: false }
+          : fillEmptySoapNarratives(
+              {
+                objectiveNotes: currentObjectiveNotesRef.current,
+                reasoning: currentReasoningRef.current,
+                planNotes: currentPlanNotesRef.current,
+              },
+              fromScribe
+            );
+        if (!alreadyApplied) markScribeSuggestionApplied(soapEncounterId, fromScribe);
         if (filled.changed) {
           const patch: {
             objectiveNotes?: string;
@@ -658,6 +669,10 @@ export default function ScribePanel({
     // re-creates them in the parent, so without this the effect re-fires on its own writes.
     if (prevSuggestionRef.current === suggestion) return;
     prevSuggestionRef.current = suggestion;
+    markScribeSuggestionApplied(
+      soapEncounterId,
+      narrativesFromScribeSuggestion(suggestion, patientId)
+    );
 
     const vitalsPatch: Partial<Vitals> = {};
     const current = currentVitalsRef.current;
@@ -780,6 +795,8 @@ export default function ScribePanel({
     onApplyReasoning,
     onApplyPlanNotes,
     logApplied,
+    soapEncounterId,
+    patientId,
   ]);
 
   const startRecording = useCallback(async () => {
@@ -921,6 +938,8 @@ export default function ScribePanel({
   // patient (the current patient's own checkbox can't be unchecked — see the roster UI below) —
   // this keeps the plain single-pet path byte-for-byte unchanged when there's nothing to select.
   const multiPetSelected = selectedPatientIds.size > 1;
+  /** Sibling charts the doctor chose to skip in the household confirm (SCR-01). */
+  const skipEncounterIdsRef = useRef<Set<string>>(new Set());
 
   const processPastedTranscript = useCallback(async () => {
     const text = pasteText.trim();
@@ -942,6 +961,47 @@ export default function ScribePanel({
       }))
     ) {
       return;
+    }
+
+    // SCR-01: Process replaces Objective, Assessment and Plan on every ticked pet's chart. Ask
+    // before touching a sibling whose chart already has text.
+    skipEncounterIdsRef.current = new Set();
+    if (multiPetSelected) {
+      const siblings = roster.filter(
+        (r) => selectedPatientIds.has(r.patientId) && r.soapEncounterId !== soapEncounterId
+      );
+      const withNotes: HouseholdRosterEntry[] = [];
+      await Promise.all(
+        siblings.map(async (r) => {
+          try {
+            const enc = await getEncounter(r.soapEncounterId);
+            if (
+              !soapTextIsBlank(enc.objectiveNotes) ||
+              !soapTextIsBlank(enc.assessmentReasoning) ||
+              !soapTextIsBlank(enc.planNotes)
+            ) {
+              withNotes.push(r);
+            }
+          } catch {
+            withNotes.push(r); // could not check: do not risk an overwrite
+          }
+        })
+      );
+      if (withNotes.length > 0) {
+        const choice = await appConfirmChoice({
+          title: 'Other pets already have notes',
+          message:
+            'These pets already have Objective, Assessment or Plan text on their charts. Process replaces it with the AI text.',
+          listItems: withNotes.map((r) => r.patientName),
+          confirmLabel: 'Overwrite all',
+          altLabel: 'Skip those pets',
+          danger: true,
+        });
+        if (choice === 'cancel') return;
+        if (choice === 'alt') {
+          skipEncounterIdsRef.current = new Set(withNotes.map((r) => r.soapEncounterId));
+        }
+      }
     }
 
     setPasteBusy(true);
@@ -1025,6 +1085,13 @@ export default function ScribePanel({
     setErrorMessage(null);
     try {
       await clearScribeTranscript(soapEncounterId);
+      // The server blanks every household chart's copy; drop the copies kept on this device too.
+      try {
+        const ids = new Set([soapEncounterId, ...roster.map((r) => r.soapEncounterId)]);
+        ids.forEach((id) => localStorage.removeItem(`scout.scribe.liveTranscript:${id}`));
+      } catch {
+        /* private mode */
+      }
       setFinalTranscript('');
       setInterimText('');
       setPasteText('');
@@ -1038,7 +1105,7 @@ export default function ScribePanel({
     } finally {
       setPasteBusy(false);
     }
-  }, [soapEncounterId]);
+  }, [soapEncounterId, roster]);
 
   const togglePatientSelected = (id: number) => {
     if (id === patientId) return; // current patient always included
@@ -1053,6 +1120,16 @@ export default function ScribePanel({
   const applyMultiPatientEntry = useCallback(
     async (entry: HouseholdRosterEntry, sugg: MultiPatientSuggestionEntry) => {
       setErrorMessage(null);
+      const multiNarratives = {
+        objectiveNotes: formatSoapSectionSpacing(sugg.objectiveNotes ?? ''),
+        reasoning: formatSoapSectionSpacing(sugg.assessmentReasoning ?? ''),
+        planNotes: formatSoapSectionSpacing(sugg.planNotes ?? ''),
+      };
+      if (skipEncounterIdsRef.current.has(entry.soapEncounterId)) {
+        // The doctor chose to keep this chart as written; do not refill it on reopen either.
+        markScribeSuggestionApplied(entry.soapEncounterId, multiNarratives);
+        return;
+      }
       try {
         if (entry.isCurrent) {
           const vitalsPatch = fillEmptyVitals(currentVitalsRef.current, sugg.vitals);
@@ -1105,6 +1182,7 @@ export default function ScribePanel({
             toSuggestedPlanItems(sugg.planItems, existingOrders)
           );
         }
+        markScribeSuggestionApplied(entry.soapEncounterId, multiNarratives);
         onHouseholdOrdersChanged?.();
       } catch (err) {
         setErrorMessage(
