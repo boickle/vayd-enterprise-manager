@@ -8,7 +8,7 @@
 - **Watch first:** MEM-06.
 - **The one thing to remember:** changes and cancellations take effect at the anniversary, not now.
 
-> **Owner review, Nov 10, 2026:** line m19-04b says why renewing is worth it (wellness exam and trip fee, vaccines and lab work covered; priority scheduling; 7-day portal support; half off other exams). "Save my choice" was white on white; fixed.
+> **Owner review, Nov 10-11, 2026:** the page itself now says why renewing is worth it: **What Maple keeps by staying a member** lists the plan's signup-card lines, with "This year, Maple's membership covered $X of care" (shown from $100 up). The cancel form lists what the pet would lose. "Save my choice" was white on white; fixed.
 
 ## Why (opening)
 
@@ -18,17 +18,18 @@
 
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
-| 1 | **Review Maple's membership** | — | Why line | Maple on Canine Foundations monthly, year ends in 7 days. Review link signed with the test stack's test-only secret |
+| 1 | **Review Maple's membership** | — | Why line | Maple on Canine Foundations monthly, year ends in 7 days, with a covered wellness visit (exam, trip fee, DAPP, 4dx) 200 days ago. Review link signed with the test stack's test-only secret |
 | 2 | Same | — | "Remember: changes and cancellations take effect at the anniversary, not now." | — |
 | 3 | Page heading | Point at "Hi Maria. This membership year ends on … Unless you cancel, it renews automatically." | "The page says when Maple's year ends, and that it renews automatically." | — |
-| 4 | Plan card | Point at **Current plan / Renews as / Price at renewal** | "Her current plan, the plan she renews on, and the price." | — |
+| 4 | **What Maple keeps by staying a member** | Point at "This year, Maple's membership covered $… of care", then the list | "Next, what Maple keeps by staying a member, and how much care her membership covered this year. If a family isn't sure about renewing, walk them through this list." | — |
+| 4b | Plan card | Point at **Current plan / Renews as / Price at renewal** | "Then her current plan, the plan she renews on, and the price." | — |
 | 5 | Plan card | Click **Choose a different plan for next year** | "To change it, Maria clicks Choose a different plan for next year." | — |
 | 6 | **Choose a plan for next year** | Point at "Your current plan stays the same until … The plan you pick here starts on that date, at its price." | "Her plan stays the same until the anniversary. What she picks here starts that day." | — |
 | 7 | **Billing for next year** | Click **Pay yearly** (Save 10%) | "She chooses Pay yearly, which saves ten percent," | — |
 | 8 | Footer | Click **Save my choice** | "and clicks Save my choice." | — |
 | 9 | Plan card | Point at "Saved. … starts on …" | "Saved. The new billing starts on the anniversary." | — |
 | 10 | Page | Click **I want to cancel this membership** | "If she wants to stop instead, she clicks I want to cancel this membership." | — |
-| 11 | **Cancel at the end of this year** | Point at the form (pet's name, the phrase, a reason of 20+ characters, the acknowledgement box, **Cancel at year end**) | "Coverage continues to the end of the year. To confirm, she types Maple's name, the words cancel membership, and a reason, and ticks that she understands." | — |
+| 11 | **Cancel at the end of this year** | Point at the form (pet's name, the phrase, a reason of 20+ characters, the acknowledgement box, **Cancel at year end**) | "Coverage continues to the end of the year, and the form lists what Maple would lose. To confirm, she types Maple's name, the words cancel membership, and a reason, and ticks that she understands." | — |
 | 12 | Voice-over | — | Closing line | — |
 
 ## What else you can do here
