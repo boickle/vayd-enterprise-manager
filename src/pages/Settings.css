@@ -3766,3 +3766,28 @@
   color: #103b2e;
 }
 
+
+/* Settings → Staff: state licenses (Nov 12, 2026). */
+.settings-licenses {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.settings-licenses__row {
+  display: grid;
+  grid-template-columns: 64px minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.settings-licenses__state {
+  text-transform: uppercase;
+  text-align: center;
+}
+.settings-licenses__empty,
+.settings-licenses__hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
