@@ -2901,7 +2901,9 @@
   color: #475569;
 }
 
-.pims-chart-pick--call {
+/* Above the floating call dock (16000). Two classes so the later .pims-chart-pick
+   z-index (9100) cannot win on source order and bury this under the dock. */
+.pims-chart-pick.pims-chart-pick--call {
   z-index: 20100;
 }
 

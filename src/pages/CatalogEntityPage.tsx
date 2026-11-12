@@ -221,9 +221,10 @@ export default function CatalogEntityPage({ itemType }: { itemType: ManagedType 
   }, [runSearch]);
 
   const loadDetail = useCallback(
-    async (id: number) => {
+    // keepOpen: reload in place (no "Loading…" swap), so the popup keeps its scroll position.
+    async (id: number, opts?: { keepOpen?: boolean }) => {
       setSelectedId(id);
-      setDetailLoading(true);
+      if (!opts?.keepOpen) setDetailLoading(true);
       setError(null);
       try {
         const loaded = await getItemWithPriceBreaks(itemType, id, practiceId);
@@ -529,7 +530,7 @@ export default function CatalogEntityPage({ itemType }: { itemType: ManagedType 
                     practiceId={practiceId}
                     item={detail.item}
                     priceBreaks={detail.priceBreaks}
-                    onChanged={() => loadDetail(selectedId)}
+                    onChanged={() => loadDetail(selectedId, { keepOpen: true })}
                   />
                 </div>
               )}

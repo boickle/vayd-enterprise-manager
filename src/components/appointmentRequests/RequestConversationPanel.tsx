@@ -7,6 +7,7 @@ import {
   fetchAppointmentRequestConversation,
   logAppointmentRequestCall,
   sendAppointmentRequestSubmissionSms,
+  summarizeAppointmentRequestQuoCall,
   type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
 } from '../../api/appointmentRequestSubmissions';
@@ -20,6 +21,7 @@ import {
 import { resolveAppointmentRequestSmsMessage } from '../../utils/appointmentRequestSmsMessage';
 import { requestDataPetRowSummaries } from '../../utils/appointmentRequestDetailDisplay';
 import { ConversationPanel, type ConversationSource } from './ConversationPanel';
+import { AppointmentRequestEmailModal } from '../AppointmentRequestEmailModal';
 
 type Props = {
   item: AppointmentRequestSubmissionItem;
@@ -49,7 +51,13 @@ export function RequestConversationPanel({
 }: Props) {
   const rd = item.requestData ?? {};
   const phone = requestDataPhone(rd);
-  const email = useAppointmentRequestEmail(item, { onGmailLinked });
+  const baseEmail = useAppointmentRequestEmail(item, { onGmailLinked });
+  /** The Email window (From / send as, templates), opened with what was typed. */
+  const [windowDraft, setWindowDraft] = useState<string | null>(null);
+  const email = useMemo(
+    () => (baseEmail ? { ...baseEmail, openWindow: (draft: string) => setWindowDraft(draft) } : null),
+    [baseEmail]
+  );
 
   // A client reply arriving while the request is open: load the conversation again.
   const latestReply = item.unreadReplies?.lastAt ?? null;
@@ -78,7 +86,10 @@ export function RequestConversationPanel({
         patientId: firstPet != null ? Number(firstPet) : null,
       },
       email,
-      load: () => fetchAppointmentRequestConversation(item.id),
+      load: ({ part, fresh }) => fetchAppointmentRequestConversation(item.id, part, fresh),
+      splitLoad: true,
+      fresh: replyStamp > 0,
+      summarizeCall: (callId) => summarizeAppointmentRequestQuoCall(item.id, callId),
       sendText: async (message) => {
         await sendAppointmentRequestSubmissionSms(item.id, { message });
         onContacted(item);
@@ -93,5 +104,23 @@ export function RequestConversationPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt per request and email state
   }, [item, phone, email, practiceTz, practiceId, onContacted, onSubmissionUpdated, replyStamp]);
 
-  return <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} />;
+  return (
+    <>
+      <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} />
+      {windowDraft != null ? (
+        <AppointmentRequestEmailModal
+          item={item}
+          practiceId={practiceId}
+          practiceTz={practiceTz}
+          initialBodyText={windowDraft}
+          onClose={() => setWindowDraft(null)}
+          onSent={() => {
+            baseEmail?.reload();
+            onContacted(item);
+          }}
+          onGmailLinked={onGmailLinked}
+        />
+      ) : null}
+    </>
+  );
 }

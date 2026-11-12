@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getEmployeeBranches,
+  getShelfCountStatus,
   getUncountedShelfLot,
   listInventoryLots,
   listPracticeBranches,
@@ -249,6 +250,25 @@ export default function VaccineLotPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey]);
 
+  // Add lot doesn't count the shelf: keep offering existing stock until its first count.
+  const [shelfCounted, setShelfCounted] = useState<boolean | null>(null);
+  const askShelfCounted = offerUncountedShelf && preferredLocationId != null && branchLots.length > 0;
+  useEffect(() => {
+    setShelfCounted(null);
+    if (!askShelfCounted || preferredLocationId == null) return;
+    let canceled = false;
+    void getShelfCountStatus(practiceId, inventoryItemId, preferredLocationId)
+      .then((r) => {
+        if (!canceled) setShelfCounted(r.counted);
+      })
+      .catch(() => {
+        if (!canceled) setShelfCounted(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [askShelfCounted, practiceId, inventoryItemId, preferredLocationId, reloadTick]);
+
   const selectValue = useMemo(() => {
     if (selectedLotId != null) return String(selectedLotId);
     return '';
@@ -273,7 +293,7 @@ export default function VaccineLotPicker({
     !shelfLotShown &&
     preferredLocationId != null &&
     !loading &&
-    branchLots.length === 0;
+    (branchLots.length === 0 || shelfCounted === false);
 
   return (
     <div className="soap-dose-lot-picker">

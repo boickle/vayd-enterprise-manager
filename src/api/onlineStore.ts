@@ -406,6 +406,15 @@ export type MailOrder = {
   fillerName?: string | null;
   fillBranchId?: number | null;
   fillBranchName?: string | null;
+  /** "+ New mail order" package (ashes etc.), not a pharmacy fill. */
+  packageShipment?: boolean;
+  /** Package ships from this typed address instead of an office. */
+  shipFromName?: string | null;
+  shipFromLine1?: string | null;
+  shipFromLine2?: string | null;
+  shipFromCity?: string | null;
+  shipFromState?: string | null;
+  shipFromPostal?: string | null;
   filledAt?: string | null;
   packagedAt?: string | null;
   secondCheckedAt?: string | null;
@@ -903,6 +912,10 @@ export async function createStaffMailOrder(
       state?: string;
       postal?: string;
     };
+    /** Package mail: the office it leaves from. */
+    fillBranchId?: number | null;
+    /** Package mail: ships from this typed address instead of an office. */
+    shipFrom?: { name?: string; line1: string; line2?: string; city: string; state: string; postal: string } | null;
     lines: Array<{
       inventoryItemId?: number | null;
       name: string;

@@ -46,6 +46,10 @@ export type ConversationEmail = {
   clientEmail: string | null;
   subject: string | null;
   send: (text: string) => Promise<unknown>;
+  /** Open the Email client window (From / send as, templates) with what was typed. */
+  openWindow?: (draft: string) => void;
+  /** Send only through the window (holds): the main button opens it. */
+  windowOnly?: boolean;
 };
 
 export type ConversationSource = {
@@ -59,7 +63,21 @@ export type ConversationSource = {
   /** For the call dock when dialing through Quo. */
   dial: { clientId: number | null; clientName: string | null; patientId: number | null };
   email: ConversationEmail | null;
-  load: () => Promise<ConversationLoad>;
+  /**
+   * Texts and calls. With `splitLoad`, called once for texts and once for calls so each shows as
+   * soon as it arrives (texts come from Quo and can take a while). `fresh` skips the API's short
+   * texts cache (after sending, or when a new reply came in).
+   */
+  load: (opts: { part?: 'texts' | 'calls'; fresh: boolean }) => Promise<ConversationLoad>;
+  splitLoad?: boolean;
+  /** Load fresh from the start (a new reply came in). */
+  fresh?: boolean;
+  /** "Summarize" a Quo call: fetches Quo's transcript when missing, then summarizes. */
+  summarizeCall?: (callId: number) => Promise<{
+    transcript: string | null;
+    summary: string | null;
+    transcriptStatus: string | null;
+  }>;
   sendText: (message: string) => Promise<void>;
   logCall: (outcome: ConversationCall['outcome'], note: string | null) => Promise<void>;
   /** Called after an email goes out. */
@@ -89,7 +107,25 @@ function whenLabel(iso: string, tz: string): string {
 
 const LONG_BODY = 420;
 
-function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
+/** Quo has said no transcript will come for the call. */
+const NO_TRANSCRIPT = new Set(['absent', 'failed', 'not-found']);
+
+type CallSummaryState =
+  | { state: 'busy' }
+  | { state: 'error' }
+  | { state: 'done'; transcript: string | null; summary: string | null; transcriptStatus: string | null };
+
+function Bubble({
+  entry,
+  tz,
+  summary,
+  onSummarize,
+}: {
+  entry: ConversationItem;
+  tz: string;
+  summary?: CallSummaryState;
+  onSummarize?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   if (entry.channel === 'event') {
@@ -99,8 +135,25 @@ function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
       </div>
     );
   }
-  const long = entry.body.length > LONG_BODY;
-  const body = long && !expanded ? `${entry.body.slice(0, LONG_BODY).trimEnd()}…` : entry.body;
+  const done = summary?.state === 'done' ? summary : null;
+  const fullBody = done?.summary ?? entry.body;
+  const transcript = done?.transcript ?? entry.transcript ?? null;
+  const transcriptStatus = done?.transcriptStatus ?? entry.transcriptStatus ?? null;
+  const long = fullBody.length > LONG_BODY;
+  const body = long && !expanded ? `${fullBody.slice(0, LONG_BODY).trimEnd()}…` : fullBody;
+  // A Quo call with no summary yet: summarizing, Summarize, or why there is none.
+  const callNote =
+    entry.quoCallId == null || fullBody
+      ? null
+      : summary?.state === 'busy'
+        ? 'busy'
+        : NO_TRANSCRIPT.has(String(transcriptStatus)) || (done && !done.transcript)
+          ? 'none'
+          : summary?.state === 'error'
+            ? 'error'
+            : onSummarize
+              ? 'offer'
+              : null;
   const channelLabel =
     entry.channel === 'email' ? 'Email' : entry.channel === 'text' ? 'Text' : 'Call';
   return (
@@ -115,7 +168,20 @@ function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
             {expanded ? 'Show less' : 'Show more'}
           </button>
         ) : null}
-        {entry.transcript ? (
+        {callNote === 'busy' ? (
+          <div className="req-convo-callnote">Getting the transcript and summarizing…</div>
+        ) : callNote === 'none' ? (
+          <div className="req-convo-callnote">
+            {transcriptStatus === 'in-progress'
+              ? 'Quo is still transcribing this call. Try again in a minute.'
+              : 'No transcript in Quo for this call, so there is nothing to summarize.'}
+          </div>
+        ) : callNote === 'error' || callNote === 'offer' ? (
+          <button type="button" className="req-convo-more" onClick={onSummarize}>
+            {callNote === 'error' ? 'Could not summarize. Try again' : 'Summarize'}
+          </button>
+        ) : null}
+        {transcript ? (
           <>
             <button
               type="button"
@@ -125,7 +191,7 @@ function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
             >
               {showTranscript ? 'Hide transcript' : 'Show transcript'}
             </button>
-            {showTranscript ? <div className="req-convo-transcript">{entry.transcript}</div> : null}
+            {showTranscript ? <div className="req-convo-transcript">{transcript}</div> : null}
           </>
         ) : null}
       </div>
@@ -146,8 +212,12 @@ function Bubble({ entry, tz }: { entry: ConversationItem; tz: string }) {
 
 export function ConversationPanel({ source, practiceTz, actions }: Props) {
   const { phone, canText, email } = source;
-  const [convo, setConvo] = useState<ConversationLoad | null>(null);
-  const [convoError, setConvoError] = useState<string | null>(null);
+  /** Texts and calls arrive separately when the source splits them. */
+  const [textsPart, setTextsPart] = useState<ConversationLoad | null>(null);
+  const [callsPart, setCallsPart] = useState<ConversationLoad | null>(null);
+  const [textsLoadError, setTextsLoadError] = useState<string | null>(null);
+  const [callsLoadError, setCallsLoadError] = useState<string | null>(null);
+  const [summaries, setSummaries] = useState<Record<number, CallSummaryState>>({});
   const [convoKey, setConvoKey] = useState(0);
   const [showEarlier, setShowEarlier] = useState(false);
   /** Show only emails, only texts, only calls, or everything (default). */
@@ -188,21 +258,98 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
 
   const loadRef = useRef(source.load);
   loadRef.current = source.load;
+  const splitLoad = Boolean(source.splitLoad);
+  const firstFresh = Boolean(source.fresh);
   useEffect(() => {
     let cancelled = false;
-    setConvoError(null);
-    loadRef
-      .current()
-      .then((res) => {
-        if (!cancelled) setConvo(res);
-      })
-      .catch((e) => {
-        if (!cancelled) setConvoError(errorText(e, 'Could not load texts and calls.'));
-      });
+    const fresh = firstFresh || convoKey > 0;
+    setTextsLoadError(null);
+    setCallsLoadError(null);
+    // Reloading the same conversation keeps what is shown until the new copy arrives.
+    if (convoKey === 0) {
+      setTextsPart(null);
+      setCallsPart(null);
+    }
+    if (splitLoad) {
+      loadRef
+        .current({ part: 'calls', fresh })
+        .then((res) => !cancelled && setCallsPart(res))
+        .catch((e) => !cancelled && setCallsLoadError(errorText(e, 'Could not load calls.')));
+      loadRef
+        .current({ part: 'texts', fresh })
+        .then((res) => !cancelled && setTextsPart(res))
+        .catch((e) => !cancelled && setTextsLoadError(errorText(e, 'Could not load texts.')));
+    } else {
+      loadRef
+        .current({ fresh })
+        .then((res) => {
+          if (cancelled) return;
+          setTextsPart(res);
+          setCallsPart(res);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          const msg = errorText(e, 'Could not load texts and calls.');
+          setTextsLoadError(msg);
+          setCallsLoadError(msg);
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [source.key, convoKey]);
+  }, [source.key, convoKey, splitLoad, firstFresh]);
+  useEffect(() => setSummaries({}), [source.key]);
+
+  const convo = useMemo<ConversationLoad | null>(
+    () =>
+      textsPart || callsPart
+        ? {
+            texts: textsPart?.texts ?? [],
+            textsError: textsPart?.textsError ?? null,
+            calls: callsPart?.calls ?? [],
+            quoCalls: callsPart?.quoCalls ?? [],
+          }
+        : null,
+    [textsPart, callsPart]
+  );
+  const textsLoading = textsPart == null && textsLoadError == null;
+  const callsLoading = callsPart == null && callsLoadError == null;
+  const emailLoading = Boolean(email?.loading);
+
+  /** Summarize a Quo call (fetches the transcript from Quo when Scout never got it). */
+  const summarizeFn = source.summarizeCall;
+  const summarize = useCallback(
+    (callId: number) => {
+      if (!summarizeFn) return;
+      setSummaries((m) => ({ ...m, [callId]: { state: 'busy' } }));
+      summarizeFn(callId)
+        .then((r) => setSummaries((m) => ({ ...m, [callId]: { state: 'done', ...r } })))
+        .catch(() => setSummaries((m) => ({ ...m, [callId]: { state: 'error' } })));
+    },
+    [summarizeFn]
+  );
+  // Calls since the request with no summary: summarize them on their own (a few at most).
+  const autoAsked = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    autoAsked.current = new Set();
+  }, [source.key]);
+  useEffect(() => {
+    if (!summarizeFn) return;
+    const todo = (callsPart?.quoCalls ?? [])
+      .filter(
+        (c) =>
+          !c.beforeRequest &&
+          !c.summary &&
+          !NO_TRANSCRIPT.has(String(c.transcriptStatus)) &&
+          (c.durationSeconds ?? 0) >= 20 &&
+          !autoAsked.current.has(c.id)
+      )
+      .slice(-5);
+    for (const c of todo) {
+      autoAsked.current.add(c.id);
+      summarize(c.id);
+    }
+  }, [callsPart, summarizeFn, summarize]);
 
   const allItems = useMemo(
     () =>
@@ -227,8 +374,21 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
     text: allItems.filter((i) => i.channel === 'text').length,
     call: allItems.filter((i) => i.channel === 'call').length,
   };
-  const summary = conversationSummary(allItems);
-  const loading = Boolean(email?.loading) || (convo == null && convoError == null);
+  const loading = emailLoading || textsLoading || callsLoading;
+  // Don't say "no reply yet" while texts or emails are still on their way.
+  const summary = loading
+    ? { tone: 'none' as const, label: 'Checking for messages…', at: null }
+    : conversationSummary(allItems);
+  const checking = [
+    email ? { key: 'email', label: 'email', busy: emailLoading } : null,
+    { key: 'text', label: 'texts', busy: textsLoading },
+    { key: 'call', label: 'calls', busy: callsLoading },
+  ].filter((c): c is { key: string; label: string; busy: boolean } => c != null);
+  const partLoading: Record<'email' | 'text' | 'call', boolean> = {
+    email: emailLoading,
+    text: textsLoading,
+    call: callsLoading,
+  };
 
   useEffect(() => {
     const el = threadRef.current;
@@ -254,7 +414,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
     setSending(true);
     setSendError(null);
     try {
-      if (mode === 'email' && email) {
+      if (mode === 'email' && email?.windowOnly && email.openWindow) {
+        email.openWindow(text);
+      } else if (mode === 'email' && email) {
         await email.send(text);
         source.afterEmail?.();
       } else if (mode === 'text') {
@@ -274,7 +436,7 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
 
   const sendDisabled =
     sending ||
-    (mode === 'email' && (!email?.canSend || !draft.trim())) ||
+    (mode === 'email' && (!email?.canSend || (!draft.trim() && !email?.windowOnly))) ||
     (mode === 'text' && (!canText || !draft.trim()));
 
   return (
@@ -293,7 +455,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
             >
               {f.label}
               {f.key !== 'all' ? (
-                <span className="req-convo-filter-count">{channelCounts[f.key]}</span>
+                <span className="req-convo-filter-count">
+                  {partLoading[f.key] ? '…' : channelCounts[f.key]}
+                </span>
               ) : null}
             </button>
           ))}
@@ -304,6 +468,18 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
         </span>
       </header>
 
+      {loading ? (
+        <div className="req-convo-checking" role="status" aria-live="polite">
+          {checking.map((c) => (
+            <span
+              key={c.key}
+              className={`req-convo-checking-part${c.busy ? ' req-convo-checking-part--busy' : ''}`}
+            >
+              {c.busy ? `Checking ${c.label}…` : `${c.label[0].toUpperCase()}${c.label.slice(1)} ✓`}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="req-convo-thread" ref={threadRef}>
         {earlierCount > 0 ? (
           <button
@@ -317,12 +493,24 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
           </button>
         ) : null}
         {shown.map((entry) => (
-          <Bubble key={entry.key} entry={entry} tz={practiceTz} />
+          <Bubble
+            key={entry.key}
+            entry={entry}
+            tz={practiceTz}
+            summary={entry.quoCallId != null ? summaries[entry.quoCallId] : undefined}
+            onSummarize={
+              entry.quoCallId != null && summarizeFn
+                ? () => summarize(entry.quoCallId as number)
+                : undefined
+            }
+          />
         ))}
-        {loading ? <div className="req-convo-loading">Loading conversation…</div> : null}
         {email?.error ? <div className="req-convo-warning">Email: {email.error}</div> : null}
-        {convo?.textsError || convoError ? (
-          <div className="req-convo-warning">Texts: {convo?.textsError ?? convoError}</div>
+        {convo?.textsError || textsLoadError ? (
+          <div className="req-convo-warning">Texts: {convo?.textsError ?? textsLoadError}</div>
+        ) : null}
+        {callsLoadError && callsLoadError !== textsLoadError ? (
+          <div className="req-convo-warning">Calls: {callsLoadError}</div>
         ) : null}
       </div>
 
@@ -425,7 +613,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               placeholder={
                 mode === 'call'
                   ? 'What was said (optional)'
-                  : mode === 'email'
+                  : mode === 'email' && email?.windowOnly
+                    ? 'Start an email here, or leave blank, then open the email window to pick From and send…'
+                    : mode === 'email'
                     ? 'Write an email…'
                     : 'Write a text…'
               }
@@ -434,18 +624,31 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               }
             />
             <div className="req-convo-compose-foot">
-              {mode !== 'call' && source.suggest ? (
-                <button
-                  type="button"
-                  className="req-convo-suggest"
-                  onClick={() => void suggest()}
-                  disabled={suggesting}
-                >
-                  {suggesting ? 'Writing…' : 'Suggested message'}
-                </button>
-              ) : (
-                <span />
-              )}
+              <span className="req-convo-compose-tools">
+                {mode !== 'call' && source.suggest ? (
+                  <button
+                    type="button"
+                    className="req-convo-suggest"
+                    onClick={() => void suggest()}
+                    disabled={suggesting}
+                  >
+                    {suggesting ? 'Writing…' : 'Suggested message'}
+                  </button>
+                ) : null}
+                {mode === 'email' && email?.openWindow && !email.windowOnly ? (
+                  <button
+                    type="button"
+                    className="req-convo-suggest"
+                    title="Choose who it is from (send as), use a template, attach files"
+                    onClick={() => {
+                      email.openWindow?.(draft.trim());
+                      setDraft('');
+                    }}
+                  >
+                    From, templates… ↗
+                  </button>
+                ) : null}
+              </span>
               <button
                 type="button"
                 className="req-convo-send"
@@ -454,7 +657,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               >
                 {sending
                   ? 'Sending…'
-                  : mode === 'call'
+                  : mode === 'email' && email?.windowOnly
+                    ? 'Open email window'
+                    : mode === 'call'
                     ? 'Save call'
                     : mode === 'email'
                       ? 'Send email'

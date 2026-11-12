@@ -2809,27 +2809,6 @@
   color: inherit;
 }
 
-.evet-name-link,
-.appt-request-evet-link {
-  color: inherit;
-  text-decoration: none;
-  font-weight: inherit;
-}
-
-.evet-name-link:hover,
-.appt-request-evet-link:hover {
-  text-decoration: underline;
-}
-
-.appt-request-evet-link--detail-client {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.appt-request-detail-client-evet-name {
-  margin-bottom: 10px;
-}
-
 .appt-request-client-phone {
   margin-left: 8px;
   font-weight: 400;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   getUncountedShelfLot,
+  getShelfCountStatus,
   listInventoryLots,
   type InventoryLotBalance,
 } from '../../api/branchInventory';
@@ -166,6 +167,8 @@ export default function StockLotPicker({
   const [reloadTick, setReloadTick] = useState(0);
   const [shelfLot, setShelfLot] = useState<{ id: number; lotNumber: string } | null>(null);
   const [shelfLotError, setShelfLotError] = useState<string | null>(null);
+  /** False until this shelf's first count, even after Add lot: its other bottles are still unknown. */
+  const [shelfCounted, setShelfCounted] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (inventoryItemId == null) {
@@ -196,6 +199,24 @@ export default function StockLotPicker({
       canceled = true;
     };
   }, [practiceId, inventoryItemId, branchFilter, locationFilter, allowNew, refreshKey, reloadTick]);
+
+  const askShelfCounted =
+    inventoryItemId != null && !allowNew && !requireLotNumber && locationId != null && lots.length > 0;
+  useEffect(() => {
+    setShelfCounted(null);
+    if (!askShelfCounted || inventoryItemId == null || locationId == null) return;
+    let canceled = false;
+    void getShelfCountStatus(practiceId, inventoryItemId, locationId)
+      .then((r) => {
+        if (!canceled) setShelfCounted(r.counted);
+      })
+      .catch(() => {
+        if (!canceled) setShelfCounted(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [askShelfCounted, practiceId, inventoryItemId, locationId, refreshKey, reloadTick]);
 
   /** Lots staff may pick: in use mode, expired ones are left out. */
   const pickable = useMemo(
@@ -284,7 +305,11 @@ export default function StockLotPicker({
     allowNew && (newLot || (selectedLotId == null && lotNumber.trim() !== ''));
   const canAddLot = allowAddLot && !allowNew && !disabled;
   const offerShelfStock =
-    !allowNew && !requireLotNumber && locationId != null && !loading && lots.length === 0;
+    !allowNew &&
+    !requireLotNumber &&
+    locationId != null &&
+    !loading &&
+    (lots.length === 0 || shelfCounted === false);
   // The no-lot bucket sits at 0 or below, so the lot list (on-hand only) leaves it out.
   const shelfLotId =
     shelfLot?.id ?? (selectedLotId != null && lotNumber === 'UNASSIGNED' ? selectedLotId : null);
