@@ -43,6 +43,8 @@ export type ScribeSuggestion = {
   narrativePlan: string | null;
   clientEmailSubject: string | null;
   clientEmailBody: string | null;
+  /** Notes from the server about this pass, e.g. the start of a very long visit was cut. */
+  warnings?: string[];
 };
 
 /** Roster entry sent to the backend for a multi-pet structuring pass (docs/ai-scribe.md
@@ -73,6 +75,7 @@ export type MultiPatientScribeSuggestion = {
   patients: MultiPatientSuggestionEntry[];
   clientEmailSubject: string | null;
   clientEmailBody: string | null;
+  warnings?: string[];
 };
 
 export type ScribeSession = {
