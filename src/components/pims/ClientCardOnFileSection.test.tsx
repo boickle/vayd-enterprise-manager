@@ -40,6 +40,7 @@ vi.mock('./ClientCardSetupEntry', async () => {
 });
 
 import ClientCardOnFileSection from './ClientCardOnFileSection';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const withCard = {
   card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030, expired: false },
@@ -101,6 +102,15 @@ describe('Card on file section', () => {
     await waitFor(() => expect(saveClientCardOnFile).toHaveBeenCalledWith(5, { setupIntentId: 'seti_confirmed', consent: true }));
     expect(startClientCardReplacement).toHaveBeenCalledWith(5);
     expect(await screen.findByText(/Visa ending 1111/)).toBeTruthy();
+  });
+
+  it('PAY-C3-1: Replace card shows the practice-wide staff wording', async () => {
+    granted.add('card_on_file.manage');
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace card' }));
+    const text = document.querySelector('.client-card__consent')?.textContent ?? '';
+    expect(text).toContain(CARD_ON_FILE_STAFF_WORDING);
+    expect(text).toMatch(/visits, refills, memberships and online store orders/);
   });
 
   it('Remove card asks for a reason first, then removes', async () => {

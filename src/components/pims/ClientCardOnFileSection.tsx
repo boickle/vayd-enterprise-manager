@@ -11,6 +11,7 @@ import {
 } from '../../api/visitWorkflow';
 import { getMembershipCard, listPatientMemberships } from '../../api/memberships';
 import ClientCardSetupEntry from './ClientCardSetupEntry';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const SOURCE_LABEL: Record<string, string> = {
   terminal: 'Tap to Pay at a visit',
@@ -226,8 +227,7 @@ export default function ClientCardOnFileSection({ clientId }: { clientId: number
           <label className="client-card__consent">
             <input type="checkbox" checked={consent} disabled={busy} onChange={(e) => setConsent(e.target.checked)} />
             <span>
-              Owner is happy for us to keep this card on file for future visits, refills, and memberships.
-              Ask first. Tick this box when they say yes.
+              {CARD_ON_FILE_STAFF_WORDING} Ask first. Tick this box when they say yes.
             </span>
           </label>
           {error ? <p className="client-fin__err">{error}</p> : null}

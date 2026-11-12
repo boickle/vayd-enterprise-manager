@@ -88,6 +88,7 @@ import {
 } from '../../utils/chatHours';
 import { Card, FactGrid, PimsBadge } from './detail/PimsDetailKit';
 import './PatientMembershipPanel.css';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -1649,8 +1650,7 @@ export default function PatientMembershipPanel({
                         disabled={busy}
                       />
                       <span>
-                        Owner is happy for us to keep this card on file for future visits, refills, and
-                        memberships. Ask first; tick when they say yes. Checkout can then use it today.
+                        {CARD_ON_FILE_STAFF_WORDING} Ask first; tick when they say yes. Checkout can then use it today.
                       </span>
                     </label>
                   </>

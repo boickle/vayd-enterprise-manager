@@ -33,6 +33,7 @@ vi.mock('../../permissions/PermissionContext', () => ({
 }));
 
 import VisitCheckoutPanel from './VisitCheckoutPanel';
+import { CARD_ON_FILE_STAFF_ASK } from '../../utils/cardOnFileWording';
 
 const invoice = {
   id: 'inv-1',
@@ -71,7 +72,14 @@ describe('card on file consent box at checkout', () => {
     const label = document.querySelector('.soap-checkout-consent')?.textContent ?? '';
     expect(label).toMatch(/Tick this box when they say yes/);
     expect(label).not.toMatch(/uncheck/i);
-    expect(label).toMatch(/keep this card on file for future visits, refills, and memberships/);
+    expect(label).toMatch(/keep this card on file and charge it for visits, refills, memberships and online store orders/);
+  });
+
+  it('PAY-C3-1: the label is the practice-wide staff wording, word for word', async () => {
+    render(<VisitCheckoutPanel {...(props as object)} />);
+    await screen.findByRole('checkbox');
+    const label = document.querySelector('.soap-checkout-consent')?.textContent ?? '';
+    expect(label).toBe(CARD_ON_FILE_STAFF_ASK);
   });
 
   it('Tap to Pay without ticking the box does not ask to save the card', async () => {

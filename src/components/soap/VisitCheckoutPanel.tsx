@@ -165,6 +165,7 @@ import {
   tomorrowInput,
 } from '../../utils/printRxLabel';
 import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { CARD_ON_FILE_STAFF_ASK } from '../../utils/cardOnFileWording';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -3963,7 +3964,7 @@ export default function VisitCheckoutPanel({
               <span>
                 {cardDeclinedAt
                   ? `This household said no to keeping a card on file last time${formatDeclineDay(cardDeclinedAt)}. Leave unchecked unless they have changed their mind.`
-                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap. Tick this box when they say yes.'}
+                  : CARD_ON_FILE_STAFF_ASK}
               </span>
             </label>
           )}
