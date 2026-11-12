@@ -19,7 +19,9 @@ import {
   loadPatientDocumentContext,
   newVaccinePlanRow,
   PATIENT_DOC_KINDS,
+  signerChoices,
   VACCINE_PLAN_WEEKS,
+  VET_SIGNED_KINDS,
   type PatientDocContext,
   type PatientDocDraft,
   type PatientDocKind,
@@ -439,8 +441,8 @@ export default function ChartPrintDocumentModal({
 
             {kind === 'rabies' && ctx.source.rabiesLogs.length > 0 && !draft.veterinarianEmployeeId && (
               <p className="chart-print-doc__mode">
-                The veterinarian who administered this vaccine is no longer on staff, or was not
-                recorded. Choose who should sign.
+                The person who gave this vaccine is no longer on staff, was not recorded, or is not a
+                licensed veterinarian. Choose the veterinarian who should sign.
               </p>
             )}
 
@@ -454,15 +456,20 @@ export default function ChartPrintDocumentModal({
                   }
                 >
                   <option value="">Choose a veterinarian</option>
-                  {ctx.source.providers
-                    .filter((p) => p.active)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                        {p.license ? ` · ${p.license}` : ''}
-                      </option>
-                    ))}
+                  {signerChoices(kind, ctx.source.providers).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                      {p.license ? ` · ${p.license}` : ''}
+                    </option>
+                  ))}
                 </select>
+                {kind && VET_SIGNED_KINDS.has(kind) && (
+                  <span className="chart-print-doc__hint">
+                    Only a licensed veterinarian can sign this.
+                    {signerChoices(kind, ctx.source.providers).length === 0 &&
+                      ' No one is set up as one yet: set the license type in Staff settings.'}
+                  </span>
+                )}
               </label>
             )}
             {showVetPicker && draft.veterinarianSignaturePng ? (

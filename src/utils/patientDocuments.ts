@@ -250,7 +250,23 @@ export type PatientDocProvider = {
   label: string;
   license: string;
   active: boolean;
+  /** Licensed veterinarian (isLicensed + licenseType "veterinarian"). Only they may sign VET_SIGNED_KINDS. */
+  isVeterinarian?: boolean;
 };
+
+/** Documents only a licensed veterinarian may sign (owner decision, Nov 12, 2026). */
+export const VET_SIGNED_KINDS: ReadonlySet<PatientDocKind> = new Set<PatientDocKind>(['rx', 'rabies', 'health']);
+
+/** Licensed veterinarian, the same test the API uses for prescription approval. */
+export function isLicensedVeterinarian(e: { isLicensed?: unknown; licenseType?: unknown } | null | undefined): boolean {
+  return e?.isLicensed === true && String(e?.licenseType ?? '').toLowerCase() === 'veterinarian';
+}
+
+/** Who may be chosen to sign this kind of document. */
+export function signerChoices(kind: PatientDocKind | null, providers: PatientDocProvider[]): PatientDocProvider[] {
+  const active = providers.filter((p) => p.active);
+  return kind && VET_SIGNED_KINDS.has(kind) ? active.filter((p) => p.isVeterinarian === true) : active;
+}
 
 export type PatientDocSource = {
   rabiesLogs: Record<string, unknown>[];
@@ -498,6 +514,7 @@ function performerFromRabiesLog(
       label: name || pickStr(log.veterinarianName) || `Provider #${empId}`,
       license: pickStr(log.veterinarianLicense) ?? pickStr(emp?.licenseNumber) ?? '',
       active: emp?.isActive !== false && emp?.isDeleted !== true,
+      isVeterinarian: isLicensedVeterinarian(emp),
     };
   }
   const named = pickStr(log.veterinarianName);
@@ -513,7 +530,8 @@ export function applyRabiesSource(
   const log = source.rabiesLogs.find((l) => String(l.id) === id) ?? null;
   let next = applyRabiesLog(draft, log);
   const performer = performerFromRabiesLog(log, source.providers);
-  if (performer?.active) {
+  // Only a licensed veterinarian signs a rabies certificate; otherwise staff choose one.
+  if (performer?.active && performer.isVeterinarian === true) {
     // An eVet-imported dose names its vet only through the linked employee, who may not be in the
     // provider list (no license on file, or not marked as a provider). Print them anyway (EMR-A12).
     const listed = source.providers.some((p) => p.id === performer.id);
@@ -568,7 +586,7 @@ export function applyKindDefaults(kind: PatientDocKind, draft: PatientDocDraft, 
     }
   }
   const primary = source.primaryProviderId
-    ? source.providers.find((p) => p.id === source.primaryProviderId && p.active)
+    ? signerChoices(kind, source.providers).find((p) => p.id === source.primaryProviderId)
     : null;
   if (primary) return applyProvider(next, source.providers, String(primary.id), source.signatures);
   return applyProvider(next, source.providers, '', source.signatures);
@@ -624,6 +642,7 @@ export async function loadPatientDocumentContext(patientId: number): Promise<Pat
       label: employeeLabel(e),
       license: (e.licenseNumber ?? '').trim(),
       active: e.isActive !== false,
+      isVeterinarian: isLicensedVeterinarian(e),
     }))
     .filter((e) => e.label)
     .sort((a, b) => Number(b.active) - Number(a.active) || a.label.localeCompare(b.label));

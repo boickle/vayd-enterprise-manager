@@ -9,6 +9,7 @@ vi.mock('./practiceIdFromToken', () => ({
 import {
   applyKindDefaults,
   applyRabiesSource,
+  signerChoices,
   type PatientDocDraft,
   type PatientDocSource,
 } from './patientDocuments';
@@ -49,7 +50,7 @@ const evetRabies = {
   vaccineExpiration: '2027-04-02T00:00:00.000Z',
   usdaLicensingMonths: 36,
   treatmentItem: { inventoryItem: { name: 'Rabies 3yr Vaccine' } },
-  employee: { id: 12, firstName: 'Odile', lastName: 'Brackenridge', licenseNumber: 'WI-VET-0717', isActive: true },
+  employee: { id: 12, firstName: 'Odile', lastName: 'Brackenridge', licenseNumber: 'WI-VET-0717', isActive: true, isLicensed: true, licenseType: 'veterinarian' },
 };
 
 const src = (providers: PatientDocSource['providers'], log: Record<string, unknown> = evetRabies): PatientDocSource => ({
@@ -61,7 +62,7 @@ const src = (providers: PatientDocSource['providers'], log: Record<string, unkno
 
 describe('EMR-A12-1: an imported eVet rabies dose reprints with everything on it', () => {
   it('fills vaccine, lot, tag, dates and the vet name and license from the linked employee', () => {
-    const s = src([{ id: 12, label: 'Odile Brackenridge, DVM', license: 'WI-VET-0717', active: true }]);
+    const s = src([{ id: 12, label: 'Odile Brackenridge, DVM', license: 'WI-VET-0717', active: true, isVeterinarian: true }]);
     const next = applyKindDefaults('rabies', draft(), s);
     expect(next.vaccinationName).toBe('Rabies 3yr Vaccine');
     expect(next.serialNumber).toBe('RB-LOT-4471');
@@ -77,5 +78,29 @@ describe('EMR-A12-1: an imported eVet rabies dose reprints with everything on it
     const next = applyRabiesSource(draft(), src([]), '5001');
     expect(next.veterinarianName).toBe('Odile Brackenridge');
     expect(next.veterinarianLicense).toBe('WI-VET-0717');
+  });
+});
+
+describe('Only a licensed veterinarian signs a prescription, rabies certificate or health certificate', () => {
+  const vet = { id: 12, label: 'Odile Brackenridge, DVM', license: 'WI-VET-0717', active: true, isVeterinarian: true };
+  const tech = { id: 30, label: 'Remy Tate, CVT', license: 'WI-CVT-0042', active: true, isVeterinarian: false };
+
+  it('lists only vets for rx, rabies and health; anyone licensed for other documents', () => {
+    for (const kind of ['rx', 'rabies', 'health'] as const) {
+      expect(signerChoices(kind, [vet, tech]).map((p) => p.id), kind).toEqual([12]);
+    }
+    expect(signerChoices('death', [vet, tech]).map((p) => p.id)).toEqual([12, 30]);
+  });
+
+  it('does not default a prescription to a primary provider who is a technician', () => {
+    const next = applyKindDefaults('rx', draft(), { ...src([vet, tech]), primaryProviderId: 30 });
+    expect(next.veterinarianEmployeeId).toBeNull();
+  });
+
+  it('leaves the rabies signer blank when a technician gave the dose', () => {
+    const log = { ...evetRabies, employee: { id: 30, firstName: 'Remy', lastName: 'Tate', isActive: true, isLicensed: true, licenseType: 'technician' } };
+    const next = applyRabiesSource(draft(), src([vet, tech], log), '5001');
+    expect(next.veterinarianEmployeeId).toBeNull();
+    expect(next.veterinarianName).toBe('');
   });
 });

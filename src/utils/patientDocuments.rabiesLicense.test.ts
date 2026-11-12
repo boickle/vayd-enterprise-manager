@@ -42,7 +42,7 @@ const rabiesLog = {
   tagNumber: 'R-3311',
   veterinarianName: 'Odile Brackenridge',
   veterinarianLicense: LICENSE_AT_DOSE,
-  employee: { id: 12, firstName: 'Odile', lastName: 'Brackenridge', licenseNumber: LICENSE_TODAY, isActive: true },
+  employee: { id: 12, firstName: 'Odile', lastName: 'Brackenridge', licenseNumber: LICENSE_TODAY, isActive: true, isLicensed: true, licenseType: 'veterinarian' },
 };
 
 const source = (providers: PatientDocSource['providers']): PatientDocSource => ({
@@ -54,7 +54,7 @@ const source = (providers: PatientDocSource['providers']): PatientDocSource => (
 
 describe('EMR-07-2b: the rabies certificate keeps the license in force when the dose was given', () => {
   it('prints license A from the dose, not the vet’s current license B (vet in the provider list)', () => {
-    const src = source([{ id: 12, label: 'Odile Brackenridge, DVM', license: LICENSE_TODAY, active: true }]);
+    const src = source([{ id: 12, label: 'Odile Brackenridge, DVM', license: LICENSE_TODAY, active: true, isVeterinarian: true }]);
     const next = applyRabiesSource(draft(), src, '77');
     expect(next.veterinarianEmployeeId).toBe(12);
     expect(next.veterinarianName).toBe('Odile Brackenridge, DVM');
@@ -70,7 +70,7 @@ describe('EMR-07-2b: the rabies certificate keeps the license in force when the 
 
   it('falls back to the vet’s current license when the dose saved none (older records)', () => {
     const src: PatientDocSource = {
-      ...source([{ id: 12, label: 'Odile Brackenridge, DVM', license: LICENSE_TODAY, active: true }]),
+      ...source([{ id: 12, label: 'Odile Brackenridge, DVM', license: LICENSE_TODAY, active: true, isVeterinarian: true }]),
       rabiesLogs: [{ ...rabiesLog, veterinarianLicense: null }],
     };
     expect(applyRabiesSource(draft(), src, '77').veterinarianLicense).toBe(LICENSE_TODAY);
