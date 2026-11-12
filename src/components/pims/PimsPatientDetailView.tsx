@@ -166,7 +166,12 @@ import {
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
-import { patientSexDisplayFromRecord, patientSexHighlightTone, primaryProviderFromPatientRecord } from '../../utils/schedulerVisitDisplay';
+import {
+  patientSexDisplayFromRecord,
+  patientSexHighlightTone,
+  primaryProviderFromPatientRecord,
+  sixteenWeekBoosterNote,
+} from '../../utils/schedulerVisitDisplay';
 import { useAuth } from '../../auth/AuthProvider';
 import {
   readStaffPatientLayout,
@@ -2252,6 +2257,9 @@ export default function PimsPatientDetailView({
 
   const dob = pickStr(payload.dateOfBirth) ?? pickStr(payload.dob);
   const ageStr = ageFromDob(dob);
+  /** Puppies/kittens under 20 weeks: when they turn 16 weeks (final boosters). */
+  const boosterNote = sixteenWeekBoosterNote(dob, practiceTz);
+  const ageWithBooster = ageStr && boosterNote ? `${ageStr} (${boosterNote})` : ageStr;
   const weightLb = pickStr(payload.weight) ?? pickStr(payload.weightLbs);
   const weightKg = pickStr(payload.weightKg);
   const weightLine =
@@ -2286,7 +2294,7 @@ export default function PimsPatientDetailView({
   const wellnessPlanCount = wellnessPlans.length;
   const latestWeightPoint = weightHistoryPoints[weightHistoryPoints.length - 1];
 
-  const signalment = signalmentParts(record, ageStr, weightLine);
+  const signalment = signalmentParts(record, ageWithBooster, weightLine);
   const primaryProviderLabel = primaryProviderFromPatientRecord(record);
   const clientId = client?.id != null ? String(client.id) : null;
   const petPhotoBase = petImageSrc(patientId, record.imageUrl);
@@ -2318,7 +2326,7 @@ export default function PimsPatientDetailView({
 
   const detailFields: FieldSpec[] = [
     { key: 'name', label: 'Name', required: true },
-    { key: 'dob', label: 'Date of birth', type: 'date', display: () => ageStr ?? dob ?? '' },
+    { key: 'dob', label: 'Date of birth', type: 'date', display: () => ageWithBooster ?? dob ?? '' },
     {
       key: 'species',
       label: 'Species',
