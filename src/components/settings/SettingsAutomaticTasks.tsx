@@ -278,7 +278,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                   {rule.timingMode === 'weekly'
                     ? `Every ${WEEKDAYS[rule.weeklyDay] ?? 'week'} at ${hourLabel(rule.endOfDayHour)} (Eastern).`
                     : rule.timingMode === 'end_of_day'
-                      ? `Checked at ${hourLabel(rule.endOfDayHour)}.`
+                      ? `Checked at ${hourLabel(rule.endOfDayHour)} ET.`
                       : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
                   {rule.assigneeMode === 'owner'
                     ? `Goes to ${ASSIGNEE_OWNER_LABELS[rule.trigger].toLowerCase()}.`
@@ -387,7 +387,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     </label>
                   ) : (
                     <label className="auto-tasks__field">
-                      <span>End of day is</span>
+                      <span>End of day is (ET)</span>
                       <select
                         value={rule.endOfDayHour}
                         onChange={(e) =>
