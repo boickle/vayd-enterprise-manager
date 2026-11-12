@@ -184,6 +184,9 @@ export default function MedicalNoteEncounterPage() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pets, setPets] = useState<PetDraft[]>([]);
   const [activePetId, setActivePetId] = useState(patientId);
+  /** Pets the AI write-up filled whose tab nobody has opened since (SCR-07): Wrap up won't sign them. */
+  const [unviewedAiPetIds, setUnviewedAiPetIds] = useState<number[]>([]);
+  const [reviewFirst, setReviewFirst] = useState<{ patientId: number; name: string }[]>([]);
   const [recapSubject, setRecapSubject] = useState('');
   const [recapBody, setRecapBody] = useState('');
   const [writingUp, setWritingUp] = useState(false);
@@ -206,6 +209,14 @@ export default function MedicalNoteEncounterPage() {
   /** Only worth naming the pet on the section headings when the visit had more than one. */
   const petLabel =
     pets.length > 1 && activePet?.patientName ? ` — ${activePet.patientName}` : '';
+
+  useEffect(() => {
+    if (activePet) {
+      setUnviewedAiPetIds((prev) =>
+        prev.includes(activePet.patientId) ? prev.filter((id) => id !== activePet.patientId) : prev
+      );
+    }
+  }, [activePet?.patientId, activePet]);
 
   const updatePet = useCallback((id: number, patch: Partial<PetDraft>) => {
     setPets((prev) => prev.map((p) => (p.patientId === id ? { ...p, ...patch } : p)));
@@ -506,12 +517,24 @@ export default function MedicalNoteEncounterPage() {
           };
         })
       );
+      // The open tab is on screen now; every other pet the write-up filled must be opened
+      // before Wrap up signs it (the AI can put a note on the wrong pet).
+      setUnviewedAiPetIds(
+        pets
+          .filter(
+            (p) =>
+              p.patientId !== activePetId &&
+              (written.has(p.patientId) || (p.patientId === patientId && result.history))
+          )
+          .map((p) => p.patientId)
+      );
+      setReviewFirst([]);
       if (result.clientEmailSubject) setRecapSubject(result.clientEmailSubject);
       if (result.clientEmailBody) setRecapBody(result.clientEmailBody);
       setActiveTab('history');
       setHint(
         pets.length > 1
-          ? `Visit write-up is ready for all ${pets.length} pets — check each one before you wrap up.`
+          ? `Visit write-up is ready for all ${pets.length} pets — open each pet's tab before you wrap up.`
           : 'Visit write-up is ready — edit anything before you wrap up.'
       );
     } catch (err) {
@@ -562,8 +585,20 @@ export default function MedicalNoteEncounterPage() {
       setError('Write History or Plan before wrapping up.');
       return;
     }
+    const unviewed = written.filter(({ pet }) => unviewedAiPetIds.includes(pet.patientId));
+    if (unviewed.length) {
+      setReviewFirst(
+        unviewed.map(({ pet }) => ({
+          patientId: pet.patientId,
+          name: pet.patientName || `Patient #${pet.patientId}`,
+        }))
+      );
+      setError(null);
+      return;
+    }
     setWrapping(true);
     setError(null);
+    setReviewFirst([]);
     try {
       for (const { pet, body } of written) {
         let id = pet.noteId;
@@ -705,6 +740,26 @@ export default function MedicalNoteEncounterPage() {
       </header>
 
       {error ? <div className="soap-error soap-error-banner">{error}</div> : null}
+      {reviewFirst.length ? (
+        <div className="soap-error soap-error-banner" role="alert">
+          {reviewFirst.map((r, i) => (
+            <span key={r.patientId}>
+              {i > 0 ? ' ' : ''}Review{' '}
+              <button
+                type="button"
+                style={{ background: 'none', border: 0, padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                onClick={() => {
+                  setActivePetId(r.patientId);
+                  setReviewFirst((prev) => prev.filter((x) => x.patientId !== r.patientId));
+                }}
+              >
+                {r.name}
+              </button>{' '}
+              before signing.
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div className="soap-body soap-workspace med-note-workspace">
         <main className="soap-main">
