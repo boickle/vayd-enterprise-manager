@@ -134,6 +134,7 @@ import {
   accountCreditButtonText,
   cardOnFileButtonText,
   cardText,
+  expiredCardText,
   paidTenderLines,
 } from './checkoutPaymentText';
 import CheckoutPetSignalment from './CheckoutPetSignalment';
@@ -2137,7 +2138,9 @@ export default function VisitCheckoutPanel({
   const status = invoice?.status ?? 'open';
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
-  const hasSavedCard = Boolean(cardOnFile || invoice?.savedPaymentMethodId);
+  // PAY-C5: an expired card is shown as expired and never offered for a charge.
+  const cardExpired = Boolean(cardOnFile?.expired);
+  const hasSavedCard = cardOnFile ? !cardExpired : Boolean(invoice?.savedPaymentMethodId);
   // Branch/Location only matter when an in-person charge takes stock off a shelf. A services-only
   // invoice shows neither and doesn't wait on them (owner decision, Nov 9, 2026).
   const needsStockShelf = (invoice?.lines ?? []).some(
@@ -3944,6 +3947,13 @@ export default function VisitCheckoutPanel({
                 void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
               }}
             />
+          )}
+
+          {showPayment && !isPaid && !isVoid && cardOnFile && cardExpired && (
+            <p className="soap-checkout-card-expired" data-testid="card-on-file-expired">
+              {cardOnFile.brand ? `${cardOnFile.brand.charAt(0).toUpperCase()}${cardOnFile.brand.slice(1)}: ` : ''}
+              <strong>{expiredCardText(cardOnFile)}</strong>. Ask the owner for a new card.
+            </p>
           )}
 
           {showPayment && !isPaid && !isVoid && (

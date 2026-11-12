@@ -75,6 +75,14 @@ describe('Card on file section', () => {
     expect(screen.getByText(/Owner agreed .*Tap to Pay at a visit, agreement 2026-10-07/)).toBeTruthy();
   });
 
+  it('PAY-C5-1: an expired card is shown as "Expired, ending 4242", not as a card to use', async () => {
+    getClientCardOnFile.mockResolvedValue({ ...withCard, card: { ...withCard.card, expired: true } });
+    render(ui());
+    expect(await screen.findByText('Expired, ending 4242')).toBeTruthy();
+    expect(screen.queryByText(/expires 12\/30/)).toBeNull();
+    expect(screen.queryByText('No card on file')).toBeNull();
+  });
+
   it('says "No card on file" when there is none', async () => {
     getClientCardOnFile.mockResolvedValue(noCard);
     render(ui());

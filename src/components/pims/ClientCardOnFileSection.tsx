@@ -11,6 +11,7 @@ import {
 } from '../../api/visitWorkflow';
 import { getMembershipCard, listPatientMemberships } from '../../api/memberships';
 import ClientCardSetupEntry from './ClientCardSetupEntry';
+import { expiredCardText } from '../soap/checkoutPaymentText';
 import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -184,10 +185,14 @@ export default function ClientCardOnFileSection({ clientId }: { clientId: number
 
       <p className="client-card__card">
         {card ? (
-          <>
-            {cardText(card)}
-            {card.expired ? <strong className="client-card__warn"> (expired)</strong> : null}
-          </>
+          card.expired ? (
+            <>
+              {card.brand ? `${card.brand.charAt(0).toUpperCase()}${card.brand.slice(1)}: ` : ''}
+              <strong className="client-card__warn">{expiredCardText(card)}</strong>. Ask the owner for a new card.
+            </>
+          ) : (
+            cardText(card)
+          )
         ) : (
           'No card on file'
         )}

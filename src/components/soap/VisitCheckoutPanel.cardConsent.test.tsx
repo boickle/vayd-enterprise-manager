@@ -82,6 +82,21 @@ describe('card on file consent box at checkout', () => {
     expect(label).toBe(CARD_ON_FILE_STAFF_ASK);
   });
 
+  it('PAY-C5-1: an expired card on file shows "Expired, ending 4242" and cannot be charged', async () => {
+    getInvoiceCardOnFile.mockResolvedValue({
+      card: { customerId: 'cus_1', paymentMethodId: 'pm_1', brand: 'visa', last4: '4242', expMonth: 1, expYear: 2026, expired: true },
+      declinedAt: null,
+    });
+    render(<VisitCheckoutPanel {...(props as object)} />);
+    expect((await screen.findByTestId('card-on-file-expired')).textContent).toMatch(/Visa: Expired, ending 4242/);
+    expect(screen.getByText('Expired, ending 4242')).toBeTruthy();
+    const button = screen.getByTestId('card-on-file-button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).not.toMatch(/4242/);
+    // With no usable card, the owner can agree to keep the new one.
+    expect(document.querySelector('.soap-checkout-consent')).not.toBeNull();
+  });
+
   it('Tap to Pay without ticking the box does not ask to save the card', async () => {
     render(<VisitCheckoutPanel {...(props as object)} />);
     await screen.findByRole('checkbox');
