@@ -56,6 +56,8 @@ import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAtte
 import DepositQuickLink from '../components/DepositQuickLink';
 import { APPOINTMENT_REQUESTS_LIST_PATH } from '../appointments-nav';
 import { mayShowAppointmentsQuickAction } from '../utils/appointmentsQuickAction';
+import { useAppointmentReplyCounts } from '../hooks/useAppointmentReplyCounts';
+import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
@@ -125,6 +127,7 @@ export default function ScheduleLayout() {
   // Appointments (requests and holds) for CLs, practice managers and admins (owner, Nov 11, 2026).
   const { hasRole: hasStaffRole } = usePermissions();
   const showAppointments = mayShowAppointmentsQuickAction(roles, hasStaffRole);
+  const apptReplies = useAppointmentReplyCounts(showAppointments);
 
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
   const [forwardBookingModalOpen, setForwardBookingModalOpen] = useState(false);
@@ -335,7 +338,10 @@ export default function ScheduleLayout() {
                 <span className="schedule-app__quick-link-icon" aria-hidden>
                   <CalendarCheck size={18} strokeWidth={1.75} />
                 </span>
-                <span className="schedule-app__quick-link-label">Appointments</span>
+                <span className="schedule-app__quick-link-label">
+                  Appointments
+                  <ReplyBadges mine={apptReplies.mine} others={apptReplies.others} />
+                </span>
               </NavLink>
             ) : null}
             <NavLink

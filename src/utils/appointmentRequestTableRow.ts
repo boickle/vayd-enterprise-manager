@@ -257,3 +257,16 @@ export function parseLiaisonFilter(raw: string | null | undefined): LiaisonFilte
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 'all';
 }
+
+/** "2:14 PM" for a reply today, "Nov 9" before that (practice time zone). */
+export function replyTimeLabel(
+  iso: string | null | undefined,
+  practiceTz: string,
+  now: Date = new Date()
+): string {
+  if (!iso?.trim()) return '';
+  const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
+  if (!dt.isValid) return '';
+  const today = DateTime.fromJSDate(now).setZone(practiceTz);
+  return dt.hasSame(today, 'day') ? dt.toFormat('h:mm a') : dt.toFormat('LLL d');
+}

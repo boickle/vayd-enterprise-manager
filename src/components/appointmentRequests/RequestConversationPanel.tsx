@@ -2,7 +2,7 @@
  * Right side of an open request on the Appointments list: the request's email thread, texts with
  * the request's phone, Quo calls and call notes in one conversation (see ConversationPanel).
  */
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   fetchAppointmentRequestConversation,
   logAppointmentRequestCall,
@@ -51,11 +51,23 @@ export function RequestConversationPanel({
   const phone = requestDataPhone(rd);
   const email = useAppointmentRequestEmail(item, { onGmailLinked });
 
+  // A client reply arriving while the request is open: load the conversation again.
+  const latestReply = item.unreadReplies?.lastAt ?? null;
+  const seenReply = useRef<string | null>(latestReply);
+  const [replyStamp, setReplyStamp] = useState(0);
+  useEffect(() => {
+    if (!latestReply || latestReply === seenReply.current) return;
+    seenReply.current = latestReply;
+    setReplyStamp((n) => n + 1);
+    email?.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on a new reply
+  }, [latestReply]);
+
   const source: ConversationSource = useMemo(() => {
     const clientId = Number(requestDataClientId(rd));
     const firstPet = requestDataPetRowSummaries(rd).find((p) => p.patientId)?.patientId;
     return {
-      key: `request-${item.id}`,
+      key: `request-${item.id}-${replyStamp}`,
       startedAt: item.submittedAt,
       startTitle: 'Request received',
       phone,
@@ -79,7 +91,7 @@ export function RequestConversationPanel({
         resolveAppointmentRequestSmsMessage(item, practiceTz, { practiceId, greeting: mode }),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt per request and email state
-  }, [item, phone, email, practiceTz, practiceId, onContacted, onSubmissionUpdated]);
+  }, [item, phone, email, practiceTz, practiceId, onContacted, onSubmissionUpdated, replyStamp]);
 
   return <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} />;
 }

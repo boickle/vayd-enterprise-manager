@@ -72,6 +72,8 @@ export type AppointmentRequestSubmissionItem = {
   recordsStatus?: AppointmentRequestRecordsChoice | null;
   /** Records column; null for Not booked requests (or if it could not be worked out). */
   records?: AppointmentRequestRecordsSummary | null;
+  /** Client replies (email or text) nobody has opened yet; null when there are none. */
+  unreadReplies?: AppointmentRequestUnreadReplies | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -422,6 +424,36 @@ export async function logAppointmentRequestCall(
     body,
   );
   return data;
+}
+
+export type AppointmentRequestUnreadReplies = {
+  count: number;
+  lastAt: string;
+  lastChannel: 'email' | 'text';
+  lastPreview: string | null;
+};
+
+/** Anyone opening the request reads its replies; `read: false` is "Mark as unread". */
+export async function markAppointmentRequestReplies(
+  id: number,
+  read: boolean,
+): Promise<AppointmentRequestSubmission> {
+  const { data } = await http.post<AppointmentRequestSubmission>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/replies`,
+    { read },
+  );
+  return data;
+}
+
+/** Requests with unread client replies: mine (or nobody's) in red, someone else's in blue. */
+export async function fetchAppointmentRequestUnreadCounts(
+  practiceId: number,
+): Promise<{ mine: number; others: number }> {
+  const { data } = await http.get<{ mine: number; others: number }>(
+    '/appointments/request-submissions/unread-counts',
+    { params: { practiceId } },
+  );
+  return { mine: Number(data?.mine) || 0, others: Number(data?.others) || 0 };
 }
 
 /** A visit for one of the request's pets after the request came in. */

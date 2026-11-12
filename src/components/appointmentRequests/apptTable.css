@@ -399,3 +399,32 @@
   font: inherit;
   font-weight: 500;
 }
+
+/* The latest unread reply under the client name. */
+.appt-table-reply {
+  display: block;
+  margin-top: 3px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.appt-table-reply--others {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.appt-table-row--unread {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.appt-table-row--unread-others {
+  box-shadow: inset 3px 0 0 #2563eb;
+}

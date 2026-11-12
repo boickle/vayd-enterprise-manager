@@ -10,6 +10,7 @@ import {
   fetchRemainingAppointmentRequestSubmissionPages,
   bookAppointmentRequestSubmission,
   patchAppointmentRequestSubmission,
+  markAppointmentRequestReplies,
   sendAppointmentRequestSubmissionSms,
   type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
@@ -163,6 +164,8 @@ import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisp
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
+import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
+import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
 import {
   StatusPillMenu,
   type StatusMenuItem,
@@ -183,6 +186,7 @@ import {
   parseLiaisonFilter,
   type LiaisonFilter,
   requestIsQuiet,
+  replyTimeLabel,
   visitSinceLabel,
   requestDataTown,
   visitDateShortLabel,
@@ -614,6 +618,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const hydrateGenerationRef = useRef(0);
   const submissionBackfillGenRef = useRef(0);
 
+  const openRowIdsRef = useRef(openRowIds);
+  openRowIdsRef.current = openRowIds;
   const toggleRowOpen = (id: number) => {
     setOpenRowIds((prev) => {
       const next = new Set(prev);
@@ -1308,8 +1314,16 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     const n = Number(authEmployeeId);
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [authEmployeeId]);
-  const filtered = useMemo(
-    () =>
+  /** Red when the request is mine or nobody's; blue when it is someone else's. */
+  const replyIsMine = useCallback(
+    (item: AppointmentRequestSubmissionItem) =>
+      item.liaisonEmployeeId == null || (myEmployeeId != null && item.liaisonEmployeeId === myEmployeeId),
+    [myEmployeeId],
+  );
+  /** Rows read by opening them keep their place at the top until they are closed. */
+  const [readWhileOpen, setReadWhileOpen] = useState<Set<number>>(() => new Set());
+  const filtered = useMemo(() => {
+    const base =
       liaisonFilter === 'all'
         ? filteredByTab
         : filteredByTab.filter(
@@ -1317,9 +1331,28 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               // An open row stays while staff work it, even after its liaison changes.
               openRowIds.has(item.id) ||
               (!isAbandonedItem(item) && matchesLiaisonFilter(item, liaisonFilter, myEmployeeId)),
-          ),
-    [filteredByTab, liaisonFilter, myEmployeeId, openRowIds],
-  );
+          );
+    // Requests with unread client replies come first (the order is otherwise unchanged).
+    const unreadFirst = (item: AppointmentRequestSubmissionItem) =>
+      !isAbandonedItem(item) && ((item.unreadReplies?.count ?? 0) > 0 || readWhileOpen.has(item.id))
+        ? 1
+        : 0;
+    return [...base].sort((a, b) => unreadFirst(b) - unreadFirst(a));
+  }, [filteredByTab, liaisonFilter, myEmployeeId, openRowIds, readWhileOpen]);
+
+  /** Unread replies per tab, red (mine) and blue (others). */
+  const tabReplyCounts = useMemo(() => {
+    const counts = new Map<StatusFilter, { mine: number; others: number }>();
+    for (const row of submissions) {
+      if ((row.unreadReplies?.count ?? 0) <= 0) continue;
+      const tab = appointmentRequestListTabForSubmission(row, bookedApptMeta, typeCatalog);
+      const c = counts.get(tab) ?? { mine: 0, others: 0 };
+      if (replyIsMine(row)) c.mine += 1;
+      else c.others += 1;
+      counts.set(tab, c);
+    }
+    return counts;
+  }, [submissions, bookedApptMeta, typeCatalog, replyIsMine]);
 
   /** While searching across tabs, highlight the result tab when unambiguous; otherwise none. */
   const highlightedStatusTab = useMemo((): StatusFilter | null => {
@@ -1701,6 +1734,64 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       }
     },
     [mergeSubmission, beginRowExit],
+  );
+
+  /** Opening a request reads its client replies (anyone can); closing lets it settle back. */
+  const toggleRowAndReadReplies = useCallback(
+    (item: AppointmentRequestSubmissionItem) => {
+      const opening = !openRowIdsRef.current.has(item.id);
+      toggleRowOpen(item.id);
+      if (!opening) {
+        setReadWhileOpen((prev) => {
+          if (!prev.has(item.id)) return prev;
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+        return;
+      }
+      if ((item.unreadReplies?.count ?? 0) <= 0 || isAbandonedItem(item)) return;
+      setReadWhileOpen((prev) => new Set(prev).add(item.id));
+      void markAppointmentRequestReplies(item.id, true)
+        .then((updated) => {
+          mergeSubmission({ ...updated, kind: 'submission' });
+          notifyAppointmentRepliesChanged();
+        })
+        .catch(() => {
+          /* still unread; the badge stays */
+        });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleRowOpen only sets state
+    [mergeSubmission],
+  );
+
+  /** "Mark as unread": the latest reply is unread again, and the request closes. */
+  const markRepliesUnread = useCallback(
+    async (item: AppointmentRequestSubmissionItem) => {
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await markAppointmentRequestReplies(item.id, false);
+        mergeSubmission({ ...updated, kind: 'submission' });
+        notifyAppointmentRepliesChanged();
+        setOpenRowIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+        setReadWhileOpen((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not mark as unread';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      }
+    },
+    [mergeSubmission],
   );
 
   /** Liaison column: anyone can hand a request to anyone, or clear it. */
@@ -2272,6 +2363,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               }}
             >
               <span>{label}</span>
+              <ReplyBadges
+                mine={tabReplyCounts.get(key)?.mine ?? 0}
+                others={tabReplyCounts.get(key)?.others ?? 0}
+              />
               {tabShowsCount(key) ? (
                 <span className="appt-request-status-tab-count" aria-hidden>
                   ({key === 'new' ? newTabVisibleCount : tabCounts[key]})
@@ -2286,6 +2381,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           onClick={() => navigate(HOLDS_PATH)}
         >
           <span>Hold</span>
+          <ReplyBadges
+            mine={tabReplyCounts.get('on_hold')?.mine ?? 0}
+            others={tabReplyCounts.get('on_hold')?.others ?? 0}
+          />
         </button>
         <button
           type="button"
@@ -2548,6 +2647,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const commPill = appointmentRequestCommunicationPill(communication);
             const recordsPill = appointmentRequestRecordsPill(item.records);
             const quiet = requestIsQuiet(item);
+            const unread = (item.unreadReplies?.count ?? 0) > 0 ? item.unreadReplies! : null;
+            const unreadMine = replyIsMine(item);
             // A pet on this open request was already seen (or has a visit coming) since it came in.
             const visitSince =
               (status === 'new' || status === 'contacted') && !hasLinkedAppointment
@@ -2580,7 +2681,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                   </div>
                 ) : null}
                 <div
-                  className={`appt-table-row appt-table--with-records${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}`}
+                  className={`appt-table-row appt-table--with-records${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}${unread ? (unreadMine ? ' appt-table-row--unread' : ' appt-table-row--unread-others') : ''}`}
                 >
                   <div className="appt-table-cell appt-table-received">
                     <button
@@ -2588,7 +2689,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       className="appt-table-chevron"
                       aria-expanded={rowOpen}
                       aria-label={rowOpen ? 'Close request' : 'Open request'}
-                      onClick={() => toggleRowOpen(item.id)}
+                      onClick={() => toggleRowAndReadReplies(item)}
                     >
                       {rowOpen ? '▾' : '▸'}
                     </button>
@@ -2615,9 +2716,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       className="appt-table-client"
                       aria-expanded={rowOpen}
                       title={rowOpen ? 'Close request' : 'Open request'}
-                      onClick={() => toggleRowOpen(item.id)}
+                      onClick={() => toggleRowAndReadReplies(item)}
                     >
-                      <span className="appt-table-client-name">{name}</span>
+                      <span className="appt-table-client-name">
+                        {name}
+                        {unread ? (
+                          <ReplyBadges
+                            mine={unreadMine ? unread.count : 0}
+                            others={unreadMine ? 0 : unread.count}
+                          />
+                        ) : null}
+                      </span>
+                      {unread ? (
+                        <span
+                          className={`appt-table-reply${unreadMine ? '' : ' appt-table-reply--others'}`}
+                          title={unread.lastPreview ?? undefined}
+                        >
+                          ↩ {unread.lastChannel === 'text' ? 'Texted' : 'Emailed'}{' '}
+                          {replyTimeLabel(unread.lastAt, practiceTz)}
+                          {unread.lastPreview ? `: ${unread.lastPreview}` : ''}
+                        </span>
+                      ) : null}
                       {petNames.length > 0 ? (
                         <span className="appt-table-pets">
                           {petNames.map((p) => (
@@ -2882,6 +3001,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                               ...(status === 'contacted'
                                 ? [{ label: 'Move back to New', onClick: () => void updateStatus(item, 'new') }]
                                 : []),
+                              { label: 'Mark as unread', onClick: () => void markRepliesUnread(item) },
                             ]}
                           />
                           {statusError[item.id] ? (
