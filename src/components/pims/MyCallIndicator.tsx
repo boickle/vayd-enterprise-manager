@@ -266,6 +266,8 @@ export default function MyCallIndicator() {
 
   return (
     <>
+      {/* The dock floats over everything; hide it while its own review popup is open. */}
+      {reviewing ? null : (
       <CallDock
         tone={copy.tone}
         gripLabel={copy.gripLabel}
@@ -316,6 +318,7 @@ export default function MyCallIndicator() {
           canDismiss ? dismissFront : undefined
         }
       />
+      )}
 
       {reviewing ? (
         <CallTranscriptModal
