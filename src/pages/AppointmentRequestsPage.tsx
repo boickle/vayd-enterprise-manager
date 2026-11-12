@@ -175,6 +175,7 @@ import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
+  appointmentRequestClientTypeBadge,
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
   appointmentRequestRecordsPill,
@@ -2570,6 +2571,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const name = clientDisplayNameFromRequestData(rd);
             const phone = requestDataPhone(rd);
             const clientType = requestDataClientType(rd);
+            const clientTypeBadge = appointmentRequestClientTypeBadge(
+              clientType,
+              requestDataPetRowSummaries(rd)
+            );
             const isEuth = isEuthanasiaRequestData(rd);
             const status = submissionStatus(item);
             const isDismissed = status === 'dismissed';
@@ -2745,11 +2750,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     </span>
                   </div>
                   <div className="appt-table-cell appt-table-client-type">
-                    {clientType === 'existing' ? (
+                    {clientTypeBadge === 'existing' ? (
                       'Existing'
-                    ) : clientType === 'new' ? (
+                    ) : clientTypeBadge === 'new_client' ? (
                       <span className="appt-table-new-pill" title="New client: not in Scout yet">
                         New
+                        <br />
+                        Client
+                      </span>
+                    ) : clientTypeBadge === 'new_patient' ? (
+                      <span
+                        className="appt-table-new-pill"
+                        title="Existing client with a new pet: the pet isn't in Scout yet"
+                      >
+                        New
+                        <br />
+                        Patient
                       </span>
                     ) : (
                       ''
