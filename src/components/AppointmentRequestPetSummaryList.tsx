@@ -12,8 +12,11 @@ export function AppointmentRequestPetSummaryList({
   practiceId,
   practiceTz,
   linkedAppointment,
+  onOpenPatient,
 }: {
   requestData: Record<string, unknown>;
+  /** When given, a pet in Scout opens its medical record in a pop-up from its name. */
+  onOpenPatient?: (patientId: string, name: string) => void;
   practiceId: number;
   practiceTz: string;
   /** Client/patient ids from the linked booked appointment when not on the form payload. */
@@ -30,7 +33,17 @@ export function AppointmentRequestPetSummaryList({
       {pets.map((pet) => (
         <li key={pet.key} className="appt-request-pet-summary-item">
           <div className="appt-request-pet-summary-head">
-            {pet.patientPimsId ? (
+            {pet.patientId && onOpenPatient ? (
+              <button
+                type="button"
+                className="appt-request-pet-summary-name req-record-link"
+                aria-haspopup="dialog"
+                title="Open the medical record"
+                onClick={() => onOpenPatient(String(pet.patientId), pet.name)}
+              >
+                {pet.name}
+              </button>
+            ) : pet.patientPimsId ? (
               <EvetNameLink
                 href={evetPatientLink(pet.patientPimsId)}
                 className="appt-request-pet-summary-name appt-request-evet-link"
@@ -57,6 +70,8 @@ export function AppointmentRequestPetSummaryList({
                 label="View details"
                 className="appt-request-pet-summary-link"
               />
+            ) : pet.isNew && onOpenPatient ? (
+              <span className="appt-request-pet-summary-nochart">No chart yet (made when booked)</span>
             ) : null}
           </div>
           {pet.typeName || pet.appointmentType ? (

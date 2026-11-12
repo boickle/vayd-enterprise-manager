@@ -428,3 +428,16 @@
 .appt-table-row--unread-others {
   box-shadow: inset 3px 0 0 #2563eb;
 }
+
+/* New client: stands out in the row (owner, Nov 12, 2026). */
+.appt-table-new-pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #ea580c;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

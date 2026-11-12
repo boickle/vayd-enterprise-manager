@@ -163,6 +163,10 @@ import { useAuth } from '../auth/useAuth';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
+import { SoapRecordModal, type SoapRecordRef } from '../components/soap/SoapHeaderRecords';
+import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
+import { requestDataPetRowSummaries } from '../utils/appointmentRequestDetailDisplay';
+import { enrichPetRowSummariesFromLinkedAppointment } from '../utils/appointmentRequestLinkedEvet';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
 import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
@@ -573,6 +577,14 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [notBookedSaving, setNotBookedSaving] = useState(false);
   const [notBookedError, setNotBookedError] = useState<string | null>(null);
   const [bookedApptMeta, setBookedApptMeta] = useState<Map<number, BookedApptSummary>>(new Map());
+  /** Client or pet record open in a pop-up over the list (owner, Nov 12, 2026). */
+  const [recordOpen, setRecordOpen] = useState<SoapRecordRef | null>(null);
+  /** "Request records for <pet>" from the Records menu. */
+  const [recordsRequestFor, setRecordsRequestFor] = useState<{
+    patientId: number;
+    patientName: string;
+    clientId: number | null;
+  } | null>(null);
   const [clientPimsIdByInternalId, setClientPimsIdByInternalId] = useState<Map<string, string>>(
     () => new Map(),
   );
@@ -2219,15 +2231,41 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   };
 
   /** Records column menu: follow the records requests, or say what staff know. */
-  const recordsMenuItems = (item: AppointmentRequestSubmissionItem, clientName: string): StatusMenuItem[] => {
+  const recordsMenuItems = (
+    item: AppointmentRequestSubmissionItem,
+    clientName: string,
+    pets: Array<{ name: string; patientId: string | null }>,
+    clientId: string | null,
+  ): StatusMenuItem[] => {
     const choice = item.recordsStatus ?? null;
     const set = (next: 'not_needed' | 'waiting' | 'complete' | null) => {
       if (next !== choice) void changeRequestProgress(item, { recordsStatus: next }, 'records');
     };
-    const items: StatusMenuItem[] = [
+    const sent = (item.records?.total ?? 0) > 0;
+    const items: StatusMenuItem[] = [];
+    // Ask the previous hospital for records (owner, Nov 12, 2026). Needs the pet in Scout.
+    for (const pet of pets) {
+      const pid = Number(pet.patientId);
+      const inScout = Number.isFinite(pid) && pid > 0;
+      items.push({
+        label: `Request records for ${pet.name}…`,
+        hint: inScout ? 'Email the previous hospital' : `${pet.name} isn't in Scout yet. Request after booking`,
+        disabled: !inScout,
+        onClick: () =>
+          setRecordsRequestFor({
+            patientId: pid,
+            patientName: pet.name,
+            clientId: clientId && /^\d+$/.test(clientId) ? Number(clientId) : null,
+          }),
+      });
+    }
+    if (items.length > 0) items.push({ divider: true });
+    items.push(
       {
-        label: 'Follow records requests',
-        hint: 'Done when every request is in and summarized in the chart',
+        label: sent ? 'Records requested' : 'Nothing requested yet',
+        hint: sent
+          ? 'Done when every request is in and summarized in the chart'
+          : 'Shows Requested once a records request is sent',
         selected: choice == null,
         onClick: () => set(null),
       },
@@ -2244,7 +2282,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         onClick: () => set('complete'),
       },
       { label: 'Not needed', selected: choice === 'not_needed', onClick: () => set('not_needed') },
-    ];
+    );
     if ((item.records?.total ?? 0) > 0) {
       items.push({ divider: true });
       items.push({
@@ -2625,6 +2663,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               clientPimsIdByInternalId,
               linkedAppointment,
             );
+            // Scout client: from the form (signed-in client) or the booked visit.
+            const formClientId = requestDataClientId(rd);
+            const scoutClientId =
+              (formClientId && /^\d+$/.test(formClientId) ? formClientId : null) ??
+              bookedSummary?.clientInternalId ??
+              null;
             const howSoonUrgency = requestDataHowSoonUrgency(rd);
             const rowHighlighted = highlightEntryId === item.id;
             const exitKind = exitingRows.get(item.id);
@@ -2708,7 +2752,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     </span>
                   </div>
                   <div className="appt-table-cell appt-table-client-type">
-                    {clientType === 'existing' ? 'Existing' : clientType === 'new' ? 'New' : ''}
+                    {clientType === 'existing' ? (
+                      'Existing'
+                    ) : clientType === 'new' ? (
+                      <span className="appt-table-new-pill" title="New client: not in Scout yet">
+                        New
+                      </span>
+                    ) : (
+                      ''
+                    )}
                   </div>
                   <div className="appt-table-cell">
                     <button
@@ -2840,7 +2892,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         label={recordsPill.label}
                         detail={recordsPill.detail}
                         saving={pillSaving[item.id] === 'records'}
-                        items={recordsMenuItems(item, name)}
+                        items={recordsMenuItems(
+                          item,
+                          name,
+                          enrichPetRowSummariesFromLinkedAppointment(
+                            requestDataPetRowSummaries(rd),
+                            linkedAppointment,
+                          ),
+                          scoutClientId,
+                        )}
                       />
                     )}
                   </div>
@@ -2854,7 +2914,21 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           linkedClientLabel={bookedSummary?.linkedClientLabel}
                           isNewClient={clientType === 'new'}
                           linkedNameWrapper={
-                            clientPimsId
+                            scoutClientId
+                              ? (currentName) => (
+                                  <button
+                                    type="button"
+                                    className="req-record-link"
+                                    aria-haspopup="dialog"
+                                    title="Open the client record"
+                                    onClick={() =>
+                                      setRecordOpen({ kind: 'client', id: scoutClientId, name: currentName })
+                                    }
+                                  >
+                                    {currentName}
+                                  </button>
+                                )
+                              : clientPimsId
                               ? (currentName) => (
                                   <EvetNameLink
                                     href={evetClientLink(clientPimsId)}
@@ -2891,6 +2965,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           practiceId={PRACTICE_ID}
                           practiceTz={practiceTz}
                           linkedAppointment={linkedAppointment}
+                          onOpenPatient={(id, petName) =>
+                            setRecordOpen({ kind: 'patient', id, name: petName })
+                          }
                         />
                       }
                       notes={item.notes ?? ''}
@@ -3074,6 +3151,25 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         />
       ) : null}
 
+      {recordsRequestFor ? (
+        <SchedulerRecordsRequestModal
+          patientId={recordsRequestFor.patientId}
+          patientName={recordsRequestFor.patientName}
+          clientId={recordsRequestFor.clientId}
+          onClose={() => {
+            setRecordsRequestFor(null);
+            void load({ silent: true });
+          }}
+        />
+      ) : null}
+      {recordOpen ? (
+        <SoapRecordModal
+          key={`${recordOpen.kind}-${recordOpen.id}`}
+          record={recordOpen}
+          onClose={() => setRecordOpen(null)}
+          hint="The Appointments list stays open underneath. Links that leave this record open in a new tab ↗"
+        />
+      ) : null}
       {smsItem ? (
         <ClientSmsComposeModal
           open
