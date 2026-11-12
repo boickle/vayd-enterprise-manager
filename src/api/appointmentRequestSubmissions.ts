@@ -476,12 +476,18 @@ export async function markAppointmentRequestReplies(
 /** Requests with unread client replies: mine (or nobody's) in red, someone else's in blue. */
 export async function fetchAppointmentRequestUnreadCounts(
   practiceId: number,
-): Promise<{ mine: number; others: number }> {
-  const { data } = await http.get<{ mine: number; others: number }>(
+): Promise<{ mine: number; others: number; holdMine: number; holdOthers: number }> {
+  const { data } = await http.get<{ mine: number; others: number; holdMine?: number; holdOthers?: number }>(
     '/appointments/request-submissions/unread-counts',
     { params: { practiceId } },
   );
-  return { mine: Number(data?.mine) || 0, others: Number(data?.others) || 0 };
+  return {
+    mine: Number(data?.mine) || 0,
+    others: Number(data?.others) || 0,
+    // Of the above, the ones on holds that did not come from a request (the Hold tab).
+    holdMine: Number(data?.holdMine) || 0,
+    holdOthers: Number(data?.holdOthers) || 0,
+  };
 }
 
 /** A visit for one of the request's pets after the request came in. */
