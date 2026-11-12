@@ -39,6 +39,10 @@ function when(iso: string | null): string {
     : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function listNames(names: string[]): string {
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 type OtherCardMembership = { id: number; patientId: number; petName: string };
 
 /** Active Stripe memberships in the household billed on a card other than the one on file. Read only. */
@@ -139,8 +143,10 @@ export default function ClientCardOnFileSection({ clientId }: { clientId: number
     setBusy(true);
     setError(null);
     try {
-      setInfo(await removeClientCardOnFile(clientId, reason.trim()));
-      setSaved('Card removed.');
+      const after = await removeClientCardOnFile(clientId, reason.trim());
+      setInfo(after);
+      const kept = after.removed?.stillUsedBy ?? [];
+      setSaved(kept.length ? `Card removed. Kept only for ${listNames(kept)}.` : 'Card removed.');
       close();
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -237,6 +243,13 @@ export default function ClientCardOnFileSection({ clientId }: { clientId: number
 
       {canManage && mode === 'remove' ? (
         <div className="client-card__form">
+          {info.stillUsedBy?.length ? (
+            <p className="client-card__note">
+              Still used by {listNames(info.stillUsedBy)}. The card is kept for {info.stillUsedBy.length === 1 ? 'it' : 'them'} only,
+              so {info.stillUsedBy.length === 1 ? 'it keeps' : 'they keep'} billing. It won&apos;t be used for visits or shown in the
+              online store.
+            </p>
+          ) : null}
           <label className="client-card__field">
             <span>Why is the card being removed?</span>
             <input value={reason} maxLength={500} disabled={busy} onChange={(e) => setReason(e.target.value)} />
@@ -248,7 +261,9 @@ export default function ClientCardOnFileSection({ clientId }: { clientId: number
             </button>
             <button type="button" className="client-fin__btn" disabled={busy} onClick={close}>Cancel</button>
           </div>
-          <p className="client-card__muted">Memberships keep the card they are billed on. The reason is kept in the financial audit log.</p>
+          <p className="client-card__muted">
+            Removes the card everywhere: visits, the online store and portal bill pay. The reason is kept in the financial audit log.
+          </p>
         </div>
       ) : null}
     </section>
