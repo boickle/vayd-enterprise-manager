@@ -393,6 +393,7 @@ export type AppointmentRequestConversationResponse = {
     staff: { id: number; firstName: string | null; lastName: string | null } | null;
     transcript: string | null;
     summary: string | null;
+    transcriptStatus?: string | null;
     beforeRequest: boolean;
   }>;
   calls: Array<{
@@ -407,9 +408,36 @@ export type AppointmentRequestConversationResponse = {
 /** GET /appointments/request-submissions/:id/conversation */
 export async function fetchAppointmentRequestConversation(
   id: number,
+  /** Load only texts (Quo, can be slow) or only calls (quick); default both. */
+  include?: 'texts' | 'calls',
+  /** Skip the API's short texts cache (a new reply came in, or we just sent). */
+  fresh?: boolean,
 ): Promise<AppointmentRequestConversationResponse> {
+  const params: Record<string, string> = {};
+  if (include) params.include = include;
+  if (fresh) params.fresh = '1';
   const { data } = await http.get<AppointmentRequestConversationResponse>(
     `/appointments/request-submissions/${encodeURIComponent(String(id))}/conversation`,
+    Object.keys(params).length ? { params } : undefined,
+  );
+  return data;
+}
+
+export type QuoCallSummaryResult = {
+  id: number;
+  transcript: string | null;
+  summary: string | null;
+  /** completed, absent (Quo has none), failed, not-found, in-progress… */
+  transcriptStatus: string | null;
+};
+
+/** POST …/quo-calls/:callId/summary — fetch Quo's transcript if missing and summarize the call. */
+export async function summarizeAppointmentRequestQuoCall(
+  id: number,
+  callId: number,
+): Promise<QuoCallSummaryResult> {
+  const { data } = await http.post<QuoCallSummaryResult>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/quo-calls/${encodeURIComponent(String(callId))}/summary`,
   );
   return data;
 }

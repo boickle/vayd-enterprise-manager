@@ -7,6 +7,7 @@ import {
   fetchAppointmentRequestConversation,
   logAppointmentRequestCall,
   sendAppointmentRequestSubmissionSms,
+  summarizeAppointmentRequestQuoCall,
   type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
 } from '../../api/appointmentRequestSubmissions';
@@ -78,7 +79,10 @@ export function RequestConversationPanel({
         patientId: firstPet != null ? Number(firstPet) : null,
       },
       email,
-      load: () => fetchAppointmentRequestConversation(item.id),
+      load: ({ part, fresh }) => fetchAppointmentRequestConversation(item.id, part, fresh),
+      splitLoad: true,
+      fresh: replyStamp > 0,
+      summarizeCall: (callId) => summarizeAppointmentRequestQuoCall(item.id, callId),
       sendText: async (message) => {
         await sendAppointmentRequestSubmissionSms(item.id, { message });
         onContacted(item);

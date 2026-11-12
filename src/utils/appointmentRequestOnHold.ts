@@ -41,6 +41,8 @@ export type AppointmentRequestBookedApptSummary = {
   clientPimsId?: string | null;
   patientPimsId?: string | null;
   patientInternalId?: string | null;
+  /** Scout client id on the linked appointment (opens the client record). */
+  clientInternalId?: string | null;
   patientName?: string | null;
   /** Client / household on the linked calendar appointment (after HOLD conversion). */
   linkedClientLabel?: string | null;
@@ -151,6 +153,10 @@ export function appointmentRequestBookedSummaryFromAppointment(
     clientPimsId: linkedEvet.clientPimsId,
     patientPimsId: linkedEvet.patientPimsId,
     patientInternalId: linkedEvet.patientInternalId,
+    clientInternalId:
+      (typeof appt.client === 'object' && appt.client
+        ? pickStr((appt.client as Record<string, unknown>).id)
+        : null) ?? pickStr(appt.clientId),
     patientName: linkedEvet.patientName,
     linkedClientLabel: appointmentLinkedClientLabel(appt as Appointment),
     appointmentCancelled: isAppointmentCancelledOnPracticeCalendar(

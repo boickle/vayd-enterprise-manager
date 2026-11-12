@@ -10,8 +10,11 @@ export function AppointmentRequestPetSummaryList({
   practiceId,
   practiceTz,
   linkedAppointment,
+  onOpenPatient,
 }: {
   requestData: Record<string, unknown>;
+  /** When given, a pet in Scout opens its medical record in a pop-up from its name. */
+  onOpenPatient?: (patientId: string, name: string) => void;
   practiceId: number;
   practiceTz: string;
   /** Client/patient ids from the linked booked appointment when not on the form payload. */
@@ -28,7 +31,19 @@ export function AppointmentRequestPetSummaryList({
       {pets.map((pet) => (
         <li key={pet.key} className="appt-request-pet-summary-item">
           <div className="appt-request-pet-summary-head">
-            <span className="appt-request-pet-summary-name">{pet.name}</span>
+            {pet.patientId && onOpenPatient ? (
+              <button
+                type="button"
+                className="appt-request-pet-summary-name req-record-link"
+                aria-haspopup="dialog"
+                title="Open the medical record"
+                onClick={() => onOpenPatient(String(pet.patientId), pet.name)}
+              >
+                {pet.name}
+              </button>
+            ) : (
+              <span className="appt-request-pet-summary-name">{pet.name}</span>
+            )}
             <span
               className={`appt-request-detail-pet-badge${
                 pet.isNew ? '' : ' appt-request-detail-pet-badge--existing'
@@ -45,6 +60,8 @@ export function AppointmentRequestPetSummaryList({
                 label="View details"
                 className="appt-request-pet-summary-link"
               />
+            ) : pet.isNew && onOpenPatient ? (
+              <span className="appt-request-pet-summary-nochart">No chart yet (made when booked)</span>
             ) : null}
           </div>
           {pet.typeName || pet.appointmentType ? (

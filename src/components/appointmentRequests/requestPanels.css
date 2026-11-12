@@ -52,8 +52,83 @@
 }
 
 .req-details-chip--new {
-  background: #dcfce7;
+  background: #ea580c;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* New patient on an open request: same strong orange as New client. */
+.req-details .appt-request-detail-pet-badge:not(.appt-request-detail-pet-badge--existing) {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.req-details .appt-request-pet-summary-nochart {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+/* Client and pet names that open their Scout record in a pop-up. */
+.req-record-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #1d4ed8;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: #bfdbfe;
+  text-underline-offset: 3px;
+}
+
+.req-record-link:hover {
+  text-decoration-color: currentColor;
+}
+
+/* "Checking email… · Texts ✓" while the conversation fills in. */
+.req-convo-checking {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.req-convo-checking-part {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #f0fdf4;
   color: #166534;
+}
+
+.req-convo-checking-part--busy {
+  background: #eff6ff;
+  color: #1d4ed8;
+  animation: req-convo-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes req-convo-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .req-convo-checking-part--busy {
+    animation: none;
+  }
+}
+
+.req-convo-callnote {
+  font-size: 0.8rem;
+  color: #64748b;
+  font-style: italic;
 }
 
 .req-details-contact {

@@ -22,6 +22,9 @@ export type ConversationItem = {
   beforeRequest?: boolean;
   /** Quo call transcript, behind "Show transcript". */
   transcript?: string | null;
+  /** Quo call: its id (for Summarize) and what Quo said about the transcript. */
+  quoCallId?: number;
+  transcriptStatus?: string | null;
 };
 
 export type ConversationQuoCall = {
@@ -33,6 +36,8 @@ export type ConversationQuoCall = {
   staff: { firstName: string | null; lastName: string | null } | null;
   transcript: string | null;
   summary: string | null;
+  /** completed, absent (Quo has none), failed, not-found, in-progress… or null (never asked). */
+  transcriptStatus?: string | null;
   beforeRequest: boolean;
 };
 
@@ -215,6 +220,8 @@ export function buildRequestConversation(args: {
       author: personName(q.staff),
       body: q.summary ?? '',
       transcript: q.transcript,
+      quoCallId: q.id,
+      transcriptStatus: q.transcriptStatus ?? null,
       beforeRequest: q.beforeRequest,
     });
   }
