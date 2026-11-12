@@ -104,13 +104,11 @@ function seedRequest(o: SeedOptions): Cypress.Chainable<{ id: number; name: stri
   return sql(insert).then((idText) => {
     const id = Number(idText);
     expect(id, 'seeded submission id').to.be.greaterThan(0);
-    if (o.replyText) {
-      sql(
-        `insert into appointment_request_reply ("submissionId","channel","externalId","fromAddress","preview","receivedAt") values ` +
-          `(${id}, 'text', ${q(`r5-${STAMP}-${id}`)}, '+19195550142', ${q(o.replyText)}, now() - interval '5 minutes')`
-      );
-    }
-    return { id, name };
+    if (!o.replyText) return cy.wrap({ id, name });
+    return sql(
+      `insert into appointment_request_reply ("submissionId","channel","externalId","fromAddress","preview","receivedAt") values ` +
+        `(${id}, 'text', ${q(`r5-${STAMP}-${id}`)}, '+19195550142', ${q(o.replyText)}, now() - interval '5 minutes')`
+    ).then(() => ({ id, name }));
   });
 }
 
@@ -310,7 +308,7 @@ describe('SCH-R5: Appointments list end to end', () => {
           expect(res.body.recordsStatus).to.eq('not_needed');
         });
 
-        cy.contains('.appt-request-status-tab', 'Booked').click();
+        cy.contains('.appt-request-status-tab', /^\s*Booked\b/).click();
         row(name).within(() => {
           cy.get('button[aria-label^="Communication for"]').should(
             'contain.text',
@@ -339,7 +337,9 @@ describe('SCH-R5: Appointments list end to end', () => {
       signInAsScheduling('cl', `${LIST}?tab=new`);
       row(name).find('button.appt-table-client').click();
       row(name).within(() => {
-        cy.contains('.req-convo-checking-part--busy', 'Checking texts…').should('be.visible');
+        cy.contains('.req-convo-checking-part--busy', 'Checking texts…')
+          .scrollIntoView()
+          .should('be.visible');
         cy.contains('.req-convo-checking-part', 'Calls ✓').should('be.visible');
         cy.get('.req-convo-status').should('contain.text', 'Checking for messages…');
         // Calls show first, before the texts arrive.
