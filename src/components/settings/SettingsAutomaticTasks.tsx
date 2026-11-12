@@ -134,6 +134,18 @@ const BUILTIN_TASKS: { name: string; when: string; who: string }[] = [
   },
 ];
 
+function formatEastern(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
 export default function SettingsAutomaticTasks({ practiceId, readOnly = false, onMessage }: Props) {
   const [rules, setRules] = useState<TaskAutomationRule[]>([]);
   const [placeholders, setPlaceholders] = useState<
@@ -303,6 +315,13 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
               </button>
               )}
             </header>
+
+            {rule.lastError ? (
+              <p className="auto-tasks__warning" role="alert">
+                <strong>Last run hit a problem</strong>
+                {rule.lastErrorAt ? ` (${formatEastern(rule.lastErrorAt)})` : ''}: {rule.lastError}
+              </p>
+            ) : null}
 
             {readOnly && rule.bodyTemplate ? (
               <p className="auto-tasks__builtin-copy">{rule.bodyTemplate}</p>
