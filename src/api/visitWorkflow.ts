@@ -452,6 +452,8 @@ export type HouseholdRosterEntry = {
   appointmentId: number;
   soapEncounterId: string;
   isCurrent: boolean;
+  /** 'completed' = signed and locked; the scribe cannot write into it. */
+  status?: SoapEncounterStatus;
 };
 
 /**

@@ -280,3 +280,38 @@ describe('SCR-05 delete transcript', () => {
     expect(screen.getByRole('button', { name: /Paste transcript/ })).toBeTruthy();
   });
 });
+
+describe('SCR-A3-1 signed sibling and SCR-A14 warning', () => {
+  it('SCR-A3-1 shows the signed pet unticked and disabled, marked signed', async () => {
+    mocks.getHouseholdRoster.mockResolvedValue([
+      ROSTER[0],
+      { ...ROSTER[1], status: 'completed' },
+    ]);
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: /Paste transcript/ }));
+    const box = (await screen.findByLabelText(/Basil/)) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(true);
+    expect(screen.getByText(/\(signed\)/)).toBeTruthy();
+  });
+
+  it('SCR-A14 shows the server warning after Process', async () => {
+    mocks.getHouseholdRoster.mockResolvedValue([ROSTER[0]]);
+    mocks.structureTranscript.mockResolvedValue({
+      ...entry(1, 'A'),
+      subjectiveHistory: 'x',
+      narrativeObjective: null,
+      narrativePlan: null,
+      clientEmailSubject: null,
+      clientEmailBody: null,
+      warnings: ['This visit was very long, so the start of the visit was cut.'],
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: /Paste transcript/ }));
+    fireEvent.change(await screen.findByPlaceholderText(/Paste a visit transcript/), {
+      target: { value: 'Doctor: long visit.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Process' }));
+    expect(await screen.findByText(/start of the visit was cut/)).toBeTruthy();
+  });
+});

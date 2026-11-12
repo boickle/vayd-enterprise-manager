@@ -417,6 +417,8 @@ export default function ScribePanel({
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
+  // Server notes after Process (SCR-A14), e.g. the start of a very long visit was cut.
+  const [processWarnings, setProcessWarnings] = useState<string[]>([]);
   const [autoAppliedLog, setAutoAppliedLog] = useState<{ key: number; text: string }[]>([]);
   const [logOpen, setLogOpen] = useState(false);
 
@@ -551,8 +553,15 @@ export default function ScribePanel({
         setRoster(entries);
         // Default: every household pet on this visit is included in Process — otherwise only
         // the open chart gets SOAP text and siblings look "empty" after a multi-pet visit.
+        // A pet whose chart is already signed is left out: the scribe can't write into it (SCR-A3).
         if (entries.length > 0) {
-          setSelectedPatientIds(new Set(entries.map((e) => Number(e.patientId))));
+          setSelectedPatientIds(
+            new Set(
+              entries
+                .filter((e) => e.isCurrent || e.status !== 'completed')
+                .map((e) => Number(e.patientId))
+            )
+          );
         } else {
           setSelectedPatientIds(new Set([Number(patientId)]));
         }
@@ -1077,6 +1086,7 @@ export default function ScribePanel({
 
     setPasteBusy(true);
     setErrorMessage(null);
+    setProcessWarnings([]);
     try {
       if (multiPetSelected) {
         const selectedRoster = roster.filter((r) => selectedPatientIds.has(r.patientId));
@@ -1096,6 +1106,7 @@ export default function ScribePanel({
         setMultiPlanItemsForCurrent([]);
         setMultiProblemsForCurrent([]);
         setMultiSuggestion(result as MultiPatientScribeSuggestion);
+        setProcessWarnings((result as MultiPatientScribeSuggestion).warnings ?? []);
         setPasteOpen(false);
         setPasteText(text);
         setTranscriptOpen(false);
@@ -1110,6 +1121,7 @@ export default function ScribePanel({
         setInterimText('');
         prevSuggestionRef.current = null;
         setSuggestion(result as ScribeSuggestion);
+        setProcessWarnings((result as ScribeSuggestion).warnings ?? []);
         setDismissed(new Set());
         writeDismissedKeys(soapEncounterId, new Set());
         setProblemLabelEdits({});
@@ -1580,6 +1592,12 @@ export default function ScribePanel({
         </div>
       )}
 
+      {processWarnings.length > 0 && (
+        <div className="soap-scribe-error" role="status">
+          <AlertTriangle size={13} /> {processWarnings.join(' ')}
+        </div>
+      )}
+
       {pasteOpen && !recording && (
         <div className="soap-scribe-paste">
           <p className="soap-scribe-paste-hint">
@@ -1600,11 +1618,12 @@ export default function ScribePanel({
                     <input
                       type="checkbox"
                       checked={selectedPatientIds.has(r.patientId)}
-                      disabled={r.isCurrent || pasteBusy}
+                      disabled={r.isCurrent || pasteBusy || r.status === 'completed'}
                       onChange={() => togglePatientSelected(r.patientId)}
                     />
                     {r.patientName}
                     {r.isCurrent ? ' (this chart)' : ''}
+                    {r.status === 'completed' ? ' (signed)' : ''}
                   </label>
                 ))}
               </div>
