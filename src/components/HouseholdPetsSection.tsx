@@ -80,8 +80,8 @@ export function HouseholdPetsSection({
           {question} <span style={{ color: '#ef4444' }}>*</span>
         </label>
         <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#4b5563' }}>
-          They don’t need a visit. We’ll add them to your account so booking them later is quick and
-          we can remind you when vaccines are due.
+          Even if they don’t need a visit today, we’ll add them to your account so booking them
+          later is quick and we can remind you when vaccines are due.
         </p>
         <div style={{ display: 'flex', gap: 8 }} role="radiogroup" aria-label={question}>
           {(['Yes', 'No'] as const).map((option) => (
@@ -214,8 +214,8 @@ export function HouseholdPetsSection({
                   }}
                 >
                   <span style={{ fontSize: '13px', color: '#065f46', flex: '1 1 200px' }}>
-                    We’re already coming to your home. Adding {pet.name.trim() || 'this pet'} to
-                    this visit saves you a separate house-call fee.
+                    Since we are coming anyway, we’re happy to establish care and address anything
+                    you need - just let us know. It saves you a separate house-call fee.
                   </span>
                   <button
                     type="button"
