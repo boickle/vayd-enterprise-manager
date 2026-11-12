@@ -1,0 +1,10 @@
+{
+  "history": "AI-WRITTEN HISTORY for pet 1.",
+  "plan": "AI-WRITTEN PLAN for pet 1.",
+  "clientEmailSubject": "Visit summary",
+  "clientEmailBody": "<p>Thanks for bringing your pets in today.</p>",
+  "patients": [
+    { "patientId": 0, "patientName": "", "history": "AI-WRITTEN HISTORY for pet 1.", "plan": "AI-WRITTEN PLAN for pet 1." },
+    { "patientId": 0, "patientName": "", "history": "AI-WRITTEN HISTORY for pet 2.", "plan": "AI-WRITTEN PLAN for pet 2." }
+  ]
+}

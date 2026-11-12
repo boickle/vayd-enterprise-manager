@@ -31,11 +31,26 @@ export default function ScribeConsentModal({ onConfirm, onClose }: Props) {
             <X size={16} />
           </button>
         </div>
-        <p className="soap-modal-sub">
-          The visit audio is streamed for live transcription and used only to suggest SOAP note
-          content for your review — nothing is saved to the record without you applying it. Some
-          states require notifying anyone being recorded.
-        </p>
+        <div className="soap-modal-sub">
+          <p>
+            The visit audio is streamed for live transcription. Some states require notifying
+            anyone being recorded.
+          </p>
+          <ul>
+            <li>
+              <strong>Process</strong> fills Objective, Assessment and Plan on the chart for you.
+              Review them before you sign.
+            </li>
+            <li>
+              On a household visit, <strong>Process</strong> fills every ticked pet. You are asked
+              first about pets that already have notes.
+            </li>
+            <li>
+              The transcript is kept on the chart and in a learning table used to improve the
+              scribe.
+            </li>
+          </ul>
+        </div>
         <label className="soap-scribe-consent-check">
           <input
             type="checkbox"

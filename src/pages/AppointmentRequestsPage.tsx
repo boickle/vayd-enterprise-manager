@@ -8,10 +8,13 @@ import {
   fetchAppointmentRequestSubmission,
   fetchAppointmentRequestSubmissionsPage,
   fetchRemainingAppointmentRequestSubmissionPages,
+  bookAppointmentRequestSubmission,
   patchAppointmentRequestSubmission,
+  markAppointmentRequestReplies,
   sendAppointmentRequestSubmissionSms,
   type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
+  type VisitSinceRequest,
   type AppointmentRequestSubmissionStatus,
 } from '../api/appointmentRequestSubmissions';
 import {
@@ -156,16 +159,35 @@ import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
 import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { RouteButton } from '../components/appointmentRequests/RouteButton';
+import { useAuth } from '../auth/useAuth';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
+import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
+import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
+import {
+  StatusPillMenu,
+  type StatusMenuItem,
+} from '../components/appointmentRequests/StatusPillMenu';
+import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
+  appointmentRequestRecordsPill,
+  COMMUNICATION_OPTIONS,
+  type CommunicationStatus,
+  requestCommunicationStatus,
+  requestWorkIsFinished,
   receivedDateLabel,
+  matchesLiaisonFilter,
+  parseLiaisonFilter,
+  type LiaisonFilter,
+  requestIsQuiet,
+  replyTimeLabel,
+  visitSinceLabel,
   requestDataTown,
   visitDateShortLabel,
 } from '../utils/appointmentRequestTableRow';
@@ -178,6 +200,7 @@ import './Settings.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const PRACTICE_ID = currentPracticeId();
+const LIAISON_FILTER_KEY = 'vayd-appt-requests-liaison-filter';
 
 type BookedApptSummary = AppointmentRequestBookedApptSummary;
 
@@ -191,7 +214,8 @@ type AppointmentRequestsPageProps = {
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'new', label: 'New' },
   { key: 'to_confirm', label: 'Auto-Booked' },
-  { key: 'contacted', label: 'Contacted' },
+  // Contacted requests, and booked ones whose communication or records are not done yet.
+  { key: 'contacted', label: 'In progress' },
   { key: 'booked', label: 'Booked' },
   { key: 'dismissed', label: 'Not Booked' },
 ];
@@ -453,6 +477,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const location = useLocation();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  const { employeeId: authEmployeeId } = useAuth() as { employeeId?: string | null };
 
   const statusFilter = useMemo(
     () => parseAppointmentRequestsTabFromLocation(location.pathname, location.search),
@@ -571,6 +596,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [openRowIds, setOpenRowIds] = useState<Set<number>>(() => new Set());
   const [liaisons, setLiaisons] = useState<ClientLiaisonOption[]>([]);
   const [liaisonSaving, setLiaisonSaving] = useState<Record<number, boolean>>({});
+  /** Which status pill is saving on a row (Communication or Records). */
+  const [pillSaving, setPillSaving] = useState<Record<number, 'comm' | 'records' | undefined>>({});
   const [listPage, setListPage] = useState(1);
 
   const rowsRef = useRef(rows);
@@ -591,6 +618,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const hydrateGenerationRef = useRef(0);
   const submissionBackfillGenRef = useRef(0);
 
+  const openRowIdsRef = useRef(openRowIds);
+  openRowIdsRef.current = openRowIds;
   const toggleRowOpen = (id: number) => {
     setOpenRowIds((prev) => {
       const next = new Set(prev);
@@ -1156,6 +1185,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       if (submissionShowsContactedChip(row)) counts.contacted += 1;
       if (status === 'contacted') continue;
       if (isOnHold || needsAutoBooked) continue;
+      // Booked stays In progress until communication is complete and records are done.
+      if (status === 'booked' && !requestWorkIsFinished(row)) {
+        counts.contacted += 1;
+        continue;
+      }
       counts[status] += 1;
     }
     return counts;
@@ -1174,7 +1208,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     return count;
   }, [submissions, bookedApptMeta, typeCatalog]);
 
-  const filtered = useMemo(() => {
+  const filteredByTab = useMemo(() => {
     const q = search.trim().toLowerCase();
     const sortNewestFirst = (a: AppointmentRequestSubmissionItem, b: AppointmentRequestSubmissionItem) =>
       new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
@@ -1223,16 +1257,24 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       .filter((item) => {
         // An open row stays put while staff work it, even after its status moves on.
         if (exitingRows.has(item.id) || openRowIds.has(item.id)) return true;
-        if (submissionStatus(item) !== statusFilter) return false;
-        if (
-          statusFilter !== 'contacted' &&
-          appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)
-        ) {
+        const itemStatus = submissionStatus(item);
+        if (statusFilter === 'contacted') {
+          if (itemStatus === 'contacted') return true;
+          // Booked, but communication or records still open.
+          return (
+            itemStatus === 'booked' &&
+            !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog) &&
+            !appointmentRequestNeedsStaffConfirmation(item) &&
+            !requestWorkIsFinished(item)
+          );
+        }
+        if (itemStatus !== statusFilter) return false;
+        if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
           return false;
         }
         if (
           statusFilter === 'booked' &&
-          appointmentRequestNeedsStaffConfirmation(item)
+          (appointmentRequestNeedsStaffConfirmation(item) || !requestWorkIsFinished(item))
         ) {
           return false;
         }
@@ -1251,6 +1293,66 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     bookedApptMeta,
     typeCatalog,
   ]);
+
+  /** Liaison filter (Everyone / Mine / Unassigned / one person), remembered on this computer. */
+  const [liaisonFilter, setLiaisonFilter] = useState<LiaisonFilter>(() => {
+    try {
+      return parseLiaisonFilter(localStorage.getItem(LIAISON_FILTER_KEY));
+    } catch {
+      return 'all';
+    }
+  });
+  const chooseLiaisonFilter = (next: LiaisonFilter) => {
+    setLiaisonFilter(next);
+    try {
+      localStorage.setItem(LIAISON_FILTER_KEY, String(next));
+    } catch {
+      /* not remembered */
+    }
+  };
+  const myEmployeeId = useMemo(() => {
+    const n = Number(authEmployeeId);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [authEmployeeId]);
+  /** Red when the request is mine or nobody's; blue when it is someone else's. */
+  const replyIsMine = useCallback(
+    (item: AppointmentRequestSubmissionItem) =>
+      item.liaisonEmployeeId == null || (myEmployeeId != null && item.liaisonEmployeeId === myEmployeeId),
+    [myEmployeeId],
+  );
+  /** Rows read by opening them keep their place at the top until they are closed. */
+  const [readWhileOpen, setReadWhileOpen] = useState<Set<number>>(() => new Set());
+  const filtered = useMemo(() => {
+    const base =
+      liaisonFilter === 'all'
+        ? filteredByTab
+        : filteredByTab.filter(
+            (item) =>
+              // An open row stays while staff work it, even after its liaison changes.
+              openRowIds.has(item.id) ||
+              (!isAbandonedItem(item) && matchesLiaisonFilter(item, liaisonFilter, myEmployeeId)),
+          );
+    // Requests with unread client replies come first (the order is otherwise unchanged).
+    const unreadFirst = (item: AppointmentRequestSubmissionItem) =>
+      !isAbandonedItem(item) && ((item.unreadReplies?.count ?? 0) > 0 || readWhileOpen.has(item.id))
+        ? 1
+        : 0;
+    return [...base].sort((a, b) => unreadFirst(b) - unreadFirst(a));
+  }, [filteredByTab, liaisonFilter, myEmployeeId, openRowIds, readWhileOpen]);
+
+  /** Unread replies per tab, red (mine) and blue (others). */
+  const tabReplyCounts = useMemo(() => {
+    const counts = new Map<StatusFilter, { mine: number; others: number }>();
+    for (const row of submissions) {
+      if ((row.unreadReplies?.count ?? 0) <= 0) continue;
+      const tab = appointmentRequestListTabForSubmission(row, bookedApptMeta, typeCatalog);
+      const c = counts.get(tab) ?? { mine: 0, others: 0 };
+      if (replyIsMine(row)) c.mine += 1;
+      else c.others += 1;
+      counts.set(tab, c);
+    }
+    return counts;
+  }, [submissions, bookedApptMeta, typeCatalog, replyIsMine]);
 
   /** While searching across tabs, highlight the result tab when unambiguous; otherwise none. */
   const highlightedStatusTab = useMemo((): StatusFilter | null => {
@@ -1511,13 +1613,26 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   }, []);
 
+  /**
+   * After a request is booked: it moves to Booked only when communication and records are done
+   * too (a hold goes to On hold as before); otherwise it moves to, or stays in, In progress.
+   */
+  const exitAfterBooking = useCallback(
+    (updated: AppointmentRequestSubmissionItem) => {
+      const finished = updated.linkedVisitIsHold === true || requestWorkIsFinished(updated);
+      if (finished) beginRowExit(updated.id, 'booked');
+      else if (statusFilterRef.current !== 'contacted') beginRowExit(updated.id, 'contacted');
+    },
+    [beginRowExit],
+  );
+
   const handleLinkedAppointment = useCallback(
     (updated: AppointmentRequestSubmissionItem) => {
       mergeSubmission({ ...updated, kind: 'submission' });
-      beginRowExit(updated.id, 'booked');
+      exitAfterBooking(updated);
       notifySchedulingToolsNavCountsRefresh();
     },
-    [mergeSubmission, beginRowExit],
+    [mergeSubmission, exitAfterBooking],
   );
 
   const handleRelinkedAppointment = useCallback(
@@ -1554,7 +1669,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         if (status === 'dismissed') {
           beginRowExit(item.id, 'dismissed');
         } else if (status === 'booked') {
-          beginRowExit(item.id, 'booked');
+          exitAfterBooking({ ...item, ...updated });
         } else if (status === 'contacted') {
           beginRowExit(item.id, 'contacted');
         } else if (status !== submissionStatus(item)) {
@@ -1571,7 +1686,112 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         setStatusUpdating((s) => ({ ...s, [item.id]: false }));
       }
     },
-    [mergeSubmission, beginRowExit]
+    [mergeSubmission, beginRowExit, exitAfterBooking]
+  );
+
+  /**
+   * Communication and Records columns. A booked request whose last open part is finished
+   * leaves for Booked; a New request with a communication step moves to In progress.
+   */
+  const changeRequestProgress = useCallback(
+    async (
+      item: AppointmentRequestSubmissionItem,
+      body: {
+        communicationStatus?: CommunicationStatus;
+        recordsStatus?: 'not_needed' | 'waiting' | 'complete' | null;
+      },
+      column: 'comm' | 'records',
+    ) => {
+      setPillSaving((s) => ({ ...s, [item.id]: column }));
+      setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await patchAppointmentRequestSubmission(item.id, body);
+        const merged = { ...item, ...updated, kind: 'submission' as const };
+        mergeSubmission(merged);
+        const before = submissionStatus(item);
+        const after = submissionStatus(merged);
+        if (before === 'new' && after === 'contacted' && statusFilterRef.current === 'new') {
+          beginRowExit(item.id, 'contacted');
+        } else if (
+          after === 'booked' &&
+          merged.linkedVisitIsHold !== true &&
+          !appointmentRequestNeedsStaffConfirmation(merged) &&
+          !requestWorkIsFinished(item) &&
+          requestWorkIsFinished(merged)
+        ) {
+          beginRowExit(item.id, 'booked');
+        }
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not save';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      } finally {
+        setPillSaving((s) => ({ ...s, [item.id]: undefined }));
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      }
+    },
+    [mergeSubmission, beginRowExit],
+  );
+
+  /** Opening a request reads its client replies (anyone can); closing lets it settle back. */
+  const toggleRowAndReadReplies = useCallback(
+    (item: AppointmentRequestSubmissionItem) => {
+      const opening = !openRowIdsRef.current.has(item.id);
+      toggleRowOpen(item.id);
+      if (!opening) {
+        setReadWhileOpen((prev) => {
+          if (!prev.has(item.id)) return prev;
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+        return;
+      }
+      if ((item.unreadReplies?.count ?? 0) <= 0 || isAbandonedItem(item)) return;
+      setReadWhileOpen((prev) => new Set(prev).add(item.id));
+      void markAppointmentRequestReplies(item.id, true)
+        .then((updated) => {
+          mergeSubmission({ ...updated, kind: 'submission' });
+          notifyAppointmentRepliesChanged();
+        })
+        .catch(() => {
+          /* still unread; the badge stays */
+        });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleRowOpen only sets state
+    [mergeSubmission],
+  );
+
+  /** "Mark as unread": the latest reply is unread again, and the request closes. */
+  const markRepliesUnread = useCallback(
+    async (item: AppointmentRequestSubmissionItem) => {
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await markAppointmentRequestReplies(item.id, false);
+        mergeSubmission({ ...updated, kind: 'submission' });
+        notifyAppointmentRepliesChanged();
+        setOpenRowIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+        setReadWhileOpen((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not mark as unread';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      }
+    },
+    [mergeSubmission],
   );
 
   /** Liaison column: anyone can hand a request to anyone, or clear it. */
@@ -1815,12 +2035,39 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   };
 
+  /** "Seen since this request": link that visit to the request (Booked, or On hold for a hold). */
+  const linkVisitSince = useCallback(
+    async (item: AppointmentRequestSubmissionItem, appointmentId: number) => {
+      setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await bookAppointmentRequestSubmission(item.id, { appointmentId });
+        mergeSubmission({ ...updated, kind: 'submission', visitSinceRequest: null });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not link the visit';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      } finally {
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      }
+    },
+    [mergeSubmission],
+  );
+
   /** Contact from the conversation panel: mark a New request Contacted without moving the row away. */
   const markContactedInPlace = useCallback(
     async (item: AppointmentRequestSubmissionItem) => {
-      if (submissionStatus(item) !== 'new') return;
+      const isNew = submissionStatus(item) === 'new';
+      // Booked or contacted rows: a first email or text still moves Not contacted on.
+      if (!isNew && requestCommunicationStatus(item) !== 'not_contacted') return;
+      if (submissionStatus(item) === 'dismissed') return;
       try {
-        const updated = await patchAppointmentRequestSubmission(item.id, { status: 'contacted' });
+        const updated = await patchAppointmentRequestSubmission(
+          item.id,
+          isNew ? { status: 'contacted' } : { communicationStatus: 'contacted' },
+        );
         mergeSubmission({ ...updated, kind: 'submission' });
       } catch (e: unknown) {
         const msg =
@@ -1921,6 +2168,93 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     } finally {
       setSmsSending(false);
     }
+  };
+
+  /** Booking column menu: the next booking step for this request. */
+  const bookingMenuItems = (args: {
+    item: AppointmentRequestSubmissionItem;
+    visitSince: VisitSinceRequest | null;
+    isDismissed: boolean;
+    needsStaffConfirmation: boolean;
+    needsManualBook: boolean;
+    hasLinkedAppointment: boolean;
+    isOnHoldVisit: boolean;
+  }): StatusMenuItem[] => {
+    const { item, visitSince } = args;
+    const items: StatusMenuItem[] = [];
+    if (args.isDismissed) {
+      items.push({ label: 'Reopen', hint: 'Back to New', onClick: () => void updateStatus(item, 'new') });
+      return items;
+    }
+    if (visitSince) {
+      items.push({
+        label: `Link this visit (${visitSinceLabel(visitSince, practiceTz)})`,
+        hint: visitSince.isHold ? 'Puts the request on that hold' : 'Marks the request booked',
+        onClick: () => void linkVisitSince(item, visitSince.appointmentId),
+      });
+    }
+    if (args.needsStaffConfirmation) {
+      items.push({ label: 'Confirm appointment', onClick: () => openConfirmPreview(item) });
+    }
+    if (args.needsManualBook) {
+      items.push({ label: 'Route to book…', onClick: () => onBook(item) });
+      items.push({
+        label: 'Link existing appointment…',
+        onClick: () => setManualBookModal({ item, relink: false }),
+      });
+    }
+    if (args.hasLinkedAppointment && !args.needsStaffConfirmation) {
+      items.push({
+        label: args.isOnHoldVisit ? 'Open hold' : 'View appointment',
+        onClick: () => onViewAppointment(item),
+      });
+      items.push({
+        label: 'Re-link appointment…',
+        onClick: () => setManualBookModal({ item, relink: true }),
+      });
+    }
+    if (items.length > 0) items.push({ divider: true });
+    items.push({ label: 'Not booked…', hint: 'Choose a reason', onClick: () => openNotBookedModal(item) });
+    return items;
+  };
+
+  /** Records column menu: follow the records requests, or say what staff know. */
+  const recordsMenuItems = (item: AppointmentRequestSubmissionItem, clientName: string): StatusMenuItem[] => {
+    const choice = item.recordsStatus ?? null;
+    const set = (next: 'not_needed' | 'waiting' | 'complete' | null) => {
+      if (next !== choice) void changeRequestProgress(item, { recordsStatus: next }, 'records');
+    };
+    const items: StatusMenuItem[] = [
+      {
+        label: 'Follow records requests',
+        hint: 'Done when every request is in and summarized in the chart',
+        selected: choice == null,
+        onClick: () => set(null),
+      },
+      {
+        label: 'Waiting on client',
+        hint: 'The client is sending records',
+        selected: choice === 'waiting',
+        onClick: () => set('waiting'),
+      },
+      {
+        label: 'Records complete',
+        hint: 'Done, even if a request is still out',
+        selected: choice === 'complete',
+        onClick: () => set('complete'),
+      },
+      { label: 'Not needed', selected: choice === 'not_needed', onClick: () => set('not_needed') },
+    ];
+    if ((item.records?.total ?? 0) > 0) {
+      items.push({ divider: true });
+      items.push({
+        label: 'Open records requests',
+        hint: item.records?.toSummarize ? 'Summarize and close out there' : undefined,
+        onClick: () =>
+          navigate(`${SCHEDULING_TOOLS_PATH_PREFIX}/records?q=${encodeURIComponent(clientName)}`),
+      });
+    }
+    return items;
   };
 
   const onViewAppointment = (item: AppointmentRequestSubmissionItem) => {
@@ -2029,6 +2363,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               }}
             >
               <span>{label}</span>
+              <ReplyBadges
+                mine={tabReplyCounts.get(key)?.mine ?? 0}
+                others={tabReplyCounts.get(key)?.others ?? 0}
+              />
               {tabShowsCount(key) ? (
                 <span className="appt-request-status-tab-count" aria-hidden>
                   ({key === 'new' ? newTabVisibleCount : tabCounts[key]})
@@ -2043,13 +2381,45 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           onClick={() => navigate(HOLDS_PATH)}
         >
           <span>Hold</span>
+          <ReplyBadges
+            mine={tabReplyCounts.get('on_hold')?.mine ?? 0}
+            others={tabReplyCounts.get('on_hold')?.others ?? 0}
+          />
+        </button>
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() => navigate(`${APPOINTMENT_REQUESTS_LIST_PATH}/cleanup`)}
+          title="Close out open requests older than 10 days"
+        >
+          Clean up old requests
         </button>
         <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load({ awaitHydration: true })} disabled={loading}>
           Refresh
         </button>
       </div>
 
-      <div style={{ marginBottom: 16, maxWidth: 420 }}>
+      <div className="appt-list-filters">
+      <label className="appt-liaison-filter">
+        <span>Liaison</span>
+        <select
+          value={String(liaisonFilter)}
+          onChange={(e) => chooseLiaisonFilter(parseLiaisonFilter(e.target.value))}
+          aria-label="Filter by liaison"
+        >
+          <option value="all">Everyone</option>
+          <option value="mine" disabled={myEmployeeId == null}>
+            Mine
+          </option>
+          <option value="unassigned">Unassigned</option>
+          {liaisons.map((l) => (
+            <option key={l.id} value={String(l.id)}>
+              {[l.firstName, l.lastName].filter(Boolean).join(' ')}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div style={{ marginBottom: 16, maxWidth: 420, flex: '1 1 320px' }}>
         <input
           type="search"
           className="settings-input"
@@ -2064,6 +2434,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             Searching all tabs ({filtered.length} match{filtered.length === 1 ? '' : 'es'})
           </p>
         ) : null}
+      </div>
       </div>
 
       {error ? (
@@ -2082,7 +2453,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         </p>
       ) : (
         <div className="appt-request-list-wrap">
-        <div className="appt-table-head" role="presentation">
+        <div className="appt-table-head appt-table--with-records" role="presentation">
           <span>Request received</span>
           <span />
           <span>Client / Patient</span>
@@ -2092,6 +2463,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           <span>Route visit</span>
           <span>Booking status</span>
           <span>Communication status</span>
+          <span>Records</span>
         </div>
         <ul className="appt-request-list appt-request-list--table">
           {displayList.map((item) => {
@@ -2271,7 +2643,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               visitDateLabel: visitDateShortLabel(displayBookedSummary?.start, practiceTz),
               notBookedReason: item.notBookedReason,
             });
-            const commPill = appointmentRequestCommunicationPill(status, { needsStaffConfirmation });
+            const communication = requestCommunicationStatus(item);
+            const commPill = appointmentRequestCommunicationPill(communication);
+            const recordsPill = appointmentRequestRecordsPill(item.records);
+            const quiet = requestIsQuiet(item);
+            const unread = (item.unreadReplies?.count ?? 0) > 0 ? item.unreadReplies! : null;
+            const unreadMine = replyIsMine(item);
+            // A pet on this open request was already seen (or has a visit coming) since it came in.
+            const visitSince =
+              (status === 'new' || status === 'contacted') && !hasLinkedAppointment
+                ? (item.visitSinceRequest ?? null)
+                : null;
             const hasVisitForRoute = hasLinkedAppointment || autoBookedOnline;
 
             return (
@@ -2294,12 +2676,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     {exitKind === 'booked'
                       ? 'Booked'
                       : exitKind === 'contacted'
-                        ? 'Contacted'
+                        ? 'In progress'
                         : 'Not Booked'}
                   </div>
                 ) : null}
                 <div
-                  className={`appt-table-row${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}`}
+                  className={`appt-table-row appt-table--with-records${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}${unread ? (unreadMine ? ' appt-table-row--unread' : ' appt-table-row--unread-others') : ''}`}
                 >
                   <div className="appt-table-cell appt-table-received">
                     <button
@@ -2307,7 +2689,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       className="appt-table-chevron"
                       aria-expanded={rowOpen}
                       aria-label={rowOpen ? 'Close request' : 'Open request'}
-                      onClick={() => toggleRowOpen(item.id)}
+                      onClick={() => toggleRowAndReadReplies(item)}
                     >
                       {rowOpen ? '▾' : '▸'}
                     </button>
@@ -2316,6 +2698,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       {howSoonUrgency ? (
                         <span className="appt-table-urgent" title={howSoon ?? undefined}>
                           Urgent
+                        </span>
+                      ) : null}
+                      {quiet ? (
+                        <span className="appt-table-quiet" title="Nobody has worked this request in 10 days">
+                          No activity 10+ days
                         </span>
                       ) : null}
                     </span>
@@ -2329,9 +2716,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       className="appt-table-client"
                       aria-expanded={rowOpen}
                       title={rowOpen ? 'Close request' : 'Open request'}
-                      onClick={() => toggleRowOpen(item.id)}
+                      onClick={() => toggleRowAndReadReplies(item)}
                     >
-                      <span className="appt-table-client-name">{name}</span>
+                      <span className="appt-table-client-name">
+                        {name}
+                        {unread ? (
+                          <ReplyBadges
+                            mine={unreadMine ? unread.count : 0}
+                            others={unreadMine ? 0 : unread.count}
+                          />
+                        ) : null}
+                      </span>
+                      {unread ? (
+                        <span
+                          className={`appt-table-reply${unreadMine ? '' : ' appt-table-reply--others'}`}
+                          title={unread.lastPreview ?? undefined}
+                        >
+                          ↩ {unread.lastChannel === 'text' ? 'Texted' : 'Emailed'}{' '}
+                          {replyTimeLabel(unread.lastAt, practiceTz)}
+                          {unread.lastPreview ? `: ${unread.lastPreview}` : ''}
+                        </span>
+                      ) : null}
                       {petNames.length > 0 ? (
                         <span className="appt-table-pets">
                           {petNames.map((p) => (
@@ -2378,17 +2783,66 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     />
                   </div>
                   <div className="appt-table-cell">
-                    <span className={`appt-table-pill appt-table-pill--${bookingPill.tone}`}>
-                      <span>{bookingPill.label}</span>
-                      {bookingPill.detail ? (
-                        <span className="appt-table-pill-detail">{bookingPill.detail}</span>
-                      ) : null}
-                    </span>
+                    <StatusPillMenu
+                      ariaLabel={`Booking for ${name}`}
+                      tone={visitSince ? 'seen' : bookingPill.tone}
+                      label={
+                        visitSince
+                          ? visitSince.isHold
+                            ? 'Hold since request'
+                            : visitSince.past
+                              ? 'Seen since request'
+                              : 'Visit since request'
+                          : bookingPill.label
+                      }
+                      detail={visitSince ? visitSinceLabel(visitSince, practiceTz) : bookingPill.detail}
+                      title={
+                        visitSince
+                          ? `${visitSince.typeName ?? 'Visit'} since this request`
+                          : undefined
+                      }
+                      saving={Boolean(statusUpdating[item.id]) && pillSaving[item.id] == null}
+                      items={bookingMenuItems({
+                        item,
+                        visitSince,
+                        isDismissed,
+                        needsStaffConfirmation,
+                        needsManualBook,
+                        hasLinkedAppointment,
+                        isOnHoldVisit,
+                      })}
+                    />
                   </div>
                   <div className="appt-table-cell">
-                    <span className={`appt-table-pill appt-table-pill--comm-${commPill.tone}`}>
-                      {commPill.label}
-                    </span>
+                    <StatusPillMenu
+                      ariaLabel={`Communication for ${name}`}
+                      tone={`comm-${commPill.tone}`}
+                      label={commPill.label}
+                      saving={pillSaving[item.id] === 'comm'}
+                      items={COMMUNICATION_OPTIONS.map((o) => ({
+                        label: o.label,
+                        selected: o.value === communication,
+                        onClick: () => {
+                          if (o.value !== communication) {
+                            void changeRequestProgress(item, { communicationStatus: o.value }, 'comm');
+                          }
+                        },
+                      }))}
+                    />
+                  </div>
+                  <div className="appt-table-cell">
+                    {isDismissed ? (
+                      <span className="settings-muted">—</span>
+                    ) : (
+                      <StatusPillMenu
+                        ariaLabel={`Records for ${name}`}
+                        tone={`records-${recordsPill.tone}`}
+                        label={recordsPill.label}
+                        detail={recordsPill.detail}
+                        saving={pillSaving[item.id] === 'records'}
+                        items={recordsMenuItems(item, name)}
+                      />
+                    )}
                   </div>
                 </div>
                 {rowOpen ? (
@@ -2483,8 +2937,22 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                               {statusUpdating[item.id] ? 'Saving…' : 'Confirm appointment'}
                             </button>
                           ) : null}
+                          {visitSince ? (
+                            <button
+                              type="button"
+                              className="req-action req-action--primary"
+                              disabled={Boolean(statusUpdating[item.id])}
+                              onClick={() => void linkVisitSince(item, visitSince.appointmentId)}
+                            >
+                              Link this visit ({visitSinceLabel(visitSince, practiceTz)})
+                            </button>
+                          ) : null}
                           {needsManualBook ? (
-                            <button type="button" className="req-action req-action--primary" onClick={() => onBook(item)}>
+                            <button
+                              type="button"
+                              className={`req-action${visitSince ? '' : ' req-action--primary'}`}
+                              onClick={() => onBook(item)}
+                            >
                               Route
                             </button>
                           ) : null}
@@ -2533,6 +3001,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                               ...(status === 'contacted'
                                 ? [{ label: 'Move back to New', onClick: () => void updateStatus(item, 'new') }]
                                 : []),
+                              { label: 'Mark as unread', onClick: () => void markRepliesUnread(item) },
                             ]}
                           />
                           {statusError[item.id] ? (

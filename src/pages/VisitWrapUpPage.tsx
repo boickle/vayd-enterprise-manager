@@ -33,6 +33,8 @@ import {
   persistClientRecapDraft,
   prefetchClientRecap,
   recordClientEmailDecision,
+  fetchStoreMedsBlock,
+  type StoreMedsBlock,
   type VisitReminderPet,
   type VisitWrapUp,
   type VisitWrapUpPet,
@@ -55,6 +57,7 @@ import {
   formatSendAsLabel,
   isFallbackSender,
   ensureRecapFarewell,
+  insertBeforeFarewell,
   recapHasFarewell,
   RECAP_FAREWELL,
   parseRecapRecipients,
@@ -71,6 +74,7 @@ import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChron
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 import { useAuth } from '../auth/useAuth';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
+import { clearScribeDeviceCopy } from '../utils/scribeDeviceCopy';
 import SignAndLockButton from '../components/soap/SignOffGate';
 import { formatDeclinedDate } from '../api/declinedTreatments';
 
@@ -123,6 +127,8 @@ function petSummaryLine(pet: VisitWrapUpPet): string {
  * generates from the finished charts and saves that draft. Later visits keep the saved
  * draft (so SOAP edits never silently overwrite a long email); use Regenerate to rebuild.
  */
+const SENT_NOT_RECORDED = 'Sent, but not recorded — don’t send again.';
+
 export default function VisitWrapUpPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
@@ -135,6 +141,8 @@ export default function VisitWrapUpPage() {
   /** Start of the visit day — declines before it are from an earlier visit. */
   const [visitDayStart, setVisitDayStart] = useState<number | null>(null);
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
+  /** SCR-02: the saved recap was written before the charts last changed. Cleared by Regenerate. */
+  const [draftStale, setDraftStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,7 +164,16 @@ export default function VisitWrapUpPage() {
   const [recipients, setRecipients] = useState('');
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
+  /** "Order from our store" block for new chronic meds (owner, Nov 12, 2026); null when none. */
+  const [storeMeds, setStoreMeds] = useState<StoreMedsBlock | null>(null);
+  const [includeStoreMeds, setIncludeStoreMeds] = useState(true);
+  /** With no recap, the ordering email still goes out on its own unless the doctor unticks this. */
+  const [storeMedsWithoutRecap, setStoreMedsWithoutRecap] = useState(true);
   const [emailError, setEmailError] = useState<string | null>(null);
+  /** SCR-A13: the email went out but recording it failed. Send stays locked; only the record is retried. */
+  const [sentNotRecorded, setSentNotRecorded] = useState<Parameters<
+    typeof recordClientEmailDecision
+  >[1] | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [skipReason, setSkipReason] = useState('');
   const [showSkip, setShowSkip] = useState(false);
@@ -184,6 +201,7 @@ export default function VisitWrapUpPage() {
   const loadWrapUp = useCallback(async (id: string) => {
     const data = await getVisitWrapUp(id);
     setWrapUp(data);
+    setDraftStale(data.emailDraftStale === true);
     return data;
   }, []);
 
@@ -338,6 +356,29 @@ export default function VisitWrapUpPage() {
   );
 
   const emailDecided = Boolean(wrapUp?.clientEmailDelivery?.status);
+
+  // The block follows the pets the recap covers, and refreshes when the wrap-up reloads
+  // (signing commits chronic meds drafted on the SOAP).
+  const storeMedPetKey = selectedPets.map((p) => p.patientId).join(',');
+  useEffect(() => {
+    if (!encounterId || !storeMedPetKey) {
+      setStoreMeds(null);
+      return;
+    }
+    let cancelled = false;
+    fetchStoreMedsBlock(encounterId, storeMedPetKey.split(',').map(Number))
+      .then((block) => {
+        if (!cancelled) setStoreMeds(block);
+      })
+      .catch(() => {
+        // Without the block the meds still reach the client in their own email.
+        if (!cancelled) setStoreMeds(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [encounterId, storeMedPetKey, wrapUp]);
+  const storeMedsToSend = includeStoreMeds ? storeMeds : null;
   const allLocked = pets.length > 0 && pets.every((p) => p.status === 'completed');
   const clinicalComplete = useMemo(
     () =>
@@ -475,7 +516,8 @@ export default function VisitWrapUpPage() {
       const draft = await generateClientRecap(encounterId, petIds);
       setSubject(draft.subject);
       setBody(draft.body);
-      await persistClientRecapDraft(encounterId, draft);
+      await persistClientRecapDraft(encounterId, draft, { fromCharts: true });
+      setDraftStale(false);
     } catch (e) {
       setEmailError(
         e instanceof Error ? e.message : 'Could not rewrite the recap from the charts.'
@@ -486,7 +528,7 @@ export default function VisitWrapUpPage() {
   };
 
   const onSend = async () => {
-    if (!encounterId || sending) return;
+    if (!encounterId || sending || sentNotRecorded) return;
     const to = parseRecapRecipients(recipients);
     if (to.length === 0) {
       setEmailError('Add at least one recipient address. Separate multiple emails with commas.');
@@ -508,10 +550,14 @@ export default function VisitWrapUpPage() {
       // The recap carries bold on the things the client has to do or watch for, so it
       // goes out as HTML. The Gmail send-as signature (Dr. Heather, practice block, etc.)
       // is attached here, not stored in the draft, so switching From swaps it cleanly.
-      const closed = ensureRecapFarewell({
-        html: soapTextToEditorHtml(body),
-        text: soapHtmlToPlainText(body),
-      });
+      // New chronic meds we sell online: the "order anytime" block goes above the closing.
+      const closed = insertBeforeFarewell(
+        ensureRecapFarewell({
+          html: soapTextToEditorHtml(body),
+          text: soapHtmlToPlainText(body),
+        }),
+        storeMedsToSend
+      );
       const sigHtml = fromAddress
         ? signatureHtmlForFromAlias(sendAsOptions, fromAddress).trim()
         : '';
@@ -527,21 +573,45 @@ export default function VisitWrapUpPage() {
           : closed.text,
         bodyHtml: sigHtml ? `${closed.html}<br><br>${sigHtml}` : closed.html,
       });
-      const updated = await recordClientEmailDecision(encounterId, {
-        status: 'sent',
+      const decision = {
+        status: 'sent' as const,
         patientIds: selectedPets.map((p) => p.patientId),
         recipients: to,
         subject,
-        body,
+        // The chart's copy of the recap includes the block the client received.
+        body: storeMedsToSend ? `${body}\n\n${storeMedsToSend.text}` : body,
         fromAddress: bareAddress(fromAddress),
         mailbox,
         gmailMessageId: sent.id,
         gmailThreadId: sent.threadId,
-      });
-      setWrapUp(updated);
-      setRedoingEmail(false);
+        ...(storeMedsToSend ? { storeMedRxIds: storeMedsToSend.rxIds } : {}),
+      };
+      try {
+        const updated = await recordClientEmailDecision(encounterId, decision);
+        setWrapUp(updated);
+        setRedoingEmail(false);
+      } catch {
+        setSentNotRecorded(decision);
+        setEmailError(SENT_NOT_RECORDED);
+      }
     } catch (e) {
       setEmailError(e instanceof Error ? e.message : 'Could not send the recap.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const onRetryRecord = async () => {
+    if (!encounterId || !sentNotRecorded || sending) return;
+    setSending(true);
+    try {
+      const updated = await recordClientEmailDecision(encounterId, sentNotRecorded);
+      setWrapUp(updated);
+      setRedoingEmail(false);
+      setSentNotRecorded(null);
+      setEmailError(null);
+    } catch {
+      setEmailError(SENT_NOT_RECORDED);
     } finally {
       setSending(false);
     }
@@ -559,6 +629,7 @@ export default function VisitWrapUpPage() {
       const updated = await recordClientEmailDecision(encounterId, {
         status: 'skipped',
         skipReason: skipReason.trim(),
+        ...(storeMeds && !storeMedsWithoutRecap ? { storeMedsDeclinedRxIds: storeMeds.rxIds } : {}),
       });
       setWrapUp(updated);
       setShowSkip(false);
@@ -615,6 +686,7 @@ export default function VisitWrapUpPage() {
           readSoapChronicDraft(pet.soapEncounterId),
         );
         await completeEncounter(pet.soapEncounterId);
+        clearScribeDeviceCopy(pet.soapEncounterId);
       }
       await loadWrapUp(encounterId);
     } catch (e) {
@@ -1016,6 +1088,21 @@ export default function VisitWrapUpPage() {
                 </label>
               )}
 
+              {draftStale && !regenerating ? (
+                <div className="soap-error" role="alert" data-testid="recap-stale-banner" data-cy="recap-stale-banner">
+                  <strong>Charts changed after this recap was written.</strong> Doses, sigs or chart text
+                  may no longer match what is below. Your text is kept until you choose to rewrite it.{' '}
+                  <button
+                    type="button"
+                    className="soap-btn"
+                    data-testid="recap-stale-regenerate" data-cy="recap-stale-regenerate"
+                    onClick={() => void onRegenerate()}
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              ) : null}
+
               <label className="soap-wrapup-field">
                 Subject
                 <input
@@ -1047,6 +1134,29 @@ export default function VisitWrapUpPage() {
                     }}
                   />
                 ) : null}
+                {storeMeds ? (
+                  <div className="soap-wrapup-store-meds" data-cy="recap-store-meds">
+                    <label className="soap-wrapup-store-meds-toggle">
+                      <input
+                        type="checkbox"
+                        checked={includeStoreMeds}
+                        onChange={(e) => setIncludeStoreMeds(e.target.checked)}
+                        data-cy="recap-store-meds-toggle"
+                      />{' '}
+                      Include how to order the new chronic medications from our online store (goes above your closing)
+                    </label>
+                    {includeStoreMeds ? (
+                      <div
+                        className="soap-wrapup-store-meds-preview"
+                        dangerouslySetInnerHTML={{ __html: sanitizeCommunicationHtml(storeMeds.html) }}
+                      />
+                    ) : (
+                      <p className="soap-hint">
+                        Left out: the client gets these in a separate email 30 minutes after you send.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </div>
 
               {regenerating && (
@@ -1060,10 +1170,22 @@ export default function VisitWrapUpPage() {
                   type="button"
                   className="soap-btn primary"
                   onClick={() => void onSend()}
-                  disabled={sending || regenerating || !subject.trim() || !body.trim()}
+                  disabled={
+                    sending || regenerating || !!sentNotRecorded || !subject.trim() || !body.trim()
+                  }
                 >
                   <Send size={14} /> {sending ? 'Sending…' : 'Send to client'}
                 </button>
+                {sentNotRecorded ? (
+                  <button
+                    type="button"
+                    className="soap-btn subtle"
+                    onClick={() => void onRetryRecord()}
+                    disabled={sending}
+                  >
+                    Try recording it again
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="soap-btn subtle"
@@ -1107,6 +1229,22 @@ export default function VisitWrapUpPage() {
                       onChange={(e) => setSkipReason(e.target.value)}
                     />
                   </label>
+                  {storeMeds ? (
+                    <div className="soap-wrapup-store-meds" data-cy="skip-store-meds">
+                      <label className="soap-wrapup-store-meds-toggle">
+                        <input
+                          type="checkbox"
+                          checked={storeMedsWithoutRecap}
+                          onChange={(e) => setStoreMedsWithoutRecap(e.target.checked)}
+                          data-cy="skip-store-meds-toggle"
+                        />{' '}
+                        Still email the client how to order the new chronic medications from our online store
+                      </label>
+                      <p className="soap-hint">
+                        Goes out on its own 30 minutes from now. Untick if the client shouldn&apos;t get it.
+                      </p>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className="soap-btn"

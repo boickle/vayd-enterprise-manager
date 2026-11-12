@@ -34,6 +34,7 @@ export const SETTINGS_TAB_IDS = [
   'cl-seat-assignment',
   'gmail-mailboxes',
   'chat-hours',
+  'call-dock',
   'reminders',
   'payment-types',
   'client-statuses',
@@ -98,6 +99,8 @@ export const SETTINGS_TAB_PERMISSIONS: Record<SettingsTabId, readonly TabRequire
   // Communication
   'gmail-mailboxes': [],
   'chat-hours': [{ key: 'message_template.manage' }],
+  // Go-live call-dock start date: admin and superadmin only (API key calls.* has no staff rule).
+  'call-dock': [],
   reminders: [{ key: 'message_template.manage' }],
   'message-templates': [{ key: 'message_template.manage' }],
   forms: [],

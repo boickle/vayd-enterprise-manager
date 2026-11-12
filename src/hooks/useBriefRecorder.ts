@@ -5,6 +5,7 @@ import {
   type ScribeSocketStatus,
 } from '../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../utils/scribeAudioCapture';
+import { redactPaymentDetails } from '../utils/paymentRedaction';
 import { requestKeepAwake, type KeepAwakeHandle } from '../utils/keepAwake';
 
 export type BriefRecorderStatus = ScribeSocketStatus | 'listening';
@@ -210,9 +211,12 @@ export function useBriefRecorder(
         else interimChunk += text;
       }
       if (finalChunk.trim()) {
-        setTranscript((prev) => `${prev} ${finalChunk}`.trim());
+        // Card numbers read aloud never reach the transcript, the draft or the server.
+        setTranscript((prev) =>
+          `${prev} ${redactPaymentDetails(finalChunk, prev)}`.trim(),
+        );
       }
-      setInterim(interimChunk);
+      setInterim(redactPaymentDetails(interimChunk, transcriptRef.current));
     };
     rec.onerror = (ev) => {
       if (ev.error === 'no-speech' || ev.error === 'aborted') return;

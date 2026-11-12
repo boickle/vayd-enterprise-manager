@@ -99,7 +99,9 @@ import {
   type NormalizedInvoice,
 } from '../../utils/pimsInvoices';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
-import { appAlert, appConfirm } from '../../utils/appDialog';
+import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
+import { setClientDepositRequired } from '../../api/appointmentDeposits';
+import { apiErrorMessage } from '../../api/http';
 import DeathWrapUpModal from '../soap/DeathWrapUpModal';
 import {
   previewDeathWrapUpForPatients,
@@ -1350,6 +1352,8 @@ export default function PimsClientDetailView({
   const mayResetPortal = useMayShow('portal_access.send');
   const mayDeactivate = useMayShow('client.deactivate');
   const mayEditAlerts = useMayShow('client.alert.edit');
+  const mayFlagDeposit = useMayShow('client.deposit_required');
+  const [depositBusy, setDepositBusy] = useState(false);
   const mayEditConnectionNotes = useMayShow('client.staff_note.edit');
   // B7: pencils, household defaults and contact preferences only for staff who can save.
   const mayEditRecord = useMayEditClientRecords();
@@ -1658,6 +1662,39 @@ export default function PimsClientDetailView({
   const alerts = pickStr(record.alerts);
   const connectionNotes = pickStr(record.connectionNotes);
   const alertsBy = pickStr(record.alertsUpdatedByName);
+  const depositRequired = record.depositRequired === true;
+  const depositNote = pickStr(record.depositRequiredNote);
+  const depositBy = pickStr(record.depositRequiredByName);
+  const setDepositFlag = async (required: boolean) => {
+    const recordId = Number(record.id);
+    if (!Number.isFinite(recordId)) return;
+    let note: string | null = null;
+    if (required) {
+      note = await appPrompt({
+        title: 'Deposit required',
+        message: 'CLs will see this when booking and collect a deposit for each visit. Why? (optional)',
+        placeholder: 'Two unpaid visits, returned check, …',
+        confirmLabel: 'Mark deposit required',
+      });
+      if (note === null) return;
+    } else {
+      const ok = await appConfirm({
+        title: 'Clear "Deposit required"?',
+        message: 'CLs will no longer be reminded to collect a deposit for this client.',
+        confirmLabel: 'Clear',
+      });
+      if (!ok) return;
+    }
+    setDepositBusy(true);
+    try {
+      const saved = await setClientDepositRequired(recordId, required, note);
+      setPayload((prev) => (prev ? { ...prev, ...saved } : prev));
+    } catch (e) {
+      void appAlert(apiErrorMessage(e));
+    } finally {
+      setDepositBusy(false);
+    }
+  };
   const connectionNotesBy = pickStr(record.connectionNotesUpdatedByName);
   const emailRows = contactEmailRows(record);
   const phoneRows = contactPhoneRows(record);
@@ -2101,6 +2138,35 @@ export default function PimsClientDetailView({
                 onClick={() => toggleHeaderEdit('alerts')}
               >
                 + Add client alerts
+              </button>
+            ) : null}
+            {depositRequired ? (
+              <div className="pims-emr-alert-box" role="alert" data-testid="client-deposit-required">
+                <div className="pims-emr-alert-box__head">
+                  <span className="pims-emr-alert-box__label">Deposit required</span>
+                  {mayFlagDeposit ? (
+                    <button
+                      type="button"
+                      className="pims-emr-alert-add"
+                      disabled={depositBusy}
+                      onClick={() => void setDepositFlag(false)}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                Collect a deposit before each visit (right-click the appointment → Client → Appointment
+                Deposit).{depositNote ? ` ${depositNote}` : ''}
+                {depositBy ? <span className="pims-emr-alert-box__by"> — {depositBy}</span> : null}
+              </div>
+            ) : mayFlagDeposit ? (
+              <button
+                type="button"
+                className="pims-emr-alert-add"
+                disabled={depositBusy}
+                onClick={() => void setDepositFlag(true)}
+              >
+                + Mark deposit required
               </button>
             ) : null}
             {connectionNotes ? (

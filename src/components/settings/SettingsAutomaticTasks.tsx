@@ -134,6 +134,18 @@ const BUILTIN_TASKS: { name: string; when: string; who: string }[] = [
   },
 ];
 
+function formatEastern(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
 export default function SettingsAutomaticTasks({ practiceId, readOnly = false, onMessage }: Props) {
   const [rules, setRules] = useState<TaskAutomationRule[]>([]);
   const [placeholders, setPlaceholders] = useState<
@@ -278,7 +290,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                   {rule.timingMode === 'weekly'
                     ? `Every ${WEEKDAYS[rule.weeklyDay] ?? 'week'} at ${hourLabel(rule.endOfDayHour)} (Eastern).`
                     : rule.timingMode === 'end_of_day'
-                      ? `Checked at ${hourLabel(rule.endOfDayHour)}.`
+                      ? `Checked at ${hourLabel(rule.endOfDayHour)} ET.`
                       : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
                   {rule.assigneeMode === 'owner'
                     ? `Goes to ${ASSIGNEE_OWNER_LABELS[rule.trigger].toLowerCase()}.`
@@ -303,6 +315,13 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
               </button>
               )}
             </header>
+
+            {rule.lastError ? (
+              <p className="auto-tasks__warning" role="alert">
+                <strong>Last run hit a problem</strong>
+                {rule.lastErrorAt ? ` (${formatEastern(rule.lastErrorAt)})` : ''}: {rule.lastError}
+              </p>
+            ) : null}
 
             {readOnly && rule.bodyTemplate ? (
               <p className="auto-tasks__builtin-copy">{rule.bodyTemplate}</p>
@@ -387,7 +406,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     </label>
                   ) : (
                     <label className="auto-tasks__field">
-                      <span>End of day is</span>
+                      <span>End of day is (ET)</span>
                       <select
                         value={rule.endOfDayHour}
                         onChange={(e) =>
@@ -471,13 +490,17 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     <span>Queue it sits on when nobody is found</span>
                     <select
                       value={rule.queueRoleId ?? ''}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        // Queue mode needs a queue; the API refuses to save without one.
+                        if (!e.target.value && rule.assigneeMode === 'queue') return;
                         void save(rule, {
                           queueRoleId: e.target.value ? Number(e.target.value) : null,
-                        })
-                      }
+                        });
+                      }}
                     >
-                      <option value="">No queue</option>
+                      <option value="" disabled={rule.assigneeMode === 'queue'}>
+                        No queue
+                      </option>
                       {roles.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}

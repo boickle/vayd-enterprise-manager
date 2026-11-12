@@ -301,6 +301,10 @@ export type VisitInvoice = {
   total: number;
   amountPaid: number;
   isEuthanasiaPrepay: boolean;
+  /** Appointment deposit bill (Nov 12, 2026): the appointment it holds a deposit for. */
+  depositForAppointmentId?: number | null;
+  /** The deposit asked for. */
+  depositAmount?: number | string | null;
   stripeCustomerId: string | null;
   stripeSetupIntentId: string | null;
   savedPaymentMethodId: string | null;
@@ -452,6 +456,8 @@ export type HouseholdRosterEntry = {
   appointmentId: number;
   soapEncounterId: string;
   isCurrent: boolean;
+  /** 'completed' = signed and locked; the scribe cannot write into it. */
+  status?: SoapEncounterStatus;
 };
 
 /**
