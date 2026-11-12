@@ -490,13 +490,17 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     <span>Queue it sits on when nobody is found</span>
                     <select
                       value={rule.queueRoleId ?? ''}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        // Queue mode needs a queue; the API refuses to save without one.
+                        if (!e.target.value && rule.assigneeMode === 'queue') return;
                         void save(rule, {
                           queueRoleId: e.target.value ? Number(e.target.value) : null,
-                        })
-                      }
+                        });
+                      }}
                     >
-                      <option value="">No queue</option>
+                      <option value="" disabled={rule.assigneeMode === 'queue'}>
+                        No queue
+                      </option>
                       {roles.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
