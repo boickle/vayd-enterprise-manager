@@ -254,7 +254,8 @@ export default function RecordReviewWorkspace({
       .filter((r) => !declined.some((d) => sameThing(r.item, d.item)))
       .map((r) => ({
         key: newKey('rem'),
-        include: Boolean(r.dueDate),
+        // SCR-A9: an AI-found "Overdue" date may be a misread; staff tick it after checking.
+        include: Boolean(r.dueDate) && dueStatus(r.dueDate, r.status).tone !== 'overdue',
         item: r.item,
         dueDate: r.dueDate,
         lastDone: r.lastDone,
@@ -701,6 +702,12 @@ export default function RecordReviewWorkspace({
                                   ? ` (due ${isoToYmd(row.existing.dueDate)})`
                                   : ''}
                                 . Check it only if this is a different reminder.
+                              </p>
+                            ) : null}
+                            {!row.entered && row.dueDate && status.tone === 'overdue' ? (
+                              <p className="rrw__warn">
+                                Overdue: check the date against the document before you enter this
+                                one.
                               </p>
                             ) : null}
                             {row.include && !row.entered && !row.dueDate ? (
