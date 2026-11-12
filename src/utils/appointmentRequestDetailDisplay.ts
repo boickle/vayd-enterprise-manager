@@ -1,6 +1,7 @@
 /** Structured readout of persisted appointment request payloads for staff review. */
 
 import { DateTime } from 'luxon';
+import { formatHouseholdPetsSummary } from './appointmentRequestHouseholdPets';
 import {
   formatRequestDataAddress,
   enrichDateTimePreferenceDisplay,
@@ -600,6 +601,8 @@ export function buildAppointmentRequestDetailSections(
   }
 
   const other: AppointmentRequestDetailRow[] = [];
+  const householdPets = formatHouseholdPetsSummary(requestData.householdPets);
+  if (householdPets) other.push(asRow('Other pets at home (no visit)', householdPets, 'note'));
   const anythingElse = requestDataAnythingElse(requestData);
   if (anythingElse) other.push(asRow('Client note', anythingElse, 'note'));
   const visitDetails = pickStr(requestData.visitDetails);
