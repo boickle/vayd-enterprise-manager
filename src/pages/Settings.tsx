@@ -11,6 +11,7 @@ import {
   fetchAllZones,
   fetchEmployee,
   updateEmployeeAppointmentTypes,
+  updateEmployeePrimaryZone,
   updateEmployeeScheduleZones,
   updateWeeklySchedule,
   uploadEmployeeImage,
@@ -437,6 +438,7 @@ export default function Settings() {
   const [selectedEmployeeForZones, setSelectedEmployeeForZones] = useState<Employee | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<EmployeeWeeklySchedule | null>(null);
   const [zoneUpdates, setZoneUpdates] = useState<EmployeeZoneEditorRow[]>([]);
+  const [savingPrimaryZone, setSavingPrimaryZone] = useState(false);
 
   // Employee Schedule state
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
@@ -533,6 +535,50 @@ export default function Settings() {
     allowedTabs.has('appointment-types') ||
     allowedTabs.has('roles') ||
     allowedTabs.has('employee-directory');
+
+  // Primary zone choices: zones the selected employee is assigned on any day.
+  const primaryZoneOptions = useMemo(() => {
+    if (!selectedEmployeeForZones) return [];
+    const assignedIds = new Set<number>();
+    for (const schedule of selectedEmployeeForZones.weeklySchedules ?? []) {
+      for (const z of schedule.zones ?? []) {
+        const id = Number(z.zoneId ?? z.zone?.id);
+        if (Number.isFinite(id) && id > 0) assignedIds.add(id);
+      }
+    }
+    return allZones
+      .filter((z) => assignedIds.has(z.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedEmployeeForZones, allZones]);
+
+  // A saved primary zone the employee is no longer assigned to, so it can still show.
+  const unassignedPrimaryZoneName = useMemo(() => {
+    const id = selectedEmployeeForZones?.primaryZoneId;
+    if (id == null || primaryZoneOptions.some((z) => z.id === id)) return null;
+    return allZones.find((z) => z.id === id)?.name ?? 'Unknown zone';
+  }, [selectedEmployeeForZones, primaryZoneOptions, allZones]);
+
+  const handleSetPrimaryZone = async (zoneId: number | null) => {
+    if (!selectedEmployeeForZones) return;
+    const employeeId = selectedEmployeeForZones.id;
+    setSavingPrimaryZone(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await updateEmployeePrimaryZone(employeeId, zoneId);
+      const primaryZoneId = updated?.primaryZoneId ?? zoneId;
+      setSelectedEmployeeForZones((prev) =>
+        prev && prev.id === employeeId ? { ...prev, primaryZoneId } : prev
+      );
+      setSuccess(zoneId == null ? 'Primary zone cleared' : 'Primary zone saved');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to save primary zone');
+    } finally {
+      setSavingPrimaryZone(false);
+    }
+  };
+
   useEffect(() => {
     if (!needsCoreData) return;
     loadData();
@@ -1730,6 +1776,45 @@ export default function Settings() {
 
             {selectedEmployeeForZones && (
               <>
+                <div className="settings-form-group">
+                  <label className="settings-label" htmlFor="employee-primary-zone">
+                    Primary Zone
+                  </label>
+                  <select
+                    id="employee-primary-zone"
+                    className="settings-select"
+                    value={selectedEmployeeForZones.primaryZoneId ?? ''}
+                    disabled={
+                      savingPrimaryZone ||
+                      (primaryZoneOptions.length === 0 &&
+                        selectedEmployeeForZones.primaryZoneId == null)
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void handleSetPrimaryZone(v === '' ? null : Number(v));
+                    }}
+                  >
+                    <option value="">-- No primary zone --</option>
+                    {primaryZoneOptions.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.name}
+                      </option>
+                    ))}
+                    {unassignedPrimaryZoneName != null && (
+                      <option value={selectedEmployeeForZones.primaryZoneId ?? ''}>
+                        {unassignedPrimaryZoneName} (not assigned)
+                      </option>
+                    )}
+                  </select>
+                  <p className="settings-muted" style={{ marginTop: '6px' }}>
+                    {primaryZoneOptions.length === 0
+                      ? 'Assign this employee to a zone below first. '
+                      : ''}
+                    Shown as Primary on the Work Zones Map; their other zones show as Backup. Saves
+                    as soon as you pick one.
+                  </p>
+                </div>
+
                 {selectedEmployeeForZones.weeklySchedules && selectedEmployeeForZones.weeklySchedules.length > 0 && (
                   <div className="settings-form-group">
                     <label className="settings-label">Select Schedule</label>
