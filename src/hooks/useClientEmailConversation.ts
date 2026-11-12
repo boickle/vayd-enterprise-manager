@@ -25,12 +25,23 @@ const THREADS_PER_MAILBOX = 4;
 
 export function useClientEmailConversation(opts: {
   clientEmail: string | null;
+  /** The client's second email: searched too, same shared mailboxes. */
+  secondEmail?: string | null;
   enabled?: boolean;
   /** Opens the Email client window with what was typed. */
   openWindow: (draft: string) => void;
 }): (ConversationEmail & { reload: () => void }) | null {
-  const email = opts.clientEmail?.trim() || null;
-  const usable = opts.enabled !== false && isEffectiveClientEmail(email);
+  // Primary first, then the second email; unusable and duplicate addresses dropped.
+  const addresses: string[] = [];
+  for (const a of [opts.clientEmail, opts.secondEmail]) {
+    const t = a?.trim();
+    if (t && isEffectiveClientEmail(t) && !addresses.some((x) => x.toLowerCase() === t.toLowerCase())) {
+      addresses.push(t);
+    }
+  }
+  const addressKey = addresses.join('|').toLowerCase();
+  const email = addresses[0] ?? null;
+  const usable = opts.enabled !== false && addresses.length > 0;
   const [messages, setMessages] = useState<GmailThreadMessage[]>([]);
   const [loading, setLoading] = useState(usable);
   const [error, setError] = useState<string | null>(null);
@@ -44,9 +55,9 @@ export function useClientEmailConversation(opts: {
       setError(null);
       try {
         const mailboxes = sharedConnectedMailboxes((await fetchGmailMailboxes()).mailboxes);
-        const q = buildGmailClientCorrespondenceQuery(email);
         const perMailbox = await Promise.all(
-          mailboxes.map(async (mb) => {
+          mailboxes.flatMap((mb) => addresses.map((address) => ({ mb, address }))).map(async ({ mb, address }) => {
+            const q = buildGmailClientCorrespondenceQuery(address);
             const res = await fetchGmailMessages(mb.email, { q, maxResults: 10 });
             const threads = mergeGmailMessagesByDate(res.threads ?? [], res.untaggedQueue ?? []).slice(
               0,
@@ -79,7 +90,8 @@ export function useClientEmailConversation(opts: {
     return () => {
       cancelled = true;
     };
-  }, [usable, email, reloadKey]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usable, addressKey, reloadKey]);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
   const { openWindow } = opts;

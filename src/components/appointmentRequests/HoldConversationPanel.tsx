@@ -29,6 +29,7 @@ export function HoldConversationPanel({ hold, canText, practiceTz, onChanged, ac
   );
   const email = useClientEmailConversation({
     clientEmail: hold.client?.id != null ? hold.client.email : null,
+    secondEmail: hold.client?.id != null ? (hold.client.secondEmail ?? null) : null,
     openWindow: setWindowDraft,
   });
   const clientLabel = hold.client
