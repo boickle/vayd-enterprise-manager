@@ -135,6 +135,8 @@ export default function VisitWrapUpPage() {
   /** Start of the visit day — declines before it are from an earlier visit. */
   const [visitDayStart, setVisitDayStart] = useState<number | null>(null);
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
+  /** SCR-02: the saved recap was written before the charts last changed. Cleared by Regenerate. */
+  const [draftStale, setDraftStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -184,6 +186,7 @@ export default function VisitWrapUpPage() {
   const loadWrapUp = useCallback(async (id: string) => {
     const data = await getVisitWrapUp(id);
     setWrapUp(data);
+    setDraftStale(data.emailDraftStale === true);
     return data;
   }, []);
 
@@ -475,7 +478,8 @@ export default function VisitWrapUpPage() {
       const draft = await generateClientRecap(encounterId, petIds);
       setSubject(draft.subject);
       setBody(draft.body);
-      await persistClientRecapDraft(encounterId, draft);
+      await persistClientRecapDraft(encounterId, draft, { fromCharts: true });
+      setDraftStale(false);
     } catch (e) {
       setEmailError(
         e instanceof Error ? e.message : 'Could not rewrite the recap from the charts.'
@@ -1015,6 +1019,21 @@ export default function VisitWrapUpPage() {
                   </span>
                 </label>
               )}
+
+              {draftStale && !regenerating ? (
+                <div className="soap-error" role="alert" data-testid="recap-stale-banner" data-cy="recap-stale-banner">
+                  <strong>Charts changed after this recap was written.</strong> Doses, sigs or chart text
+                  may no longer match what is below. Your text is kept until you choose to rewrite it.{' '}
+                  <button
+                    type="button"
+                    className="soap-btn"
+                    data-testid="recap-stale-regenerate" data-cy="recap-stale-regenerate"
+                    onClick={() => void onRegenerate()}
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              ) : null}
 
               <label className="soap-wrapup-field">
                 Subject
