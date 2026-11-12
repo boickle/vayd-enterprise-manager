@@ -67,6 +67,7 @@ import {
 import { DepotLocationField } from '../components/DepotLocationField';
 import SettingsEmployeeSchedulePanel from '../components/settings/SettingsEmployeeSchedulePanel';
 import './Settings.css';
+import SettingsCallDock from '../components/settings/SettingsCallDock';
 import SettingsEmployeeDirectory, {
   type EmployeeHubSection,
 } from '../components/settings/SettingsEmployeeDirectory';
@@ -163,6 +164,7 @@ const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
 const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'gmail-mailboxes', label: 'Gmail Mailboxes' },
   { id: 'chat-hours', label: 'Live Chat Hours' },
+  { id: 'call-dock', label: 'Calls' },
   { id: 'reminders', label: 'Reminders' },
   { id: 'message-templates', label: 'Email & Text Templates' },
   { id: 'forms', label: 'Forms' },
@@ -403,6 +405,16 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const onCallDockMessage = useCallback((msg: string, kind: 'success' | 'error') => {
+    if (kind === 'success') {
+      setSuccess(msg);
+      setError(null);
+      window.setTimeout(() => setSuccess(null), 4000);
+    } else {
+      setError(msg);
+      setSuccess(null);
+    }
+  }, []);
 
   // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
@@ -3178,6 +3190,19 @@ export default function Settings() {
                   setSuccess(null);
                 }
               }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'call-dock' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Calls</h2>
+            <p className="settings-section-description">
+              Where Quo calls start appearing in staff call docks.
+            </p>
+            <SettingsCallDock
+              practiceId={REMINDERS_PRACTICE_ID}
+              onMessage={onCallDockMessage}
             />
           </div>
         )}

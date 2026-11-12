@@ -152,6 +152,7 @@ const ALL_MENUS: Record<string, string[]> = {
   Communication: [
     'Gmail Mailboxes',
     'Live Chat Hours',
+    'Calls',
     'Reminders',
     'Email & Text Templates',
     'Forms',
@@ -225,6 +226,8 @@ describe('RP-A1-2: Settings as a practice manager with an employee login', () =>
     const communication = menuItems('Communication');
     expect(communication).not.toContain('Gmail Mailboxes');
     expect(communication).not.toContain('Forms');
+    // Go-live call-dock start date (Nov 11, 2026): admin logins only.
+    expect(communication).not.toContain('Calls');
     expect(communication).toEqual(
       expect.arrayContaining(['Live Chat Hours', 'Reminders', 'Email & Text Templates'])
     );
