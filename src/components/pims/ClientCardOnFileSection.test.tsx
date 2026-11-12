@@ -40,6 +40,7 @@ vi.mock('./ClientCardSetupEntry', async () => {
 });
 
 import ClientCardOnFileSection from './ClientCardOnFileSection';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const withCard = {
   card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030, expired: false },
@@ -74,6 +75,14 @@ describe('Card on file section', () => {
     expect(screen.getByText(/Owner agreed .*Tap to Pay at a visit, agreement 2026-10-07/)).toBeTruthy();
   });
 
+  it('PAY-C5-1: an expired card is shown as "Expired, ending 4242", not as a card to use', async () => {
+    getClientCardOnFile.mockResolvedValue({ ...withCard, card: { ...withCard.card, expired: true } });
+    render(ui());
+    expect(await screen.findByText('Expired, ending 4242')).toBeTruthy();
+    expect(screen.queryByText(/expires 12\/30/)).toBeNull();
+    expect(screen.queryByText('No card on file')).toBeNull();
+  });
+
   it('says "No card on file" when there is none', async () => {
     getClientCardOnFile.mockResolvedValue(noCard);
     render(ui());
@@ -101,6 +110,15 @@ describe('Card on file section', () => {
     await waitFor(() => expect(saveClientCardOnFile).toHaveBeenCalledWith(5, { setupIntentId: 'seti_confirmed', consent: true }));
     expect(startClientCardReplacement).toHaveBeenCalledWith(5);
     expect(await screen.findByText(/Visa ending 1111/)).toBeTruthy();
+  });
+
+  it('PAY-C3-1: Replace card shows the practice-wide staff wording', async () => {
+    granted.add('card_on_file.manage');
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace card' }));
+    const text = document.querySelector('.client-card__consent')?.textContent ?? '';
+    expect(text).toContain(CARD_ON_FILE_STAFF_WORDING);
+    expect(text).toMatch(/visits, refills, memberships and online store orders/);
   });
 
   it('Remove card asks for a reason first, then removes', async () => {

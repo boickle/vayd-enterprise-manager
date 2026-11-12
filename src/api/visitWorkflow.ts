@@ -1823,6 +1823,8 @@ export type InvoiceCardOnFile = {
   brand: string | null;
   expMonth: number | null;
   expYear: number | null;
+  /** PAY-C5: the card has expired. It is shown, never charged. */
+  expired?: boolean;
 };
 
 export type InvoiceCardOnFileLookup = {

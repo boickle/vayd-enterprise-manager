@@ -5,6 +5,7 @@ import { loadStripePublishableKey } from '../../api/practicePublicConfig';
 import { isNetworkError, NOT_CHARGED_OFFLINE_MESSAGE } from '../../api/http';
 import { chargeKeyedCard, type VisitInvoice } from '../../api/visitWorkflow';
 import './VirtualTerminalModal.css';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 type Props = {
   invoiceId: string;
@@ -133,7 +134,7 @@ export default function VirtualTerminalModal({
             onChange={(e) => setSaveCard(e.target.checked)}
           />
           <span>
-            Owner agreed to keep this card on file
+            {CARD_ON_FILE_STAFF_WORDING}
             <span className="virtual-terminal__hint">
               {declinedBefore
                 ? 'They said no last time — only tick this if they have changed their mind.'
