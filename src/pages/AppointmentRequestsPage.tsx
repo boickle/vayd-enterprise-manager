@@ -172,7 +172,7 @@ import {
 import { searchPatients, extractPatientListFromSearchResponse } from '../api/patients';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
 import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
-import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
+import { notifyAppointmentRepliesChanged, useAppointmentReplyCounts } from '../hooks/useAppointmentReplyCounts';
 import {
   StatusPillMenu,
   type StatusMenuItem,
@@ -1384,6 +1384,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     return [...base].sort((a, b) => unreadFirst(b) - unreadFirst(a));
   }, [filteredByTab, liaisonFilter, myEmployeeId, openRowIds, readWhileOpen]);
 
+  // SCH-R10: unread client texts on holds that did not come from a request, shown on the Hold tab.
+  const holdReplyCounts = useAppointmentReplyCounts(true);
+
   /** Unread replies per tab, red (mine) and blue (others). */
   const tabReplyCounts = useMemo(() => {
     const counts = new Map<StatusFilter, { mine: number; others: number }>();
@@ -2452,8 +2455,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         >
           <span>Hold</span>
           <ReplyBadges
-            mine={tabReplyCounts.get('on_hold')?.mine ?? 0}
-            others={tabReplyCounts.get('on_hold')?.others ?? 0}
+            mine={(tabReplyCounts.get('on_hold')?.mine ?? 0) + holdReplyCounts.holdMine}
+            others={(tabReplyCounts.get('on_hold')?.others ?? 0) + holdReplyCounts.holdOthers}
           />
         </button>
         <button
