@@ -1,0 +1,119 @@
+/* Clean up old requests (one-time backlog review). */
+.cleanup-back {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+}
+
+.cleanup-intro {
+  max-width: 860px;
+  line-height: 1.5;
+}
+
+.cleanup-intro select {
+  font: inherit;
+  padding: 1px 4px;
+}
+
+.cleanup-error {
+  color: #b91c1c;
+}
+
+.cleanup-result {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 600;
+}
+
+.cleanup-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 0;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cleanup-bar > span {
+  margin-right: auto;
+  font-size: 0.9rem;
+}
+
+.cleanup-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 0.9rem;
+}
+
+.cleanup-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #e8ecf8;
+  font-weight: 600;
+  color: #334155;
+}
+
+.cleanup-table td {
+  padding: 10px 12px;
+  border-top: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.cleanup-row--off td {
+  opacity: 0.45;
+}
+
+.cleanup-pets {
+  color: #475569;
+  font-size: 0.85rem;
+}
+
+.cleanup-notes {
+  margin-top: 4px;
+  max-width: 420px;
+  color: #64748b;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
+.cleanup-choice {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  gap: 2px;
+}
+
+.cleanup-choice button {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.cleanup-choice button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cleanup-choice .cleanup-choice--on {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}

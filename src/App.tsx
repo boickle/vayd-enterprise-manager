@@ -35,6 +35,7 @@ import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
 import AppointmentSearchPage from './pages/AppointmentSearchPage';
+import AppointmentRequestCleanupPage from './pages/AppointmentRequestCleanupPage';
 import HoldsPage from './pages/HoldsPage';
 import {
   parseAppointmentRequestsHighlightFromSearch,
@@ -803,6 +804,7 @@ export default function App() {
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
                     <Route path="appointments/holds" element={<HoldsPage />} />
+                    <Route path="appointments/cleanup" element={<AppointmentRequestCleanupPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"

@@ -71,6 +71,7 @@ import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChron
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 import { useAuth } from '../auth/useAuth';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
+import { clearScribeDeviceCopy } from '../utils/scribeDeviceCopy';
 import SignAndLockButton from '../components/soap/SignOffGate';
 import { formatDeclinedDate } from '../api/declinedTreatments';
 
@@ -123,6 +124,8 @@ function petSummaryLine(pet: VisitWrapUpPet): string {
  * generates from the finished charts and saves that draft. Later visits keep the saved
  * draft (so SOAP edits never silently overwrite a long email); use Regenerate to rebuild.
  */
+const SENT_NOT_RECORDED = 'Sent, but not recorded — don’t send again.';
+
 export default function VisitWrapUpPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
@@ -135,6 +138,8 @@ export default function VisitWrapUpPage() {
   /** Start of the visit day — declines before it are from an earlier visit. */
   const [visitDayStart, setVisitDayStart] = useState<number | null>(null);
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
+  /** SCR-02: the saved recap was written before the charts last changed. Cleared by Regenerate. */
+  const [draftStale, setDraftStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,6 +162,10 @@ export default function VisitWrapUpPage() {
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
+  /** SCR-A13: the email went out but recording it failed. Send stays locked; only the record is retried. */
+  const [sentNotRecorded, setSentNotRecorded] = useState<Parameters<
+    typeof recordClientEmailDecision
+  >[1] | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [skipReason, setSkipReason] = useState('');
   const [showSkip, setShowSkip] = useState(false);
@@ -184,6 +193,7 @@ export default function VisitWrapUpPage() {
   const loadWrapUp = useCallback(async (id: string) => {
     const data = await getVisitWrapUp(id);
     setWrapUp(data);
+    setDraftStale(data.emailDraftStale === true);
     return data;
   }, []);
 
@@ -475,7 +485,8 @@ export default function VisitWrapUpPage() {
       const draft = await generateClientRecap(encounterId, petIds);
       setSubject(draft.subject);
       setBody(draft.body);
-      await persistClientRecapDraft(encounterId, draft);
+      await persistClientRecapDraft(encounterId, draft, { fromCharts: true });
+      setDraftStale(false);
     } catch (e) {
       setEmailError(
         e instanceof Error ? e.message : 'Could not rewrite the recap from the charts.'
@@ -486,7 +497,7 @@ export default function VisitWrapUpPage() {
   };
 
   const onSend = async () => {
-    if (!encounterId || sending) return;
+    if (!encounterId || sending || sentNotRecorded) return;
     const to = parseRecapRecipients(recipients);
     if (to.length === 0) {
       setEmailError('Add at least one recipient address. Separate multiple emails with commas.');
@@ -527,8 +538,8 @@ export default function VisitWrapUpPage() {
           : closed.text,
         bodyHtml: sigHtml ? `${closed.html}<br><br>${sigHtml}` : closed.html,
       });
-      const updated = await recordClientEmailDecision(encounterId, {
-        status: 'sent',
+      const decision = {
+        status: 'sent' as const,
         patientIds: selectedPets.map((p) => p.patientId),
         recipients: to,
         subject,
@@ -537,11 +548,33 @@ export default function VisitWrapUpPage() {
         mailbox,
         gmailMessageId: sent.id,
         gmailThreadId: sent.threadId,
-      });
-      setWrapUp(updated);
-      setRedoingEmail(false);
+      };
+      try {
+        const updated = await recordClientEmailDecision(encounterId, decision);
+        setWrapUp(updated);
+        setRedoingEmail(false);
+      } catch {
+        setSentNotRecorded(decision);
+        setEmailError(SENT_NOT_RECORDED);
+      }
     } catch (e) {
       setEmailError(e instanceof Error ? e.message : 'Could not send the recap.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const onRetryRecord = async () => {
+    if (!encounterId || !sentNotRecorded || sending) return;
+    setSending(true);
+    try {
+      const updated = await recordClientEmailDecision(encounterId, sentNotRecorded);
+      setWrapUp(updated);
+      setRedoingEmail(false);
+      setSentNotRecorded(null);
+      setEmailError(null);
+    } catch {
+      setEmailError(SENT_NOT_RECORDED);
     } finally {
       setSending(false);
     }
@@ -615,6 +648,7 @@ export default function VisitWrapUpPage() {
           readSoapChronicDraft(pet.soapEncounterId),
         );
         await completeEncounter(pet.soapEncounterId);
+        clearScribeDeviceCopy(pet.soapEncounterId);
       }
       await loadWrapUp(encounterId);
     } catch (e) {
@@ -1016,6 +1050,21 @@ export default function VisitWrapUpPage() {
                 </label>
               )}
 
+              {draftStale && !regenerating ? (
+                <div className="soap-error" role="alert" data-testid="recap-stale-banner" data-cy="recap-stale-banner">
+                  <strong>Charts changed after this recap was written.</strong> Doses, sigs or chart text
+                  may no longer match what is below. Your text is kept until you choose to rewrite it.{' '}
+                  <button
+                    type="button"
+                    className="soap-btn"
+                    data-testid="recap-stale-regenerate" data-cy="recap-stale-regenerate"
+                    onClick={() => void onRegenerate()}
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              ) : null}
+
               <label className="soap-wrapup-field">
                 Subject
                 <input
@@ -1060,10 +1109,22 @@ export default function VisitWrapUpPage() {
                   type="button"
                   className="soap-btn primary"
                   onClick={() => void onSend()}
-                  disabled={sending || regenerating || !subject.trim() || !body.trim()}
+                  disabled={
+                    sending || regenerating || !!sentNotRecorded || !subject.trim() || !body.trim()
+                  }
                 >
                   <Send size={14} /> {sending ? 'Sending…' : 'Send to client'}
                 </button>
+                {sentNotRecorded ? (
+                  <button
+                    type="button"
+                    className="soap-btn subtle"
+                    onClick={() => void onRetryRecord()}
+                    disabled={sending}
+                  >
+                    Try recording it again
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="soap-btn subtle"
