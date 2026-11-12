@@ -6,6 +6,8 @@ import { useCan, usePermissions } from '../permissions/PermissionContext';
 import { isInventoryOpsNavPath } from '../utils/catalogInventoryNav';
 import ReleasedStockLinksNotice from '../components/inventory/ReleasedStockLinksNotice';
 import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
+import { useMailNavCounts } from '../utils/useMailNavCounts';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
 type Props = { basePath?: string };
@@ -141,6 +143,8 @@ export default function InventoryLayout({
   const holdsOrderManage = useCan('inventory.po.manage');
   const location = useLocation();
   const attention = useInventoryAttention(canManage);
+  // Owner (Nov 11, 2026): client replies on held mail orders, and auto-ship payment problems.
+  const mailCounts = useMailNavCounts(currentPracticeId(), canMailQueue || canAutoships);
 
   const onPath = (segment: string) => location.pathname.includes(`/inventory/${segment}`);
   const moveOrderNav = [
@@ -294,6 +298,7 @@ export default function InventoryLayout({
                 className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
               >
                 Mail Order Queue
+                <AttentionBadge count={mailCounts.clientReplies} title="Clients who texted back on a held order" />
               </NavLink>
             ) : null}
             {canAutoships ? (
@@ -302,6 +307,7 @@ export default function InventoryLayout({
                 className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
               >
                 Auto-ships
+                <AttentionBadge count={mailCounts.autoshipPaymentProblems} title="Auto-ships with a payment problem" />
               </NavLink>
             ) : null}
             {canManage ? <InventoryNavGroup label="Manage" items={manageItems} /> : null}
