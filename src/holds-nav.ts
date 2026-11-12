@@ -1,6 +1,10 @@
 import type { HoldOwnerFilter } from './api/holds';
 
-export const HOLDS_PATH = '/schedule/holds';
+/** Holds board — now the Hold tab of Appointments. */
+export const HOLDS_PATH = '/schedule/appointments/holds';
+
+/** Old Holds board address; redirects to HOLDS_PATH (keeps ?owner / ?highlight). */
+export const LEGACY_HOLDS_PATH = '/schedule/holds';
 
 export const HOLDS_OWNER_PARAM = 'owner';
 

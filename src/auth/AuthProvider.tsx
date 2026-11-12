@@ -1,8 +1,11 @@
 // src/auth/useAuth.tsx
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
+import { leaveImpersonation, readImpersonation } from './impersonationSession';
 import { setLogoutHandler } from '../api/http';
 import { getCurrentUser } from '../api/users';
+import { practiceHandoffUrl, startPracticeSwitch } from '../api/practices';
+import { applyStaffUiPrefsFromServer, migrateStaffUiPrefsKeys } from '../utils/staffUiPrefs';
 import { trackLogin, trackLogout } from '../utils/analytics';
 import { collectAssignedDoctorIds } from '../utils/analyticsAccess';
 
@@ -16,11 +19,13 @@ export type LoginResult = {
     id?: number;
     email?: string;
     requiresPasswordReset?: boolean;
-    resetPasswordCode?: string | null;
     [k: string]: any;
   } | null;
   resetRequired: boolean;
+  /** One-time code for the reset screen; the API sends it (top level) only after a temporary-password sign-in. */
   resetCode?: string | null;
+  /** The browser is leaving for another practice's host to finish signing in. */
+  redirecting?: boolean;
 };
 
 type AuthContextType = {
@@ -44,6 +49,8 @@ type AuthContextType = {
   assignedDoctorIds: string[];
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
+  redeemHandoff: (code: string) => Promise<LoginResult>;
+  switchPractice: (practiceKey: string) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
 };
@@ -391,23 +398,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token: fakeAccessToken, // Keep for backward compatibility
         accessToken: fakeAccessToken,
         refreshToken: fakeRefreshToken,
-        user: { email: emailInput, requiresPasswordReset: false, resetPasswordCode: null },
+        user: { email: emailInput, requiresPasswordReset: false },
         resetRequired: false,
       };
     }
 
-    const { data } = await http.post('/auth/login', { email: emailInput, password });
+    let { data } = await http.post('/auth/login', { email: emailInput, password });
+    if (data?.handoff) {
+      const url = practiceHandoffUrl(data.handoff);
+      if (url) {
+        window.location.assign(url);
+        return { resetRequired: false, redirecting: true };
+      }
+      ({ data } = await http.post('/auth/handoff', { code: data.handoff.code }));
+    }
+    return applySession(data, emailInput);
+  }
 
+  /** Redeems a code from login or the practice switcher and stores the session it returns. */
+  async function redeemHandoff(code: string): Promise<LoginResult> {
+    const { data } = await http.post('/auth/handoff', { code });
+    return applySession(data, data?.user?.email ?? '');
+  }
+
+  async function switchPractice(practiceKey: string): Promise<void> {
+    const handoff = await startPracticeSwitch(practiceKey);
+    const url = practiceHandoffUrl(handoff);
+    if (url) {
+      window.location.assign(url);
+      return;
+    }
+    const oldRefreshToken = localStorage.getItem('refreshToken');
+    await redeemHandoff(handoff.code);
+    if (oldRefreshToken) {
+      http.post('/auth/logout', { refreshToken: oldRefreshToken }).catch(() => undefined);
+    }
+    window.location.assign('/');
+  }
+
+  function applySession(data: any, emailInput: string): LoginResult {
     // New response format: { accessToken, refreshToken, user: { ... } }
     // Also support old format for migration: { token, user: { ... } }
     const accessToken: string | null = data?.accessToken ?? data?.token ?? null;
     const refreshToken: string | null = data?.refreshToken ?? null;
     const user = (data?.user ?? null) as LoginResult['user'];
-    const resetRequired = !!(user?.requiresPasswordReset || user?.resetPasswordCode);
-    const resetCode = user?.resetPasswordCode ?? null;
+    // PA-02: the user object carries no reset secrets; the code comes beside it.
+    const resetRequired = !!user?.requiresPasswordReset;
+    const resetCode: string | null = data?.resetCode ?? null;
+    // PA-02: a temporary-password sign-in must change the password first. Keep no session for it (the reset
+    // screen sends the email with the code), so the app can't open behind the reset screen, and end the
+    // session the API issued.
+    const mustResetFirst = resetRequired && !!resetCode;
+    if (mustResetFirst && refreshToken) {
+      http.post('/auth/logout', { refreshToken }).catch(() => undefined);
+    }
 
-    // Persist tokens/email if accessToken is present (even if reset is required)
-    if (accessToken) {
+    // Persist tokens/email if accessToken is present
+    if (accessToken && !mustResetFirst) {
       try {
         localStorage.setItem('accessToken', accessToken);
         if (refreshToken) {
@@ -509,6 +556,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setClientInfo(null);
     }
 
+    if (mustResetFirst) {
+      return { token: null, accessToken: null, refreshToken: null, user, resetRequired, resetCode };
+    }
     return { 
       token: accessToken, // Keep for backward compatibility
       accessToken, 
@@ -520,6 +570,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function logout() {
+    if (readImpersonation()) {
+      await http.post('/auth/impersonation/stop', {}).catch(() => undefined);
+      leaveImpersonation();
+      return;
+    }
     // Track logout before clearing state
     trackLogout();
     
@@ -555,6 +610,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function logoutAll() {
+    if (readImpersonation()) {
+      await http.post('/auth/impersonation/stop', {}).catch(() => undefined);
+      leaveImpersonation();
+      return;
+    }
     // Track logout before clearing state
     trackLogout();
     
@@ -621,6 +681,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const fromJwt = extractEmployeeIdFromToken(tokenState);
           if (fromJwt) setEmployeeId(fromJwt);
         }
+        if (data?.id != null) {
+          const idStr = String(data.id);
+          // Prefs are keyed by users.id; earlier toggles may have used the JWT claim.
+          migrateStaffUiPrefsKeys(userId, idStr);
+          applyStaffUiPrefsFromServer(idStr, data.uiPrefs);
+        }
         const collected = collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>);
         if (collected.length > 0) {
           setAssignedDoctorIds(collected);
@@ -658,6 +724,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       employeeId,
       assignedDoctorIds,
       login,
+      redeemHandoff,
+      switchPractice,
       logout,
       logoutAll,
     }),

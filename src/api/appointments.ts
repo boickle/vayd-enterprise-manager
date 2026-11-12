@@ -11,8 +11,32 @@ import {
   clientAddressFromRecord,
   compareVisitAddressToClientHome,
 } from '../utils/addressMatchCore';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type RangeAppointment = Appointment;
+
+/** A pet's most recent past visit, returned only when that visit needed pre-meds. */
+export type PremedsHistoryVisit = {
+  patientId: number;
+  /** 'chart': the pet is marked as needing pre-meds; 'visit': its last visit had them. */
+  source: 'chart' | 'visit';
+  premedsNote: string | null;
+  appointmentId: number | null;
+  appointmentStart: string | null;
+  appointmentTypeName: string | null;
+};
+
+export async function fetchPremedsHistory(
+  practiceId: number,
+  patientIds: Array<string | number>
+): Promise<PremedsHistoryVisit[]> {
+  const ids = [...new Set(patientIds.map((id) => String(id).trim()).filter((id) => /^\d+$/.test(id)))];
+  if (!ids.length) return [];
+  const { data } = await http.get<PremedsHistoryVisit[]>('/appointments/premeds-history', {
+    params: { practiceId, patientIds: ids.join(',') },
+  });
+  return Array.isArray(data) ? data : [];
+}
 
 /** Normalized confirm/status strings that mean “do not show on practice calendar” (PIMS + presets). */
 const PRACTICE_CALENDAR_CANCELLED_STATUSES = new Set([
@@ -116,6 +140,8 @@ export type CreateAppointmentPayload = {
   appointmentEnd: string;
   description?: string;
   instructions?: string;
+  /** Pet needs pre-meds — forces the practice pre-meds arrival window (default ±30). */
+  needsPremeds?: boolean;
   equipment?: string;
   medications?: string;
   treatmentId?: number;
@@ -320,12 +346,15 @@ export function isPracticeCalendarBlockAppointment(a: Appointment): boolean {
   return false;
 }
 
-/** Scheduler Remove: personal/flex blocks and no-location rows use confirm-only (no reason). */
+/** Scheduler Remove: personal/flex blocks, rows with no client and HOLD types use confirm-only (no reason). */
 export function appointmentRemoveRequiresCancellationReason(
   a: Appointment & Record<string, unknown>
 ): boolean {
   if (isPracticeCalendarBlockAppointment(a)) return false;
-  if (isAppointmentNoLocation(a)) return false;
+  // D1: a visit with a client always needs a reason, even without a location; only rows with no client don't.
+  if (!a.client) return false;
+  // D1: HOLD-type visits are cancelled without asking for a reason.
+  if (a.appointmentType?.isHold === true) return false;
   return true;
 }
 
@@ -407,11 +436,15 @@ export async function cancelAppointment(
   const appt = opts?.appt ?? null;
   const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
 
-  // Scout-created visits (manual book / add-pet): soft-delete on Remove so they leave the range
-  // query entirely. Cancel-only left hidden rows that piled up during testing.
-  if (isScoutCreatedAppointment(appt)) {
+  // SCH-03 / D1: a visit with a client is always cancelled (kept, with the reason). Only blocks and
+  // rows with no client may be deleted outright.
+  if (
+    isScoutCreatedAppointment(appt) &&
+    appt != null &&
+    (isPracticeCalendarBlockAppointment(appt) || !appt.client)
+  ) {
     await deleteAppointment(id);
-    return appointmentWithCancelledFields(appt ?? ({ id } as Appointment), trimmedReason ?? null);
+    return appointmentWithCancelledFields(appt, trimmedReason ?? null);
   }
 
   const basePayload: Record<string, unknown> = {
@@ -682,7 +715,7 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
   });
 }
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 /** UTC bounds for one local calendar day (same shape as scheduler range queries). */
 export function localDayUtcRange(
@@ -1320,4 +1353,30 @@ export async function fetchDoctorMonth(
     timezone: data?.timezone ?? days[0]?.timezone ?? 'America/New_York',
     days,
   };
+}
+
+/** One field that changed on an appointment, as History shows it. */
+export type AppointmentFieldChange = {
+  field: string;
+  label: string;
+  from: string | null;
+  to: string | null;
+};
+
+/** One History entry: who did what to an appointment, and when. */
+export type AppointmentChangeEntry = {
+  id: number;
+  action: 'created' | 'updated' | 'deleted';
+  changes: AppointmentFieldChange[];
+  note: string | null;
+  actorName: string | null;
+  createdAt: string;
+};
+
+/** GET /appointments/:id/changes — History, newest first. */
+export async function listAppointmentChanges(id: number | string): Promise<AppointmentChangeEntry[]> {
+  const { data } = await http.get<AppointmentChangeEntry[]>(
+    `/appointments/${encodeURIComponent(String(id))}/changes`
+  );
+  return data;
 }

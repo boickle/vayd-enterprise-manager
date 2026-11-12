@@ -1,0 +1,507 @@
+/* Configuration-driven sections of the client Room Loader.
+   Mobile first: single column with touch-sized targets, widening at 720px. */
+
+.rl-html {
+  color: #35443d;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.rl-html p {
+  margin: 0 0 0.6em;
+}
+.rl-html p:last-child {
+  margin-bottom: 0;
+}
+.rl-html ul,
+.rl-html ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.25em;
+}
+.rl-html img {
+  max-width: 100%;
+  height: auto;
+}
+.rl-html p,
+.rl-html div,
+.rl-html span,
+.rl-html li,
+.rl-caution .rl-html,
+.rl-caution .rl-html p,
+.rl-caution .rl-html div,
+.rl-caution .rl-html span {
+  background: transparent !important;
+  color: inherit !important;
+}
+
+.rl-required {
+  color: #b3261e;
+}
+
+/* ---------------------------------------------------------------- lab panels ---- */
+
+.rl-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.rl-panel {
+  border: 1px solid #dbe7e0;
+  border-radius: 12px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.rl-panel__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  line-height: 1.3;
+  color: #1f2e27;
+}
+
+.rl-panel__intro,
+.rl-panel__desc {
+  margin-bottom: 0.75rem;
+}
+
+.rl-panel__closing {
+  margin-top: 1rem;
+  margin-bottom: 0;
+}
+
+.rl-panel__prose {
+  display: flow-root;
+  margin-bottom: 0.75rem;
+}
+.rl-panel__prose .rl-panel__intro,
+.rl-panel__prose .rl-panel__desc {
+  margin-bottom: 0.5rem;
+}
+.rl-panel__prose .rl-panel__intro:last-child,
+.rl-panel__prose .rl-panel__desc:last-child {
+  margin-bottom: 0;
+}
+
+.rl-panel__figure {
+  margin: 0.75rem 0;
+}
+.rl-panel__figure img {
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #e4efe9;
+}
+.rl-panel__figure--side {
+  float: right;
+  width: 50%;
+  max-width: 260px;
+  margin: 0 0 0.65rem 1rem;
+}
+.rl-panel__figure--side img {
+  max-width: none;
+}
+.rl-panel__figure figcaption {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  color: #637a6e;
+}
+
+@media (max-width: 420px) {
+  .rl-panel__figure--side {
+    float: none;
+    width: 100%;
+    max-width: 260px;
+    margin: 0 auto 0.75rem;
+  }
+}
+
+.rl-labs__header {
+  margin-bottom: 1rem;
+}
+
+.rl-labs__title {
+  margin: 0 0 0.65rem;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  color: #1f2e27;
+}
+
+.rl-labs__intro {
+  margin-bottom: 0;
+}
+
+.rl-panel__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.rl-option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  border: 1px solid #dbe7e0;
+  border-radius: 10px;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.rl-option.is-selected {
+  border-color: #4b7c6a;
+  background: #f3f9f6;
+}
+.rl-option input {
+  width: 20px;
+  height: 20px;
+  margin-top: 0.1rem;
+  flex: none;
+  accent-color: #4b7c6a;
+}
+.rl-option__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rl-option__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.rl-option__name {
+  font-weight: 600;
+  color: #1f2e27;
+}
+.rl-option__price {
+  font-variant-numeric: tabular-nums;
+  color: #35443d;
+}
+.rl-price__was {
+  margin-right: 0.4em;
+  color: #8a9a91;
+  font-weight: 400;
+}
+.rl-price__covered {
+  color: #0a58ca;
+  font-weight: 600;
+}
+.rl-price__allotment {
+  display: block;
+  margin-top: 0.15rem;
+  color: #0a58ca;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.rl-option--decline .rl-option__name {
+  font-weight: 500;
+  color: #637a6e;
+}
+
+.rl-panel__replaces {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: #f3f9f6;
+  color: #35443d;
+  font-size: 0.88rem;
+}
+
+/* --------------------------------------------------------------- yes / no ---- */
+
+.rl-yesno,
+.rl-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.rl-yesno label,
+.rl-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  touch-action: manipulation;
+}
+.rl-yesno label.is-selected,
+.rl-choices label.is-selected {
+  border-color: #4b7c6a;
+  background: #f3f9f6;
+  font-weight: 600;
+}
+.rl-yesno input,
+.rl-choices input {
+  width: 18px;
+  height: 18px;
+  accent-color: #4b7c6a;
+}
+
+/* ---------------------------------------------------------------- sub-asks ---- */
+
+.rl-subasks {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px dashed #cfe0d7;
+}
+.rl-subasks__lead {
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+  color: #1f2e27;
+}
+.rl-subask + .rl-subask {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eef4f1;
+}
+.rl-subask__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.rl-subask__name {
+  font-weight: 600;
+  color: #1f2e27;
+}
+.rl-subask__price {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- cautions ---- */
+
+.rl-caution {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: #fff8e8;
+  border: 1px solid #f0dfb5;
+  font-size: 0.9rem;
+}
+.rl-caution__icon {
+  flex: none;
+  margin-top: 0.15rem;
+  color: #9a6b00;
+}
+.rl-caution__title {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #6f4e00;
+}
+
+/* --------------------------------------------------- sample collection ---- */
+
+.rl-sample {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  background: #eef5fb;
+  border: 1px solid #c9ddee;
+  font-size: 0.92rem;
+}
+.rl-sample__icon {
+  flex: none;
+  margin-top: 0.2rem;
+  color: #2b5f8c;
+}
+.rl-sample__body {
+  min-width: 0;
+}
+.rl-sample__title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  line-height: 1.3;
+  color: #1c3d59;
+}
+.rl-sample p:last-child {
+  margin-bottom: 0;
+}
+
+/* ------------------------------------------------------------------ offers ---- */
+
+.rl-offers {
+  margin-top: 1.25rem;
+}
+.rl-offers__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.02rem;
+  color: #1f2e27;
+}
+.rl-offers__lead {
+  margin: 0 0 0.75rem;
+  color: #637a6e;
+  font-size: 0.9rem;
+}
+.rl-offers__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.rl-offer {
+  border: 1px solid #dbe7e0;
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+.rl-offer__check {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.rl-offer__check input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  accent-color: #4b7c6a;
+}
+.rl-offer__name {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: #1f2e27;
+}
+.rl-offer__price {
+  font-variant-numeric: tabular-nums;
+}
+.rl-offer__desc {
+  margin-top: 0.35rem;
+  padding-left: 1.85rem;
+}
+
+/* ----------------------------------------------------------------- outdoor ---- */
+
+.rl-outdoor {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 12px;
+  background: #fff;
+}
+.rl-outdoor__title {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.35;
+  color: #1f2e27;
+}
+.rl-outdoor__pitch {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px dashed #cfe0d7;
+}
+
+/* ------------------------------------------------- estimate-line questions ---- */
+
+.rl-askq {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 12px;
+  background: #fff;
+}
+.rl-askq__title {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.35;
+  color: #1f2e27;
+}
+.rl-askq__error {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: #dc3545;
+}
+
+/* ------------------------------------------------------------ chronic meds ---- */
+
+.rl-meds {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 12px;
+  background: #fff;
+}
+.rl-meds__title {
+  margin: 0 0 0.4rem;
+  font-size: 1.02rem;
+  line-height: 1.35;
+  color: #1f2e27;
+}
+.rl-meds__intro {
+  margin-bottom: 0.75rem;
+}
+.rl-med + .rl-med {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #eef4f1;
+}
+.rl-med__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+.rl-med__name {
+  font-weight: 600;
+  color: #1f2e27;
+}
+.rl-med__badge {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: #eef4f1;
+  color: #4b7c6a;
+}
+.rl-med__sig {
+  margin: 0.2rem 0 0;
+  font-size: 0.88rem;
+  color: #637a6e;
+}
+
+.rl-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+  color: #35443d;
+}
+.rl-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #dbe7e0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 16px; /* keeps iOS from zooming the page on focus */
+  resize: vertical;
+}
+
+@media (min-width: 720px) {
+  .rl-panel,
+  .rl-outdoor,
+  .rl-meds {
+    padding: 1.25rem;
+  }
+  /*
+   * auto-fit, not a fixed 2 columns: an empty track collapses, so a pet with a single
+   * add-on gets one full-width card instead of a half-width one with dead space beside
+   * it. Two or more still sit side by side.
+   */
+  .rl-offers__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: 0.85rem;
+  }
+}

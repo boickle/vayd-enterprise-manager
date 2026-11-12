@@ -5,12 +5,14 @@ import { apiBaseUrl } from '../api/http';
 import {
   fetchPublicVeterinarians,
   fetchPublicMonthAvailability,
+  RoutingUnavailableError,
   fetchRoutingServiceMinutes,
   type PublicProvider,
   type MonthAvailabilityCandidate,
   type SelfScheduledSlot,
   type RoutingVisitPetInput,
 } from '../api/publicAppointments';
+import { ROUTING_UNAVAILABLE_ONLINE_MESSAGE } from './RoutingUnavailableNotice';
 import { fetchVeterinarians } from '../api/employee';
 import {
   findVeterinarianById,
@@ -772,6 +774,14 @@ function TimeSlotPill({
 }
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
+/** Returns the previous value while `value` has the same JSON contents, so effects keyed on it stay put. */
+export function useSameContents<T>(value: T): T {
+  const key = value === undefined ? 'undefined' : JSON.stringify(value);
+  const ref = useRef<{ key: string; value: T }>({ key, value });
+  if (ref.current.key !== key) ref.current = { key, value };
+  return ref.current.value;
+}
+
 export function SelfScheduleCalendarModal({
   practiceId,
   address,
@@ -786,24 +796,33 @@ export function SelfScheduleCalendarModal({
   isNewClient = false,
   newPatientCount = 0,
   isNewPatientRequest = false,
-  rawVeterinarians,
+  rawVeterinarians: rawVeterinariansProp,
   appointmentTypeId,
   appointmentType,
   practiceTz = DEFAULT_PRACTICE_TIMEZONE,
   initialDoctorId,
   preferredDoctorId,
   chartPrimaryProviderId,
-  preloadedDoctors,
-  requestOnlyDoctors,
+  preloadedDoctors: preloadedDoctorsProp,
+  requestOnlyDoctors: requestOnlyDoctorsProp,
   onRequestDoctor,
   slotPickerError,
-  visitPets,
-  patientIds,
+  visitPets: visitPetsProp,
+  patientIds: patientIdsProp,
   clientUploadedRecords = false,
   recordCheckTokens,
   searchAllDoctors = false,
   selectedAppointmentStart,
 }: Props) {
+  // The form may hand over new copies of the same lists on any render. Keep the previous copy while
+  // the contents are the same, so the effects below (which fetch availability) don't run again.
+  // Without this the picker sent the same availability request about nine times a second until
+  // the API's rate limit refused it (429) and the calendar showed "Unable to load availability".
+  const rawVeterinarians = useSameContents(rawVeterinariansProp);
+  const preloadedDoctors = useSameContents(preloadedDoctorsProp);
+  const requestOnlyDoctors = useSameContents(requestOnlyDoctorsProp);
+  const visitPets = useSameContents(visitPetsProp);
+  const patientIds = useSameContents(patientIdsProp);
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth <= 600 : false,
   );
@@ -1172,6 +1191,9 @@ export function SelfScheduleCalendarModal({
           monthHasBookableCandidates(cachedStart, startMonth, earliestCalendarDate)
         ) {
           applyMonth(startMonth, cachedVisible, false);
+          // A search this one replaced may have turned the spinner on, and it
+          // only turns it off for the newest search.
+          setLoadingMonth(false);
           return;
         }
         for (let i = 1; i < 12; i++) {
@@ -1187,6 +1209,7 @@ export function SelfScheduleCalendarModal({
               candidatesInCalendarMonth(cachedLater, later, earliestCalendarDate),
               true,
             );
+            setLoadingMonth(false);
             return;
           }
         }
@@ -1275,7 +1298,9 @@ export function SelfScheduleCalendarModal({
           return;
         }
         setMonthCandidates([]);
-        if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
+        if (err instanceof RoutingUnavailableError) {
+          setAvailabilityError(ROUTING_UNAVAILABLE_ONLINE_MESSAGE);
+        } else if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
           setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
         } else {
           setAvailabilityError(
@@ -1843,6 +1868,26 @@ export function SelfScheduleCalendarModal({
             {soonestAvailabilityNote && !loadingMonth ? (
               <div style={{ fontSize: 12, color: tealDark, textAlign: 'center', marginTop: 8 }}>
                 {soonestAvailabilityNote}
+              </div>
+            ) : null}
+
+            {!loadingMonth && availableDays.size === 0 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  background: grey50,
+                  border: `1px solid ${grey200}`,
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: grey700,
+                  lineHeight: 1.5,
+                  textAlign: 'center',
+                }}
+              >
+                No pre-approved online times are open this month for this doctor at
+                your address. Use the arrows to look at other months, or tell us
+                your preferred times below and we&apos;ll find a visit.
               </div>
             ) : null}
 

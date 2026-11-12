@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { mayRecordOnOpen } from '../auth/impersonationSession';
 import { useLocation } from 'react-router';
 import {
   APPOINTMENT_FORM_DRAFTS_ENABLED,
@@ -60,6 +61,8 @@ export function useAppointmentFormDraftPersistence({
   currentPageRef.current = currentPage;
 
   const shouldPersistDraft = useCallback(() => {
+    // Viewing as a client: their form is not theirs to save or report as abandoned.
+    if (!mayRecordOnOpen()) return false;
     return shouldPersistAppointmentFormDraft(currentPageRef.current, getSnapshotInput());
   }, [getSnapshotInput]);
 

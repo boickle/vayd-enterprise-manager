@@ -28,8 +28,9 @@ import {
 } from '../utils/routingOfferableScoreConfig';
 import './Settings.css';
 import './RoutingScoreThresholds.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 const WINDOW_OPTIONS = [30, 60, 90, 180] as const;
 

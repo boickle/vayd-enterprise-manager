@@ -3,6 +3,7 @@ import { http } from './http';
 import {
   fetchEmployeeRoles,
   fetchEmployeesByRole,
+  type Employee,
   type EmployeeRole,
 } from './appointmentSettings';
 
@@ -113,23 +114,23 @@ export type ClientLiaisonOption = {
   lastName: string | null;
 };
 
-/** Match the EVet "Receptionist" (Client Liaison) role by name, roleValue, then fuzzy. */
-function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
-  const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
-  const byName = roles.find((r) => norm(r.name) === 'receptionist');
-  if (byName) return byName.id;
-  const byValue = roles.find((r) => norm(r.roleValue) === 'receptionist');
-  if (byValue) return byValue.id;
-  const fuzzy = roles.find((r) => norm(r.name).includes('receptionist'));
-  return fuzzy?.id ?? null;
+export const CLIENT_LIAISON_ROLE_SLUGS = ['client_liaison', 'lead_client_liaison'];
+
+/** Everyone holding a Client Liaison or Lead Client Liaison role, once each. */
+export async function fetchClientLiaisonEmployees(): Promise<Employee[]> {
+  const roles: EmployeeRole[] = await fetchEmployeeRoles();
+  const ids = roles
+    .filter((r) => r.slug != null && CLIENT_LIAISON_ROLE_SLUGS.includes(r.slug))
+    .map((r) => r.id);
+  const lists = await Promise.all(ids.map((id) => fetchEmployeesByRole(id)));
+  const byId = new Map<number, Employee>();
+  for (const emp of lists.flat()) byId.set(emp.id, emp);
+  return [...byId.values()];
 }
 
-/** Client Liaisons (Receptionists) for the "Assign to…" dropdown. */
+/** Client Liaisons for the "Assign to…" dropdown. */
 export async function fetchClientLiaisons(): Promise<ClientLiaisonOption[]> {
-  const roles = await fetchEmployeeRoles();
-  const roleId = findReceptionistRoleId(roles);
-  if (roleId == null) return [];
-  const emps = await fetchEmployeesByRole(roleId);
+  const emps = await fetchClientLiaisonEmployees();
   return emps
     .map((e) => ({
       id: e.id,
@@ -152,3 +153,45 @@ export const HOLD_SOURCE_LABELS: Record<HoldSource, string> = {
   texted_offer: 'Texted offer',
   manual: 'Manual',
 };
+
+/** GET /holds/:id/conversation — texts, Quo calls and call notes for a hold's client. */
+export type HoldConversationResponse = {
+  appointmentId: number;
+  placedAt: string;
+  phone: string | null;
+  texts: Array<{ id: string; direction: 'in' | 'out'; body: string; at: string; beforeRequest: boolean }>;
+  textsError: string | null;
+  quoCalls: Array<{
+    id: number;
+    direction: 'in' | 'out';
+    status: string | null;
+    at: string;
+    durationSeconds: number | null;
+    staff: { id: number; firstName: string | null; lastName: string | null } | null;
+    transcript: string | null;
+    summary: string | null;
+    beforeRequest: boolean;
+  }>;
+  calls: Array<{
+    id: number;
+    at: string;
+    outcome: 'reached' | 'voicemail' | 'no_answer';
+    note: string | null;
+    employee: { id: number; firstName: string | null; lastName: string | null } | null;
+  }>;
+};
+
+export async function fetchHoldConversation(appointmentId: number): Promise<HoldConversationResponse> {
+  const { data } = await http.get<HoldConversationResponse>(
+    `/holds/${encodeURIComponent(String(appointmentId))}/conversation`
+  );
+  return data;
+}
+
+/** POST /holds/:id/calls — log a phone call on a hold (claims an unowned hold). */
+export async function logHoldCall(
+  appointmentId: number,
+  body: { outcome: 'reached' | 'voicemail' | 'no_answer'; note?: string | null }
+): Promise<void> {
+  await http.post(`/holds/${encodeURIComponent(String(appointmentId))}/calls`, body);
+}

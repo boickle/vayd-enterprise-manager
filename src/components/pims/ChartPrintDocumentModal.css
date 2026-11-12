@@ -1,0 +1,325 @@
+.chart-print-doc {
+  width: min(860px, 100%);
+  max-height: min(92vh, 860px);
+  overflow: auto;
+  border: none;
+}
+
+.chart-print-doc__intro {
+  margin: 0 0 12px;
+  padding: 0 16px;
+}
+
+.chart-print-doc__kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.chart-print-doc__kind {
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.chart-print-doc__kind:hover,
+.chart-print-doc__kind.is-selected {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.chart-print-doc__kind strong {
+  display: block;
+  font-size: 14px;
+  color: #111827;
+}
+
+.chart-print-doc__badge {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.chart-print-doc__badge.is-edit {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.chart-print-doc__badge.is-locked {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.chart-print-doc__mode {
+  margin: 0;
+  font-size: 12.5px;
+  color: #6b7280;
+}
+
+.chart-print-doc__facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chart-print-doc__fact dt {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.chart-print-doc__fact dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.chart-print-doc__foot {
+  flex-wrap: wrap;
+}
+
+.chart-print-doc__kind span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.chart-print-doc__form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.chart-print-doc__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+
+.chart-print-doc__label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.chart-print-doc__label input,
+.chart-print-doc__label select,
+.chart-print-doc__label textarea {
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #111827;
+  background: #fff;
+  font-family: inherit;
+}
+
+.chart-print-doc__label textarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.chart-print-doc__label--full {
+  grid-column: 1 / -1;
+}
+
+.chart-print-doc__vaccines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chart-print-doc__vaccine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #111827;
+}
+
+.chart-print-doc__vaccine small {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.chart-print-doc__error {
+  margin: 0;
+  font-size: 12.5px;
+  color: #b91c1c;
+}
+
+.chart-print-doc__ok {
+  margin: 0;
+  font-size: 12.5px;
+  color: #15803d;
+}
+
+.chart-print-doc__blocked {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.chart-print-doc__sig-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 12.5px;
+  color: #0f766e;
+}
+
+.chart-print-doc__plan-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chart-print-doc__plan {
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.chart-print-doc__plan-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.chart-print-doc__plan-table th,
+.chart-print-doc__plan-table td {
+  border: 1px solid #e5e7eb;
+  padding: 6px 8px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.chart-print-doc__plan-table th {
+  background: #0f766e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chart-print-doc__plan-table th:first-child,
+.chart-print-doc__plan-table td:first-child {
+  text-align: left;
+  min-width: 220px;
+}
+
+.chart-print-doc__plan-table input[type='text'],
+.chart-print-doc__plan-table input[type='date'] {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font: inherit;
+  color: #111827;
+  background: #fff;
+}
+
+.chart-print-doc__plan-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0f766e;
+}
+
+.chart-print-doc__systems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.chart-print-doc__system {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.4fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 400;
+  color: #111827;
+}
+
+.chart-print-doc__system strong {
+  font-size: 12.5px;
+}
+
+.chart-print-doc__system label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+
+.chart-print-doc__system input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0f766e;
+}
+
+.chart-print-doc__plan-remove {
+  border: none;
+  background: none;
+  color: #b45309;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chart-print-doc__sig-preview img {
+  display: block;
+  height: 36px;
+  max-width: 160px;
+  object-fit: contain;
+}
+
+@media (max-width: 640px) {
+  .chart-print-doc__kinds,
+  .chart-print-doc__grid,
+  .chart-print-doc__facts {
+    grid-template-columns: 1fr;
+  }
+}

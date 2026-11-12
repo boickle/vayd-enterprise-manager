@@ -38,7 +38,8 @@ assert(
 );
 assert(
   /suffix === 'generalWellbeing'[\s\S]*?suffix === 'currentMedications'/.test(src) ||
-    src.includes("suffix === 'currentMedications'"),
+    src.includes("suffix === 'currentMedications'") ||
+    /staticCheckInSuffixes = new Set\(\[[\s\S]*?'currentMedications'[\s\S]*?\]\)/.test(src),
   'currentMedications not allowed on submit filter'
 );
 

@@ -27,6 +27,9 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { DateTime } from 'luxon';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import { optionalExpiresIso, toDateInputValue } from '../utils/promotionExpiry';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
@@ -44,6 +47,7 @@ import {
   type CreateAppointmentRequestPromotionRequest,
   type UpdateAppointmentRequestPromotionRequest,
 } from '../api/appointmentRequestPromotions';
+import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
 
 function formatDiscount(row: AppointmentRequestPromotion): string {
   if (row.discountType === 'fixed_amount' && row.amountOffCents != null && row.amountOffCents > 0) {
@@ -59,24 +63,8 @@ function formatDiscount(row: AppointmentRequestPromotion): string {
 
 function formatDate(iso?: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString();
-}
-
-/** `YYYY-MM-DD` for `<input type="date">` from an ISO timestamp. */
-function toDateInputValue(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
-}
-
-/** Noon UTC on the given calendar day — avoids timezone day-shift; undefined when blank. */
-function optionalExpiresIso(dateOnly: string): string | undefined {
-  const t = dateOnly.trim();
-  if (!t) return undefined;
-  const d = new Date(`${t}T12:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return undefined;
-  return d.toISOString();
+  const dt = DateTime.fromISO(iso, { zone: DEFAULT_PRACTICE_TIMEZONE });
+  return dt.isValid ? dt.toLocaleString(DateTime.DATE_SHORT) : '—';
 }
 
 type CodeOption = 'none' | 'generate' | 'custom';
@@ -95,6 +83,10 @@ const DEFAULT_FORM = {
 };
 
 export default function AppointmentRequestPromotionsPanel() {
+  // RP-08: changes need store.coupon.manage or marketing.manage; Executives only look.
+  const canManageCoupons = useCanOrAdminLogin('store.coupon.manage');
+  const canManageMarketing = useCanOrAdminLogin('marketing.manage');
+  const canManage = canManageCoupons || canManageMarketing;
   const [listView, setListView] = useState<ListView>('active');
   const [rows, setRows] = useState<AppointmentRequestPromotion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -380,7 +372,7 @@ export default function AppointmentRequestPromotionsPanel() {
               <Tab value="active" label="Active" />
               <Tab value="archived" label="Archived" />
             </Tabs>
-            {listView === 'active' ? (
+            {listView === 'active' && canManage ? (
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
@@ -481,17 +473,19 @@ export default function AppointmentRequestPromotionsPanel() {
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           {listView === 'active' ? (
                             <>
-                              <Tooltip title="Edit">
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => openEditDialog(row)}
-                                    color="primary"
-                                  >
-                                    <EditIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
+                              {canManage ? (
+                                <Tooltip title="Edit">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => openEditDialog(row)}
+                                      color="primary"
+                                    >
+                                      <EditIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              ) : null}
                               <Tooltip title={copiedLinkId === row.id ? 'Copied!' : 'Copy employer link'}>
                                 <span>
                                   <IconButton
@@ -504,36 +498,40 @@ export default function AppointmentRequestPromotionsPanel() {
                                   </IconButton>
                                 </span>
                               </Tooltip>
-                              <Tooltip title={row.isActive ? 'Deactivate' : 'Reactivate'}>
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => void handleToggleActive(row)}
-                                    disabled={togglingId === row.id}
-                                    color={row.isActive ? 'warning' : 'success'}
-                                  >
-                                    {row.isActive ? (
-                                      <PauseCircleIcon fontSize="small" />
-                                    ) : (
-                                      <PlayCircleIcon fontSize="small" />
-                                    )}
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title="Archive">
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => setArchiveConfirm(row)}
-                                    disabled={archivingId === row.id}
-                                    color="default"
-                                  >
-                                    <ArchiveIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
+                              {canManage ? (
+                                <>
+                                  <Tooltip title={row.isActive ? 'Deactivate' : 'Reactivate'}>
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => void handleToggleActive(row)}
+                                        disabled={togglingId === row.id}
+                                        color={row.isActive ? 'warning' : 'success'}
+                                      >
+                                        {row.isActive ? (
+                                          <PauseCircleIcon fontSize="small" />
+                                        ) : (
+                                          <PlayCircleIcon fontSize="small" />
+                                        )}
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                  <Tooltip title="Archive">
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => setArchiveConfirm(row)}
+                                        disabled={archivingId === row.id}
+                                        color="default"
+                                      >
+                                        <ArchiveIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                </>
+                              ) : null}
                             </>
-                          ) : (
+                          ) : canManage ? (
                             <Tooltip title="Restore to active list">
                               <span>
                                 <IconButton
@@ -546,7 +544,7 @@ export default function AppointmentRequestPromotionsPanel() {
                                 </IconButton>
                               </span>
                             </Tooltip>
-                          )}
+                          ) : null}
                         </Stack>
                       </TableCell>
                     </TableRow>

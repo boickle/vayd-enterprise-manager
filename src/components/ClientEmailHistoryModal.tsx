@@ -20,8 +20,10 @@ import {
   CLIENT_EMAIL_THREADS_PER_ADDRESS,
   clientEmailsFromStaffPayload,
 } from '../utils/clientEmailGmailSearch';
+import { NO_SHARED_GMAIL_MESSAGE, sharedConnectedMailboxes } from '../utils/practiceGmailMailboxes';
 import { threadCacheKey, threadListPreviewFromMessages } from '../utils/gmailThreadPreview';
 import GmailOpenTrackingBadge from './gmail/GmailOpenTrackingBadge';
+import { sanitizeEmailHtml } from '../utils/sanitizeEmailHtml';
 import '../pages/GmailInbox.css';
 
 type Props = {
@@ -187,18 +189,13 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
           return;
         }
 
-        const connected = (mailboxRes.mailboxes ?? []).filter((mb) => mb.connected);
-        if (connected.length === 0) {
-          setError(
-            'No Gmail mailboxes are connected. Open Scout Email — shared inboxes connect automatically when configured; personal mailboxes still need OAuth once.',
-          );
+        const shared = sharedConnectedMailboxes(mailboxRes.mailboxes);
+        if (shared.length === 0) {
+          setError(NO_SHARED_GMAIL_MESSAGE);
           return;
         }
 
-        const { sections: loaded, threadCache } = await loadSectionsForMailboxes(
-          mailboxRes.mailboxes ?? [],
-          emails,
-        );
+        const { sections: loaded, threadCache } = await loadSectionsForMailboxes(shared, emails);
         if (!cancelled) {
           setSections(loaded);
           threadMessageCacheRef.current = threadCache;
@@ -380,7 +377,7 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
                     {msg.body.html ? (
                       <div
                         className="gmail-thread-message__body gmail-thread-message__body--html"
-                        dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                       />
                     ) : (
                       <div className="gmail-thread-message__body">

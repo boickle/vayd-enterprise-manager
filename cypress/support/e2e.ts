@@ -22,34 +22,55 @@ import './commands';
 declare global {
   namespace Cypress {
     interface Chainable {
+      /** UI login — fills the login form. Slower; prefer apiLogin() in most specs. */
+      loginAs(userType: 'client' | 'employee', email?: string, password?: string): Chainable<void>;
+
       /**
-       * Custom command to login as a specific user type
-       * @example cy.loginAs('client', 'client@example.com', 'password')
-       * @example cy.loginAs('employee', 'employee@example.com', 'password')
+       * H3: Fast API-level login. Calls POST /auth/login, stores the JWT in
+       * localStorage, then navigates to startPath (defaults to /home or /client-portal).
+       * @example cy.apiLogin('employee');
+       * @example cy.apiLogin('client', { startPath: '/client-portal' });
        */
-      loginAs(
-        userType: 'client' | 'employee',
-        email?: string,
-        password?: string
+      apiLogin(
+        role: 'client' | 'employee',
+        opts?: { email?: string; password?: string; startPath?: string },
       ): Chainable<void>;
 
-      /**
-       * Custom command to verify current route
-       * @example cy.shouldBeOnRoute('/client-portal')
-       */
+      /** Verify current route. */
       shouldBeOnRoute(route: string): Chainable<void>;
 
-      /**
-       * Custom command to check if element should not exist (for clients on employee pages)
-       * @example cy.shouldNotHaveEmployeeTabs()
-       */
+      /** Assert employee navigation tabs are NOT visible (client view). */
       shouldNotHaveEmployeeTabs(): Chainable<void>;
 
-      /**
-       * Custom command to check if employee tabs are visible
-       * @example cy.shouldHaveEmployeeTabs()
-       */
+      /** Assert employee navigation tabs ARE visible. */
       shouldHaveEmployeeTabs(): Chainable<void>;
+
+      /**
+       * H3: Read emails captured to the EMAIL_CAPTURE_PATH file.
+       * Returns [] when the file is empty or the path is not configured.
+       */
+      capturedEmails(): Chainable<unknown[]>;
+
+      /** H3: Truncate the captured-emails file before a test. */
+      clearCapturedEmails(): Chainable<void>;
+
+      /**
+       * H3: Seed test data via the backend test-support endpoint.
+       * Requires TEST_SUPPORT_KEY in cypress.env.json and NODE_ENV=test on the API.
+       */
+      seed(fixture: Record<string, unknown>): Chainable<void>;
+
+      /**
+       * H3: Clean up data seeded by cy.seed().
+       * Safe to call even when TEST_SUPPORT_KEY is missing.
+       */
+      cleanUp(refs?: Record<string, unknown>): Chainable<void>;
+
+      /** H-INV: seed the inventory world; yields its ids, lot numbers and employee bearer headers. */
+      seedInventory(options?: Record<string, unknown> | true): Chainable<Record<string, any>>;
+
+      /** H-INV: remove a world returned by seedInventory(). */
+      cleanUpInventory(world: Record<string, unknown>): Chainable<void>;
     }
   }
 }

@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scout — Practice Roles &amp; Permissions (Draft for approval)</title>
+<style>
+  @page { size: letter landscape; margin: 0.4in 0.45in 0.5in 0.45in; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color:#15241f; font-size:9pt; line-height:1.35; margin:0; }
+  h1 { font-size:19pt; margin:0 0 2pt; letter-spacing:-0.3pt; }
+  h2 { font-size:12.5pt; margin:16pt 0 5pt; padding-bottom:3pt; border-bottom:1.5px solid #0f7b5f; color:#0f5f4a; }
+  h3 { font-size:10pt; margin:11pt 0 3pt; color:#0f5f4a; }
+  p { margin:0 0 6pt; }
+  .sub { color:#5c6b66; font-size:9.5pt; margin-bottom:10pt; }
+  .meta { color:#5c6b66; font-size:8pt; }
+  .lede { background:#f1f7f4; border-left:3px solid #0f7b5f; padding:7pt 9pt; margin:0 0 10pt; }
+  table { width:100%; border-collapse:collapse; margin:0 0 8pt; }
+  th, td { border:0.5px solid #c9d6d1; padding:2.6pt 3.5pt; vertical-align:middle; }
+  thead th { background:#0f5f4a; color:#fff; font-size:7.2pt; font-weight:600; text-align:center; }
+  thead th.p { text-align:left; width:30%; }
+  tbody td.p { text-align:left; font-size:8pt; }
+  tbody td { text-align:center; font-size:6.6pt; color:#8a6400; line-height:1.15; }
+  tbody tr:nth-child(even) td { background:#f7faf9; }
+  .f:after { content:"\25CF"; color:#0f7b5f; font-size:9pt; }
+  .n:after { content:"\25CB"; color:#b9c5c1; font-size:9pt; }
+  .sec td { background:#dbeae4 !important; font-weight:700; font-size:8.5pt; text-align:left; color:#0f5f4a; letter-spacing:0.2pt; }
+  .legend { display:flex; gap:18pt; font-size:8.5pt; margin:0 0 10pt; align-items:center; flex-wrap:wrap; }
+  .legend span b { font-weight:600; }
+  table.info th { background:#0f5f4a; color:#fff; font-size:8pt; text-align:left; }
+  table.info td { text-align:left; font-size:8.5pt; color:#15241f; }
+  table.info td.c { text-align:center; }
+  .new { background:#0f7b5f; color:#fff; padding:1pt 5pt; border-radius:8pt; font-size:7pt; font-weight:700; letter-spacing:0.3pt; }
+  .keep { background:#e3ebe8; color:#4a5a55; padding:1pt 5pt; border-radius:8pt; font-size:7pt; font-weight:700; letter-spacing:0.3pt; }
+  .ren { background:#b4791a; color:#fff; padding:1pt 5pt; border-radius:8pt; font-size:7pt; font-weight:700; letter-spacing:0.3pt; }
+  .ret { background:#9c3b2e; color:#fff; padding:1pt 5pt; border-radius:8pt; font-size:7pt; font-weight:700; letter-spacing:0.3pt; }
+  ol, ul { margin:0 0 8pt; padding-left:15pt; }
+  li { margin-bottom:3.5pt; font-size:9pt; }
+  .pb { page-break-before: always; }
+  .avoid { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  .sign { border:1px solid #c9d6d1; padding:10pt; margin-top:10pt; }
+  .sign div { border-bottom:0.75px solid #8a9a95; height:22pt; margin-top:12pt; width:60%; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size:8pt; background:#eef4f1; padding:0 2pt; }
+</style>
+</head>
+<body>
+
+<h1>Scout — Practice Roles &amp; Permissions</h1>
+<div class="sub">Draft for approval · Vet At Your Door · practice-level roles only (platform / multi-tenant roles excluded)</div>
+
+<div class="lede">
+<p><b>What this is.</b> A proposed default role set for a Scout practice, and who can do what across the whole product. It is modeled on the conventional veterinary PIMS baseline you supplied, then rewritten against Scout's actual screens and actions — mobile-practice specifics (routing, zones, room loader, forward booking, autoship, post-visit membership re-rating) have no equivalent in a conventional PIMS, so those rows are new.</p>
+<p style="margin-bottom:0"><b>What I need from you.</b> Approve or edit the role list in Section 1, the retirements in Section 2, the matrix in Section 4, and the open decisions in Section 7. Nothing is implemented yet.</p>
+</div>
+
+<h2>1. Proposed practice role set</h2>
+<p>Ten roles. Seven already exist in Scout's role catalog, three are new. A person can hold more than one role (for example Lead Technician + Inventory Manager); permissions are additive.</p>
+
+<table class="info">
+<thead><tr><th style="width:3%">#</th><th style="width:15%">Role</th><th style="width:8%">Code</th><th style="width:12%">Slug</th><th style="width:40%">Who it is for / what it owns</th><th style="width:9%" class="c">Per branch?</th><th style="width:13%" class="c">Status</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><b>Practice Admin</b></td><td>PA</td><td><code>practice_admin</code></td><td>Owner or designated administrator. Full practice control including staff accounts, roles, integrations configuration, and all money. Does not include platform/multi-tenant control.</td><td class="c">No</td><td class="c"><span class="ren">RENAME</span></td></tr>
+<tr><td>2</td><td><b>Practice Manager</b></td><td>PM</td><td><code>practice_manager</code></td><td>Day-to-day operations and finance. Everything except creating admin-level logins and changing integrations/system configuration.</td><td class="c">Yes</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>3</td><td><b>Veterinarian (DVM)</b></td><td>DVM</td><td><code>veterinarian</code></td><td>Licensed provider. Sole authority to sign/lock a medical record, write an addendum, and approve a prescription. Owns clinical content; limited on pricing and refunds.</td><td class="c">No</td><td class="c"><span class="new">NEW</span></td></tr>
+<tr><td>4</td><td><b>Lead Technician</b></td><td>LT</td><td><code>lead_technician</code></td><td>Senior technician. Technician scope plus team task reassignment, lab result review, stock movement, and mail-order approval.</td><td class="c">No</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>5</td><td><b>Technician</b></td><td>TE</td><td><code>technician</code></td><td>Vitals, exam findings, treatments, charge capture, vaccine/lot documentation, van stock. Cannot sign a record or approve an Rx.</td><td class="c">No</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>6</td><td><b>Lead Client Liaison</b></td><td>LC</td><td><code>lead_client_liaison</code></td><td>Senior CL. CL scope plus seat assignment, merges, membership changes, deposits, and outreach reporting.</td><td class="c">No</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>7</td><td><b>Client Liaison</b></td><td>CL</td><td><code>client_liaison</code></td><td>Phones, email, outreach, booking, holds, waitlist, forward booking, payments, membership enrollment.</td><td class="c">No</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>8</td><td><b>Inventory Manager</b></td><td>IM</td><td><code>inventory_manager</code></td><td>Stock, lots, counts, suppliers, purchase orders, cost, online store catalog, mail-order fulfillment. Cost yes; sell price needs PM.</td><td class="c">Yes</td><td class="c"><span class="keep">KEEP</span></td></tr>
+<tr><td>9</td><td><b>Billing &amp; AR</b></td><td>BA</td><td><code>billing_ar</code></td><td>Collections, statements, pay links, refunds, deposits, reconciliation, AR reporting. No clinical editing, no scheduling.</td><td class="c">No</td><td class="c"><span class="new">NEW</span></td></tr>
+<tr><td>10</td><td><b>Observer (read&#8209;only)</b></td><td>OB</td><td><code>observer</code></td><td>New hires in training, shadowing students, outside auditors, bookkeepers. Can see records and reports; can change nothing.</td><td class="c">No</td><td class="c"><span class="new">NEW</span></td></tr>
+</tbody>
+</table>
+
+<h3>Why these three are new</h3>
+<ul>
+<li><b>Veterinarian (DVM) — the significant gap.</b> Scout's role catalog today has no provider role at all. Record signing, Rx approval, and provider-scoped production reporting have no role to attach to. This is the one addition I would not skip.</li>
+<li><b>Billing &amp; AR</b> — refunds, voids, deposits, and reconciliation are currently only reachable by making someone a full admin. A narrow role lets a bookkeeper work without clinical or configuration access. <i>Optional — see Decision 2 if you would rather fold this into Lead Client Liaison.</i></li>
+<li><b>Observer</b> — there is no way today to give someone look-only access. Useful for onboarding and for your accountant. <i>Optional — see Decision 5.</i></li>
+</ul>
+
+<h2 class="pb">2. Roles to retire</h2>
+<p>These exist in the database today but should not appear in a practice's role picker.</p>
+
+<table class="info">
+<thead><tr><th style="width:18%">Role</th><th style="width:14%">Source</th><th style="width:38%">Why it should go</th><th style="width:30%">Where its people go</th></tr></thead>
+<tbody>
+<tr><td><b>Superadmin</b> <span class="ret">RETIRE</span></td><td>Scout seed catalog</td><td>Duplicates the platform login role of the same name. A practice-level job role called "Superadmin" invites someone to grant practice staff what reads as platform control. Platform access should never be assignable from practice settings.</td><td>Stays a login-account attribute, managed by Vet At Your Door, not by the practice.</td></tr>
+<tr><td><b>Admin</b> <span class="ren">RENAME</span></td><td>Scout seed catalog</td><td>Name collides with the login role <code>admin</code>, so "is this person an admin?" has two different answers today.</td><td>Becomes <b>Practice Admin</b>.</td></tr>
+<tr><td><b>Receptionist</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Scout's equivalent is Client Liaison, which is the term the practice actually uses.</td><td>Client Liaison.</td></tr>
+<tr><td><b>BusinessOwner, BusinessManager</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Overlap entirely with Practice Admin / Practice Manager.</td><td>Practice Admin or Practice Manager.</td></tr>
+<tr><td><b>SystemAdmin, UserManager, ApiManager</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Platform-level concepts imported from the old PIMS; not practice job roles.</td><td>Practice Admin, or platform side.</td></tr>
+<tr><td><b>TechnicianAssistant, KennelWorker, Groomer, ShiftLeader</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Brick-and-mortar hospital roles. A mobile practice has no kennel, no grooming, and no shifts in that sense.</td><td>Technician, or no role.</td></tr>
+<tr><td><b>Kiosk, Guest, Client</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Not staff. "Client" is a portal account, not an employee role.</td><td>Not staff roles.</td></tr>
+<tr><td><b>BillableItemsManager, ReferralSystemManager, LimitedAssignedProvider</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>No corresponding feature in Scout.</td><td>Practice Manager or Inventory Manager.</td></tr>
+<tr><td><b>GroupManager, GroupOwner, Enterprise, EVet*</b> <span class="ret">RETIRE</span></td><td>eVet import</td><td>Vendor and multi-group artifacts from the old system.</td><td>None.</td></tr>
+</tbody>
+</table>
+<p class="meta">Retire = hide from the Scout role picker and stop assigning. Existing historical assignments stay in the database for audit; staff get remapped to the column on the right.</p>
+
+<h2>3. How to read the matrix</h2>
+<div class="legend">
+<span><b style="color:#0f7b5f; font-size:12pt">&#9679;</b> &nbsp;<b>Full</b> — can do it</span>
+<span><b style="color:#8a6400; font-size:9pt">text</b> &nbsp;<b>Limited</b> — can do it only as described in the cell</span>
+<span><b style="color:#b9c5c1; font-size:12pt">&#9675;</b> &nbsp;<b>None</b> — cannot do it, control is hidden</span>
+</div>
+<p><b>Role codes:</b> PA Practice Admin · PM Practice Manager · DVM Veterinarian · LT Lead Technician · TE Technician · LC Lead Client Liaison · CL Client Liaison · IM Inventory Manager · BA Billing &amp; AR · OB Observer</p>
+<p>"Reason code" means the action is allowed but Scout requires a selected reason and records it to the audit report. "Capped %" means a discount above the practice cap routes to Practice Manager approval. "Own" means limited to that person's own visits, entries, or schedule.</p>
+
+<h2 class="pb">4. Permission matrix</h2>
+
+<table>
+<thead><tr>
+<th class="p">Permission</th><th>PA</th><th>PM</th><th>DVM</th><th>LT</th><th>TE</th><th>LC</th><th>CL</th><th>IM</th><th>BA</th><th>OB</th>
+</tr></thead>
+<tbody>
+
+<tr class="sec"><td colspan="11">A · System, users &amp; roles</td></tr>
+<tr><td class=p>Create / edit staff logins, reset staff passwords<td class=f><td class=l>Non-admin logins only<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Assign practice roles to staff<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Create / edit the role definitions themselves<td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Manual-booking permissions per role<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Deactivate or delete an employee record<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Platform: practices, domains, feature flags, secrets<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>View audit / usage log<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>Financial entries<td class=n></tr>
+
+<tr class="sec"><td colspan="11">B · Practice configuration</td></tr>
+<tr><td class=p>Letterhead, branches &amp; locations<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>Locations only<td class=n><td class=n></tr>
+<tr><td class=p>Appointment types, durations, arrival windows<td class=f><td class=f><td class=l>View<td class=n><td class=n><td class=l>View<td class=l>View<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Practice booking goals<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>View<td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Staff schedules, zones, depots, offices<td class=f><td class=f><td class=l>Own, view only<td class=n><td class=n><td class=l>View<td class=l>View<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Staff photo, bio &amp; provider signature<td class=f><td class=f><td class=l>Own<td class=l>Own<td class=l>Own<td class=l>Own<td class=l>Own<td class=l>Own<td class=l>Own<td class=n></tr>
+<tr><td class=p>CL seat assignment (phones / outreach / email)<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>View<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Automatic task rules<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Room Loader configuration — offers, pricing, pitch<td class=f><td class=f><td class=l>Lab panels &amp; clinical copy<td class=n><td class=n><td class=l>View<td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Email &amp; text templates, reminders, forms, chat hours<td class=f><td class=f><td class=l>Clinical templates<td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Gmail shared-mailbox permissions<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Euthanasia consent defaults, aftercare offerings<td class=f><td class=f><td class=f><td class=n><td class=n><td class=l>View<td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Outside hospitals directory<td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Patient statuses<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Client discount statuses / tiers<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>View<td class=n></tr>
+<tr><td class=p>Payment types &amp; discount categories<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>View<td class=n></tr>
+<tr><td class=p>Deposit bank accounts<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>View<td class=n></tr>
+<tr><td class=p>Sales tax levels<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Mail shipping types<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Waste reasons &amp; disposal methods<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>In-house lab form templates &amp; analytes<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Online store settings, fulfillment branch<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">C · Scheduling &amp; routing</td></tr>
+<tr><td class=p>View practice calendar, My Day, routes<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>View<td class=l>View<td class=l>View</tr>
+<tr><td class=p>Book an appointment through Routing<td class=f><td class=f><td class=l>Own schedule<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Manually book on the calendar<td class=f><td class=f><td class=l>Own + allowed types<td class=l>Allowed types<td class=l>Allowed types<td class=f><td class=l>Allowed types<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Reschedule / move an appointment<td class=f><td class=f><td class=l>Own<td class=f><td class=l>Own day<td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Cancel / remove a visit (reason code)<td class=f><td class=f><td class=l>Own<td class=f><td class=l>Own day<td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Override a zone or doctor-mismatch warning<td class=f><td class=f><td class=l>Own<td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Staff schedule overrides (work hours, OFF days)<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Run schedule optimization<td class=f><td class=f><td class=l>View<td class=f><td class=n><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Apply an optimized time &amp; notify the client<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>With LC approval<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Appointment requests queue — book, contact, decline<td class=f><td class=f><td class=l>View<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Holds board — add, contact, release<td class=f><td class=f><td class=l>View<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Waitlist — add, book, remove<td class=f><td class=f><td class=l>View<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Forward booking — create, book, complete, remove<td class=f><td class=f><td class=l>Create from own visit<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Texted slot offers — send, resolve<td class=f><td class=f><td class=n><td class=f><td class=l>Send only<td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Schedule loader / fill-day outreach<td class=f><td class=f><td class=n><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Care outreach &amp; records-request chasing<td class=f><td class=f><td class=l>Clinical replies<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Record actual visit start / end, complete visit<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Send "on my way" and visit-day texts<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Send exit survey<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">D · Clients &amp; patients</td></tr>
+<tr><td class=p>View client &amp; patient records<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>Dispensing info<td class=l>Billing + contact<td class=f></tr>
+<tr><td class=p>Create a client or patient<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=l>Billing-only records<td class=n></tr>
+<tr><td class=p>Edit demographics, phones, email, address<td class=f><td class=f><td class=l>Clinical fields<td class=f><td class=l>Clinical fields<td class=f><td class=f><td class=n><td class=l>Billing contact<td class=n></tr>
+<tr><td class=p>Edit client &amp; patient alerts<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Staff-only connection notes &amp; referral source<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Merge two clients or two patients<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>Clients only<td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Deactivate / reactivate a client or patient<td class=f><td class=f><td class=l>Deceased patients<td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Send portal access / password reset<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Client communication — text, email, log the call<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>Mail order only<td class=l>Billing only<td class=n></tr>
+<tr><td class=p>Household AI chart chat &amp; summaries<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=l>View</tr>
+<tr><td class=p>Pet snapshots — download &amp; use for social<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>Consented only<td class=n><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">E · Medical records &amp; visits</td></tr>
+<tr><td class=p>View the medical record<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>Rx &amp; dispensing<td class=l>Billing-relevant<td class=f></tr>
+<tr><td class=p>Create / edit SOAP while unlocked<td class=n><td class=n><td class=f><td class=l>Vitals, exam, treatments<td class=l>Vitals, exam, treatments<td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Medical note (non-SOAP) entries<td class=l>Administrative<td class=l>Administrative<td class=f><td class=f><td class=l>Own entries<td class=l>Call notes<td class=l>Call notes<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>AI Scribe — record, transcribe, structure<td class=n><td class=n><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Edit the provider scribe prompt<td class=f><td class=n><td class=l>Own prompt<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Delete a scribe transcript<td class=f><td class=n><td class=l>Own visit<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p><b>Sign &amp; lock the record / finalize a note</b><td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p><b>Write an addendum after lock</b><td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Client recap email — send or skip<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Callbacks — create, complete, delete<td class=f><td class=f><td class=f><td class=f><td class=l>Create &amp; complete<td class=f><td class=l>Create &amp; complete<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Reminders — decline or delete on a chart<td class=f><td class=f><td class=f><td class=f><td class=l>Decline only<td class=f><td class=l>Decline only<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Chronic problems &amp; chronic medications<td class=n><td class=n><td class=f><td class=l>Record, not start/stop<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Upload outside records to the chart<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Print certificates — rabies, vaccine, health, death<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Send a client form for signature<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Enter in-house lab results<td class=n><td class=n><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p><b>Review / release lab results to the record</b><td class=n><td class=n><td class=f><td class=l>Flag for DVM<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Euthanasia — send consent &amp; estimate<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Room Loader — send, reconcile, confirm matches<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">F · Prescriptions, vaccines &amp; controlled substances</td></tr>
+<tr><td class=p>Enter Rx directions / sig<td class=n><td class=n><td class=f><td class=l>Draft for approval<td class=l>Draft for approval<td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p><b>Approve a prescription</b><td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Authorize a refill<td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Vaccine lot &amp; dose documentation<td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=l>Lot data<td class=n><td class=n></tr>
+<tr><td class=p>Flag an item as a controlled substance<td class=f><td class=f><td class=l>View<td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Controlled-substance count &amp; reconciliation<td class=f><td class=f><td class=l>Dispensing log<td class=l>Count with a DVM<td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">G · Tasks</td></tr>
+<tr><td class=p>View, claim, complete tasks assigned to me<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>View</tr>
+<tr><td class=p>Create a task and assign it to someone else<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n></tr>
+<tr><td class=p>Reassign / bulk reassign tasks<td class=f><td class=f><td class=l>Own team<td class=f><td class=n><td class=f><td class=n><td class=l>Inventory tasks<td class=l>Billing tasks<td class=n></tr>
+<tr><td class=p>Remove a task (reason code)<td class=f><td class=f><td class=l>Own<td class=l>Own team<td class=n><td class=f><td class=n><td class=l>Inventory tasks<td class=l>Billing tasks<td class=n></tr>
+<tr><td class=p>Mail-order task — approve or deny fulfillment<td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Run automatic task rules on demand<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">H · Estimates &amp; invoicing</td></tr>
+<tr><td class=p>View invoices &amp; household ledger<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>Stock lines<td class=f><td class=l>View</tr>
+<tr><td class=p>Create an estimate<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>From price list<td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Email an estimate / authorize a card hold<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Add line items to an open invoice<td class=f><td class=f><td class=f><td class=f><td class=l>Charge capture<td class=f><td class=l>From price list<td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Edit or remove line items<td class=f><td class=f><td class=l>Own invoices<td class=l>Own entries<td class=l>Own entries<td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Change a price on the invoice<td class=f><td class=f><td class=l>Reason code<td class=l>Reason code<td class=l>Reason code<td class=l>Reason code<td class=n><td class=n><td class=l>Reason code<td class=n></tr>
+<tr><td class=p>Apply a discount<td class=f><td class=f><td class=l>Capped % + reason<td class=l>Capped % + reason<td class=l>Capped % + reason<td class=l>Capped % + reason<td class=l>Coded only<td class=n><td class=l>Capped % + reason<td class=n></tr>
+<tr><td class=p>Choose membership coverage on a line<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Set inventory branch / lot on a line<td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Close / finalize an invoice<td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Reopen / unlock a finalized invoice<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>Same day<td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p><b>Void an invoice or delete a draft</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>Same day<td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Process a return / issue account credit<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Adopt / edit a legacy eVet invoice<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>Same day<td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Email invoice, receipt or household statement<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+
+<tr class="sec"><td colspan="11">I · Payments, refunds &amp; deposits</td></tr>
+<tr><td class=p>Take a payment — cash, check, card, terminal<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Charge a card on file<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Send a pay link by text or email<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p><b>Void a payment / tender</b><td class=f><td class=f><td class=l>Own visit, same day<td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p><b>Refund a card payment</b> (reason code)<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Post a manual account credit / adjustment<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Create a bank deposit<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p><b>Void a deposit</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>With PM approval<td class=n></tr>
+<tr><td class=p>Stripe / Square reconciliation<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n></tr>
+
+<tr class="sec"><td colspan="11">J · Memberships</td></tr>
+<tr><td class=p>Enroll a patient in a plan<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Post-visit signup — re-rate &amp; refund the visit<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Override the post-visit window (reason code)<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n><td class=l>With PM approval<td class=n></tr>
+<tr><td class=p>Change plan / carry over usage<td class=f><td class=f><td class=l>Clinical benefit swap<td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Add or edit a per-patient benefit override<td class=f><td class=f><td class=l>Clinical benefit<td class=n><td class=n><td class=f><td class=n><td class=n><td class=l>Billing benefit<td class=n></tr>
+<tr><td class=p><b>Cancel a membership</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Create / edit membership plans &amp; benefits<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p><b>Apply plan changes to existing members</b><td class=f><td class=l>With owner approval<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Archive a plan<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">K · Catalog &amp; pricing</td></tr>
+<tr><td class=p>View the price list<td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f><td class=f></tr>
+<tr><td class=p>Add items, procedures, labs<td class=f><td class=f><td class=l>Request only<td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Edit cost<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p><b>Edit sell price, service fee, minimum price</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>Needs PM approval<td class=n><td class=n></tr>
+<tr><td class=p><b>Bulk price change</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Quantity price breaks<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Tax level on an item<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Clinical fields — dispensable, vaccine, controlled<td class=f><td class=f><td class=f><td class=l>View<td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Tagalong / auto-add rules<td class=f><td class=f><td class=l>Clinical rules<td class=n><td class=n><td class=n><td class=n><td class=l>Stock rules<td class=n><td class=n></tr>
+<tr><td class=p>Catalog reminder rules<td class=f><td class=f><td class=f><td class=n><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Bundles / packages<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Archive / restore a catalog item<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">L · Inventory &amp; pharmacy</td></tr>
+<tr><td class=p>View stock on hand &amp; lots<td class=f><td class=f><td class=f><td class=f><td class=f><td class=l>View<td class=l>View<td class=f><td class=n><td class=l>View</tr>
+<tr><td class=p>Receive a shipment, enter vendor invoice &amp; cost<td class=f><td class=f><td class=n><td class=l>Receive, not cost<td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Initial entry / seeded lot corrections<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Move stock between branches &amp; vehicles<td class=f><td class=f><td class=l>Own vehicle<td class=f><td class=l>Own vehicle<td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Waste / adjust with reason<td class=f><td class=f><td class=l>Own vehicle<td class=f><td class=l>Own vehicle<td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Weekly &amp; full counts — enter and submit<td class=f><td class=f><td class=n><td class=f><td class=f><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Count report &amp; variance review<td class=f><td class=f><td class=n><td class=l>View<td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Par levels &amp; reorder points<td class=f><td class=f><td class=n><td class=l>Suggest<td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Suppliers<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Cost reviews — apply or dismiss<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Expiring report<td class=f><td class=f><td class=l>View<td class=f><td class=l>View<td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Order list / purchase orders<td class=f><td class=f><td class=l>Request<td class=l>Request<td class=l>Request<td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Transfer &amp; fill lists<td class=f><td class=f><td class=l>Own vehicle<td class=f><td class=f><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Inventory activity log<td class=f><td class=f><td class=l>View<td class=f><td class=l>View<td class=n><td class=n><td class=f><td class=n><td class=l>View</tr>
+
+<tr class="sec"><td colspan="11">M · Online store &amp; mail order</td></tr>
+<tr><td class=p>Store listings, variations, product content<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Store categories<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Catalog / Ecwid import<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Autoship settings (per item and in bulk)<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Coupons<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>Issue existing<td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Client subscriptions — edit, pause, cancel<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>Client's own<td class=f><td class=f><td class=n></tr>
+<tr><td class=p>Abandoned cart — resend<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=f><td class=f><td class=n><td class=n></tr>
+<tr><td class=p>Mail order queue — fill, ship, notify<td class=f><td class=f><td class=n><td class=f><td class=f><td class=n><td class=n><td class=f><td class=n><td class=n></tr>
+
+<tr class="sec"><td colspan="11">N · Reports &amp; analytics</td></tr>
+<tr><td class=p>Payments &amp; collections<td class=f><td class=f><td class=n><td class=n><td class=n><td class=l>AR aging<td class=n><td class=n><td class=f><td class=l>View</tr>
+<tr><td class=p>Production (VSD) — all providers<td class=f><td class=f><td class=l>Own only<td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>VSD vs payments match<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Projected revenue<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>View<td class=n></tr>
+<tr><td class=p>Square reconciliation<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p><b>Discount / void / refund audit report</b><td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=n></tr>
+<tr><td class=p>Appointments, booking calendar, cancellations<td class=f><td class=f><td class=l>Own only<td class=f><td class=l>Own only<td class=f><td class=l>Own only<td class=n><td class=n><td class=l>View</tr>
+<tr><td class=p>Patient dormancy &amp; lapsed clients<td class=f><td class=f><td class=l>Own patients<td class=f><td class=n><td class=f><td class=f><td class=n><td class=n><td class=l>View</tr>
+<tr><td class=p>Email tracking, OpenPhone calls, CL performance<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>Own only<td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Time spent / route efficiency<td class=f><td class=f><td class=l>Own only<td class=f><td class=n><td class=f><td class=n><td class=n><td class=n><td class=l>View</tr>
+<tr><td class=p>Membership purchases<td class=f><td class=f><td class=n><td class=n><td class=n><td class=f><td class=l>Own only<td class=n><td class=f><td class=l>View</tr>
+<tr><td class=p>Inventory totals &amp; valuation<td class=f><td class=f><td class=n><td class=n><td class=n><td class=n><td class=n><td class=f><td class=l>View<td class=l>View</tr>
+<tr><td class=p>Room loader declines, survey results, call coaching<td class=f><td class=f><td class=l>Own visits<td class=f><td class=n><td class=f><td class=n><td class=n><td class=n><td class=n></tr>
+<tr><td class=p>Export / download data in bulk<td class=f><td class=l>Operational reports<td class=n><td class=n><td class=n><td class=n><td class=n><td class=l>Inventory<td class=l>Financial<td class=n></tr>
+
+</tbody>
+</table>
+
+<h2 class="pb">5. Conventions &amp; guardrails behind the matrix</h2>
+<ol>
+<li><b>Only a DVM signs.</b> Sign &amp; lock, addendum after lock, Rx approval, and refill authorization are DVM-only, with no admin override. An administrator who is also licensed holds the DVM role in addition to Practice Admin. This is the one place where "admin can do everything" is deliberately false.</li>
+<li><b>Price changes and discounts are capped, not blocked.</b> Providers, technicians, and liaisons can discount within a practice cap with a mandatory reason code; anything larger routes to Practice Manager. The discount/void/refund audit report is the real control — a hard block just pushes people into giving away free line items instead.</li>
+<li><b>Refunds stay open to client-facing roles.</b> The usual industry guardrail (same-day void only, or a dollar ceiling) does not survive your post-visit membership flow, where a client enrolls after the appointment and the visit is re-rated retroactively. Refunds therefore require a reason code and show on the audit report rather than being restricted by role.</li>
+<li><b>Removing a line item is an audit event.</b> Technicians and providers can remove their own entries only. Every removal appears on the void/discount report, because a silent removal is a missed charge.</li>
+<li><b>Lead versus non-lead.</b> The difference is consistently: team task reassignment, record merges, same-day financial reversals, and team reporting. Everything clinical or client-facing is identical.</li>
+<li><b>"Own vehicle" for a mobile practice.</b> Providers and technicians adjust and move stock on the van they are assigned to; branch and depot stock stays with Inventory Manager. Inventory Manager and Practice Manager are branch-scoped roles, so a person can hold them for one location only.</li>
+<li><b>Inventory Manager owns cost, not sell price.</b> They set cost, receive, count, and reorder; manual sell-price overrides and bulk price changes stay with Practice Manager and above. This is the common split and it is what your sample assumed.</li>
+<li><b>Observer is enforced by hiding controls, not by disabling them.</b> An Observer should never see a Save button they cannot press.</li>
+<li><b>Roles stack.</b> Someone who is both Lead Technician and Inventory Manager gets the union of both. No role subtracts from another.</li>
+<li><b>Platform access is never assignable from practice settings.</b> Feature flags, domains, secrets, and the practice list stay with Vet At Your Door.</li>
+</ol>
+
+<h2>6. What this changes in the product today</h2>
+<p>Facts about the current build, so the scope of the work is visible before you approve.</p>
+<table class="info">
+<thead><tr><th style="width:33%">Today</th><th style="width:67%">What the approved matrix requires</th></tr></thead>
+<tbody>
+<tr><td>Scout's role catalog contains Superadmin, Admin, Inventory Manager, Practice Manager, Technician, Client Liaison, Lead Client Liaison, Lead Technician. <b>There is no provider role.</b></td><td>Add Veterinarian, Billing &amp; AR, and Observer. Rename Admin to Practice Admin. Retire Superadmin from the practice catalog.</td></tr>
+<tr><td>Practice roles currently control exactly one thing: which appointment types a person may book manually.</td><td>Roles become the source of truth for every row in Section 4. This is the bulk of the build.</td></tr>
+<tr><td>Everything else is gated on the <i>login</i> role — <code>admin</code>, <code>superadmin</code>, <code>employee</code> — which is a separate system from practice roles.</td><td>The login role shrinks to an account type. Capability moves to practice roles so the two stop disagreeing.</td></tr>
+<tr><td>A permission framework exists in the frontend (<code>canSeeRouting</code>, <code>canSeeDoctorDay</code>, <code>canManageUsers</code>) but nothing ever populates it, so those checks pass for everyone.</td><td>Either populate it from the practice roles or remove it. Right now it reads like protection that is not there.</td></tr>
+<tr><td>Settings and Admin are all-or-nothing on login <code>admin</code>.</td><td>A Practice Manager can reach operational settings without also gaining the ability to create admin logins.</td></tr>
+<tr><td>Inventory Manager cannot open suppliers, the count report, expiring, or cost reviews — those pages check for login <code>admin</code>.</td><td>The role that is named for the job can actually do the job.</td></tr>
+<tr><td>Square reconciliation is restricted to platform superadmin.</td><td>Opens to Practice Admin, Practice Manager, and Billing &amp; AR.</td></tr>
+<tr><td>Role and assignment endpoints are authenticated but not role-checked on the server.</td><td>Server-side enforcement, so permissions are not only a hidden button.</td></tr>
+<tr><td>Imported eVet roles (Receptionist, KennelWorker, Groomer, Kiosk, BusinessOwner, and the rest) still appear in role data.</td><td>Hidden from the picker and remapped per Section 2.</td></tr>
+<tr><td>There is no reason-code prompt on price changes, discounts, voids, or refunds, and no discount/void/refund audit report.</td><td>Needed for rows marked "reason code" and for the audit report in Section N. This is a meaningful piece of work and could be phased.</td></tr>
+</tbody>
+</table>
+
+<h2>7. Decisions I need from you</h2>
+<ol>
+<li><b>Discount cap.</b> What percentage can a DVM, technician, or liaison apply before it needs Practice Manager approval? The common setting is 10–15%.</li>
+<li><b>Billing &amp; AR — keep it or fold it in?</b> If your liaisons already handle collections, delete the role and give Lead Client Liaison the refund, deposit, and reconciliation rows instead.</li>
+<li><b>Can a Practice Manager create staff logins?</b> The matrix says yes for non-admin logins. Say the word if that should be Practice Admin only.</li>
+<li><b>Voiding a deposit.</b> Currently Practice Admin and Practice Manager, with Billing &amp; AR needing approval. Should Billing &amp; AR be able to do it outright?</li>
+<li><b>Observer — needed?</b> Worth having for onboarding and for an outside bookkeeper, but it is a real role to build and test.</li>
+<li><b>Relief / locum DVMs.</b> Should they be a separate role (same clinical rights, no production reports, no access after their last shift), or just the DVM role deactivated when they leave?</li>
+<li><b>Branch scoping.</b> Inventory Manager and Practice Manager are branch-specific today. Should Lead Technician or Lead Client Liaison also be scoped per location?</li>
+<li><b>Who approves a lab result into the record?</b> The matrix says DVM only, with Lead Technician able to flag. Confirm that matches how your team actually works.</li>
+<li><b>Reason codes and the audit report.</b> Build them with the roles, or ship roles first and add the audit layer in a second phase?</li>
+<li><b>Anything a specific person needs</b> that the role they will hold does not allow. Easier to catch now than after rollout.</li>
+</ol>
+
+<div class="sign avoid">
+<p style="margin:0"><b>Approval</b> — sign here and I will implement exactly what is above, including any edits you mark on the matrix.</p>
+<div></div>
+<p class="meta" style="margin:3pt 0 0">Approved by &nbsp;·&nbsp; Date</p>
+</div>
+
+<p class="meta" style="margin-top:12pt">Draft generated from the Scout codebase (vayd-enterprise-manager and vayd-api). Nothing in this document has been implemented. Role names, slugs, and the current-state notes in Section 6 reflect the code as it stands today.</p>
+
+</body>
+</html>

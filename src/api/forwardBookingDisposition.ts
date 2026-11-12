@@ -12,6 +12,8 @@ export type ForwardBookingDispositionMode =
 
 export type ForwardBookingDispositionLabsPendingTask = {
   assignedToEmployeeId?: number | null;
+  assignedToEmployeeIds?: number[];
+  watcherEmployeeIds?: number[];
   title?: string | null;
   /** ISO8601 UTC */
   startAt?: string | null;

@@ -117,7 +117,16 @@ export type AvailabilitySlot = {
   doctorName?: string;
 };
 
+/** SCH-A3: the API says routing (OSRM) is down; an empty list means an outage, not "no times". */
+export class RoutingUnavailableError extends Error {
+  constructor() {
+    super('Routing is unavailable');
+    this.name = 'RoutingUnavailableError';
+  }
+}
+
 export type AvailabilityResponse = {
+  routingUnavailable?: boolean;
   slots?: AvailabilitySlot[];
   winner?: AvailabilitySlot;
   alternates?: AvailabilitySlot[];
@@ -243,6 +252,7 @@ export type MonthAvailabilityCandidate = {
  */
 export async function fetchPublicMonthAvailability(request: AvailabilityRequest): Promise<MonthAvailabilityCandidate[]> {
   const { data } = await http.post('/public/appointments/availability', request);
+  if (data?.routingUnavailable === true) throw new RoutingUnavailableError();
 
   const rawCandidates: any[] = [];
 
@@ -319,6 +329,7 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
  */
 export async function fetchAvailability(request: AvailabilityRequest): Promise<AvailabilityResponse> {
   const { data } = await http.post('/public/appointments/availability', request);
+  if (data?.routingUnavailable === true) return { slots: [], alternates: [], routingUnavailable: true };
   
   // Handle new format with candidates array
   if (data?.candidates && Array.isArray(data.candidates)) {

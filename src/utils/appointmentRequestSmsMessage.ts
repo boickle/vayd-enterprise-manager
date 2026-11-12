@@ -1,6 +1,5 @@
 import { DateTime } from 'luxon';
 import { fetchAppointmentById } from '../api/appointments';
-import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import type { Appointment } from '../api/roomLoader';
 import {
@@ -16,7 +15,10 @@ import {
   type AppointmentTypeWindowSource,
 } from './appointmentArrivalWindow';
 import { fetchDoctorDayEffectiveWindowIsosForAppointment } from './appointmentRoutedArrivalWindow';
-import { findCalmingPremedAppointmentType } from './appointmentTypeSettings';
+import {
+  ensurePracticePremedsWindowLoaded,
+  tightenWindowSourceForPremeds,
+} from './premedsWindow';
 import {
   appointmentArrivalWindowIsosForSms,
   formatForwardBookingSmsBookedSlot,
@@ -61,21 +63,11 @@ function requestUsesCalmingMedications(requestData: Record<string, unknown>): bo
 }
 
 async function resolveCalmingPremedWindowSource(
-  practiceId?: number,
-): Promise<AppointmentTypeWindowSource | null> {
-  try {
-    const types = await fetchAllAppointmentTypes(practiceId);
-    const premed = findCalmingPremedAppointmentType(types);
-    if (!premed) return null;
-    return {
-      name: premed.name,
-      prettyName: premed.prettyName,
-      windowBeforeMinutes: premed.windowBeforeMinutes,
-      windowAfterMinutes: premed.windowAfterMinutes,
-    };
-  } catch {
-    return null;
-  }
+  practiceId: number | undefined,
+  visitType: AppointmentTypeWindowSource | undefined,
+): Promise<AppointmentTypeWindowSource> {
+  if (practiceId != null) await ensurePracticePremedsWindowLoaded(practiceId);
+  return tightenWindowSourceForPremeds(visitType);
 }
 
 function applyCalmingPremedWindow(
@@ -260,9 +252,6 @@ export async function resolveAppointmentRequestSmsMessage(
   const separator = opts?.greeting === 'email' ? '\n\n' : ' ';
   const greet = (body: string) => withGreeting(firstName, body, separator);
   const usesCalming = requestUsesCalmingMedications(rd);
-  const premedPromise = usesCalming
-    ? resolveCalmingPremedWindowSource(opts?.practiceId)
-    : Promise.resolve(null);
 
   // Prefer the linked calendar visit once booked. The request's self-scheduled
   // slot can still carry a stale (±60) window from an earlier availability pass.
@@ -276,11 +265,14 @@ export async function resolveAppointmentRequestSmsMessage(
         const resolved = await bookingContextFromAppointment(appt, practiceTz);
         if (resolved) {
           let ctx = resolved.ctx;
-          const premed = await premedPromise;
           const startIso = pickStr(appt.appointmentStart);
-          // Keep doctor-day windows (includes first-stop depot clamp). Only apply
-          // Pre-Meds type ±N when we fell back to appointment/type fields.
-          if (premed && startIso && resolved.source !== 'doctor_day') {
+          // Keep doctor-day windows (includes first-stop depot clamp). Only narrow
+          // by the pre-meds window when we fell back to appointment/type fields.
+          if (usesCalming && startIso && resolved.source !== 'doctor_day') {
+            const premed = await resolveCalmingPremedWindowSource(
+              opts?.practiceId,
+              appt.appointmentType ?? undefined,
+            );
             ctx = applyCalmingPremedWindow(ctx, startIso, practiceTz, premed);
           }
           return greet(buildAppointmentRequestSmsMessage(ctx));
@@ -293,9 +285,9 @@ export async function resolveAppointmentRequestSmsMessage(
 
   let fromSlot = bookingContextFromSelfScheduledSlot(rd, practiceTz);
   if (fromSlot) {
-    const premed = await premedPromise;
     const slot = requestDataSelfScheduledSlot(rd);
-    if (premed && slot?.appointmentStart) {
+    if (usesCalming && slot?.appointmentStart) {
+      const premed = await resolveCalmingPremedWindowSource(opts?.practiceId, undefined);
       fromSlot = applyCalmingPremedWindow(fromSlot, slot.appointmentStart, practiceTz, premed);
     }
     return greet(buildAppointmentRequestSmsMessage(fromSlot));

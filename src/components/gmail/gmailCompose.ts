@@ -14,10 +14,16 @@ import {
   formatGmailAddress,
   type GmailDraftResponse,
   type GmailAddress,
+  type GmailComposeAttachment,
+  type GmailComposePayload,
   type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../../api/gmail';
 import { extractEmailsFromText, normalizeEmail } from '../../utils/gmailEmailExtract';
+import {
+  looksLikeHtmlFragment,
+  sanitizeCommunicationHtml,
+} from '../../utils/sanitizeCommunicationHtml';
 
 export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
 
@@ -274,6 +280,33 @@ export function buildComposeSendBodiesFromEditorHtml(bodyHtml: string): {
   const trimmed = bodyHtml.trim();
   if (!trimmed) return { bodyText: '', bodyHtml: '' };
   return { bodyText: plainTextFromHtml(trimmed), bodyHtml: trimmed };
+}
+
+/** Plain or HTML user content from the template editor / Email client box. */
+export function composeBodiesFromUserContent(opts: {
+  userContent: string;
+  signatureHtml: string;
+}): { bodyText: string; bodyHtml: string } {
+  if (looksLikeHtmlFragment(opts.userContent)) {
+    const user = sanitizeCommunicationHtml(opts.userContent.trim());
+    const sig = opts.signatureHtml.trim();
+    const html = sig ? `${user}<br>${sig}` : user;
+    const text = [plainTextFromHtml(user), sig ? plainTextFromHtml(sig) : '']
+      .filter(Boolean)
+      .join('\n\n');
+    return { bodyText: text, bodyHtml: html };
+  }
+  return buildComposeSendBodies({
+    userText: opts.userContent,
+    signatureHtml: opts.signatureHtml,
+    quotedSuffix: '',
+  });
+}
+
+export function isEmailBodyEmpty(content: string): boolean {
+  if (!content.trim()) return true;
+  if (!looksLikeHtmlFragment(content)) return false;
+  return !plainTextFromHtml(content).trim();
 }
 
 /** User-typed portion of a unified HTML compose body. */
@@ -740,6 +773,9 @@ export async function submitCompose(opts: {
   references?: string;
   /** Defaults to tracked; false sends without a read receipt. */
   trackOpens?: boolean;
+  attachments?: GmailComposeAttachment[];
+  /** COM-07d: have the API write the chart entry after the send (see GmailComposePayload.chartLog). */
+  chartLog?: GmailComposePayload['chartLog'];
 }) {
   const to = opts.to
     .split(/[,;]/)
@@ -761,6 +797,8 @@ export async function submitCompose(opts: {
     inReplyTo: opts.inReplyTo,
     references: opts.references,
     trackOpens: opts.trackOpens,
+    attachments: opts.attachments?.length ? opts.attachments : undefined,
+    ...(opts.chartLog ? { chartLog: opts.chartLog } : {}),
   });
 }
 

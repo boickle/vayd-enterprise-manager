@@ -1,0 +1,89 @@
+.checkout-reminders {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #e7e5e4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.checkout-reminders__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.checkout-reminders__pet + .checkout-reminders__pet {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f5f5f4;
+}
+
+.checkout-reminders__pet-name {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.checkout-reminders__group {
+  margin-bottom: 6px;
+}
+
+.checkout-reminders__label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #78716c;
+  margin-bottom: 2px;
+}
+
+.checkout-reminders__label--warn {
+  color: #b45309;
+}
+
+.checkout-reminders__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.checkout-reminders__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.checkout-reminders__due {
+  color: #78716c;
+  white-space: nowrap;
+}
+
+.checkout-reminders__row--crossed .checkout-reminders__text,
+.checkout-reminders__row--crossed .checkout-reminders__due {
+  text-decoration: line-through;
+  color: #a8a29e;
+}
+
+.checkout-reminders__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid #d6d3d1;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.checkout-reminders__date {
+  padding: 3px 6px;
+  border: 1px solid #d6d3d1;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.checkout-reminders__add-btn {
+  margin-top: 4px;
+}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import Routing from './Routing';
 import Scheduler from './Scheduler';
 import { hasActiveForwardBookingWorkspaceLock } from '../utils/forwardBookingWorkspaceGuard';
@@ -8,11 +9,18 @@ import {
   appointmentRequestWorkspaceIsActive,
   ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
 } from '../utils/routingAppointmentRequestIntent';
-import { ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT } from '../utils/routingForwardBookingIntent';
+import { dispatchRoutingFocusHouseholdVisit } from '../utils/bookingHouseholdVisitWarning';
+import { showFollowUpPlannerPreview } from '../components/followUps/plannerEvents';
+import {
+  claimRoutingCalendarHandoff,
+  ROUTING_FORWARD_BOOKING_HANDOFF_PARAM,
+  ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+} from '../utils/routingForwardBookingIntent';
 import {
   rescheduleIntentIsActive,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
 } from '../utils/routingRescheduleIntent';
+import { ROUTING_NEW_APPOINTMENT_CLEAR_EVENT } from '../utils/routingUiSnapshot';
 import './RoutingCalendarWorkspace.css';
 
 const SPLIT_STORAGE_KEY = 'schedule-routing-workspace-split';
@@ -51,6 +59,53 @@ function readStoredSplitPct(): number {
  * is a separate Scheduler instance from `/schedule/scheduler`. Preview sync uses sessionStorage + a window event.
  */
 export default function RoutingCalendarWorkspace() {
+  // Opened in a new tab from Schedule follow-ups: take over its forward booking (and the
+  // slot or visit to show) first, so Routing and the calendar below read it as if it had
+  // been started here.
+  const [handoff] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    const claimed = claimRoutingCalendarHandoff(window.location.search);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM)) {
+      url.searchParams.delete(ROUTING_FORWARD_BOOKING_HANDOFF_PARAM);
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+    return claimed;
+  });
+  const focusVisit = handoff?.focusVisit ?? null;
+  // "View in calendar" from the planner: open on that visit's day and doctor, highlighted,
+  // with the longer end time drawn as the dashed preview. Repeated while the calendar
+  // loads its doctors and day.
+  useEffect(() => {
+    if (!focusVisit) return;
+    const fire = () => {
+      dispatchRoutingFocusHouseholdVisit(
+        {
+          appointmentId: focusVisit.appointmentId,
+          patientNames: [],
+          scheduledLabel: focusVisit.label,
+          appointmentTypeLabel: '',
+          isHold: false,
+          notes: null,
+          appointmentStartIso: focusVisit.startIso,
+          practiceDateKey: focusVisit.practiceDateKey,
+          primaryProviderId: focusVisit.providerId != null ? String(focusVisit.providerId) : null,
+        },
+        { pinHighlight: true }
+      );
+      if (focusVisit.previewEndIso) {
+        showFollowUpPlannerPreview({
+          appointmentId: focusVisit.appointmentId,
+          startIso: focusVisit.startIso,
+          endIso: focusVisit.previewEndIso,
+          originalStartIso: focusVisit.startIso,
+          originalEndIso: focusVisit.originalEndIso ?? focusVisit.previewEndIso,
+        });
+      }
+    };
+    const timers = [400, 1200, 2500, 5000].map((ms) => window.setTimeout(fire, ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [focusVisit]);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const calendarPaneRef = useRef<HTMLDivElement>(null);
   const [routingPct, setRoutingPct] = useState(readStoredSplitPct);
@@ -59,6 +114,10 @@ export default function RoutingCalendarWorkspace() {
   const [mobileViewport, setMobileViewport] = useState(isMobileRoutingViewport);
   const [showEmbeddedCalendar, setShowEmbeddedCalendar] = useState(
     () => !isMobileRoutingViewport() || mobileRoutingNeedsEmbeddedCalendar()
+  );
+  const [routingCollapsed, setRoutingCollapsed] = useState(
+    // A visit opened from Schedule follow-ups: calendar only, Get Best Route minimized.
+    focusVisit != null
   );
 
   useEffect(() => {
@@ -102,6 +161,29 @@ export default function RoutingCalendarWorkspace() {
   }, [mobileViewport, showEmbeddedCalendar]);
 
   const mobileRoutingOnly = mobileViewport && !showEmbeddedCalendar;
+  const routingPaneHidden = routingCollapsed && !mobileViewport;
+
+  useEffect(() => {
+    if (mobileViewport && routingCollapsed) setRoutingCollapsed(false);
+  }, [mobileViewport, routingCollapsed]);
+
+  useEffect(() => {
+    const expand = () => setRoutingCollapsed(false);
+    const events = [
+      ROUTING_NEW_APPOINTMENT_CLEAR_EVENT,
+      ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+      ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+      ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+    ] as const;
+    for (const name of events) {
+      window.addEventListener(name, expand);
+    }
+    return () => {
+      for (const name of events) {
+        window.removeEventListener(name, expand);
+      }
+    };
+  }, []);
 
   const persistSplit = useCallback((pct: number) => {
     const clamped = Math.min(MAX_ROUTING_PCT, Math.max(MIN_ROUTING_PCT, pct));
@@ -175,18 +257,38 @@ export default function RoutingCalendarWorkspace() {
         'schedule-routing-workspace',
         dragging ? 'schedule-routing-workspace--resizing' : '',
         mobileRoutingOnly ? 'schedule-routing-workspace--mobile-routing-only' : '',
+        routingPaneHidden ? 'schedule-routing-workspace--routing-collapsed' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       style={{ ['--routing-split-pct' as string]: `${routingPct}%` }}
     >
-      <div className="schedule-routing-workspace__routing">
+      {routingPaneHidden ? (
+        <button
+          type="button"
+          className="schedule-routing-workspace__expand"
+          onClick={() => setRoutingCollapsed(false)}
+          data-schedule-preview-allow
+          aria-label="Show Get Best Route"
+          title="Show Get Best Route"
+        >
+          <ChevronRight size={18} strokeWidth={2} aria-hidden />
+          <span className="schedule-routing-workspace__expand-label">Get Best Route</span>
+        </button>
+      ) : null}
+      <div
+        className="schedule-routing-workspace__routing"
+        hidden={routingPaneHidden}
+        aria-hidden={routingPaneHidden}
+      >
         <div className="schedule-routing-workspace__routing-inner">
           <Routing calendarWorkspaceMode />
         </div>
       </div>
       <div
         className="schedule-routing-workspace__splitter"
+        hidden={routingPaneHidden}
+        aria-hidden={routingPaneHidden}
         role="separator"
         aria-orientation="vertical"
         aria-valuemin={MIN_ROUTING_PCT}
@@ -207,7 +309,19 @@ export default function RoutingCalendarWorkspace() {
             persistSplit(routingPct + 2);
           }
         }}
-      />
+      >
+        <button
+          type="button"
+          className="schedule-routing-workspace__collapse"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setRoutingCollapsed(true)}
+          data-schedule-preview-allow
+          title="Minimize Get Best Route"
+          aria-label="Minimize Get Best Route and show the full calendar"
+        >
+          <ChevronLeft size={16} strokeWidth={2.25} aria-hidden />
+        </button>
+      </div>
       <div
         ref={calendarPaneRef}
         className={[

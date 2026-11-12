@@ -1,6 +1,7 @@
 // src/auth/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { clearAllScribeDeviceCopies } from '../utils/scribeDeviceCopy';
 
 type AuthState = {
   accessToken: string | null;
@@ -49,6 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuth({ accessToken: null, refreshToken: null });
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
+    clearAllScribeDeviceCopies();
     // broadcast to other tabs
     localStorage.setItem('logout_broadcast', String(Date.now()));
     navigate('/login', { replace: true });

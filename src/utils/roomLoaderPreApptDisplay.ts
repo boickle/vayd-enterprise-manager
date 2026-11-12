@@ -75,6 +75,27 @@ export function aggregateRoomLoaderPreApptStatus(
   return best;
 }
 
+export function chartRoomLoaderAction(opts: {
+  confirmStatusName?: string | null;
+  sentStatus?: string | null;
+  timesSentToClient?: number | null;
+  hasStaffForm?: boolean;
+  hasClientResponse?: boolean;
+}): { mode: 'send' | 'resend' | 'view'; label: string } {
+  const ui = resolveRoomLoaderPreApptUiStatus(opts.confirmStatusName, opts.sentStatus);
+  if (opts.hasClientResponse || ui === 'complete') {
+    return { mode: 'view', label: 'View Room Loader' };
+  }
+  if (
+    opts.hasStaffForm ||
+    (opts.timesSentToClient ?? 0) > 0 ||
+    ui === 'sent'
+  ) {
+    return { mode: 'resend', label: 'Re-send Room Loader' };
+  }
+  return { mode: 'send', label: 'Send Room Loader' };
+}
+
 export function roomLoaderPreApptDisplayLabel(status: RoomLoaderPreApptUiStatus): string {
   if (status === 'complete') return 'Client submitted form';
   if (status === 'sent') return 'Email sent';

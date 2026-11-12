@@ -1,0 +1,103 @@
+/*
+ * Waste detail fields are shown inside the invoice table, SOAP, Waste / Adjust and returns.
+ * They carry their own layout so table cell styles (alignment, input widths) don't pull the
+ * radio choices apart.
+ */
+.waste-fields__group {
+  margin: 10px 0 0;
+  padding: 8px 12px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  min-width: 0;
+}
+
+.waste-fields__group:first-child {
+  margin-top: 0;
+}
+
+.waste-fields__legend {
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.waste-fields__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.waste-fields__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.waste-fields__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  margin: 0;
+  padding: 5px 12px 5px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.waste-fields__option:hover {
+  border-color: #0f766e;
+}
+
+.waste-fields__option input[type='radio'] {
+  flex: none;
+  width: auto;
+  height: auto;
+  margin: 0;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+
+.waste-fields__option:has(input:checked) {
+  border-color: #0f766e;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.waste-fields__option:has(input:focus-visible) {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.waste-fields__note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.waste-fields__witness {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  text-align: left;
+}
+
+.waste-fields__witness select {
+  max-width: 18rem;
+}

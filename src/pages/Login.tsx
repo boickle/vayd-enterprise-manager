@@ -35,12 +35,14 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       const res = await login(email, password); // { token, user, resetRequired, resetCode }
+      if (res.redirecting) return;
 
       if (res?.resetRequired) {
         if (res.resetCode) {
           nav('/reset-password', {
             replace: true,
-            state: { email, code: res.resetCode, reason: 'temp-password' },
+            // PA-02: the reset screen sends this email with the code.
+            state: { email: email.trim(), code: res.resetCode, reason: 'temp-password' },
           });
         } else {
           nav('/request-reset', { replace: true, state: { email, reason: 'temp-password' } });

@@ -17,6 +17,7 @@ import {
   appointmentTypeLabelFromRow as routingTypeLabelFromRow,
 } from './routingCalculateTimeType';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import { appointmentShowsPremedsCardMarker } from './schedulerNewPatientCardMarker';
 import { ROUTING_DISMISS_RESCHEDULE_EVENT } from './routingUiSnapshot';
 import { routingCalendarDatePart } from './routingSlotSearchDates';
 
@@ -120,6 +121,8 @@ export type RoutingRescheduleIntentV1 = {
   sourceProviderInternalId?: string;
   sourceDoctorPimsId?: string;
   sourceDoctorDisplayName?: string;
+  /** Visit (or a same-slot household pet) needs pre-meds — routing searches with the pre-meds window. */
+  needsPremeds?: boolean;
   description?: string | null;
   instructions?: string | null;
   clientDisplayLabel?: string;
@@ -465,7 +468,9 @@ export function collectSameDayHouseholdVisits(
       // Keep the pet on the visit being closed. Drop euthanized / inactive
       // siblings so End Visit does not pre-check them for times or forward booking.
       if (!isSourcePatient && patientIsInactive(p)) continue;
-      if (byPatient.has(patientId)) continue;
+      // One row per pet. When the same pet has two visits that day, the visit that was
+      // right-clicked wins, so Reschedule moves that one (training review B1, Nov 7, 2026).
+      if (byPatient.has(patientId) && !isSourceRow) continue;
       const at = a.appointmentType;
       const rawTypeId = at?.id;
       const appointmentTypeId =
@@ -955,6 +960,12 @@ export function buildRoutingRescheduleIntentFromAppointment(
     appointmentAlternateAddressText(appt) ?? visitAddressFromAppointmentRow(appt);
   const isAlternateStop = appointmentHasAlternateLocation(appt);
   const patientId = p0?.id != null ? String(p0.id) : '';
+  const sameDayIds = new Set(sameDayVisits.map((v) => Number(v.appointmentId)));
+  const needsPremeds =
+    appointmentShowsPremedsCardMarker(appt) ||
+    (opts?.sameCalendarDayAppointments ?? []).some(
+      (row) => sameDayIds.has(Number(row.id)) && appointmentShowsPremedsCardMarker(row)
+    );
 
   return {
     v: 1,
@@ -976,6 +987,7 @@ export function buildRoutingRescheduleIntentFromAppointment(
     instructions: appt.instructions ?? null,
     clientDisplayLabel,
     serviceMinutes: minutes,
+    ...(needsPremeds ? { needsPremeds: true } : {}),
     clientAlerts: pickStr(c.alerts),
     ...(isAlternateStop
       ? {

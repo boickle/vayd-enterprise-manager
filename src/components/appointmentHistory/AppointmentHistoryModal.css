@@ -1,0 +1,210 @@
+/* Above Visit Highlights (2000–2200) and the appointment window (3000). */
+.appt-history__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.appt-history {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  max-height: min(80dvh, 720px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+  overflow: hidden;
+  color: #0f172a;
+}
+
+.appt-history__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.appt-history__head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appt-history__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.appt-history__close:hover {
+  background: #e2e8f0;
+}
+
+.appt-history__body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 14px 14px;
+}
+
+.appt-history__msg {
+  margin: 14px 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.appt-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.appt-history__entry {
+  padding: 12px 0 12px 12px;
+  border-left: 3px solid #cbd5e1;
+  margin-top: 10px;
+}
+
+.appt-history__entry.is-created {
+  border-left-color: #16a34a;
+}
+
+.appt-history__entry.is-deleted {
+  border-left-color: #dc2626;
+}
+
+.appt-history__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.appt-history__who span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.appt-history__note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #475569;
+  font-style: italic;
+}
+
+.appt-history__lines {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.appt-history__line {
+  display: grid;
+  grid-template-columns: minmax(96px, 30%) 1fr;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.appt-history__label {
+  color: #475569;
+  font-weight: 600;
+}
+
+.appt-history__values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.appt-history__from {
+  color: #64748b;
+  text-decoration: line-through;
+  text-decoration-color: #cbd5e1;
+}
+
+.appt-history__to {
+  font-weight: 600;
+}
+
+.appt-history__arrow {
+  color: #94a3b8;
+}
+
+.appt-history__none {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.appt-history__long {
+  white-space: pre-wrap;
+  display: block;
+  max-height: 7.5em;
+  overflow-y: auto;
+}
+
+/* Phone: label above the values so long text gets the full width. */
+@media (max-width: 520px) {
+  .appt-history__line {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .appt-history {
+    max-height: 88vh;
+    max-height: 88dvh;
+  }
+}
+
+.appt-history__earlier {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed #cbd5e1;
+}
+
+.appt-history__earlier h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.appt-history__earlier .appt-history__msg {
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+
+.appt-history__earlier ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: #334155;
+}

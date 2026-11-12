@@ -11,8 +11,9 @@ import {
   compareVisitAddressToClientHome,
   type VisitAddressMatchQuality,
 } from './visitAddressMatch';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;

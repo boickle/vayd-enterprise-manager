@@ -36,6 +36,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../auth/useAuth';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { labelDeactivatedProviders } from '../utils/deactivatedProviderLabel';
 // revenue helpers (match your current api file)
 import {
   fetchOpsStatsAnalytics,
@@ -119,6 +120,7 @@ export default function OpsAnalyticsPage() {
   const [revenueRows, setRevenueRows] = useState<DoctorRevenueRow[]>([]);
   const [revenueLoading, setRevenueLoading] = useState(false);
   const [providersLoading, setProvidersLoading] = useState(false);
+  const prevAllProviderIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     setRevenueDate(toISODate(range.to));
@@ -196,7 +198,17 @@ export default function OpsAnalyticsPage() {
   useEffect(() => {
     if (!isAdmin) return;
     if (providers.length === 0) return;
-    setProviderIds((prev) => (prev.length > 0 ? prev : providers.map((p) => String(p.id))));
+    const all = providers.map((p) => String(p.id));
+    const prevAll = prevAllProviderIdsRef.current;
+    prevAllProviderIdsRef.current = all;
+    setProviderIds((prev) => {
+      if (prev.length === 0) return all;
+      // Was "all" before the list changed with the dates: stay on "all" (RP-07).
+      if (prevAll.length > 0 && prev.length === prevAll.length && prevAll.every((id) => prev.includes(id))) {
+        return all;
+      }
+      return prev;
+    });
   }, [isAdmin, providers]);
 
   const open = Boolean(anchorEl);
@@ -207,7 +219,11 @@ export default function OpsAnalyticsPage() {
       if (!isAdmin) return;
       try {
         setProvidersLoading(true);
-        const list = await fetchPrimaryProviders();
+        // RP-07: deactivated doctors with production in these dates are listed too.
+        const list = await fetchPrimaryProviders({
+          from: toISODate(range.from),
+          to: toISODate(range.to),
+        });
         if (!alive) return;
         const arr = Array.isArray(list)
           ? list
@@ -216,7 +232,7 @@ export default function OpsAnalyticsPage() {
             : Array.isArray((list as any)?.items)
               ? (list as any).items
               : [];
-        setProviders(arr as Provider[]);
+        setProviders(labelDeactivatedProviders(arr as Provider[]));
       } catch (e) {
         // ignore
       } finally {
@@ -226,7 +242,7 @@ export default function OpsAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [isAdmin]);
+  }, [isAdmin, range.from, range.to]);
 
   // Fetch series when filters change
   useEffect(() => {

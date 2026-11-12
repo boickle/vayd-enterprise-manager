@@ -104,8 +104,9 @@ import { fetchClientLastOutreach, type ClientLastOutreach } from '../api/slotOff
 import { resolveScheduleLoaderSmsBookedSlot } from '../utils/scheduleLoaderSmsMessage';
 import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 const NOTES_DEBOUNCE_MS = 750;

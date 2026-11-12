@@ -1,6 +1,9 @@
 import { DateTime } from 'luxon';
 import { X } from 'lucide-react';
-import type { EditVisitTimePreview } from '../utils/editVisitTimePreview';
+import {
+  editVisitPreviewChangesPremeds,
+  type EditVisitTimePreview,
+} from '../utils/editVisitTimePreview';
 import type { EditVisitPreviewScoreCompare } from '../utils/editVisitTypeScoreCompare';
 import { EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE } from '../utils/editVisitPreviewApi';
 import { EditVisitOverflowTag } from './EditVisitOverflowTag';
@@ -61,8 +64,7 @@ export function EditVisitPreviewPopover({
   onConfirm,
   onDismiss,
 }: EditVisitPreviewPopoverProps) {
-  const title =
-    preview.kind === 'type' ? 'Appointment type preview' : 'Time adjustment preview';
+  const premedsChanged = editVisitPreviewChangesPremeds(preview);
   const newRangeLabel = formatPreviewRange(preview, practiceTz);
   const origStart =
     preview.originalAppointmentStart?.trim() || originalAppointmentStart?.trim() || '';
@@ -77,6 +79,12 @@ export function EditVisitPreviewPopover({
   const newType = preview.kind === 'type' ? typeLabel?.trim() || null : null;
   const typeChanged = Boolean(originalType && newType && originalType !== newType);
   const showWasNowTime = preview.kind === 'time' || timeChanged;
+  const title =
+    preview.kind === 'time'
+      ? 'Time adjustment preview'
+      : premedsChanged && !typeChanged
+        ? 'Pre-meds change preview'
+        : 'Appointment type preview';
 
   return (
     <div
@@ -109,6 +117,20 @@ export function EditVisitPreviewPopover({
                 →
               </span>
               <span className="scheduler-edit-preview-popover-change-now">{newType}</span>
+            </p>
+          ) : null}
+          {premedsChanged ? (
+            <p className="scheduler-edit-preview-popover-change-row">
+              <span className="scheduler-edit-preview-popover-change-k">Pre-meds</span>
+              <span className="scheduler-edit-preview-popover-change-was">
+                {preview.originalNeedsPremeds ? 'Yes' : 'No'}
+              </span>
+              <span className="scheduler-edit-preview-popover-change-arrow" aria-hidden>
+                →
+              </span>
+              <span className="scheduler-edit-preview-popover-change-now">
+                {preview.needsPremeds ? 'Yes' : 'No'}
+              </span>
             </p>
           ) : null}
           {showWasNowTime ? (
@@ -167,7 +189,7 @@ export function EditVisitPreviewPopover({
               {scoreCompare?.overflowOverrunSeconds != null ? (
                 <EditVisitOverflowTag overrunSeconds={scoreCompare.overflowOverrunSeconds} />
               ) : null}
-              {preview.kind === 'type' && scoreCompare?.windowLine ? (
+              {scoreCompare?.windowLine ? (
                 <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
                   {scoreCompare.windowLine}
                   {scoreCompare.windowWarningMayChange

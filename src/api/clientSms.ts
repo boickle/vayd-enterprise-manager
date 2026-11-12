@@ -3,6 +3,8 @@ import { http } from './http';
 export type SendClientSmsPayload = {
   message: string;
   overrideNonProd?: boolean;
+  /** Client phone1 or phone2. When omitted, API uses phone1 then phone2. */
+  to?: string;
   /** Send from this line (e.g. practice `phone1`). When omitted, API picks receptionist or default. */
   from?: string;
   /** Send from the visit assignee provider's Quo/OpenPhone line (`quoLinePhone`). */
@@ -13,6 +15,9 @@ export type SendClientSmsPayload = {
   markInboxDone?: boolean;
   /** Label for delivery-failure alerts (e.g. care_outreach, forward_booking). */
   source?: string;
+  practiceId?: number;
+  patientIds?: number[];
+  typeLabel?: string;
 };
 
 export type StaffSmsDeliveryFailure = {
@@ -60,4 +65,31 @@ export async function fetchStaffSmsDeliveryFailures(
 
 export async function acknowledgeStaffSmsDeliveryFailure(id: number): Promise<void> {
   await http.post(`/sms/delivery-failures/${encodeURIComponent(String(id))}/acknowledge`);
+}
+
+export type PreferredSmsFrom = {
+  /** The provider's own Quo line, or null when they have none. */
+  phone: string | null;
+  providerName: string | null;
+  source: 'appointment' | 'patient' | 'client' | null;
+};
+
+/**
+ * The line a text to this family starts on: the visit's provider (a visit named, else the family's
+ * visit today or in the next 7 days), else the pet's primary provider, else the client's.
+ */
+export async function fetchPreferredSmsFrom(args: {
+  clientId: number;
+  patientId?: number | null;
+  appointmentId?: number | null;
+}): Promise<PreferredSmsFrom> {
+  const params: Record<string, number> = { clientId: args.clientId };
+  if (args.patientId) params.patientId = args.patientId;
+  if (args.appointmentId) params.appointmentId = args.appointmentId;
+  const { data } = await http.get<PreferredSmsFrom>('/sms/preferred-from', { params });
+  return {
+    phone: data?.phone ?? null,
+    providerName: data?.providerName ?? null,
+    source: data?.source ?? null,
+  };
 }

@@ -14,12 +14,14 @@ import {
   requestDataAppointmentTypeForRouting,
   requestDataHowSoon,
   requestDataPreferredDoctor,
+  requestDataPrimaryProviderSummary,
   requestDataServiceMinutes,
   requestDataUsesAlternateVisitAddress,
   requestDataClientId,
   requestDataPreferredPatientIds,
   resolveClientPatientFromRequestData,
   requestDataClientPimsId,
+  requestDataWantsEarlierAppointment,
 } from './appointmentRequestDisplay';
 import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
 
@@ -45,6 +47,11 @@ export type RoutingAppointmentRequestIntentV1 = {
   alternateAddressText?: string;
   preferredDoctorId?: string;
   preferredDoctorDisplayName?: string;
+  /**
+   * No preferred doctor on the form: the pet's primary doctor by name (requests store the
+   * primary's name, not an id). Routing matches it against the provider list.
+   */
+  primaryDoctorName?: string;
   appointmentTypeName?: string;
   appointmentTypeId?: number;
   howSoon?: string;
@@ -60,6 +67,8 @@ export type RoutingAppointmentRequestIntentV1 = {
     patientPimsId: string | null;
     clientDetails?: string | null;
   }>;
+  /** Client asked to join the waitlist for a sooner time — Book pre-ticks the waitlist box. */
+  joinWaitlistIfSooner?: boolean;
   /** When true, successful book navigates back to the appointment requests list. */
   returnToListAfterBook?: boolean;
   /** Tab to restore when leaving routing / scheduler back to the list. */
@@ -183,6 +192,9 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
   const preferredPatientIds = requestDataPreferredPatientIds(rd);
   const mins = requestDataServiceMinutes(rd) ?? 45;
   const doctorId = pickStr(rd.preferredDoctorId);
+  // Route defaults to the client's preferred doctor, else the (first) pet's primary doctor.
+  const primaryDoctorName =
+    requestDataPrimaryProviderSummary(rd)?.split(',')[0]?.trim() || null;
   const alternateAddress = formatRequestDataAddress(rd);
   const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
   const apptType = requestDataAppointmentTypeForRouting(rd);
@@ -220,6 +232,7 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
         : {}),
     preferredDoctorId: doctorId ?? undefined,
     preferredDoctorDisplayName: requestDataPreferredDoctor(rd) ?? undefined,
+    ...(!doctorId && primaryDoctorName ? { primaryDoctorName } : {}),
     ...(!usesPerPetTypes
       ? {
           appointmentTypeName: apptType.label ?? undefined,
@@ -229,6 +242,7 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
     howSoon: requestDataHowSoon(rd) ?? undefined,
     description: requestDataAnythingElse(rd),
     clientPimsId: requestDataClientPimsId(rd) ?? undefined,
+    ...(requestDataWantsEarlierAppointment(rd) ? { joinWaitlistIfSooner: true } : {}),
     pets: petSummaries.map((pet) => ({
       name: pet.name,
       appointmentType: pet.appointmentType,

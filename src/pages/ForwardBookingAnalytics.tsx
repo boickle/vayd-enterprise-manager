@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import { useCan } from '../permissions/PermissionContext';
 import {
   Alert,
   Box,
@@ -240,7 +241,12 @@ export default function ForwardBookingAnalytics() {
     assignedDoctorIds?: string[];
   };
   const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsAnalyticsViewAll = useCan('analytics.view_all');
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(
+    normalizedRoles,
+    holdsAnalyticsViewAll
+  );
   const assignedDoctorIdSet = useMemo(
     () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
     [assignedDoctorIds]
@@ -335,11 +341,19 @@ export default function ForwardBookingAnalytics() {
   const totals = useMemo(() => {
     let totalAppointments = 0;
     let forwardBooked = 0;
+    const handled = { bookedAtVisit: 0, alreadyBooked: 0, sentToCls: 0, labsPending: 0, noChoice: 0 };
+    let hasHandled = false;
     for (const row of filteredDays) {
       totalAppointments += Number(row.totalAppointments) || 0;
       forwardBooked += Number(row.forwardBooked) || 0;
+      if (row.handled) {
+        hasHandled = true;
+        for (const k of Object.keys(handled) as (keyof typeof handled)[]) {
+          handled[k] += Number(row.handled[k]) || 0;
+        }
+      }
     }
-    return { totalAppointments, forwardBooked };
+    return { totalAppointments, forwardBooked, handled: hasHandled ? handled : null };
   }, [filteredDays]);
 
   const chartData = useMemo(() => {
@@ -567,6 +581,58 @@ export default function ForwardBookingAnalytics() {
                 />
               </Grid>
             </Grid>
+
+            {totals.handled ? (
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="How follow-ups were handled"
+                  subheader={`${scopeLabel}. The follow-up choice saved for each appropriate appointment (Schedule follow-ups, Start/End Visit, or checkout).`}
+                />
+                <CardContent>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                      gap: 2,
+                    }}
+                  >
+                    {(
+                      [
+                        ['Booked at the visit', totals.handled.bookedAtVisit],
+                        ['Already booked', totals.handled.alreadyBooked],
+                        ['Sent to the CLs', totals.handled.sentToCls],
+                        ['Labs pending', totals.handled.labsPending],
+                        ['No choice saved', totals.handled.noChoice],
+                      ] as const
+                    ).map(([label, n]) => (
+                      <Box key={label} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          {label}
+                        </Typography>
+                        <Typography variant="h6" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {formatCount(n)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatPercent(n, totals.totalAppointments)} of appointments
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                  {data?.notAppropriate != null || data?.confirmationTexts != null ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                      All providers:{' '}
+                      {data?.notAppropriate != null
+                        ? `${formatCount(data.notAppropriate)} marked “Not appropriate” (not counted above)`
+                        : ''}
+                      {data?.notAppropriate != null && data?.confirmationTexts != null ? ' · ' : ''}
+                      {data?.confirmationTexts != null
+                        ? `${formatCount(data.confirmationTexts)} confirmation texts sent from Schedule follow-ups`
+                        : ''}
+                    </Typography>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card sx={{ mb: 3 }}>
               <CardHeader

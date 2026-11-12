@@ -38,11 +38,13 @@ export function ClientLoginForm({
     setSubmitting(true);
     try {
       const res = await login(email.trim(), password);
+      if (res.redirecting) return;
 
       if (res?.resetRequired) {
         if (res.resetCode) {
           navigate('/reset-password', {
             replace: true,
+            // PA-02: the reset screen sends this email with the code.
             state: { email: email.trim(), code: res.resetCode, reason: 'temp-password' },
           });
         } else {

@@ -30,6 +30,7 @@ import {
   requestDataEmail,
 } from '../utils/appointmentRequestDisplay';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
+import { sanitizeEmailHtml } from '../utils/sanitizeEmailHtml';
 import '../pages/GmailInbox.css';
 import './AppointmentRequestEmailModal.css';
 
@@ -74,7 +75,7 @@ const EMAIL_BODY_FONT =
   'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;';
 
 /** Rich HTML + plain-text fallback for the outgoing reply, with signature + Gmail-style quote. */
-function buildEmailBodies(
+export function buildEmailBodies(
   message: string,
   original: GmailThreadMessage | null,
   signatureHtml: string,
@@ -106,7 +107,7 @@ function buildEmailBodies(
   return { html, text };
 }
 
-function applySignatureForFrom(
+export function applySignatureForFrom(
   mailbox: string,
   aliases: GmailSendAsAlias[],
   fromFormatted: string,
@@ -392,7 +393,7 @@ export function AppointmentRequestEmailModal({
                         {msg.body.html ? (
                           <div
                             className="gmail-thread-message__body gmail-thread-message__body--html"
-                            dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                            dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                           />
                         ) : (
                           <div className="gmail-thread-message__body">
@@ -513,7 +514,7 @@ export function AppointmentRequestEmailModal({
                     {threadMessages[0].body.html ? (
                       <div
                         className="gmail-thread-message__body gmail-thread-message__body--html"
-                        dangerouslySetInnerHTML={{ __html: threadMessages[0].body.html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(threadMessages[0].body.html) }}
                       />
                     ) : (
                       <div className="gmail-thread-message__body">

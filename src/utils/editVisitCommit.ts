@@ -8,8 +8,6 @@ import type { Appointment } from '../api/roomLoader';
 import { appointmentTypeAllowsClient } from './appointmentTypeSettings';
 import { DateTime } from 'luxon';
 import {
-  appendEditedByStaffNote,
-  appendLinkedClientStaffNote,
   type AppointmentChangeActor,
   type EditVisitChangeKind,
 } from './appointmentChangeAuditNote';
@@ -35,6 +33,8 @@ export type EditVisitFormSnapshot = {
   confirmStatusName: string;
   isComplete: boolean;
   allDay: boolean;
+  /** Omitted when the form does not show the pre-meds toggle. */
+  needsPremeds?: boolean;
 };
 
 export type CommitLinkVisitClientInput = {
@@ -254,15 +254,8 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
   }
 
   const description = input.form.description.trim();
-  let instructions = input.form.instructions.trim();
-  if (input.editedByAudit?.changes.length) {
-    instructions = appendEditedByStaffNote(
-      instructions,
-      input.editedByAudit.actor,
-      input.editedByAudit.practiceTz,
-      input.editedByAudit.changes
-    ).trim();
-  }
+  // Who changed what is recorded in the appointment History, not appended to staff notes.
+  const instructions = input.form.instructions.trim();
 
   const link = input.linkClient;
   if (link) {
@@ -280,15 +273,6 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         );
       }
     }
-    if (link.linkAudit) {
-      instructions = appendLinkedClientStaffNote(
-        instructions,
-        link.linkAudit.actor,
-        link.linkAudit.practiceTz,
-        link.clientLabel,
-        link.patientLabel
-      ).trim();
-    }
   }
 
   const typeName = input.appointmentTypeName?.trim() || '';
@@ -303,6 +287,9 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         ...(typeName ? { appointmentTypeName: typeName } : {}),
         ...(description ? { description } : {}),
         ...(instructions ? { instructions } : {}),
+        ...(input.form.needsPremeds !== undefined
+          ? { needsPremeds: input.form.needsPremeds }
+          : {}),
         /** PATCH on existing visit — not manual booking; skip role type permission gate. */
         bookedViaRouting: true,
       }
@@ -318,6 +305,9 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         ...(confirmStatusName ? { confirmStatusName } : {}),
         isComplete: input.form.isComplete,
         allDay: input.form.allDay,
+        ...(input.form.needsPremeds !== undefined
+          ? { needsPremeds: input.form.needsPremeds }
+          : {}),
         appointmentStart: input.appointmentStart,
         appointmentEnd: input.appointmentEnd,
         /** PATCH on existing visit — not manual booking; skip role type permission gate. */

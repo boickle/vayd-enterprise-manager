@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Captured before any cd: the payment check script ships with this deploy script.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ============================
 # Config (override via env)
 # ============================
@@ -87,6 +90,8 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
   else
     die "Set VITE_API_BASE_URL or add $env_file before building"
   fi
+  # Production (any non-QA mode) must use the Stripe provider and a live key (PAY-05).
+  "$SCRIPT_DIR/scripts/check-prod-payment-env.sh" "${BUILD_MODE:-production}"
   say "Installing deps & building..."
   npm ci --prefer-offline || npm install
   if [[ -n "${BUILD_MODE:-}" ]]; then

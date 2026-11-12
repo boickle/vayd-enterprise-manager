@@ -90,53 +90,6 @@
   border-top: 2px solid #e0e0e0;
 }
 
-/* Flea/tick disclosure — align with search field (no extra horizontal inset); color matches “Additional items” title (#084298) */
-.public-room-loader .public-room-loader-parasite-prevention-details {
-  margin-top: 14px;
-  padding: 14px 0 0;
-  border-top: 1px solid #dee2e6;
-  box-sizing: border-box;
-  width: 100%;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary {
-  cursor: pointer;
-  font-size: 15px;
-  font-weight: 600;
-  color: #084298;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 2px 0;
-  user-select: none;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::marker {
-  content: '';
-}
-
-/* Larger chevron (collapsed → right, open → down) — clearer than small text glyphs */
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::before {
-  content: '';
-  flex-shrink: 0;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 8px 0 8px 12px;
-  border-color: transparent transparent transparent #084298;
-  transform-origin: 35% 50%;
-  transition: transform 0.18s ease;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details[open] > summary::before {
-  transform: rotate(90deg);
-}
-
 /* Summary: gentle pulse on “Expand to see how membership could change your bill” (collapsed only) */
 .public-room-loader-membership-explainer-trigger--throb {
   animation: publicRoomLoaderMembershipExplainerThrob 2.35s ease-in-out infinite;
@@ -352,4 +305,58 @@
   .public-room-loader-panel-decline-emphasis {
     animation: none;
   }
+}
+
+/* Product modal for "Add other medications or products" (chips come from the store page's Store.css). */
+.rl-store-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.rl-store-modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px;
+  max-width: 460px;
+  width: 92%;
+  max-height: 88vh;
+  overflow: auto;
+  box-sizing: border-box;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+.rl-store-modal__title { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: #212529; }
+.rl-store-modal__note { margin: 0 0 4px; font-size: 14px; color: #555; }
+.rl-store-modal__fits { margin: -10px 0 0; font-size: 13px; color: rgb(15, 118, 110); font-weight: 600; }
+.rl-store-modal__price { margin: 14px 0 12px; font-size: 24px; font-weight: 700; color: #103b2e; }
+.rl-store-modal__actions { display: flex; gap: 10px; align-items: center; }
+.rl-store-modal__add {
+  padding: 11px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  background: rgb(15, 118, 110);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.rl-store-modal__add:disabled { background: #adb5bd; cursor: default; }
+.rl-store-modal__cancel {
+  padding: 11px 16px;
+  font-size: 14px;
+  background: #fff;
+  color: #495057;
+  border: 1px solid #ced4da;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.rl-store-modal__alt { margin: 12px 0 0; font-size: 13px; color: #555; }
+.rl-store-modal__alt a { color: rgb(15, 118, 110); font-weight: 600; }
+@media (max-width: 520px) {
+  .rl-store-modal { width: 96%; padding: 14px; }
+  .rl-store-modal__actions { flex-direction: column-reverse; align-items: stretch; }
+  .rl-store-modal__add, .rl-store-modal__cancel { width: 100%; }
 }

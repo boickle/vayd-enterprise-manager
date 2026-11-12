@@ -23,7 +23,8 @@ import {
 } from '@mui/material';
 import Refresh from '@mui/icons-material/Refresh';
 import dayjs from 'dayjs';
-import { fetchVeterinarians, type Provider } from '../api/employee';
+import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
+import { labelDeactivatedProviders } from '../utils/deactivatedProviderLabel';
 import {
   fetchAllAppointmentTypes,
   type EmployeeWeeklySchedule,
@@ -45,6 +46,7 @@ import {
 import { mapPool } from '../utils/asyncTtlCache';
 import { useAuth } from '../auth/useAuth';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import { useCan } from '../permissions/PermissionContext';
 import {
   actionLabel,
   buildBookingCalendar,
@@ -68,8 +70,9 @@ import {
   type BookingCalendarFillTone,
   type CalendarDayMetrics,
 } from '../utils/bookingCalendarMetrics';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function uniqueProviders(list: Provider[]): Provider[] {
   const out: Provider[] = [];
@@ -157,7 +160,12 @@ export default function BookingCalendarAnalytics() {
     assignedDoctorIds?: string[];
   };
   const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsAnalyticsViewAll = useCan('analytics.view_all');
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(
+    normalizedRoles,
+    holdsAnalyticsViewAll
+  );
   const assignedDoctorIdSet = useMemo(
     () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
     [assignedDoctorIds]
@@ -190,8 +198,15 @@ export default function BookingCalendarAnalytics() {
     (async () => {
       try {
         const result = await fetchVeterinarians();
+        // RP-07: deactivated doctors with production in these dates stay in the list.
+        const withActivity = await fetchPrimaryProviders({ from: startStr, to: endStr }).catch(
+          () => [] as Provider[]
+        );
         if (!alive) return;
-        setProviders(uniqueProviders(Array.isArray(result.providers) ? result.providers : []));
+        const departed = labelDeactivatedProviders(withActivity.filter((p) => p.isActive === false));
+        setProviders(
+          uniqueProviders([...(Array.isArray(result.providers) ? result.providers : []), ...departed])
+        );
       } catch (e) {
         if (!alive) return;
         console.error('fetchVeterinarians failed:', e);
@@ -203,7 +218,7 @@ export default function BookingCalendarAnalytics() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [startStr, endStr]);
 
   useEffect(() => {
     let alive = true;

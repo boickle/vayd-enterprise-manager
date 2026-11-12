@@ -39,6 +39,8 @@ type Props = {
   summary: AudienceSummary | null;
   checks: ReviewCheck[];
   busy: boolean;
+  /** RP-08: no test send, schedule, send or stop controls (Executive without marketing.manage). */
+  viewOnly?: boolean;
   onFlush: () => Promise<boolean>;
   onSpreadChange: (minutes: number) => void;
   onSchedule: (sendAt: string | null) => Promise<void>;
@@ -51,6 +53,7 @@ export default function ReviewStep({
   summary,
   checks,
   busy,
+  viewOnly = false,
   onFlush,
   onSpreadChange,
   onSchedule,
@@ -172,36 +175,38 @@ export default function ReviewStep({
         </Box>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-          Send a test
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Uses a real recipient’s name and pets so you can check merge tags. Links in tests aren’t
-          tracked.
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          <TextField
-            size="small"
-            label="Send to (up to 5, comma separated)"
-            value={testTo}
-            onChange={(e) => setTestTo(e.target.value)}
-            sx={{ flex: 1, minWidth: 260 }}
-          />
-          <Button
-            variant="outlined"
-            onClick={() => void sendTest()}
-            disabled={testing || !testTo.trim()}
-          >
-            {testing ? 'Sending…' : 'Send test'}
-          </Button>
-        </Box>
-        {testState ? (
-          <Alert severity={testState.kind} sx={{ mt: 1.5 }}>
-            {testState.text}
-          </Alert>
-        ) : null}
-      </Paper>
+      {viewOnly ? null : (
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+            Send a test
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Uses a real recipient’s name and pets so you can check merge tags. Links in tests aren’t
+            tracked.
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <TextField
+              size="small"
+              label="Send to (up to 5, comma separated)"
+              value={testTo}
+              onChange={(e) => setTestTo(e.target.value)}
+              sx={{ flex: 1, minWidth: 260 }}
+            />
+            <Button
+              variant="outlined"
+              onClick={() => void sendTest()}
+              disabled={testing || !testTo.trim()}
+            >
+              {testing ? 'Sending…' : 'Send test'}
+            </Button>
+          </Box>
+          {testState ? (
+            <Alert severity={testState.kind} sx={{ mt: 1.5 }}>
+              {testState.text}
+            </Alert>
+          ) : null}
+        </Paper>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" fontWeight={700} gutterBottom>
@@ -215,7 +220,14 @@ export default function ReviewStep({
           </Alert>
         ) : null}
 
-        {campaign.status === 'scheduled' ? (
+        {viewOnly ? (
+          <Alert severity="info">
+            View only.{' '}
+            {campaign.status === 'draft'
+              ? 'A practice manager schedules and sends campaigns.'
+              : `This campaign is ${campaign.status}.`}
+          </Alert>
+        ) : campaign.status === 'scheduled' ? (
           <Stack spacing={1.5}>
             <Alert severity="info">
               {`Scheduled to send ${

@@ -90,10 +90,12 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import { useCan } from '../permissions/PermissionContext';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 dayjs.extend(isoWeek);
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const PRACTICE_TOTAL_ID = '__practice__';
 /** Days of history (ending yesterday) used to estimate VSD per point — same as daily VSD estimate. */
 const VSD_ESTIMATE_LOOKBACK_DAYS = 30;
@@ -420,7 +422,12 @@ export default function ProjectedRevenueAnalyticsPage() {
     assignedDoctorIds?: string[];
   };
   const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsAnalyticsViewAll = useCan('analytics.view_all');
+  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(
+    normalizedRoles,
+    holdsAnalyticsViewAll
+  );
   const assignedDoctorIdSet = useMemo(
     () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
     [assignedDoctorIds]

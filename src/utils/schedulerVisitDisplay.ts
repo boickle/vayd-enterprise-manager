@@ -145,6 +145,17 @@ function nestedRecord(v: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** True when the sex text already carries the neuter status ("MaleNeutered", "MN", "Female Spayed"). */
+function sexAlreadyStatesStatus(sexPart: string, alteredPart: string): boolean {
+  const sex = sexPart.toLowerCase().replace(/[\s._/-]+/g, '');
+  if (['mn', 'mi', 'fs', 'fi', 'sf', 'cm'].includes(sex)) return true;
+  const hasStatus = /spay|neuter|castrat|intact|altered|fixed/.test(sex);
+  if (!hasStatus) return false;
+  const status = alteredPart.toLowerCase();
+  const words = status.match(/spay|neuter|castrat|intact|altered|fixed/g) ?? [];
+  return words.length === 0 || words.every((w) => sex.includes(w));
+}
+
 /** Collect sex / altered strings from a raw patient API object (nested entities included). */
 export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -186,7 +197,9 @@ export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[]
     .filter(Boolean)
     .join(' ')
     .trim();
-  if (sexPart && alteredPart) out.push(`${sexPart} ${alteredPart}`);
+  if (sexPart && alteredPart && !sexAlreadyStatesStatus(sexPart, alteredPart)) {
+    out.push(`${sexPart} ${alteredPart}`);
+  } else if (sexPart && alteredPart) out.push(sexPart);
   else if (alteredPart) out.push(alteredPart);
 
   const nestedPatient = nestedRecord(o.patient);
@@ -558,4 +571,57 @@ export function appointmentPatientMember(appt: Appointment): {
   }
 
   return { isMember, membershipName };
+}
+
+/**
+ * Plain-language sex line that never repeats the neuter status: "Male neutered", "Female spayed",
+ * "Male intact", "Female intact", "Unknown". Reads sex and neuter fields in any shape the data has
+ * (sex "MaleNeutered" / "MN" / "Male", neuterStatus "Neutered" / "Spayed" / true). Null when the
+ * record has no sex fields at all.
+ */
+export function patientSexNaturalLabelFromRecord(o: Record<string, unknown>): string | null {
+  const texts: string[] = [];
+  let altered: boolean | null = null;
+  const take = (v: unknown, isStatusKey: boolean) => {
+    if (typeof v === 'boolean') {
+      if (isStatusKey) altered = v;
+      return;
+    }
+    const nested = nestedRecord(v);
+    if (nested) {
+      for (const k of ['name', 'description', 'label', 'value']) take(nested[k], isStatusKey);
+      return;
+    }
+    const s = pickStr(v);
+    if (s) texts.push(s);
+  };
+  for (const k of PATIENT_SEX_MERGE_KEYS) {
+    take(o[k], (PATIENT_ALTERED_STATUS_KEYS as readonly string[]).includes(k));
+  }
+  const nestedPatient = nestedRecord(o.patient);
+  if (!texts.length && altered == null && nestedPatient) {
+    return patientSexNaturalLabelFromRecord(nestedPatient);
+  }
+  let sex: 'male' | 'female' | null = null;
+  let intact: boolean | null = altered == null ? null : !altered;
+  for (const raw of texts) {
+    const s = raw.toLowerCase();
+    const c = s.replace(/[\s._/-]+/g, '');
+    const isIntact = /intact|unaltered|entire/.test(s) || ['mi', 'fi'].includes(c);
+    const isAltered =
+      !isIntact &&
+      (/spay|neuter|castrat|altered|fixed/.test(s) || ['mn', 'fs', 'sf', 'cm'].includes(c));
+    if (isIntact) intact = true;
+    else if (isAltered) intact = false;
+    if (/female|bitch|queen|spay/.test(s) || ['f', 'fs', 'sf', 'fi'].includes(c)) sex ??= 'female';
+    else if (/male|neuter|castrat/.test(s) || ['m', 'mn', 'mi', 'cm'].includes(c)) sex ??= 'male';
+  }
+  if (!texts.length && altered == null) return null;
+  if (!sex) {
+    if (intact == null) return 'Unknown';
+    return intact ? 'Intact' : 'Altered';
+  }
+  const word = sex === 'male' ? 'Male' : 'Female';
+  if (intact == null) return word;
+  return `${word} ${intact ? 'intact' : sex === 'male' ? 'neutered' : 'spayed'}`;
 }

@@ -47,6 +47,9 @@ export default function CreateClientUser() {
       // Friendly, client-facing copy only.
       if (status === 401) {
         setError("We couldn't find that email. Please use the email on file with our clinic.");
+      } else if (status === 400 && /call us/i.test(String(serverMsg ?? ''))) {
+        // The email is on more than one household (D2): we can't tell whose portal it opens.
+        setError('Please call us to set up your portal.');
       } else if (serverMsg) {
         setError(serverMsg);
       } else {

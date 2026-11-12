@@ -1,0 +1,97 @@
+.virtual-terminal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 4000;
+}
+
+.virtual-terminal {
+  width: min(440px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px;
+  color: #111827;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.virtual-terminal h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.virtual-terminal__amount {
+  margin: 0 0 14px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.virtual-terminal__field {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.virtual-terminal__field input,
+.virtual-terminal__card {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.virtual-terminal__hint {
+  display: block;
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.virtual-terminal__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+}
+
+.virtual-terminal__check input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  flex: 0 0 16px;
+}
+
+.virtual-terminal__error {
+  margin: 10px 0 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.virtual-terminal__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}

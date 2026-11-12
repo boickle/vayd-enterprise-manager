@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { checkAppointmentRequestRecord } from '../api/clientRecordUploads';
+import { useCameraCaptureAvailable } from '../utils/cameraCapture';
 import {
   CLIENT_RECORD_MAX_FILES,
   type ClientRecordFileCheck,
@@ -37,17 +38,22 @@ export type PendingClientRecordFile = {
   file: File;
   previewUrl: string | null;
   formPetId: string;
+  /** Which picked practice these records came from. */
+  practiceKey?: string;
   /** Checked when added; only kept files are attached on submit. */
   check: ClientRecordFileCheck;
 };
 
 type FilesUpdate = (prev: PendingClientRecordFile[]) => PendingClientRecordFile[];
 
-type Delivery = 'upload' | 'request' | '';
+type Choice = 'upload' | 'request' | 'holdoff';
+type Delivery = Choice | '';
+
+export type ClientRecordPracticeOption = { key: string; name: string };
 
 type Props = {
   delivery: Delivery;
-  onDeliveryChange: (value: 'upload' | 'request') => void;
+  onDeliveryChange: (value: Choice) => void;
   files: PendingClientRecordFile[];
   /** Receives an updater because checks finish after the files are added. */
   onFilesChange: (update: FilesUpdate) => void;
@@ -57,31 +63,22 @@ type Props = {
   practiceId: number;
   deliveryError?: string;
   filesError?: string;
+  /** Shown under the previous-practice picker (no separate section heading). */
+  variant?: 'standalone' | 'combined';
+  /** Practices the owner picked; with two or more, each gets its own answer. */
+  practices?: ClientRecordPracticeOption[];
+  practiceDelivery?: Record<string, Choice | undefined>;
+  onPracticeDeliveryChange?: (practiceKey: string, value: Choice) => void;
 };
+
+const PRACTICE_CHOICES: { value: Choice; label: string }[] = [
+  { value: 'request', label: 'Request them' },
+  { value: 'upload', label: "I'll upload" },
+  { value: 'holdoff', label: "Don't contact" },
+];
 
 function petLabel(pets: ClientRecordPetOption[], formPetId: string): string {
   return pets.find((pet) => pet.id === formPetId)?.name || 'Pet';
-}
-
-/** Desktop browsers ignore `capture` and open a file picker instead. */
-function deviceOpensCamera(): boolean {
-  if (typeof navigator.mediaDevices?.getUserMedia !== 'function') return false;
-  if (navigator.maxTouchPoints < 1) return false;
-  return window.matchMedia('(pointer: coarse)').matches;
-}
-
-function useCameraCaptureAvailable(): boolean {
-  const [available, setAvailable] = useState(deviceOpensCamera);
-
-  useEffect(() => {
-    const media = window.matchMedia('(pointer: coarse)');
-    const update = () => setAvailable(deviceOpensCamera());
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  return available;
 }
 
 export function ClientRecordUploadFields({
@@ -94,6 +91,10 @@ export function ClientRecordUploadFields({
   practiceId,
   deliveryError,
   filesError,
+  variant = 'standalone',
+  practices = [],
+  practiceDelivery = {},
+  onPracticeDeliveryChange,
 }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
@@ -103,6 +104,27 @@ export function ClientRecordUploadFields({
   const activePetId = pets.some((pet) => pet.id === selectedPetId)
     ? selectedPetId
     : pets[0]?.id ?? 'pet';
+
+  const combined = variant === 'combined';
+  const perPractice = combined && practices.length > 1 && !!onPracticeDeliveryChange;
+  const uploadPractices = perPractice
+    ? practices.filter((p) => practiceDelivery[p.key] === 'upload')
+    : practices;
+  const showUpload = perPractice ? uploadPractices.length > 0 : delivery === 'upload';
+  const [selectedPracticeKey, setSelectedPracticeKey] = useState(uploadPractices[0]?.key ?? '');
+  const activePracticeKey = uploadPractices.some((p) => p.key === selectedPracticeKey)
+    ? selectedPracticeKey
+    : uploadPractices[0]?.key;
+
+  const choosePractice = (key: string, value: Choice) => {
+    onPracticeDeliveryChange?.(key, value);
+    if (value !== 'upload' && files.some((f) => f.practiceKey === key)) {
+      for (const f of files) {
+        if (f.practiceKey === key && f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+      }
+      onFilesChange((prev) => prev.filter((f) => f.practiceKey !== key));
+    }
+  };
 
   const setCheck = (localId: string, patch: Partial<PendingClientRecordFile>) => {
     onFilesChange((prev) =>
@@ -151,6 +173,7 @@ export function ClientRecordUploadFields({
         file,
         previewUrl,
         formPetId: activePetId,
+        practiceKey: activePracticeKey,
         check: { state: 'checking' },
       });
     }
@@ -166,6 +189,35 @@ export function ClientRecordUploadFields({
     onFilesChange((prev) => prev.filter((file) => file.localId !== localId));
   };
 
+  const photoHint = canTakePhoto
+    ? 'Take a photo with your phone, or upload photos or a PDF.'
+    : 'Upload photos or a PDF.';
+  const choiceOptions: {
+    value: Choice;
+    title: string;
+    detail: string;
+  }[] = [
+    {
+      value: 'request',
+      title: 'Please request them for me',
+      detail: combined
+        ? 'We\u2019ll email the practice today for your pet\u2019s prior medical records.'
+        : 'We will contact the hospital you listed.',
+    },
+    {
+      value: 'upload',
+      title: combined ? 'I have them and will upload them now' : "I'll upload them",
+      detail: combined ? `We won\u2019t contact the practice. ${photoHint}` : photoHint,
+    },
+  ];
+  if (combined) {
+    choiceOptions.push({
+      value: 'holdoff',
+      title: 'Don\u2019t contact them for now',
+      detail: 'You can always ask us later.',
+    });
+  }
+
   const checking = files.some((f) => f.check.state === 'checking');
   const hasKept = files.some((f) => f.check.state === 'qualifies' || f.check.state === 'accepted');
   const verified = clientRecordsVerified(files, newPetIds);
@@ -174,30 +226,73 @@ export function ClientRecordUploadFields({
   );
 
   return (
-    <div className="client-record-upload" data-form-field="recordsDelivery">
-      <span className="client-record-upload__label">
-        How should we get your pet&apos;s records? <span style={{ color: '#ef4444' }}>*</span>
-      </span>
-      <p className="client-record-upload__hint">
-        Uploading photos or a PDF yourself can get your pet seen sooner. You can also ask us to request them from the previous hospital.
-      </p>
+    <div
+      className={
+        combined
+          ? 'client-record-upload client-record-upload--combined'
+          : 'client-record-upload'
+      }
+      data-form-field="recordsDelivery"
+    >
+      {combined ? (
+        <p className="client-record-upload__hint client-record-upload__hint--combined">
+          Having their history before the visit means we are not guessing at past illnesses,
+          medications, or vaccine due dates.{' '}
+          {perPractice
+            ? 'For each practice, should we request the records, or will you upload them?'
+            : 'How should we get records from this practice?'}{' '}
+          <span style={{ color: '#ef4444' }}>*</span>
+        </p>
+      ) : (
+        <>
+          <span className="client-record-upload__label">
+            How should we get your pet&apos;s records? <span style={{ color: '#ef4444' }}>*</span>
+          </span>
+          <p className="client-record-upload__hint">
+            Uploading photos or a PDF yourself can get your pet seen sooner. You can also ask us to
+            request them from the previous hospital.
+          </p>
+        </>
+      )}
+      {perPractice ? (
+        <div className="client-record-upload__practices">
+          {practices.map((practice) => (
+            <div key={practice.key} className="client-record-upload__practice">
+              <span className="client-record-upload__practice-name">{practice.name}</span>
+              <div
+                className="client-record-upload__practice-choices"
+                role="radiogroup"
+                aria-label={`Records from ${practice.name}`}
+              >
+                {PRACTICE_CHOICES.map((choice) => {
+                  const selected = practiceDelivery[practice.key] === choice.value;
+                  return (
+                    <button
+                      key={choice.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={
+                        selected
+                          ? 'client-record-upload__practice-choice client-record-upload__practice-choice--selected'
+                          : 'client-record-upload__practice-choice'
+                      }
+                      onClick={() => choosePractice(practice.key, choice.value)}
+                    >
+                      {choice.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <p className="client-record-upload__hint" style={{ margin: 0 }}>
+            We only contact the practices marked &ldquo;Request them.&rdquo;
+          </p>
+        </div>
+      ) : (
       <div className="client-record-upload__choices">
-        {(
-          [
-            {
-              value: 'upload' as const,
-              title: "I'll upload them",
-              detail: canTakePhoto
-                ? 'Take a photo with your phone, or upload photos or a PDF.'
-                : 'Upload photos or a PDF.',
-            },
-            {
-              value: 'request' as const,
-              title: 'Please request them',
-              detail: 'We will contact the hospital you listed.',
-            },
-          ]
-        ).map((option) => (
+        {choiceOptions.map((option) => (
           <label
             key={option.value}
             className={
@@ -220,10 +315,26 @@ export function ClientRecordUploadFields({
           </label>
         ))}
       </div>
+      )}
       {deliveryError ? <div className="client-record-upload__error">{deliveryError}</div> : null}
 
-      {delivery === 'upload' ? (
+      {showUpload ? (
         <div className="client-record-upload__files" data-form-field="recordFiles">
+          {perPractice && uploadPractices.length > 1 ? (
+            <label className="client-record-upload__pet">
+              These records are from
+              <select
+                value={activePracticeKey}
+                onChange={(e) => setSelectedPracticeKey(e.target.value)}
+              >
+                {uploadPractices.map((practice) => (
+                  <option key={practice.key} value={practice.key}>
+                    {practice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {pets.length > 1 ? (
             <label className="client-record-upload__pet">
               These records are for
@@ -291,6 +402,9 @@ export function ClientRecordUploadFields({
                     <span className="client-record-upload__file-name">{item.file.name}</span>
                     <span className="client-record-upload__file-pet">
                       {petLabel(pets, item.formPetId)}
+                      {perPractice && uploadPractices.length > 1 && item.practiceKey
+                        ? ` · ${practices.find((p) => p.key === item.practiceKey)?.name ?? ''}`
+                        : ''}
                     </span>
                     <span
                       className={`client-record-upload__check client-record-upload__check--${item.check.state}`}

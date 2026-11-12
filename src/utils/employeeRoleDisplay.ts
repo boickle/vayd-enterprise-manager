@@ -7,6 +7,9 @@ export function normalizeRoleNameKey(name: string): string {
 export function humanizeEmployeeRoleName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return '';
+  // Slugs (lead_tech, lead-tech, LeadTech) become words. A name that already has spaces is
+  // shown as written, so "Executive (read-only)" keeps its hyphen.
+  if (/\s/.test(trimmed)) return trimmed.replace(/\s+/g, ' ');
   return trimmed
     .replace(/_/g, ' ')
     .replace(/-/g, ' ')

@@ -13,8 +13,9 @@ import {
   type RescheduleSameDayVisit,
 } from './routingRescheduleIntent';
 import { fetchAndCacheRescheduleSourcePlacementSnapshot } from './routingRescheduleScoreCompare';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 function appointmentIsTodayOrFuture(apptStart: string, practiceTz: string): boolean {
   const start = DateTime.fromISO(apptStart, { zone: 'utc' }).setZone(practiceTz);
@@ -49,6 +50,8 @@ export async function startRescheduleFromBookedAppointmentRequest(args: {
   practiceTz: string;
   navigate: NavigateFunction;
   returnToGmail?: { mailbox: string; threadId: string };
+  /** Open Routing in Explore alternatives mode (keeps the current visit until one is picked). */
+  exploreAlternatives?: boolean;
 }): Promise<{ error?: string }> {
   const apptId = args.submission.bookedAppointmentId;
   if (apptId == null) {
@@ -97,6 +100,7 @@ export async function startRescheduleFromBookedAppointmentRequest(args: {
   const built = buildRoutingRescheduleIntentFromAppointment(appt, {
     practiceTz,
     sameCalendarDayAppointments,
+    ...(args.exploreAlternatives ? { exploreAlternatives: true } : {}),
   });
   if (!built) {
     return {
