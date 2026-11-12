@@ -11,6 +11,22 @@ vi.mock('../../hooks/useOutboundCallFromLine', () => ({
   useOutboundCallFromLine: () => '+12075368387',
 }));
 vi.mock('../../hooks/useClientCallActivity', () => ({ markClientCallStarted: vi.fn() }));
+const gmail = vi.hoisted(() => ({
+  fetchGmailMailboxes: vi.fn(),
+  fetchGmailMessages: vi.fn(),
+  fetchGmailThread: vi.fn(),
+}));
+vi.mock('../../api/gmail', async (orig) => ({ ...(await orig<object>()), ...gmail }));
+vi.mock('../../utils/practiceGmailMailboxes', () => ({
+  sharedConnectedMailboxes: (m: Array<{ connected: boolean }>) => m.filter((x) => x.connected),
+}));
+const composed = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
+vi.mock('../ClientEmailComposeModal', () => ({
+  ClientEmailComposeModal: (props: Record<string, unknown>) => {
+    composed.props = props;
+    return <div role="dialog" aria-label="Email client window" />;
+  },
+}));
 
 import { HoldConversationPanel } from './HoldConversationPanel';
 
@@ -72,7 +88,7 @@ describe('HoldConversationPanel', () => {
     sms.sendClientSms.mockResolvedValue(undefined);
   });
 
-  it('shows the thread from when the hold was placed, with Text and Call but no Email', async () => {
+  it('shows the thread from when the hold was placed; no Email tab without a client email', async () => {
     render(<HoldConversationPanel hold={hold} canText practiceTz="America/New_York" />);
     expect(await screen.findByText('Can we push Luna to January?')).toBeTruthy();
     expect(screen.getByText('Hold placed')).toBeTruthy();
@@ -115,5 +131,52 @@ describe('HoldConversationPanel', () => {
       expect(holdsApi.logHoldCall).toHaveBeenCalledWith(501, { outcome: 'no_answer', note: null })
     );
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('shows emails with the client (older ones folded) and Email opens the Email client window (Nov 12)', async () => {
+    gmail.fetchGmailMailboxes.mockResolvedValue({
+      mailboxes: [{ email: 'info@vetatyourdoor.com', connected: true }],
+    });
+    gmail.fetchGmailMessages.mockResolvedValue({
+      threads: [{ threadId: 'th1', id: 'm2', date: '2026-11-07T15:00:00Z', labelIds: ['INBOX'] }],
+      untaggedQueue: [],
+    });
+    const msg = (id: string, date: string, fromEmail: string, text: string) => ({
+      id,
+      threadId: 'th1',
+      date,
+      subject: 'Luna',
+      from: { name: null, email: fromEmail },
+      snippet: text,
+      labelIds: [],
+      body: { text, html: null },
+    });
+    gmail.fetchGmailThread.mockResolvedValue({
+      messages: [
+        msg('m1', '2026-10-01T15:00:00Z', 'amanda@example.com', 'Old question about fleas'),
+        msg('m2', '2026-11-07T15:00:00Z', 'amanda@example.com', 'January works better for us'),
+      ],
+    });
+    const withEmail = { ...hold, client: { ...hold.client, email: 'amanda@example.com' } } as HoldListItem;
+    render(<HoldConversationPanel hold={withEmail} canText practiceTz="America/New_York" />);
+
+    expect(await screen.findByText('January works better for us')).toBeTruthy();
+    expect(screen.queryByText('Old question about fleas')).toBeNull();
+    expect(screen.getByRole('button', { name: /Show 1 earlier message/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Email/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email message' }), {
+      target: { value: 'Hi Amanda, January it is.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open email window' }));
+    expect(await screen.findByRole('dialog', { name: 'Email client window' })).toBeTruthy();
+    expect(composed.props).toEqual(
+      expect.objectContaining({
+        clientId: 42,
+        initialBodyText: 'Hi Amanda, January it is.',
+        initialSubject: "Visit hold follow-up from Dr. Cheeseman's team at Vet At Your Door",
+        regardingPatientId: 7,
+      })
+    );
   });
 });

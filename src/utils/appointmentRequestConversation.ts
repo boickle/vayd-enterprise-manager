@@ -184,6 +184,8 @@ export function buildRequestConversation(args: {
       title: m.subject,
       author: fromClient ? null : m.from?.name?.trim() || m.from?.email || null,
       body: emailBody(m),
+      // Holds show the client's older email threads; fold what came before the hold.
+      beforeRequest: timeMs(m.date) < timeMs(args.submittedAt) - 60_000,
     });
   }
 

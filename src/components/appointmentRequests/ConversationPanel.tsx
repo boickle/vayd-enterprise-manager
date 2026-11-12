@@ -46,6 +46,10 @@ export type ConversationEmail = {
   clientEmail: string | null;
   subject: string | null;
   send: (text: string) => Promise<unknown>;
+  /** Open the Email client window (From / send as, templates) with what was typed. */
+  openWindow?: (draft: string) => void;
+  /** Send only through the window (holds): the main button opens it. */
+  windowOnly?: boolean;
 };
 
 export type ConversationSource = {
@@ -410,7 +414,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
     setSending(true);
     setSendError(null);
     try {
-      if (mode === 'email' && email) {
+      if (mode === 'email' && email?.windowOnly && email.openWindow) {
+        email.openWindow(text);
+      } else if (mode === 'email' && email) {
         await email.send(text);
         source.afterEmail?.();
       } else if (mode === 'text') {
@@ -430,7 +436,7 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
 
   const sendDisabled =
     sending ||
-    (mode === 'email' && (!email?.canSend || !draft.trim())) ||
+    (mode === 'email' && (!email?.canSend || (!draft.trim() && !email?.windowOnly))) ||
     (mode === 'text' && (!canText || !draft.trim()));
 
   return (
@@ -607,7 +613,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               placeholder={
                 mode === 'call'
                   ? 'What was said (optional)'
-                  : mode === 'email'
+                  : mode === 'email' && email?.windowOnly
+                    ? 'Start an email here, or leave blank, then open the email window to pick From and send…'
+                    : mode === 'email'
                     ? 'Write an email…'
                     : 'Write a text…'
               }
@@ -616,18 +624,31 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               }
             />
             <div className="req-convo-compose-foot">
-              {mode !== 'call' && source.suggest ? (
-                <button
-                  type="button"
-                  className="req-convo-suggest"
-                  onClick={() => void suggest()}
-                  disabled={suggesting}
-                >
-                  {suggesting ? 'Writing…' : 'Suggested message'}
-                </button>
-              ) : (
-                <span />
-              )}
+              <span className="req-convo-compose-tools">
+                {mode !== 'call' && source.suggest ? (
+                  <button
+                    type="button"
+                    className="req-convo-suggest"
+                    onClick={() => void suggest()}
+                    disabled={suggesting}
+                  >
+                    {suggesting ? 'Writing…' : 'Suggested message'}
+                  </button>
+                ) : null}
+                {mode === 'email' && email?.openWindow && !email.windowOnly ? (
+                  <button
+                    type="button"
+                    className="req-convo-suggest"
+                    title="Choose who it is from (send as), use a template, attach files"
+                    onClick={() => {
+                      email.openWindow?.(draft.trim());
+                      setDraft('');
+                    }}
+                  >
+                    From, templates… ↗
+                  </button>
+                ) : null}
+              </span>
               <button
                 type="button"
                 className="req-convo-send"
@@ -636,7 +657,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
               >
                 {sending
                   ? 'Sending…'
-                  : mode === 'call'
+                  : mode === 'email' && email?.windowOnly
+                    ? 'Open email window'
+                    : mode === 'call'
                     ? 'Save call'
                     : mode === 'email'
                       ? 'Send email'

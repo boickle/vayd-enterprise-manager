@@ -673,3 +673,9 @@
 .hold-open-card .appt-request-row-actions {
   width: 100%;
 }
+
+.req-convo-compose-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

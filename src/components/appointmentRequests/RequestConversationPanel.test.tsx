@@ -34,6 +34,14 @@ vi.mock('../../utils/appointmentRequestSmsMessage', () => ({
   resolveAppointmentRequestSmsMessage: vi.fn(async () => 'Hi Laura, it is Vet At Your Door.'),
 }));
 
+const emailWindow = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
+vi.mock('../AppointmentRequestEmailModal', () => ({
+  AppointmentRequestEmailModal: (props: Record<string, unknown>) => {
+    emailWindow.props = props;
+    return <div role="dialog" aria-label="Request email window" />;
+  },
+}));
+
 import { RequestConversationPanel } from './RequestConversationPanel';
 
 const item: AppointmentRequestSubmissionItem = {
@@ -345,5 +353,16 @@ describe('RequestConversationPanel calls', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Summarize' }));
       expect(await screen.findByText(/No transcript in Quo for this call/)).toBeInTheDocument();
     });
+  });
+
+  it('From, templates… opens the email window with what was typed (Nov 12)', async () => {
+    render(<RequestConversationPanel item={item} practiceId={1} practiceTz="America/New_York" onContacted={vi.fn()} onSubmissionUpdated={vi.fn()} />);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Email message' }), {
+      target: { value: 'Hi Laura, Tuesday works.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /From, templates/ }));
+    expect(await screen.findByRole('dialog', { name: 'Request email window' })).toBeTruthy();
+    expect(emailWindow.props).toEqual(expect.objectContaining({ initialBodyText: 'Hi Laura, Tuesday works.' }));
+    expect(emailHook.send).not.toHaveBeenCalled();
   });
 });

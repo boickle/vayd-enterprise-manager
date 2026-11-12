@@ -47,6 +47,8 @@ type Props = {
   practiceTz: string;
   onClose: () => void;
   onSent?: (context: AppointmentRequestEmailSentContext | null) => void;
+  /** What the user already typed in the conversation (replaces the suggested message). */
+  initialBodyText?: string;
   onGmailLinked?: (patch: {
     gmailThreadId: string;
     gmailMailbox: string;
@@ -140,6 +142,7 @@ export function AppointmentRequestEmailModal({
   practiceTz,
   onClose,
   onSent,
+  initialBodyText,
   onGmailLinked,
 }: Props) {
   const clientLabel = clientDisplayNameFromRequestData(item.requestData ?? {});
@@ -174,12 +177,15 @@ export function AppointmentRequestEmailModal({
       setSignatureHtml('');
       setSendAsAliases([]);
       try {
+        const typed = initialBodyText?.trim() ?? '';
         const [link, defaultMessage] = await Promise.all([
           fetchAppointmentRequestGmailLink(item.id),
-          resolveAppointmentRequestSmsMessage(item, practiceTz, {
-            practiceId,
-            greeting: 'email',
-          }),
+          typed
+            ? Promise.resolve(typed)
+            : resolveAppointmentRequestSmsMessage(item, practiceTz, {
+                practiceId,
+                greeting: 'email',
+              }),
         ]);
         if (cancelled) return;
 
