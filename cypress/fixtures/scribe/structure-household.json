@@ -1,0 +1,29 @@
+{
+  "multiPatient": true,
+  "patients": [
+    {
+      "patientId": 0,
+      "subjectiveHistory": "Annual exam, no concerns.",
+      "vitals": { "tempF": "101.2", "weight": "30.0", "weightUnit": "lb", "weightNotTaken": false, "hr": "100", "rr": "22", "bcs": "5/9", "painScore": null },
+      "exam": {},
+      "assessmentReasoning": "- Healthy adult dog",
+      "problems": [{ "label": "Healthy adult" }],
+      "planItems": [],
+      "objectiveNotes": "AI-WRITTEN OBJECTIVE for pet 1: bright, alert, normal exam.",
+      "planNotes": "AI-WRITTEN PLAN for pet 1: continue current diet, recheck in 1 year."
+    },
+    {
+      "patientId": 0,
+      "subjectiveHistory": "Vomited twice yesterday.",
+      "vitals": { "tempF": "102.0", "weight": "9.5", "weightUnit": "lb", "weightNotTaken": false, "hr": "180", "rr": "30", "bcs": "5/9", "painScore": null },
+      "exam": {},
+      "assessmentReasoning": "- Mild gastroenteritis",
+      "problems": [{ "label": "Gastroenteritis" }],
+      "planItems": [],
+      "objectiveNotes": "AI-WRITTEN OBJECTIVE for pet 2: mild abdominal discomfort.",
+      "planNotes": "AI-WRITTEN PLAN for pet 2: bland diet 3 days, recheck if vomiting continues."
+    }
+  ],
+  "clientEmailSubject": "Visit summary",
+  "clientEmailBody": "<p>Thank you for bringing your pets in today.</p>"
+}
