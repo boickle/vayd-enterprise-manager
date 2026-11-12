@@ -116,6 +116,29 @@ describe('Card on file section', () => {
     expect(await screen.findByText('No card on file')).toBeTruthy();
   });
 
+  it('PAY-C2-4: the Remove window names the membership that keeps the card', async () => {
+    granted.add('card_on_file.manage');
+    getClientCardOnFile.mockResolvedValue({ ...withCard, stillUsedBy: ["Pippin's Gold membership"] });
+    removeClientCardOnFile.mockResolvedValue({
+      ...noCard,
+      removed: { last4: '4242', brand: 'visa', detached: false, stillUsedBy: ["Pippin's Gold membership"] },
+    });
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove card' }));
+    expect(screen.getByText(/Still used by Pippin's Gold membership\. The card is kept for it only/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Owner asked' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove card' }).pop() as HTMLButtonElement);
+    expect(await screen.findByText("Card removed. Kept only for Pippin's Gold membership.")).toBeTruthy();
+  });
+
+  it('PAY-C2-4: no membership or auto-ship on the card: the Remove window says it is removed everywhere', async () => {
+    granted.add('card_on_file.manage');
+    render(ui());
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove card' }));
+    expect(screen.queryByText(/Still used by/)).toBeNull();
+    expect(screen.getByText(/Removes the card everywhere/)).toBeTruthy();
+  });
+
   it('notes a membership billed on a different card, with a link to the pet', async () => {
     listPatientMemberships.mockResolvedValue([
       { id: 9, patientId: 77, patientName: 'Hazel', status: 'active', stripeSubscriptionId: 'sub_1' },
