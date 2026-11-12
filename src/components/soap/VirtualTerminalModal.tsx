@@ -110,7 +110,10 @@ export default function VirtualTerminalModal({
   return createPortal(
     <div className="virtual-terminal-backdrop" role="dialog" aria-modal="true">
       <div className="virtual-terminal">
-        <h3>Card over the phone</h3>
+        <h3>Type card manually</h3>
+        <p className="virtual-terminal__hint">
+          Typed-in cards cost us a higher card fee than Tap to Pay. Use this when the reader isn&apos;t working, the card won&apos;t tap, or the owner isn&apos;t with you.
+        </p>
         <p className="virtual-terminal__amount">
           Charge <strong>${amountDue.toFixed(2)}</strong>
         </p>

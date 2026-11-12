@@ -2043,7 +2043,7 @@ export function formatInvoiceLineEntered(created: string | null | undefined): st
   });
 }
 
-/** Virtual terminal: charge a card keyed in while the owner reads it out. */
+/** Type card manually (virtual terminal): charge a card number keyed in by staff. */
 export async function chargeKeyedCard(
   invoiceId: string,
   body: { paymentMethodId: string; saveCard?: boolean },
