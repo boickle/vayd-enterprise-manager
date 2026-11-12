@@ -41,6 +41,7 @@ const lots: InventoryLotBalance[] = [
 vi.mock('../../api/branchInventory', () => ({
   listInventoryLots: vi.fn(async () => lots),
   getUncountedShelfLot: vi.fn(),
+  getShelfCountStatus: vi.fn(async () => ({ counted: true })),
 }));
 vi.mock('./AddInventoryLotModal', () => ({ default: () => null }));
 

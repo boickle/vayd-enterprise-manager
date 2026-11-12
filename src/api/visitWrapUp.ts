@@ -62,6 +62,11 @@ export type VisitWrapUp = {
   clientDoNotEmail?: boolean;
   provider: { id: number; name: string | null; email: string | null } | null;
   emailDraft: { subject: string; body: string };
+  /**
+   * The saved draft was written from the charts, and chart text, vitals, doses, sigs or follow-up
+   * changed since (SCR-02). Older servers omit it: treat as fresh.
+   */
+  emailDraftStale?: boolean;
   clientEmailDelivery: ClientEmailDelivery | null;
   pets: VisitWrapUpPet[];
 };
@@ -81,6 +86,7 @@ export async function getVisitWrapUp(encounterId: string): Promise<VisitWrapUp> 
     ...data,
     clientEmails: Array.isArray(data.clientEmails) ? data.clientEmails : [],
     pets: Array.isArray(data.pets) ? data.pets : [],
+    emailDraftStale: data.emailDraftStale === true,
     emailDraft: {
       subject: typeof data.emailDraft?.subject === 'string' ? data.emailDraft.subject : '',
       body: typeof data.emailDraft?.body === 'string' ? data.emailDraft.body : '',
@@ -251,12 +257,15 @@ export function normalizeClientRecap(data: unknown): { subject: string; body: st
  */
 export async function persistClientRecapDraft(
   encounterId: string,
-  draft: { subject: string; body: string }
+  draft: { subject: string; body: string },
+  /** `fromCharts`: the draft was just written from the charts (not a hand edit), so the server notes what they said. */
+  opts?: { fromCharts?: boolean }
 ): Promise<void> {
   await http.put(`/soap-encounters/${encodeURIComponent(encounterId)}/recap-draft`, {
     practiceId: pid(),
     subject: draft.subject,
     body: draft.body,
+    ...(opts?.fromCharts ? { fromCharts: true } : {}),
   });
 }
 
@@ -276,7 +285,7 @@ export function prefetchClientRecap(
       if (data.emailDraft.subject.trim() || data.emailDraft.body.trim()) return data.emailDraft;
       const ids = patientIds?.length ? patientIds : data.pets.map((p) => p.patientId);
       const draft = await generateClientRecap(encounterId, ids);
-      await persistClientRecapDraft(encounterId, draft);
+      await persistClientRecapDraft(encounterId, draft, { fromCharts: true });
       return draft;
     } catch {
       recapPrefetch.delete(encounterId);
@@ -305,6 +314,10 @@ export async function recordClientEmailDecision(
     gmailMessageId?: string;
     gmailThreadId?: string;
     skipReason?: string;
+    /** Chronic meds whose "order from our store" block went out inside this recap. */
+    storeMedRxIds?: number[];
+    /** No recap, and the doctor unticked the separate ordering email for these meds. */
+    storeMedsDeclinedRxIds?: number[];
   }
 ): Promise<VisitWrapUp> {
   const { data } = await http.post<VisitWrapUp>(
@@ -312,4 +325,19 @@ export async function recordClientEmailDecision(
     { practiceId: pid(), ...body }
   );
   return data;
+}
+
+/** The recap's "order from our store" block for chronic meds added to these pets. */
+export type StoreMedsBlock = { rxIds: number[]; html: string; text: string };
+
+/** Null when none of these pets has a new chronic med we sell online. */
+export async function fetchStoreMedsBlock(
+  encounterId: string,
+  patientIds: number[]
+): Promise<StoreMedsBlock | null> {
+  const { data } = await http.post<StoreMedsBlock | null | ''>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/store-meds-block`,
+    { practiceId: pid(), patientIds }
+  );
+  return data && typeof data === 'object' && Array.isArray(data.rxIds) && data.rxIds.length ? data : null;
 }

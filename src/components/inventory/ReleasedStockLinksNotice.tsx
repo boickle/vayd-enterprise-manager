@@ -61,7 +61,7 @@ export default function ReleasedStockLinksNotice() {
         <>
           <p className="settings-muted" style={{ margin: '8px 0' }}>
             Until you choose, each item draws stock on itself. Pick the stock item it should draw
-            from, or confirm it draws on itself. Changing the link in eVet works too.
+            from, or confirm it draws on itself.
           </p>
           {error && (
             <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>

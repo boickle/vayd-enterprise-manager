@@ -406,12 +406,23 @@ export type MailOrder = {
   fillerName?: string | null;
   fillBranchId?: number | null;
   fillBranchName?: string | null;
+  /** "+ New mail order" package (ashes etc.), not a pharmacy fill. */
+  packageShipment?: boolean;
+  /** Package ships from this typed address instead of an office. */
+  shipFromName?: string | null;
+  shipFromLine1?: string | null;
+  shipFromLine2?: string | null;
+  shipFromCity?: string | null;
+  shipFromState?: string | null;
+  shipFromPostal?: string | null;
   filledAt?: string | null;
   packagedAt?: string | null;
   secondCheckedAt?: string | null;
   clientContactedAt?: string | null;
   clientContactKind?: 'email' | 'sms' | 'none' | null;
   clientQuestionPendingAt?: string | null;
+  /** The client texted back while the order was Pending client (owner, Nov 11, 2026). */
+  clientRepliedAt?: string | null;
   cancelRequestedAt?: string | null;
   cancelRequestedByName?: string | null;
   cancelRequestReason?: MailCancelReason | null;
@@ -901,6 +912,10 @@ export async function createStaffMailOrder(
       state?: string;
       postal?: string;
     };
+    /** Package mail: the office it leaves from. */
+    fillBranchId?: number | null;
+    /** Package mail: ships from this typed address instead of an office. */
+    shipFrom?: { name?: string; line1: string; line2?: string; city: string; state: string; postal: string } | null;
     lines: Array<{
       inventoryItemId?: number | null;
       name: string;
@@ -1887,4 +1902,24 @@ export async function patchMyAutoship(
     params: { practiceId },
   });
   return data;
+}
+
+/** Red counts for the Pharmacy tabs (owner, Nov 11, 2026). */
+export type MailNavCounts = { clientReplies: number; autoshipPaymentProblems: number };
+
+export async function fetchMailNavCounts(practiceId: number): Promise<MailNavCounts> {
+  const { data } = await http.get<MailNavCounts>(`/practice/${practiceId}/mail-orders-nav-counts`);
+  return data;
+}
+
+/** True when the client texted back after the order was put on hold (Pending client). */
+export function mailClientReplied(order: Pick<MailOrder, 'clientQuestionPendingAt' | 'clientRepliedAt'>): boolean {
+  if (!order.clientQuestionPendingAt || !order.clientRepliedAt) return false;
+  return Date.parse(order.clientRepliedAt) >= Date.parse(order.clientQuestionPendingAt);
+}
+
+/** Ask the Pharmacy tabs to fetch their counts again (after a hold is cleared, a card fixed, …). */
+export const MAIL_NAV_COUNTS_REFRESH = 'vayd:mail-nav-counts';
+export function refreshMailNavCounts(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(MAIL_NAV_COUNTS_REFRESH));
 }

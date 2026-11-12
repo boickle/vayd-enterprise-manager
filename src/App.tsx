@@ -35,6 +35,7 @@ import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
 import AppointmentSearchPage from './pages/AppointmentSearchPage';
+import AppointmentRequestCleanupPage from './pages/AppointmentRequestCleanupPage';
 import HoldsPage from './pages/HoldsPage';
 import {
   parseAppointmentRequestsHighlightFromSearch,
@@ -82,7 +83,6 @@ import StoreCartPage from './pages/store/StoreCartPage';
 import StoreThanks from './pages/store/StoreThanks';
 import StoreGiftCardBalance from './pages/store/StoreGiftCardBalance';
 import StoreGiftCardPrint from './pages/store/StoreGiftCardPrint';
-import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
@@ -727,7 +727,8 @@ export default function App() {
           <Route path="/store" element={<StoreLayout />}>
             <Route index element={<StoreHome />} />
             <Route path="cart" element={<StoreCartPage />} />
-            <Route path="autoship" element={<StoreAutoshipPage />} />
+            {/* Owner (Nov 11, 2026): auto-ships are managed from each pet's Medications card in the portal. */}
+            <Route path="autoship" element={<Navigate to="/client-portal" replace />} />
             <Route path="gift-cards/balance" element={<StoreGiftCardBalance />} />
             <Route path="thanks/:id" element={<StoreThanks />} />
             <Route path=":id" element={<StoreProduct />} />
@@ -803,6 +804,7 @@ export default function App() {
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
                     <Route path="appointments/holds" element={<HoldsPage />} />
+                    <Route path="appointments/cleanup" element={<AppointmentRequestCleanupPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"

@@ -51,7 +51,7 @@ export default function StoreCartFloat() {
   }, [open]);
 
   if (!count) return null;
-  if (location.pathname === '/store/cart' || location.pathname === '/store/autoship') return null;
+  if (location.pathname === '/store/cart') return null;
   if (location.pathname.startsWith('/consent/')) return null;
   if (location.pathname.startsWith('/store/gift-cards/print/')) return null;
 

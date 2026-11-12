@@ -7,8 +7,6 @@ import {
   ROUTING_APPOINTMENT_REQUEST_INTENT_STORAGE_KEY,
   type RoutingAppointmentRequestIntentV1,
 } from '../utils/routingAppointmentRequestIntent';
-import { EvetNameLink } from './EvetNameLink';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import './AppointmentRequestRoutingSummary.css';
 
 type RoutingPetLine = NonNullable<RoutingAppointmentRequestIntentV1['pets']>[number];
@@ -42,17 +40,7 @@ function PetTypeLines({ pets }: { pets: RoutingPetLine[] }) {
     <ul className="appt-request-routing-summary__pets">
       {pets.map((pet) => (
         <li key={`${pet.name}-${pet.appointmentType ?? 'type'}`}>
-          {pet.patientPimsId ? (
-            <EvetNameLink
-              href={evetPatientLink(pet.patientPimsId)}
-              className="appt-request-routing-summary__pet-name"
-              title="Open patient in eVet"
-            >
-              {pet.name}
-            </EvetNameLink>
-          ) : (
-            <span className="appt-request-routing-summary__pet-name">{pet.name}</span>
-          )}
+          <span className="appt-request-routing-summary__pet-name">{pet.name}</span>
           {pet.appointmentType ? `: ${pet.appointmentType}` : null}
         </li>
       ))}
@@ -118,17 +106,7 @@ export function AppointmentRequestRoutingSummary({
     <div className="appt-request-routing-summary" role="status" aria-live="polite">
       <p className="appt-request-routing-summary__lead">
         Appointment request from{' '}
-        {intent.clientPimsId ? (
-          <EvetNameLink
-            href={evetClientLink(intent.clientPimsId)}
-            className="appt-request-routing-summary__client"
-            title="Open client in eVet"
-          >
-            {client}
-          </EvetNameLink>
-        ) : (
-          <span className="appt-request-routing-summary__client">{client}</span>
-        )}
+        <span className="appt-request-routing-summary__client">{client}</span>
         .
       </p>
 

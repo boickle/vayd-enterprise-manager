@@ -157,3 +157,37 @@ export function ensureRecapFarewell(parts: {
     html: `${parts.html.replace(/(<br\s*\/?>|\s)+$/gi, '')}<br><br>${RECAP_FAREWELL}`,
   };
 }
+
+const FAREWELL_RE = /(?:take care|warmly|best regards|best wishes|sincerely|with care|all the best)\s*,?/gi;
+
+/**
+ * Puts the "order from our store" block above the recap's closing ("Take care,"), so it reads
+ * as part of the doctor's letter and the signature stays last. With no closing found it goes last.
+ */
+export function insertBeforeFarewell(
+  closed: { html: string; text: string },
+  block: { html: string; text: string } | null
+): { html: string; text: string } {
+  if (!block) return closed;
+  const lines = closed.text.replace(/\s+$/, '').split('\n');
+  const lastIdx = lines.length - 1;
+  const text =
+    lastIdx >= 0 && recapHasFarewell(lines[lastIdx])
+      ? [...lines.slice(0, lastIdx), '', block.text, '', lines[lastIdx]].join('\n').replace(/\n{3,}/g, '\n\n')
+      : `${closed.text.replace(/\s+$/, '')}\n\n${block.text}`;
+
+  let at = -1;
+  for (const m of closed.html.matchAll(FAREWELL_RE)) at = m.index ?? at;
+  let html: string;
+  if (at < 0 || !recapHasFarewell(closed.html)) {
+    html = `${closed.html}${block.html}`;
+  } else {
+    // Start of the element holding the closing, when it sits in its own <p>/<div>.
+    const before = closed.html.slice(0, at);
+    const open = Math.max(before.lastIndexOf('<p'), before.lastIndexOf('<div'));
+    const close = Math.max(before.lastIndexOf('</p>'), before.lastIndexOf('</div>'), before.lastIndexOf('<br'));
+    const cut = open > close ? open : at;
+    html = `${closed.html.slice(0, cut)}${block.html}${closed.html.slice(cut)}`;
+  }
+  return { html, text };
+}

@@ -20,7 +20,44 @@ export type ConversationItem = {
   author?: string | null;
   /** Text sent before the request came in: folded under "Show earlier texts". */
   beforeRequest?: boolean;
+  /** Quo call transcript, behind "Show transcript". */
+  transcript?: string | null;
+  /** Quo call: its id (for Summarize) and what Quo said about the transcript. */
+  quoCallId?: number;
+  transcriptStatus?: string | null;
 };
+
+export type ConversationQuoCall = {
+  id: number;
+  direction: 'in' | 'out';
+  status: string | null;
+  at: string;
+  durationSeconds: number | null;
+  staff: { firstName: string | null; lastName: string | null } | null;
+  transcript: string | null;
+  summary: string | null;
+  /** completed, absent (Quo has none), failed, not-found, in-progress… or null (never asked). */
+  transcriptStatus?: string | null;
+  beforeRequest: boolean;
+};
+
+/** "Incoming call · 4 min", "Outgoing call · 30 sec", "Missed call". */
+export function quoCallTitle(
+  c: Pick<ConversationQuoCall, 'direction' | 'status' | 'durationSeconds'>
+): string {
+  const status = (c.status ?? '').toLowerCase();
+  const secs = c.durationSeconds ?? 0;
+  if (
+    status.includes('miss') ||
+    status.includes('no-answer') ||
+    status.includes('no_answer') ||
+    (c.direction === 'in' && secs === 0)
+  ) {
+    return c.direction === 'in' ? 'Missed call' : 'No answer';
+  }
+  const len = secs >= 60 ? `${Math.round(secs / 60)} min` : `${secs} sec`;
+  return `${c.direction === 'in' ? 'Incoming' : 'Outgoing'} call · ${len}`;
+}
 
 export type ConversationText = {
   id: string;
@@ -112,6 +149,9 @@ export function buildRequestConversation(args: {
   emails: readonly GmailThreadMessage[];
   texts: readonly ConversationText[];
   calls: readonly ConversationCall[];
+  quoCalls?: readonly ConversationQuoCall[];
+  /** First line of the thread; "Request received" unless told otherwise (holds: "Hold placed"). */
+  startTitle?: string;
 }): ConversationItem[] {
   const clientEmail = lower(args.clientEmail);
   const items: ConversationItem[] = [
@@ -120,7 +160,7 @@ export function buildRequestConversation(args: {
       channel: 'event',
       direction: 'none',
       at: args.submittedAt,
-      title: 'Request received',
+      title: args.startTitle ?? 'Request received',
       body: '',
     },
   ];
@@ -144,6 +184,8 @@ export function buildRequestConversation(args: {
       title: m.subject,
       author: fromClient ? null : m.from?.name?.trim() || m.from?.email || null,
       body: emailBody(m),
+      // Holds show the client's older email threads; fold what came before the hold.
+      beforeRequest: timeMs(m.date) < timeMs(args.submittedAt) - 60_000,
     });
   }
 
@@ -167,6 +209,22 @@ export function buildRequestConversation(args: {
       title: CALL_OUTCOME_LABELS[c.outcome] ?? c.outcome,
       author: personName(c.employee),
       body: c.note ?? '',
+    });
+  }
+
+  for (const q of args.quoCalls ?? []) {
+    items.push({
+      key: `quo-${q.id}`,
+      channel: 'call',
+      direction: q.direction,
+      at: q.at,
+      title: quoCallTitle(q),
+      author: personName(q.staff),
+      body: q.summary ?? '',
+      transcript: q.transcript,
+      quoCallId: q.id,
+      transcriptStatus: q.transcriptStatus ?? null,
+      beforeRequest: q.beforeRequest,
     });
   }
 

@@ -4,6 +4,29 @@ export type AppointmentRequestSubmissionKind = 'submission' | 'abandoned';
 
 export type AppointmentRequestSubmissionStatus = 'new' | 'contacted' | 'booked' | 'dismissed';
 
+/** Communication with the client, separate from booking. */
+export type AppointmentRequestCommunicationStatus =
+  | 'not_contacted'
+  | 'contacted'
+  | 'owner_replied'
+  | 'complete';
+
+/** Staff's records choice; null follows the records requests for the request's pets. */
+export type AppointmentRequestRecordsChoice = 'not_needed' | 'waiting' | 'complete';
+
+/** Records column, worked out on the server from the records requests and the staff choice. */
+export type AppointmentRequestRecordsSummary = {
+  state: 'none' | 'not_needed' | 'waiting' | 'requested' | 'received' | 'done' | 'complete';
+  /** Records part finished, so it does not hold the request on the list. */
+  finished: boolean;
+  choice: AppointmentRequestRecordsChoice | null;
+  total: number;
+  pending: number;
+  /** Received but not summarized in the chart yet. */
+  toSummarize: number;
+  patientId: number | null;
+};
+
 /** GET /appointments/request-submissions item shape */
 export type AppointmentRequestSubmissionItem = {
   kind?: AppointmentRequestSubmissionKind;
@@ -43,6 +66,14 @@ export type AppointmentRequestSubmissionItem = {
   liaisonAssignedAt?: string | null;
   /** Service zone name saved at submit; null on requests sent before Nov 2026. */
   zoneName?: string | null;
+  /** Open requests only: a visit (or upcoming hold) for one of the pets since the request came in. */
+  visitSinceRequest?: VisitSinceRequest | null;
+  communicationStatus?: AppointmentRequestCommunicationStatus;
+  recordsStatus?: AppointmentRequestRecordsChoice | null;
+  /** Records column; null for Not booked requests (or if it could not be worked out). */
+  records?: AppointmentRequestRecordsSummary | null;
+  /** Client replies (email or text) nobody has opened yet; null when there are none. */
+  unreadReplies?: AppointmentRequestUnreadReplies | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -91,6 +122,10 @@ export type PatchAppointmentRequestSubmissionBody = {
   confirm?: boolean;
   /** Request owner. `null` clears it. Anyone may reassign to anyone. */
   liaisonEmployeeId?: number | null;
+  /** A step on a New request also moves it to Contacted. */
+  communicationStatus?: AppointmentRequestCommunicationStatus;
+  /** `null` goes back to following the records requests. */
+  recordsStatus?: AppointmentRequestRecordsChoice | null;
 };
 
 export type BookAppointmentRequestSubmissionBody = {
@@ -348,6 +383,19 @@ export type AppointmentRequestConversationResponse = {
   phone: string | null;
   texts: Array<{ id: string; direction: 'in' | 'out'; body: string; at: string; beforeRequest: boolean }>;
   textsError: string | null;
+  /** Quo calls with the request's phone: transcript and AI summary when Quo transcribed it. */
+  quoCalls?: Array<{
+    id: number;
+    direction: 'in' | 'out';
+    status: string | null;
+    at: string;
+    durationSeconds: number | null;
+    staff: { id: number; firstName: string | null; lastName: string | null } | null;
+    transcript: string | null;
+    summary: string | null;
+    transcriptStatus?: string | null;
+    beforeRequest: boolean;
+  }>;
   calls: Array<{
     id: number;
     at: string;
@@ -360,9 +408,36 @@ export type AppointmentRequestConversationResponse = {
 /** GET /appointments/request-submissions/:id/conversation */
 export async function fetchAppointmentRequestConversation(
   id: number,
+  /** Load only texts (Quo, can be slow) or only calls (quick); default both. */
+  include?: 'texts' | 'calls',
+  /** Skip the API's short texts cache (a new reply came in, or we just sent). */
+  fresh?: boolean,
 ): Promise<AppointmentRequestConversationResponse> {
+  const params: Record<string, string> = {};
+  if (include) params.include = include;
+  if (fresh) params.fresh = '1';
   const { data } = await http.get<AppointmentRequestConversationResponse>(
     `/appointments/request-submissions/${encodeURIComponent(String(id))}/conversation`,
+    Object.keys(params).length ? { params } : undefined,
+  );
+  return data;
+}
+
+export type QuoCallSummaryResult = {
+  id: number;
+  transcript: string | null;
+  summary: string | null;
+  /** completed, absent (Quo has none), failed, not-found, in-progress… */
+  transcriptStatus: string | null;
+};
+
+/** POST …/quo-calls/:callId/summary — fetch Quo's transcript if missing and summarize the call. */
+export async function summarizeAppointmentRequestQuoCall(
+  id: number,
+  callId: number,
+): Promise<QuoCallSummaryResult> {
+  const { data } = await http.post<QuoCallSummaryResult>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/quo-calls/${encodeURIComponent(String(callId))}/summary`,
   );
   return data;
 }
@@ -376,5 +451,74 @@ export async function logAppointmentRequestCall(
     `/appointments/request-submissions/${encodeURIComponent(String(id))}/calls`,
     body,
   );
+  return data;
+}
+
+export type AppointmentRequestUnreadReplies = {
+  count: number;
+  lastAt: string;
+  lastChannel: 'email' | 'text';
+  lastPreview: string | null;
+};
+
+/** Anyone opening the request reads its replies; `read: false` is "Mark as unread". */
+export async function markAppointmentRequestReplies(
+  id: number,
+  read: boolean,
+): Promise<AppointmentRequestSubmission> {
+  const { data } = await http.post<AppointmentRequestSubmission>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/replies`,
+    { read },
+  );
+  return data;
+}
+
+/** Requests with unread client replies: mine (or nobody's) in red, someone else's in blue. */
+export async function fetchAppointmentRequestUnreadCounts(
+  practiceId: number,
+): Promise<{ mine: number; others: number }> {
+  const { data } = await http.get<{ mine: number; others: number }>(
+    '/appointments/request-submissions/unread-counts',
+    { params: { practiceId } },
+  );
+  return { mine: Number(data?.mine) || 0, others: Number(data?.others) || 0 };
+}
+
+/** A visit for one of the request's pets after the request came in. */
+export type VisitSinceRequest = {
+  appointmentId: number;
+  start: string;
+  typeName: string | null;
+  isHold: boolean;
+  past: boolean;
+};
+
+export type AppointmentRequestCleanupItem = {
+  id: number;
+  submittedAt: string;
+  status: string;
+  clientName: string;
+  petNames: string[];
+  notes: string | null;
+  visit: VisitSinceRequest | null;
+  proposal: 'booked' | 'not_booked';
+};
+
+/** GET /appointments/request-submissions/cleanup — open requests older than N days, with proposals. */
+export async function fetchAppointmentRequestCleanup(
+  practiceId: number,
+  olderThanDays = 10,
+): Promise<{ olderThanDays: number; items: AppointmentRequestCleanupItem[] }> {
+  const { data } = await http.get('/appointments/request-submissions/cleanup', {
+    params: { practiceId, olderThanDays },
+  });
+  return data;
+}
+
+/** POST /appointments/request-submissions/cleanup/apply */
+export async function applyAppointmentRequestCleanup(
+  items: Array<{ id: number; action: 'booked' | 'not_booked'; appointmentId?: number | null }>,
+): Promise<{ booked: number; notBooked: number; skipped: number }> {
+  const { data } = await http.post('/appointments/request-submissions/cleanup/apply', { items });
   return data;
 }

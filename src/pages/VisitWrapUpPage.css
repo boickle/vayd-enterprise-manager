@@ -1253,3 +1253,19 @@
 .soap-wrapup-pet-row--callbacks .soap-wrapup-callbacks {
   padding: 8px 14px 10px;
 }
+
+/* "Order from our store" block for new chronic meds, shown where it lands in the email. */
+.soap-wrapup-store-meds {
+  margin: 10px 0 4px;
+}
+.soap-wrapup-store-meds-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.soap-wrapup-store-meds-preview {
+  max-width: 560px;
+}

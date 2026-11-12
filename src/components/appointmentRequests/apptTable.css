@@ -256,12 +256,70 @@
   color: #166534;
 }
 
+/* Appointments requests: a tenth column for Records. */
+.appt-table-head.appt-table--with-records,
+.appt-table-row.appt-table--with-records {
+  grid-template-columns:
+    100px 54px minmax(140px, 1.4fr) minmax(86px, 1fr) minmax(86px, 0.9fr)
+    minmax(108px, 0.9fr) 100px minmax(114px, 1fr) minmax(114px, 1fr) minmax(110px, 0.95fr);
+}
+
+/* A status pill that opens a menu (Booking, Communication, Records). */
+.appt-table-pill--menu {
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.appt-table-pill--menu:hover {
+  filter: brightness(0.96);
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12) inset;
+}
+
+.appt-table-pill--menu:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 1px;
+}
+
+.appt-table-pill--menu:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.appt-table-pill-caret {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+.appt-table-pill--comm-replied {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.appt-table-pill--records-none {
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.appt-table-pill--records-open {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.appt-table-pill--records-complete {
+  background: #dcfce7;
+  color: #166534;
+}
+
 /* Narrow screens: let the summary wrap rather than squeeze. */
 @media (max-width: 1100px) {
   .appt-table-head {
     display: none;
   }
-  .appt-table-row {
+  .appt-table-row,
+  .appt-table-row.appt-table--with-records {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -295,4 +353,91 @@
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+/* Open request nobody has worked in 10 days. */
+.appt-table-quiet {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: normal;
+}
+
+/* A pet on this open request was already seen (or has a visit coming) since it came in. */
+.appt-table-pill--seen {
+  background: #ffedd5;
+  color: #9a3412;
+  border: 1px dashed #fb923c;
+}
+
+/* Liaison filter beside the search box. */
+.appt-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.appt-liaison-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.appt-liaison-filter select {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  font: inherit;
+  font-weight: 500;
+}
+
+/* The latest unread reply under the client name. */
+.appt-table-reply {
+  display: block;
+  margin-top: 3px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.appt-table-reply--others {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.appt-table-row--unread {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.appt-table-row--unread-others {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+/* New client: stands out in the row (owner, Nov 12, 2026). */
+.appt-table-new-pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #ea580c;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }

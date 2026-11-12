@@ -15,7 +15,6 @@ import {
 import { patchReminder } from '../api/careOutreach';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -1384,28 +1383,9 @@ export default function FillDayPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    {(() => {
-                      const clientPimsId = (candidate.client as any)?.pimsId || (candidate as any)?.clientPimsId;
-                      const clientHref = clientPimsId ? evetClientLink(clientPimsId) : undefined;
-                      return clientHref ? (
-                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                          <a
-                            href={clientHref}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{ color: 'inherit', textDecoration: 'none' }}
-                            onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
-                            onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
-                          >
-                            {candidate.clientName}
-                          </a>
-                        </h3>
-                      ) : (
-                        <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-                          {candidate.clientName}
-                        </h3>
-                      );
-                    })()}
+                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+                      {candidate.clientName}
+                    </h3>
                     {candidate.client?.alerts && (
                       <div style={{
                         padding: '4px 8px',
@@ -1540,28 +1520,9 @@ export default function FillDayPage() {
                         {/* Patient Name and Info */}
                         <div style={{ marginBottom: '12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                            {(() => {
-                              const patientPimsId = patient?.pimsId || (patient as any)?.pimsId;
-                              const patientHref = patientPimsId ? evetPatientLink(patientPimsId) : undefined;
-                              return patientHref ? (
-                                <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
-                                  <a
-                                    href={patientHref}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ color: 'inherit', textDecoration: 'none' }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
-                                    onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
-                                  >
-                                    {petName}
-                                  </a>
-                                </div>
-                              ) : (
-                                <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
-                                  {petName}
-                                </div>
-                              );
-                            })()}
+                            <div style={{ fontWeight: 600, fontSize: '18px', color: '#111827' }}>
+                              {petName}
+                            </div>
                             {(patient && formatPatientInfo(patient)) ||
                             (patientId != null && Number.isFinite(Number(patientId))) ? (
                               <div

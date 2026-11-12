@@ -1,5 +1,6 @@
 // Book appointment from scheduler (double-click slot) — POST /appointments
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { alertsWithDeposit } from '../utils/depositRequired';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { useSubmitOnce } from '../hooks/useSubmitOnce';
@@ -474,7 +475,7 @@ export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
 export function extractClientAlertsFromPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const row = payload as Record<string, unknown>;
-  return pickStr(row.alerts) ?? pickStr(row.clientAlert);
+  return alertsWithDeposit(row, pickStr(row.alerts) ?? pickStr(row.clientAlert));
 }
 
 function BookClientAlerts({ alerts }: { alerts: string | null | undefined }) {

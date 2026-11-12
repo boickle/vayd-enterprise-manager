@@ -66,3 +66,30 @@ export async function fetchStaffSmsDeliveryFailures(
 export async function acknowledgeStaffSmsDeliveryFailure(id: number): Promise<void> {
   await http.post(`/sms/delivery-failures/${encodeURIComponent(String(id))}/acknowledge`);
 }
+
+export type PreferredSmsFrom = {
+  /** The provider's own Quo line, or null when they have none. */
+  phone: string | null;
+  providerName: string | null;
+  source: 'appointment' | 'patient' | 'client' | null;
+};
+
+/**
+ * The line a text to this family starts on: the visit's provider (a visit named, else the family's
+ * visit today or in the next 7 days), else the pet's primary provider, else the client's.
+ */
+export async function fetchPreferredSmsFrom(args: {
+  clientId: number;
+  patientId?: number | null;
+  appointmentId?: number | null;
+}): Promise<PreferredSmsFrom> {
+  const params: Record<string, number> = { clientId: args.clientId };
+  if (args.patientId) params.patientId = args.patientId;
+  if (args.appointmentId) params.appointmentId = args.appointmentId;
+  const { data } = await http.get<PreferredSmsFrom>('/sms/preferred-from', { params });
+  return {
+    phone: data?.phone ?? null,
+    providerName: data?.providerName ?? null,
+    source: data?.source ?? null,
+  };
+}

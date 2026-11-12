@@ -29,7 +29,6 @@ import {
 } from '../pages/MyWeek';
 import { fetchSchedulerDriveContextForDate } from '../utils/schedulerDriveEta';
 import { combineDateAndTimeToUtc, toTimeLocalValue } from '../utils/editVisitTimeFields';
-import { evetPatientLink } from '../utils/evet';
 import { useVisitHighlightsHoverPopover } from '../hooks/useVisitHighlightsHoverPopover';
 import {
   buildTypeFillMap,
@@ -37,7 +36,6 @@ import {
 } from '../utils/schedulerAppointmentColors';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
-import { pickStr } from '../utils/schedulerVisitDisplay';
 import {
   formatIsoTimeShortInPracticeZone,
   practiceTimeZoneOrDefault,
@@ -1185,9 +1183,13 @@ export function SchedulerReconcileModal({
       setContextMenu(null);
       if (action.kind !== 'viewChart' || !contextMenu) return;
       const patients = patientsForAppointment(contextMenu.appt);
-      const pid = pickStr(patients[0]?.pimsId);
-      if (!pid) return;
-      window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
+      const pid = patients[0]?.id;
+      if (pid == null) return;
+      window.open(
+        `/schedule/patients?patientId=${encodeURIComponent(String(pid))}`,
+        '_blank',
+        'noopener,noreferrer',
+      );
     },
     [contextMenu]
   );

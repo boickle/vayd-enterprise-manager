@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DateTime } from 'luxon';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import {
   fetchDoctorDay,
   clientDisplayName,
@@ -1549,9 +1548,6 @@ export default function DoctorDay({
               {displayHouseholds.map((h, i) => {
                 const a = h.primary;
                 const flexBlock = h.isPersonalBlock && isFlexBlockItem(a);
-                const clientHref = str(a, 'clientPimsId')
-                  ? evetClientLink(str(a, 'clientPimsId') as string)
-                  : undefined;
 
                 let lengthText: string | null = null;
                 if (h.startIso && h.endIso) {
@@ -1609,36 +1605,16 @@ export default function DoctorDay({
                       className="dd-top"
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
-                      {clientHref ? (
-                        <>
-                          <a
-                            className="dd-title link-strong"
-                            href={clientHref}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            #{(a as any)?.positionInDay ?? i + 1}{' '}
-                            {isBlockEntry(a)
-                              ? blockDisplayLabel(a)
-                              : (a as any).isPreview
-                                ? previewRoutingAppointmentLabel(a)
-                                : clientDisplayName(a)}
-                          </a>
-                          {a?.clientAlert && (
-                            <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <div className="dd-title">
-                            #{(a as any)?.positionInDay ?? i + 1}{' '}
-                            {isBlockEntry(a)
-                              ? blockDisplayLabel(a)
-                              : (a as any).isPreview
-                                ? previewRoutingAppointmentLabel(a)
-                                : clientDisplayName(a)}
-                          </div>
-                        </>
+                      <div className="dd-title">
+                        #{(a as any)?.positionInDay ?? i + 1}{' '}
+                        {isBlockEntry(a)
+                          ? blockDisplayLabel(a)
+                          : (a as any).isPreview
+                            ? previewRoutingAppointmentLabel(a)
+                            : clientDisplayName(a)}
+                      </div>
+                      {a?.clientAlert && (
+                        <div style={{ color: '#dc2626' }}>Alert: {a.clientAlert}</div>
                       )}
 
                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
@@ -1754,7 +1730,6 @@ export default function DoctorDay({
                         <div className="dd-pets-label">Patients:</div>
                         <ul className="dd-patients-list">
                           {h.patients.map((p, idx2) => {
-                            const href = p.pimsId ? evetPatientLink(p.pimsId) : undefined;
                             const apptType =
                               (p as any)?.apptTypeName ??
                               str(h.primary, 'appointmentType') ??
@@ -1768,18 +1743,7 @@ export default function DoctorDay({
                                   {p.isMember && (
                                     <Heart size={14} fill="#dc2626" color="#dc2626" strokeWidth={1.5} aria-hidden />
                                   )}
-                                  {href ? (
-                                    <a
-                                      className="link-strong"
-                                      href={href}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      {p.name}
-                                    </a>
-                                  ) : (
-                                    <span>{p.name}</span>
-                                  )}
+                                  <span>{p.name}</span>
                                   {p.isMember && p.membershipName?.trim() ? (
                                     <span style={{ color: '#991b1b', fontWeight: 600, fontSize: 13 }}>
                                       {p.membershipName.trim()}

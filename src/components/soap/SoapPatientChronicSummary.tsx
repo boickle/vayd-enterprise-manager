@@ -94,6 +94,7 @@ export default function SoapPatientChronicSummary({
         inventoryItemId: rx.inventoryItemId,
         refill: rx.refill,
         refillExpiration: rx.refillExpiration,
+        prn: rx.prn ?? false,
         pending: false as const,
       })),
       ...draft.addMedications.map((row) => ({
@@ -104,6 +105,7 @@ export default function SoapPatientChronicSummary({
         inventoryItemId: row.inventoryItemId,
         refill: null as number | null,
         refillExpiration: null as string | null,
+        prn: false,
         pending: true as const,
       })),
     ];
@@ -465,7 +467,7 @@ export default function SoapPatientChronicSummary({
                       {' · '}
                       <button
                         type="button"
-                        className={`chronic-rx-refills-btn${(Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
+                        className={`chronic-rx-refills-btn${!rx.prn && (Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
                         title="Refills and online reorder"
                         onClick={() => setRefillsRxId(rx.numericId)}
                       >
