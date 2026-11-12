@@ -7,6 +7,7 @@ vi.mock('./store/AutoshipCardPanel', () => ({ default: () => null }));
 vi.mock('../api/autoshipCard', () => ({ listStaffAutoshipCards: vi.fn(), setStaffAutoshipCard: vi.fn() }));
 vi.mock('../api/onlineStore', () => ({
   listOnlineStoreItems: vi.fn().mockResolvedValue([]),
+  refreshMailNavCounts: vi.fn(),
   listStoreSubscriptions: vi.fn(),
   patchStoreSubscription: vi.fn(),
 }));
