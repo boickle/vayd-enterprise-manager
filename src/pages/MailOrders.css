@@ -1229,3 +1229,18 @@ textarea.mail-queue__script {
     justify-content: flex-start;
   }
 }
+
+/* A client text that arrived while the order was waiting on them (owner, Nov 11, 2026). */
+.mail-queue__new-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
