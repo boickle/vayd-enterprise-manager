@@ -2655,8 +2655,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const howSoon = requestDataHowSoon(rd);
             const visitAddress = formatRequestDataAddress(rd);
             const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
-            // Scout client: from the form (signed-in client) or the booked visit.
-            const formClientId = requestDataClientId(rd);
+            // Scout client: from the form (signed-in client) or the booked visit. Not the login's
+            // user id, which is a different number (SCH-R6).
+            const formClientId = requestDataClientId({ ...rd, userId: undefined });
             const scoutClientId =
               (formClientId && /^\d+$/.test(formClientId) ? formClientId : null) ??
               bookedSummary?.clientInternalId ??
