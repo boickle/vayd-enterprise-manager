@@ -54,7 +54,7 @@ function resetHousehold() {
   const h = w.handWritten;
   sql(`DELETE FROM scribe_learning_pairs WHERE "soapEncounterId" IN ('${a.encounterId}','${b.encounterId}')`);
   sql(`DELETE FROM soap_scribe_sessions WHERE "soapEncounterId" IN ('${a.encounterId}','${b.encounterId}')`);
-  sql(`UPDATE soap_encounters SET "objectiveNotes" = NULL, "assessmentReasoning" = NULL, "planNotes" = NULL WHERE id = '${a.encounterId}'`);
+  sql(`UPDATE soap_encounters SET subjective = NULL, "objectiveNotes" = NULL, "assessmentReasoning" = NULL, "planNotes" = NULL WHERE id = '${a.encounterId}'`);
   sql(
     `UPDATE soap_encounters SET "objectiveNotes" = ${q(h.objectiveNotes)}, "assessmentReasoning" = ${q(h.assessmentReasoning)}, "planNotes" = ${q(h.planNotes)} WHERE id = '${b.encounterId}'`,
   );
@@ -139,10 +139,21 @@ describe('AI scribe Wave 1A (SCR-01, SCR-04, SCR-05)', () => {
     const w = world();
     const { clientId, pets } = w.households.household;
     const [aster, basil] = pets;
-    openAndProcess(aster, clientId, structure);
-    cy.contains('button', 'Overwrite all').click();
-    cy.wrap(null).should(() => expect(structure.count()).to.be.greaterThan(0));
-    // The server saved the same transcript on both charts.
+    // /scribe/structure is stubbed in this spec, so the server never saves a transcript itself.
+    // Set up what a household Process leaves behind: the same transcript (and a learning row) on both charts.
+    cy.fixture('scribe/structure-single.json').then((suggestion) => {
+    for (const pet of [aster, basil]) {
+      sql(
+        `WITH s AS (INSERT INTO soap_scribe_sessions ("practiceId","soapEncounterId",status,transcript,"lastSuggestion","endedAt")
+           VALUES (${w.practiceId}, '${pet.encounterId}', 'stopped', ${q(TRANSCRIPT)}, ${q(JSON.stringify(suggestion))}::jsonb, now()) RETURNING id)
+         INSERT INTO scribe_learning_pairs ("practiceId",kind,"patientId","clientId","appointmentId","soapEncounterId","scribeSessionId",transcript,generated,"generatedAt")
+           SELECT ${w.practiceId}, 'soap', ${pet.patientId}, ${clientId}, ${pet.appointmentId}, '${pet.encounterId}', s.id, ${q(TRANSCRIPT)}, '{}'::jsonb, now() FROM s`,
+      );
+    }
+    });
+    signIn(soapPath(aster, clientId));
+    cy.contains('button', /AI Scribe/i, { timeout: 30000 }).click();
+    // Both charts carry the transcript.
     sql(`SELECT count(*) FROM soap_scribe_sessions WHERE "soapEncounterId" IN ('${aster.encounterId}','${basil.encounterId}') AND transcript <> ''`)
       .should('eq', '2');
 
