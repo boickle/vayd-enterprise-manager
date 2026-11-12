@@ -331,3 +331,60 @@
     animation: none;
   }
 }
+
+/* Minimized dock (Nov 12, 2026): a small pill in the corner. A ringing or live call opens it again. */
+.call-dock-pill {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 16000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 2px solid #16a34a;
+  border-radius: 999px;
+  background: #fff;
+  color: #14532d;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22);
+}
+
+.call-dock-pill--ready {
+  border-color: #2563eb;
+  color: #1e3a8a;
+}
+
+.call-dock-pill--muted {
+  border-color: #a8a29e;
+  color: #44403c;
+}
+
+.call-dock-pill:hover {
+  background: #f8fafc;
+}
+
+.call-dock-pill__show {
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  opacity: 0.8;
+}
+
+/* Waiting calls: a quiet list under the front card, not a second stack of loud cards. */
+.call-dock-behind {
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+}
+
+.call-dock-peek {
+  padding: 6px 10px;
+  border-width: 1px;
+  border-radius: 8px;
+  box-shadow: none;
+}

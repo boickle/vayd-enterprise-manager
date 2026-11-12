@@ -149,12 +149,6 @@ function CommaListInput({
   );
 }
 
-function numOrNull(raw: string): number | null {
-  if (raw.trim() === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
 export default function SettingsLabForms({ onMessage }: Props) {
   // LAB-A8: editing follows `lab_form_template.manage` (vets, lead techs, managers). Admin logins
   // pass on the server, so they keep the controls. The server checks again.
@@ -534,20 +528,7 @@ export default function SettingsLabForms({ onMessage }: Props) {
 
                       {el.valueType === 'number' ? (
                         <div className="lab-forms__element-range">
-                          <input
-                            className="settings-input"
-                            value={el.min ?? ''}
-                            placeholder="Min"
-                            aria-label={`Row ${idx + 1} minimum`}
-                            onChange={(e) => patchElement(idx, { min: numOrNull(e.target.value) })}
-                          />
-                          <input
-                            className="settings-input"
-                            value={el.max ?? ''}
-                            placeholder="Max"
-                            aria-label={`Row ${idx + 1} maximum`}
-                            onChange={(e) => patchElement(idx, { max: numOrNull(e.target.value) })}
-                          />
+                          {/* No number ranges (owner decision, Nov 8, 2026): units only. */}
                           <input
                             className="settings-input"
                             value={el.units ?? ''}

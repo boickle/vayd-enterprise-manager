@@ -7,6 +7,7 @@ import {
   patchStoreSubscription,
   type StoreItemRow,
   type StoreStaffSubscription,
+  refreshMailNavCounts,
 } from '../api/onlineStore';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './store/storeCartState';
 import AutoshipCardPanel from './store/AutoshipCardPanel';
@@ -101,6 +102,10 @@ export default function StoreSubscriptionsPage() {
   const { token } = useAuth();
   const practiceId = practiceIdFromToken(token);
   const [rows, setRows] = useState<StoreStaffSubscription[]>([]);
+  // Keep the Auto-ships tab's red count (payment problems) in step after a change here.
+  useEffect(() => {
+    refreshMailNavCounts();
+  }, [rows]);
   const [storeItems, setStoreItems] = useState<StoreItemRow[]>([]);
   const [filter, setFilter] = useState<'active' | 'paused' | 'cancelled' | 'payment' | 'all'>('active');
   const [q, setQ] = useState('');
@@ -491,15 +496,17 @@ export default function StoreSubscriptionsPage() {
                 ×
               </button>
             </div>
-            <AutoshipCardPanel
-              load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
-              save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
-              name={cardRow.customerName || ''}
-              email={cardRow.customerEmail}
-              buttonClass="btn primary"
-              secondaryButtonClass="btn secondary"
-              onSaved={(text) => setNote(text)}
-            />
+            <div className="settings-modal-body">
+              <AutoshipCardPanel
+                load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
+                save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
+                name={cardRow.customerName || ''}
+                email={cardRow.customerEmail}
+                buttonClass="btn primary"
+                secondaryButtonClass="btn secondary"
+                onSaved={(text) => setNote(text)}
+              />
+            </div>
           </div>
         </div>
       ) : null}
@@ -576,9 +583,9 @@ export default function StoreSubscriptionsPage() {
                 </label>
                 {!canChangeMoney ? (
                   <p className="settings-muted" data-testid="autoship-locked-note">
-                    Looks wrong? On the order in the queue, use Re-send… to send it to the doctor with a note
-                    (prescriptions), or Mark pending and ask a manager (other items). Only managers change the item or
-                    quantity.
+                    Looks wrong? Don't fill it. On the order in the queue, use Re-send… to send it to the doctor with
+                    a note (prescriptions), or leave it in Fill, add a note and ask a manager (other items). Only
+                    managers change the item or quantity.
                   </p>
                 ) : null}
                 <div className="autoship-edit__row">
@@ -698,24 +705,24 @@ export default function StoreSubscriptionsPage() {
                   onChange={(e) => setPauseUntil(e.target.value)}
                 />
               </label>
-            </div>
-            <div className="settings-modal-actions">
-              <button
-                type="button"
-                className="btn primary"
-                disabled={!pauseUntil || busyId === pauseRow.id}
-                onClick={() => {
-                  const id = pauseRow.id;
-                  void run(id, { paused: true, pausedUntil: pauseUntil }).then((ok) => {
-                    if (ok) setPauseRow(null);
-                  });
-                }}
-              >
-                Pause until {formatPauseUntil(pauseUntil) || '…'}
-              </button>
-              <button type="button" className="btn secondary" onClick={() => setPauseRow(null)}>
-                Back
-              </button>
+              <div className="settings-modal-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!pauseUntil || busyId === pauseRow.id}
+                  onClick={() => {
+                    const id = pauseRow.id;
+                    void run(id, { paused: true, pausedUntil: pauseUntil }).then((ok) => {
+                      if (ok) setPauseRow(null);
+                    });
+                  }}
+                >
+                  Pause until {formatPauseUntil(pauseUntil) || '…'}
+                </button>
+                <button type="button" className="btn secondary" onClick={() => setPauseRow(null)}>
+                  Back
+                </button>
+              </div>
             </div>
           </div>
         </div>

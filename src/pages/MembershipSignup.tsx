@@ -94,7 +94,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
   {
     id: 'foundations',
     name: 'Foundations',
-    tagLine: 'Annual Membership Plan',
+    tagLine: '12-Month Membership Plan',
     pricing: [
       { species: 'dog', monthly: 69, annual: 749 },
       { species: 'cat', monthly: 59, annual: 639 },
@@ -112,7 +112,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
   {
     id: 'golden',
     name: 'Golden',
-    tagLine: 'Annual Membership Plan',
+    tagLine: '12-Month Membership Plan',
     badge: 'Most Popular!',
     badgeColor: '#facc15',
     pricing: [
@@ -2345,7 +2345,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                       <div className="cp-card-upper">
                         <div className="cp-card-head">
                           <h3>Puppy / Kitten Add-on</h3>
-                          <div className="cp-card-sub">Annual Membership Plan</div>
+                          <div className="cp-card-sub">12-Month Membership Plan</div>
                         </div>
                         <div className="cp-card-price">
                           <div className="cp-card-price-main">

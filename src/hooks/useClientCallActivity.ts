@@ -18,7 +18,10 @@ import { subscribePracticeCalls, type CallChangePayload } from '../utils/callRea
  */
 const OPTIMISTIC_TTL_MS = 90_000;
 
-/** Calls older than this are not what the chart is about; the record is on the chart by then. */
+/**
+ * Filed, dismissed and unanswered calls older than this are not what the chart is about. Answered
+ * calls nobody has filed or dismissed come back however old (COM-CALL, owner Nov 10, 2026).
+ */
 const LOOKBACK_MINUTES = 240;
 
 type OptimisticDial = {
@@ -337,8 +340,9 @@ function isLive(phase: CallPhase): boolean {
 }
 
 /**
- * Quo often never posts a transcript for silent / empty calls. After the wait, treat
- * "still summarizing" as nothing to file so the dock does not hang.
+ * The phase to show. COM-CALL (owner, Nov 10, 2026): an answered call stays `transcribing`
+ * until its transcript arrives — Scout no longer gives up after three minutes. See
+ * {@link isSummaryOverdue} for the "taking longer than 3 minutes" message.
  */
 export function effectiveCallPhase(
   call: {
@@ -346,16 +350,26 @@ export function effectiveCallPhase(
     optimistic?: boolean;
     call?: Pick<ClientCall, 'completedAt' | 'transcriptText'> | null;
   },
-  nowMs: number = Date.now(),
 ): CallPhase {
-  if (call.optimistic) return call.phase;
-  if (call.phase !== 'transcribing') return call.phase;
-  if (call.call?.transcriptText?.trim()) return call.phase;
+  return call.phase;
+}
+
+/**
+ * True when an answered call has waited more than three minutes for its summary. The dock then
+ * says "Summary taking longer than 3 minutes — still checking" and offers Dismiss.
+ */
+export function isSummaryOverdue(
+  call: {
+    phase: CallPhase;
+    optimistic?: boolean;
+    call?: Pick<ClientCall, 'completedAt' | 'transcriptText'> | null;
+  },
+  nowMs: number = Date.now(),
+): boolean {
+  if (call.optimistic || call.phase !== 'transcribing') return false;
+  if (call.call?.transcriptText?.trim()) return false;
   const completedMs = Date.parse(call.call?.completedAt ?? '') || 0;
-  if (completedMs > 0 && nowMs - completedMs >= TRANSCRIPT_WAIT_MS) {
-    return 'no_record_needed';
-  }
-  return 'transcribing';
+  return completedMs > 0 && nowMs - completedMs >= TRANSCRIPT_WAIT_MS;
 }
 
 /** Live first, then whichever has something to file, then newest. */
@@ -557,8 +571,8 @@ export type StackedCall = {
   optimistic: boolean;
 };
 
-function stackRank(c: StackedCall, nowMs: number): number {
-  const phase = effectiveCallPhase(c, nowMs);
+function stackRank(c: StackedCall): number {
+  const phase = effectiveCallPhase(c);
   if (c.optimistic || phase === 'ringing' || phase === 'active') return 4;
   if (phase === 'transcribing') return 3;
   if (phase === 'transcript_ready') return 2;
@@ -574,12 +588,15 @@ function stackRank(c: StackedCall, nowMs: number): number {
  */
 export function useMyCallStack(): {
   calls: StackedCall[];
+  /** The server sent its newest 50; older undecided calls are waiting behind them. */
+  more: boolean;
   dismiss: (key: string) => void;
   refresh: () => void;
 } {
   const { token, employeeId } = useAuth();
   const myEmployeeId = employeeId != null ? Number(employeeId) : null;
   const [rows, setRows] = useState<ClientCall[]>([]);
+  const [more, setMore] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [optimisticTick, setOptimisticTick] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -590,7 +607,8 @@ export function useMyCallStack(): {
     for (const dial of optimisticDials.values()) followedIds.add(dial.clientId);
 
     void Promise.all([
-      listMyCalls({ sinceMinutes: LOOKBACK_MINUTES }),
+      // No time limit: every undecided call stays until filed or dismissed (COM-CALL).
+      listMyCalls(),
       ...[...followedIds].map((id) =>
         listClientCalls(id, { sinceMinutes: LOOKBACK_MINUTES }).catch(() => ({
           calls: [] as ClientCall[],
@@ -599,6 +617,8 @@ export function useMyCallStack(): {
       ),
     ])
       .then((results) => {
+        const mine = results[0] as { more?: boolean };
+        setMore(mine?.more === true);
         const byId = new Map<string, ClientCall>();
         for (const result of results) {
           const calls = 'calls' in result ? result.calls : [];
@@ -738,7 +758,7 @@ export function useMyCallStack(): {
     }
 
     next.sort((a, b) => {
-      const diff = stackRank(b, nowMs) - stackRank(a, nowMs);
+      const diff = stackRank(b) - stackRank(a);
       if (diff !== 0) return diff;
       return (b.call?.startedAt ?? '').localeCompare(a.call?.startedAt ?? '');
     });
@@ -749,8 +769,10 @@ export function useMyCallStack(): {
     (c) =>
       c.optimistic ||
       isLive(c.phase) ||
-      // Keep the clock running while we wait to give up on a missing transcript.
-      (c.phase === 'transcribing' && !c.call?.transcriptText?.trim()),
+      // Keep the clock running until the "taking longer than 3 minutes" message is due.
+      (c.phase === 'transcribing' &&
+        !c.call?.transcriptText?.trim() &&
+        !isSummaryOverdue(c, nowMs)),
   );
   useEffect(() => {
     if (!ticking) return;
@@ -770,5 +792,5 @@ export function useMyCallStack(): {
     setRows((prev) => prev.filter((c) => c.callId !== key && `optimistic:${c.clientId}` !== key));
   }, [rows]);
 
-  return { calls: stacked, dismiss, refresh };
+  return { calls: stacked, more, dismiss, refresh };
 }

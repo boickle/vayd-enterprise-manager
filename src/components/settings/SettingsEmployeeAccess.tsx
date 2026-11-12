@@ -7,9 +7,14 @@
 // you are back to auditing checkbox grids one employee at a time. To narrow
 // someone's access, change their role.
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import {
+  ACCESS_CHANGE_KEYS,
   addEmployeePermissionGrant,
+  describeAccessChange,
   fetchEmployeePermissions,
+  fetchPermissionAudit,
+  type PermissionAuditEntry,
   fetchPermissionCatalog,
   removeEmployeePermissionGrant,
   saveEmployeeLicense,
@@ -21,6 +26,7 @@ import { usePermissions } from '../../permissions/PermissionContext';
 import { PermissionGate } from '../../permissions/PermissionGate';
 import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { endOfPracticeDayIso, formatPracticeDate } from '../../utils/practiceTimezone';
 import './SettingsEmployeeAccess.css';
 
 type Props = {
@@ -58,6 +64,7 @@ export default function SettingsEmployeeAccess({
   const [reasonOpen, setReasonOpen] = useState(false);
   const [grantBusy, setGrantBusy] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<PermissionAuditEntry[]>([]);
 
   const load = useCallback(() => {
     if (!practiceId || !employeeId) return;
@@ -80,6 +87,22 @@ export default function SettingsEmployeeAccess({
   }, [practiceId, employeeId]);
 
   useEffect(load, [load]);
+
+  // Recent role, license and grant changes for this person. Needs the audit log permission;
+  // without it the list stays empty and the card is not shown.
+  const loadRecent = useCallback(() => {
+    if (!practiceId || !employeeId) return;
+    fetchPermissionAudit(practiceId, {
+      entityType: 'employee',
+      entityId: employeeId,
+      permissionKeys: ACCESS_CHANGE_KEYS,
+      limit: 10,
+    })
+      .then(setRecent)
+      .catch(() => setRecent([]));
+  }, [practiceId, employeeId]);
+
+  useEffect(loadRecent, [loadRecent]);
 
   const byKey = useMemo(() => new Map(catalog.map((entry) => [entry.key, entry])), [catalog]);
   const grantedKeys = useMemo(
@@ -115,9 +138,12 @@ export default function SettingsEmployeeAccess({
   }, [catalog, detail, sectionLabels]);
 
   const isSelf = myPermissions?.employeeId === employeeId;
+  // RP-04 (D1): nobody changes their own license or grants, except a platform superadmin.
+  const lockedAsSelf = isSelf && myPermissions?.isPlatformAdmin !== true;
+  const SELF_HINT = 'Ask a practice admin to change your own access.';
 
   async function setLicense(isLicensed: boolean, licenseType: LicenseType) {
-    if (!practiceId) return;
+    if (!practiceId || lockedAsSelf) return;
     setSavingLicense(true);
     try {
       await saveEmployeeLicense(practiceId, employeeId, { isLicensed, licenseType });
@@ -125,6 +151,7 @@ export default function SettingsEmployeeAccess({
       onLicenseChange?.({ isLicensed, licenseType });
       if (isSelf) reloadOwnPermissions();
       load();
+      loadRecent();
     } catch (err) {
       onMessage?.(err instanceof Error ? err.message : 'Could not update license', 'error');
     } finally {
@@ -133,14 +160,15 @@ export default function SettingsEmployeeAccess({
   }
 
   async function confirmGrant(reason: string) {
-    if (!practiceId || !grantKey) return;
+    if (!practiceId || !grantKey || lockedAsSelf) return;
     setGrantBusy(true);
     setGrantError(null);
     try {
       await addEmployeePermissionGrant(practiceId, employeeId, {
         permissionKey: grantKey,
         reason,
-        expiresAt: grantExpiry ? new Date(grantExpiry).toISOString() : null,
+        // The date input gives a calendar day; the grant runs to its last instant in Eastern time.
+        expiresAt: endOfPracticeDayIso(grantExpiry),
       });
       setReasonOpen(false);
       setGrantKey('');
@@ -148,6 +176,7 @@ export default function SettingsEmployeeAccess({
       onMessage?.('Permission granted', 'success');
       if (isSelf) reloadOwnPermissions();
       load();
+      loadRecent();
     } catch (err) {
       setGrantError(err instanceof Error ? err.message : 'Could not grant');
     } finally {
@@ -156,12 +185,13 @@ export default function SettingsEmployeeAccess({
   }
 
   async function revoke(permissionKey: string) {
-    if (!practiceId) return;
+    if (!practiceId || lockedAsSelf) return;
     try {
       await removeEmployeePermissionGrant(practiceId, employeeId, permissionKey);
       onMessage?.('Grant removed', 'success');
       if (isSelf) reloadOwnPermissions();
       load();
+      loadRecent();
     } catch (err) {
       onMessage?.(err instanceof Error ? err.message : 'Could not remove grant', 'error');
     }
@@ -183,14 +213,14 @@ export default function SettingsEmployeeAccess({
       <div className="settings-card">
         <h3 className="settings-card-title">License</h3>
         <p className="settings-card-subtitle">
-          Signing and locking a medical record requires a license, so a licensed technician can sign
-          and a veterinary assistant cannot. Prescriptions and refill authorizations additionally
-          require a veterinary license — no role or grant substitutes for either.
+          Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and
+          medical notes, and may enter prescription directions for the vet. No role or grant
+          substitutes for a license.
         </p>
         <PermissionGate
           permission="staff.license.manage"
           mode="disable"
-          hint="Only a practice admin or medical director can set someone's license"
+          hint="Only a practice admin or the medical director can set someone's license"
         >
           <div className="emp-access-license">
             {(['veterinarian', 'technician'] as const).map((type) => (
@@ -198,7 +228,7 @@ export default function SettingsEmployeeAccess({
                 <input
                   type="radio"
                   name="employee-license"
-                  disabled={savingLicense}
+                  disabled={savingLicense || lockedAsSelf}
                   checked={effective.isLicensed && licenseType === type}
                   onChange={() => void setLicense(true, type)}
                 />
@@ -209,7 +239,7 @@ export default function SettingsEmployeeAccess({
               <input
                 type="radio"
                 name="employee-license"
-                disabled={savingLicense}
+                disabled={savingLicense || lockedAsSelf}
                 checked={!effective.isLicensed}
                 onChange={() => void setLicense(false, null)}
               />
@@ -217,6 +247,7 @@ export default function SettingsEmployeeAccess({
             </label>
           </div>
         </PermissionGate>
+        {lockedAsSelf && <p className="settings-muted emp-access-self-hint">{SELF_HINT}</p>}
       </div>
 
       <div className="settings-card">
@@ -241,7 +272,7 @@ export default function SettingsEmployeeAccess({
                       {grant.reason}
                       {grant.grantedByName ? ` · ${grant.grantedByName}` : ''}
                       {grant.expiresAt
-                        ? ` · ends ${new Date(grant.expiresAt).toLocaleDateString()}`
+                        ? ` · ends ${formatPracticeDate(grant.expiresAt)}`
                         : ' · no end date'}
                     </div>
                   </div>
@@ -249,6 +280,8 @@ export default function SettingsEmployeeAccess({
                     <button
                       type="button"
                       className="btn-link"
+                      disabled={lockedAsSelf}
+                      title={lockedAsSelf ? SELF_HINT : undefined}
                       onClick={() => void revoke(grant.permissionKey)}
                     >
                       Remove
@@ -270,6 +303,7 @@ export default function SettingsEmployeeAccess({
               <span className="label">Permission</span>
               <select
                 className="input"
+                disabled={lockedAsSelf}
                 value={grantKey}
                 onChange={(e) => setGrantKey(e.target.value)}
               >
@@ -286,6 +320,7 @@ export default function SettingsEmployeeAccess({
               <input
                 className="input"
                 type="date"
+                disabled={lockedAsSelf}
                 value={grantExpiry}
                 onChange={(e) => setGrantExpiry(e.target.value)}
               />
@@ -293,7 +328,8 @@ export default function SettingsEmployeeAccess({
             <button
               type="button"
               className="btn"
-              disabled={!grantKey || grantedKeys.has(grantKey)}
+              disabled={!grantKey || grantedKeys.has(grantKey) || lockedAsSelf}
+              title={lockedAsSelf ? SELF_HINT : undefined}
               onClick={() => {
                 setGrantError(null);
                 setReasonOpen(true);
@@ -302,6 +338,7 @@ export default function SettingsEmployeeAccess({
               Grant
             </button>
           </div>
+          {lockedAsSelf && <p className="settings-muted emp-access-self-hint">{SELF_HINT}</p>}
         </PermissionGate>
       </div>
 
@@ -312,7 +349,7 @@ export default function SettingsEmployeeAccess({
           {effective.roles.length
             ? effective.roles.map((slug) => ROLE_LABELS[slug] ?? slug).join(', ')
             : 'none assigned'}
-          . Assign roles on the Profile tab. Hover a permission to see where it comes from.
+          . Practice-wide roles are on the Profile tab, office roles on Staff → Roles. Hover a permission to see where it comes from.
         </p>
         {sections.length === 0 ? (
           <p className="settings-muted" style={{ margin: 0 }}>
@@ -343,6 +380,25 @@ export default function SettingsEmployeeAccess({
           ))
         )}
       </div>
+
+      {recent.length > 0 && (
+        <div className="settings-card" data-testid="recent-access-changes">
+          <h3 className="settings-card-title">Recent changes</h3>
+          <ul className="emp-access-recent">
+            {recent.map((row) => (
+              <li key={row.id}>
+                <div>{describeAccessChange(row, (k) => byKey.get(k)?.label ?? k)}</div>
+                <div className="emp-access-grant-meta">
+                  {row.employeeName ?? 'Someone'} · {new Date(row.created).toLocaleString()}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <Link to="/schedule/settings?tab=permission-audit">
+            See the full Permission Audit Log
+          </Link>
+        </div>
+      )}
 
       <ReasonPrompt
         open={reasonOpen}

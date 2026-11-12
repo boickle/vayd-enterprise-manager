@@ -16,6 +16,14 @@ export type LinkedAppointmentEvetIds = {
   /** Internal patient id for in-app chart modal. */
   patientInternalId: string | null;
   patientName: string | null;
+  /** Other pets of the booked visit's client (id + name), to match the request's other new pets. */
+  clientPatients?: LinkedClientPatient[];
+};
+
+export type LinkedClientPatient = {
+  id: string;
+  pimsId?: string | null;
+  name: string;
 };
 
 export function linkedAppointmentEvetIdsFromRecord(
@@ -78,15 +86,28 @@ export function enrichPetRowSummariesFromLinkedAppointment(
 ): AppointmentRequestPetRowSummary[] {
   if (!linked) return rows;
   const targetIndex = linkedPatientTargetIndex(rows, linked);
-  if (targetIndex < 0) return rows;
+  const household = linked.clientPatients ?? [];
 
   return rows.map((row, index) => {
-    if (index !== targetIndex) return row;
-    return {
-      ...row,
-      patientPimsId: row.patientPimsId ?? linked.patientPimsId,
-      patientId: row.patientId ?? linked.patientInternalId,
-    };
+    let next = row;
+    if (index === targetIndex) {
+      next = {
+        ...row,
+        patientPimsId: row.patientPimsId ?? linked.patientPimsId,
+        patientId: row.patientId ?? linked.patientInternalId,
+      };
+    }
+    if (!next.patientId && household.length > 0) {
+      const match = household.find((p) => petNamesMatch(p.name, next.name));
+      if (match) {
+        next = {
+          ...next,
+          patientId: match.id,
+          patientPimsId: next.patientPimsId ?? match.pimsId ?? null,
+        };
+      }
+    }
+    return next;
   });
 }
 
@@ -131,9 +152,16 @@ export function linkedEvetIdsFromBookedApptSummary(
       }
     | null
     | undefined,
+  clientPatients?: LinkedClientPatient[] | null,
 ): LinkedAppointmentEvetIds | null {
   if (!summary) return null;
-  if (!summary.clientPimsId && !summary.patientPimsId && !summary.patientInternalId) {
+  const household = clientPatients && clientPatients.length > 0 ? clientPatients : undefined;
+  if (
+    !summary.clientPimsId &&
+    !summary.patientPimsId &&
+    !summary.patientInternalId &&
+    !household
+  ) {
     return null;
   }
   return {
@@ -141,5 +169,26 @@ export function linkedEvetIdsFromBookedApptSummary(
     patientPimsId: summary.patientPimsId ?? null,
     patientInternalId: summary.patientInternalId ?? null,
     patientName: summary.patientName ?? null,
+    ...(household ? { clientPatients: household } : {}),
   };
+}
+
+/** Rows with a pet name matched to the household's patients (case-insensitive, trimmed). */
+export function requestPetsNeedClientPatients(
+  rows: Array<{ patientId: string | null; isNew: boolean }>,
+): boolean {
+  return rows.some((r) => r.isNew && !r.patientId);
+}
+
+/** Normalize a /patients/search response row list into id + name pairs. */
+export function clientPatientsFromSearchRows(rows: unknown[]): LinkedClientPatient[] {
+  const out: LinkedClientPatient[] = [];
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue;
+    const o = r as Record<string, unknown>;
+    const id = pickStr(o.id);
+    const name = pickStr(o.name) ?? pickStr(o.firstName);
+    if (id && name) out.push({ id, pimsId: pickStr(o.pimsId), name });
+  }
+  return out;
 }

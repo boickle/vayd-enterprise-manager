@@ -6,6 +6,7 @@ import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequest
 import type { AppointmentRequestBookedApptSummary } from './appointmentRequestOnHold';
 import { appointmentRequestSubmissionCountsAsBooked, appointmentRequestSubmissionIsOnHold } from './appointmentRequestOnHold';
 import { appointmentRequestNeedsStaffConfirmation } from './appointmentRequestStaffConfirm';
+import { requestWorkIsFinished } from './appointmentRequestTableRow';
 import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
@@ -831,7 +832,13 @@ export function appointmentRequestListTabForSubmission(
     return 'on_hold';
   }
   if (appointmentRequestSubmissionCountsAsBooked(item, bookedApptMeta, typeCatalog)) {
-    return 'booked';
+    // SCH-R9: the linked visit was cancelled on the calendar, so the request is open again.
+    const apptId = item.bookedAppointmentId;
+    if (apptId != null && bookedApptMeta.get(Number(apptId))?.appointmentCancelled === true) {
+      return 'contacted';
+    }
+    // Booked, but communication or records still open: it stays In progress.
+    return requestWorkIsFinished(item) ? 'booked' : 'contacted';
   }
   return 'new';
 }

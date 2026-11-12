@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getPracticeSettings } from '../../api/practiceSettings';
+import { appConfirm } from '../../utils/appDialog';
 import {
   MAIL_SHIPPING_TYPES_KEY,
   mailOriginForType,
@@ -21,6 +22,8 @@ export type MailOrderPromptResult = {
   mailQty: number;
   sendWithoutPayment: boolean;
   payAfterApproval: boolean;
+  /** B10: staff ticked "Approved by doctor" (prescription lines only). */
+  approvedByDoctor: boolean;
   /** Null for office pickup. */
   ship: MailShipChoice | null;
 };
@@ -31,7 +34,7 @@ const PAYMENT_PLANS: Array<{ id: PaymentPlan; label: string; hint: string }> = [
   {
     id: 'now',
     label: 'Take payment now',
-    hint: 'Collect on this invoice as usual — card on file, reader, or a card read out over the phone.',
+    hint: 'Collect on this invoice as usual — card on file, reader, or Type card manually.',
   },
   {
     id: 'after_approval',
@@ -54,6 +57,12 @@ type Props = {
   paid?: boolean;
   /** Why the doctor still has to approve (e.g. script not approved yet). */
   approvalNote?: string | null;
+  /** B10: a prescription line gets the "Approved by doctor" box. */
+  isPrescription?: boolean;
+  /** B10: the doctor already approved the script on the bill, so the box starts ticked. */
+  approvedAtVisit?: boolean;
+  /** B10: the visit's doctor, for the box's label ("Approved by Dr. Lane"). */
+  doctorName?: string | null;
   /** The order is being sent; a second click would queue it twice. */
   saving?: boolean;
   onCancel: () => void;
@@ -67,6 +76,9 @@ export default function MailOrderPrompt({
   maxQty = 1,
   paid = false,
   approvalNote,
+  isPrescription = false,
+  approvedAtVisit = false,
+  doctorName,
   saving = false,
   onCancel,
   onConfirm,
@@ -78,6 +90,13 @@ export default function MailOrderPrompt({
   const [plan, setPlan] = useState<PaymentPlan>('now');
   const [loading, setLoading] = useState(true);
   const [ship, setShip] = useState<MailShipChoice | null>(null);
+  const [approved, setApproved] = useState(Boolean(approvedAtVisit));
+  const needsDoctor = isPrescription && !approved;
+  const plans =
+    isPrescription && approved
+      ? PAYMENT_PLANS.filter((p) => p.id !== 'after_approval')
+      : PAYMENT_PLANS;
+  const doctorLabel = doctorName?.trim() ? doctorName.trim() : 'the doctor';
 
   useEffect(() => {
     setLoading(true);
@@ -162,7 +181,29 @@ export default function MailOrderPrompt({
             {selected && !pickup ? (
               <MailShipAddressPicker clientId={clientId} onChange={setShip} />
             ) : null}
-            {approvalNote ? (
+            {isPrescription ? (
+              <label className={`mail-order-prompt__check${approved ? ' is-on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={approved}
+                  onChange={(e) => {
+                    setApproved(e.target.checked);
+                    if (e.target.checked && plan === 'after_approval') setPlan('now');
+                  }}
+                />
+                <span>
+                  Approved by {doctorLabel}
+                  <span className="mail-order-prompt__hint">
+                    {approved
+                      ? approvedAtVisit
+                        ? 'Approved on this bill. It goes straight to the mail team to fill. Your name is logged.'
+                        : `Tick only if ${doctorLabel} approved this script. It goes straight to the mail team, and your name is logged as who ticked it.`
+                      : `Not ticked: ${doctorLabel} and their tech get a task to approve it before anything is filled.`}
+                  </span>
+                </span>
+              </label>
+            ) : null}
+            {approvalNote && !(isPrescription && approved) ? (
               <p className="mail-order-prompt__notice" role="status">
                 {approvalNote}
               </p>
@@ -170,7 +211,7 @@ export default function MailOrderPrompt({
             {paid ? null : (
               <fieldset className="mail-order-prompt__plans">
                 <legend>Payment</legend>
-                {PAYMENT_PLANS.map((option) => (
+                {plans.map((option) => (
                   <label
                     key={option.id}
                     className={`mail-order-prompt__check${plan === option.id ? ' is-on' : ''}`}
@@ -203,8 +244,17 @@ export default function MailOrderPrompt({
                   ? 'Choose where this ships first'
                   : undefined
             }
-            onClick={() => {
+            onClick={async () => {
               if (saving || !selected || (!pickup && !ship)) return;
+              if (needsDoctor) {
+                const sure = await appConfirm({
+                  title: "Still needs the doctor's approval?",
+                  message: `Are you sure this still needs ${doctorLabel}'s approval? ${doctorLabel} and their tech get a task, and nothing is filled until it's approved.`,
+                  confirmLabel: 'Yes, send for approval',
+                  cancelLabel: 'Go back',
+                });
+                if (!sure) return;
+              }
               onConfirm({
                 origin: mailOriginForType(selected),
                 shippingPaymentStatus: mailShippingPaymentForType(selected, false),
@@ -213,7 +263,9 @@ export default function MailOrderPrompt({
                 type: selected,
                 mailQty: qty,
                 sendWithoutPayment: !paid && plan === 'without_payment',
-                payAfterApproval: !paid && plan === 'after_approval',
+                payAfterApproval:
+                  !paid && !(isPrescription && approved) && plan === 'after_approval',
+                approvedByDoctor: isPrescription && approved,
                 ship: pickup ? null : ship,
               });
             }}

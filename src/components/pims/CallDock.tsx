@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { GripHorizontal, Phone, X } from 'lucide-react';
+import { GripHorizontal, Minus, Phone, X } from 'lucide-react';
 import './CallDock.css';
 
-const POSITION_KEY = 'vayd-call-dock-position';
+// v2 (Nov 12, 2026): the dock moved from mid-screen to the bottom-right corner; old saved spots are ignored.
+const POSITION_KEY = 'vayd-call-dock-position-v2';
+const COLLAPSED_KEY = 'vayd-call-dock-collapsed';
 const DOCK_WIDTH = 380;
 
 type Point = { x: number; y: number };
@@ -17,12 +19,13 @@ function clampToViewport(p: Point): Point {
   };
 }
 
-/** Centred horizontally, high enough to read without covering the page header. */
-function defaultPosition(): Point {
-  return clampToViewport({
-    x: Math.round((window.innerWidth - DOCK_WIDTH) / 2),
-    y: Math.round(window.innerHeight * 0.18),
-  });
+
+function readCollapsed(): boolean {
+  try {
+    return sessionStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 function readStoredPosition(): Point | null {
@@ -35,6 +38,32 @@ function readStoredPosition(): Point | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * True while any modal dialog is open on the page (the call review, a text window, a confirm box).
+ * The dock steps aside then, so it never covers the window you are working in.
+ */
+function useAnyModalOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+    let frame = 0;
+    const check = () => {
+      frame = 0;
+      setOpen(Boolean(document.querySelector('[aria-modal="true"]')));
+    };
+    check();
+    const observer = new MutationObserver(() => {
+      if (!frame) frame = window.requestAnimationFrame(check);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return open;
 }
 
 export type CallDockTone = 'live' | 'ready' | 'muted';
@@ -69,7 +98,13 @@ type Props = {
   onDismiss?: () => void;
   /** Other calls sitting behind this one, like a bunch of post-its. */
   behind?: CallDockPeek[];
+  /** Shown under the stack, e.g. when there are more calls than the dock lists. */
+  stackNote?: string;
   onSelectBehind?: (key: string) => void;
+  /** Hide the dock entirely (e.g. while its review window is open, so nothing sits on top of it). */
+  hidden?: boolean;
+  /** A ringing or live call: the dock opens itself even if it was minimized. */
+  urgent?: boolean;
 };
 
 /**
@@ -93,10 +128,29 @@ export default function CallDock({
   dismissLabel,
   onDismiss,
   behind = [],
+  stackNote,
   onSelectBehind,
+  hidden = false,
+  urgent = false,
 }: Props) {
-  const [pos, setPos] = useState<Point>(() =>
-    typeof window === 'undefined' ? { x: 0, y: 0 } : (readStoredPosition() ?? defaultPosition()),
+  const [collapsed, setCollapsedState] = useState<boolean>(() =>
+    typeof window === 'undefined' ? false : readCollapsed(),
+  );
+  const setCollapsed = useCallback((next: boolean) => {
+    setCollapsedState(next);
+    try {
+      sessionStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+  }, []);
+  useEffect(() => {
+    if (urgent) setCollapsed(false);
+  }, [urgent, setCollapsed]);
+  const modalOpen = useAnyModalOpen();
+  // null = not moved yet: pinned to the bottom-right corner (grows upward, so it never runs off the screen).
+  const [pos, setPos] = useState<Point | null>(() =>
+    typeof window === 'undefined' ? null : readStoredPosition(),
   );
   const drag = useRef<{ dx: number; dy: number } | null>(null);
 
@@ -104,7 +158,9 @@ export default function CallDock({
     (e: React.PointerEvent<HTMLDivElement>) => {
       if ((e.target as HTMLElement).closest('button')) return;
       e.currentTarget.setPointerCapture(e.pointerId);
-      drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
+      const box = (e.currentTarget.closest('.call-dock-bunch') as HTMLElement | null)?.getBoundingClientRect();
+      const from = pos ?? { x: box?.left ?? 0, y: box?.top ?? 0 };
+      drag.current = { dx: e.clientX - from.x, dy: e.clientY - from.y };
     },
     [pos],
   );
@@ -125,18 +181,41 @@ export default function CallDock({
   }, [pos]);
 
   useEffect(() => {
-    const onResize = () => setPos((p) => clampToViewport(p));
+    const onResize = () => setPos((p) => (p ? clampToViewport(p) : p));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  if (typeof document === 'undefined') return null;
+  // A ringing or live call stays visible even over a dialog; anything else waits until it closes.
+  if (typeof document === 'undefined' || hidden || (modalOpen && !urgent)) return null;
 
-  const extra = behind.slice(0, 4);
-  const stackDepth = extra.length;
+  const extra = behind.slice(0, 3);
+  const hiddenBehind = behind.length - extra.length;
+  const total = behind.length + 1;
+
+  if (collapsed) {
+    return createPortal(
+      <button
+        type="button"
+        className={`call-dock-pill${tone === 'ready' ? ' call-dock-pill--ready' : ''}${
+          tone === 'muted' ? ' call-dock-pill--muted' : ''
+        }`}
+        onClick={() => setCollapsed(false)}
+        title="Show your calls"
+      >
+        <Phone size={14} aria-hidden />
+        <span>{total === 1 ? `Call · ${gripLabel}` : `Calls · ${total} waiting`}</span>
+        <span className="call-dock-pill__show">Show</span>
+      </button>,
+      document.body,
+    );
+  }
 
   return createPortal(
-    <div className="call-dock-bunch" style={{ left: pos.x, top: pos.y }}>
+    <div
+      className="call-dock-bunch"
+      style={pos ? { left: pos.x, top: pos.y } : { right: 20, bottom: 20 }}
+    >
       <div
         className={`call-dock${tone === 'ready' ? ' call-dock--ready' : ''}${
           tone === 'muted' ? ' call-dock--muted' : ''
@@ -154,8 +233,17 @@ export default function CallDock({
           <GripHorizontal size={15} aria-hidden />
           <span className="call-dock__grip-label">
             {gripLabel}
-            {stackDepth > 0 ? ` · ${stackDepth + 1}` : ''}
+            {total > 1 ? ` · ${total} calls` : ''}
           </span>
+          <button
+            type="button"
+            className="call-dock__grip-btn"
+            aria-label="Minimize"
+            title="Minimize (a new call opens it again)"
+            onClick={() => setCollapsed(true)}
+          >
+            <Minus size={13} aria-hidden />
+          </button>
           {onDismiss ? (
             <button
               type="button"
@@ -201,10 +289,10 @@ export default function CallDock({
         </div>
       </div>
 
-      {stackDepth > 0 ? (
+      {extra.length > 0 ? (
         <div className="call-dock-behind" aria-label="Other calls waiting">
           <span className="call-dock__stack-hint">
-            {stackDepth === 1 ? '1 more call waiting' : `${stackDepth} more calls waiting`}
+            {behind.length === 1 ? 'Next call waiting' : `${behind.length} more calls waiting`} · click one to open it
           </span>
           {extra.map((card) => (
             <button
@@ -218,8 +306,14 @@ export default function CallDock({
               <span className="call-dock-peek__who">{card.who}</span>
             </button>
           ))}
+          {hiddenBehind > 0 ? (
+            <span className="call-dock__stack-hint">
+              + {hiddenBehind} more — they move up as you file these
+            </span>
+          ) : null}
         </div>
       ) : null}
+      {stackNote ? <p className="call-dock__stack-hint">{stackNote}</p> : null}
     </div>,
     document.body,
   );

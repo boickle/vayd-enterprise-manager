@@ -301,6 +301,10 @@ export type VisitInvoice = {
   total: number;
   amountPaid: number;
   isEuthanasiaPrepay: boolean;
+  /** Appointment deposit bill (Nov 12, 2026): the appointment it holds a deposit for. */
+  depositForAppointmentId?: number | null;
+  /** The deposit asked for. */
+  depositAmount?: number | string | null;
   stripeCustomerId: string | null;
   stripeSetupIntentId: string | null;
   savedPaymentMethodId: string | null;
@@ -452,6 +456,8 @@ export type HouseholdRosterEntry = {
   appointmentId: number;
   soapEncounterId: string;
   isCurrent: boolean;
+  /** 'completed' = signed and locked; the scribe cannot write into it. */
+  status?: SoapEncounterStatus;
 };
 
 /**
@@ -869,6 +875,8 @@ export type PatientPrescription = {
   rxNumber: number | null;
   quantity?: number | null;
   autoshipStartedAt?: string | null;
+  /** The catalog item needs no prescription: show PRN, refills don't apply (owner, Nov 11, 2026). */
+  prn?: boolean;
 };
 
 /** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */
@@ -1163,11 +1171,14 @@ export async function listPatientPrescriptions(
   return data;
 }
 
-/** Mark a prescription as no longer taking (or clear that mark). */
+/**
+ * Mark a prescription as no longer taking (or clear that mark), change its refills, or link a chronic med
+ * to a catalog item (inventoryItemId) so the client can reorder it in the portal.
+ */
 export async function updatePatientPrescription(
   id: number,
   /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
-  body: { discontinued?: boolean; refill?: number; patientId?: number }
+  body: { discontinued?: boolean; refill?: number; patientId?: number; inventoryItemId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,
@@ -1750,7 +1761,6 @@ export async function voidInvoice(
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
     reason: opts?.reason,
-    voidedByEmployeeId: opts?.voidedByEmployeeId,
     ...removeDoseParams(opts?.removeDose),
   });
   return data;
@@ -1759,15 +1769,11 @@ export async function voidInvoice(
 /** Soft-delete an unused open invoice so it leaves the ledger. */
 export async function discardVisitInvoice(
   id: string,
-  opts?: { deletedByEmployeeId?: number | null },
+  _opts?: { deletedByEmployeeId?: number | null },
 ): Promise<void> {
   await http.delete(`/visit-invoices/${encodeURIComponent(id)}`, {
-    params: {
-      practiceId: pid(),
-      ...(opts?.deletedByEmployeeId != null
-        ? { deletedByEmployeeId: opts.deletedByEmployeeId }
-        : {}),
-    },
+    // The server takes the actor from the login (RP-A5).
+    params: { practiceId: pid() },
   });
 }
 
@@ -1817,6 +1823,8 @@ export type InvoiceCardOnFile = {
   brand: string | null;
   expMonth: number | null;
   expYear: number | null;
+  /** PAY-C5: the card has expired. It is shown, never charged. */
+  expired?: boolean;
 };
 
 export type InvoiceCardOnFileLookup = {
@@ -2035,7 +2043,7 @@ export function formatInvoiceLineEntered(created: string | null | undefined): st
   });
 }
 
-/** Virtual terminal: charge a card keyed in while the owner reads it out. */
+/** Type card manually (virtual terminal): charge a card number keyed in by staff. */
 export async function chargeKeyedCard(
   invoiceId: string,
   body: { paymentMethodId: string; saveCard?: boolean },
@@ -2241,6 +2249,10 @@ export type ClientCardOnFile = {
   agreementVersion: string | null;
   currentAgreementVersion: string;
   declinedAt: string | null;
+  /** Memberships and auto-ships billed on this card; Remove card keeps it for them only (PAY-C2). */
+  stillUsedBy?: string[];
+  /** Only on the Remove card reply: what was removed, and who still uses it. */
+  removed?: { last4: string | null; brand: string | null; detached: boolean; stillUsedBy: string[] };
 };
 
 export async function getClientCardOnFile(clientId: number): Promise<ClientCardOnFile> {

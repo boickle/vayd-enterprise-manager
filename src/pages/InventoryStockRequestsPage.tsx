@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { fetchMyOffices } from '../api/permissions';
-import { usePermissions } from '../permissions/PermissionContext';
 import {
   getInventoryBranchStock,
   listBranchParLevels,
@@ -182,8 +181,6 @@ type Props = { kind: InventoryStockRequestKind };
 
 export default function InventoryStockRequestsPage({ kind }: Props) {
   const { token } = useAuth() as { token: string | null };
-  const { hasRole } = usePermissions();
-  const isInventoryManager = hasRole('inventory_manager');
   const [searchParams] = useSearchParams();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const branchFromUrl = Number(searchParams.get('branchId'));
@@ -220,9 +217,10 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const isOrder = kind === 'order';
   const title = isTransfer || isFill ? 'Transfer List' : 'Order List';
   const officeName = branches.find((b) => b.id === branchId)?.name ?? 'Office';
+  // The API's inventory.po.manage decides who orders where: the practice manager at any office,
+  // an inventory manager at their own (owner decision, Nov 9, 2026).
   const canActOnOrder =
     isOrder &&
-    isInventoryManager &&
     branchId !== '' &&
     (poOffices === 'all' ||
       (Array.isArray(poOffices) && poOffices.includes(Number(branchId))));
@@ -526,7 +524,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
       <p className="settings-section-description">
         {isTransfer || isFill
           ? 'Prefer Main first (down to 0 — that may put the item on the order list back to max), then other locations over par, then other offices over par. Only pull another location below par if Main is empty. To is short of par; uncovered asks show From as —. Locations at or over par are not destinations.'
-          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that. Everyone can view this list. Placing an order or adding a line is for the inventory manager of this office.'}
+          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. It also orders what a car or shelf is short when no shelf or office has spare to transfer, so an office that keeps its stock in the car still gets an order. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that. Everyone can view this list. Placing an order or adding a line is for the practice manager and the inventory manager of this office.'}
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
@@ -781,23 +779,51 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                       <tr>
                         <td colSpan={branchId === '' ? 5 : 4}>
                           <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
-                            Order qty brings Main back to max when on-hand (after planned transfers
-                            out) is at or below the re-order point.
+                            Order qty brings the main shelf back to max when on-hand (after planned transfers
+                            out) is at or below the re-order point, plus anything a car or shelf is
+                            short that no transfer can cover.
                           </div>
                           {breakdown ? (
                             <div style={{ display: 'grid', gap: 10 }}>
                               <div>
-                                Main: {breakdown.mainOnHand} on hand
-                                {breakdown.mainOut > 0
-                                  ? ` − ${breakdown.mainOut} planned out = ${breakdown.effectiveOnHand} effective`
-                                  : ` · effective ${breakdown.effectiveOnHand}`}
-                                {' · '}
-                                re-order {breakdown.reorderPoint ?? '—'}
-                                {' · '}
-                                max {breakdown.max ?? '—'}
+                                {breakdown.mainName}:{' '}
+                                {breakdown.mainNotCounted ? (
+                                  'no count for this item'
+                                ) : (
+                                  <>
+                                    {breakdown.mainOnHand} on hand
+                                    {breakdown.mainOut > 0
+                                      ? ` − ${breakdown.mainOut} planned out = ${breakdown.effectiveOnHand} effective`
+                                      : ` · effective ${breakdown.effectiveOnHand}`}
+                                    {' · '}
+                                    re-order {breakdown.reorderPoint ?? '—'}
+                                    {' · '}
+                                    max {breakdown.max ?? '—'}
+                                  </>
+                                )}
+                                {breakdown.notCovered > 0 ? (
+                                  <>
+                                    {' · '}
+                                    {breakdown.mainOrder > 0
+                                      ? `${breakdown.mainName} needs ${breakdown.mainOrder} + `
+                                      : ''}
+                                    not covered {breakdown.notCovered}
+                                  </>
+                                ) : null}
                                 {' → '}
                                 order <strong>{breakdown.quantity}</strong>
                               </div>
+                              {breakdown.notCovered > 0 ? (
+                                <div data-testid="order-not-covered">
+                                  No shelf or office has spare for{' '}
+                                  {breakdown.locationNeeds
+                                    .filter((n) => n.notCovered > 0)
+                                    .map((n) => `${n.locationName} (short ${n.notCovered})`)
+                                    .join(', ')}
+                                  , so it's ordered for this office. When it comes in, unbox it
+                                  straight to that shelf.
+                                </div>
+                              ) : null}
                               {row.packs ? (
                                 <div>
                                   Buy <strong>{formatOrderPacks(row.packs)}</strong> ={' '}
@@ -819,7 +845,8 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                       <th>On hand</th>
                                       <th>Par</th>
                                       <th>Short</th>
-                                      <th>From Main</th>
+                                      <th>From {breakdown.mainName}</th>
+                                      <th>Not covered</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -832,6 +859,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                           <span className="par-short">{need.short}</span>
                                         </td>
                                         <td>{need.coveredFromMain}</td>
+                                        <td>{need.notCovered}</td>
                                       </tr>
                                     ))}
                                   </tbody>

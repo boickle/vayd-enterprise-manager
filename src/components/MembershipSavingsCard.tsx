@@ -319,14 +319,28 @@ export function PetSavingsCard({
 
   if (!e) {
     const planShort = planShortName(pet.recommendedPlanName);
+    const joinLabel = pet.planExtras
+      ? `Join ${planShort} for ${pet.petName}`
+      : `Explore membership for ${pet.petName}`;
+    // Point at the list only when PlanExtras will actually show one; otherwise point at the button.
+    const listShown = Boolean(
+      pet.planExtras &&
+        (pet.planExtras.includedItems.length > 0 || pet.planExtras.memberDiscounts.length > 0)
+    );
+    let next = '';
+    if (listShown) next = ` Here’s what ${pet.recommendedPlanName} includes:`;
+    else if (pet.planExtras && onJoin)
+      next = ` Tap “${joinLabel}” below to see everything ${pet.recommendedPlanName} includes and its price.`;
+    else if (!pet.planExtras)
+      next =
+        ' Membership covers the annual wellness exam and trip fee, recommended vaccines, and annual lab work, plus priority scheduling with your dedicated One-Team.';
     return (
       <div id={`pet-savings-${pet.portalPetId}`} style={{ ...cardStyle, ...outline }}>
         <h2 style={{ margin: '0 0 8px', fontSize: 20, color: '#14532d' }}>{pet.petName}</h2>
         <p style={{ margin: 0, fontSize: 16, color: '#3d5347', lineHeight: 1.5 }}>
-          We don&apos;t have a recent wellness visit with vaccines for {pet.petName} to compare yet.
-          {pet.planExtras
-            ? ` Here is what ${pet.recommendedPlanName} would include.`
-            : ' Membership covers the annual wellness exam and trip fee, recommended vaccines, and annual lab work, plus priority scheduling with your dedicated One-Team.'}
+          We can&apos;t show {pet.petName}&apos;s savings yet because we don&apos;t have a recent
+          wellness visit with vaccines to compare.
+          {next}
         </p>
         {pet.planExtras && (
           <PlanExtras
@@ -340,9 +354,7 @@ export function PetSavingsCard({
         {onJoin && (
           <div style={{ marginTop: 18 }}>
             <button type="button" style={primaryButton} onClick={() => onJoin(pet)}>
-              {pet.planExtras
-                ? `Join ${planShort} for ${pet.petName}`
-                : `Explore membership for ${pet.petName}`}
+              {joinLabel}
             </button>
           </div>
         )}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { patientHref, pushRecentRecord } from '../utils/recentRecordsStore';
 import { ArrowLeft, CalendarClock, Mic, Receipt, Users } from 'lucide-react';
 import './SoapEncounterPage.css';
 import './VisitCheckoutPage.css';
@@ -77,6 +78,13 @@ export default function VisitCheckoutPage() {
   const [ordersRevision, setOrdersRevision] = useState(0);
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
+  // Name this pet in the navbar's "Active Patient" (it shows "Patient #id" when the chart wasn't opened first).
+  useEffect(() => {
+    const name = roster.find((r) => r.patientId === patientId)?.patientName?.trim();
+    if (name && Number.isFinite(patientId)) {
+      pushRecentRecord({ kind: 'patient', id: patientId, name, href: patientHref(patientId) });
+    }
+  }, [roster, patientId]);
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

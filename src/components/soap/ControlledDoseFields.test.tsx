@@ -82,3 +82,22 @@ it('CAT-12: drawn-up-not-given waste needs a disposal method, and has a Witness 
   fireEvent.click(await screen.findByLabelText('Pharmaceutical waste'));
   expect(screen.getByRole('button', { name: 'Record waste' })).not.toBeDisabled();
 });
+
+it("B1: waste comes off the doctor's safe the dose came from, not the bill's car", async () => {
+  getInvoice.mockResolvedValue({ id: 'inv-1' });
+  const fromSafe = {
+    ...(line() as object),
+    catalogIsControlled: true,
+    controlledLocation: { branchId: 12, locationId: 44, name: 'Controlled safe' },
+  } as never;
+  render(<ControlledDoseFields invoice={invoice} line={fromSafe} practiceId={1} onInvoiceChange={() => undefined} />);
+  fireEvent.change(screen.getByLabelText('Buprenorphine mL wasted'), { target: { value: '0.2' } });
+  fireEvent.click(await screen.findByLabelText('Pharmaceutical waste'));
+  fireEvent.click(screen.getByRole('button', { name: 'Record waste' }));
+  await waitFor(() =>
+    expect(recordWaste).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ branchId: 12, fromBranchLocationId: 44 })
+    )
+  );
+});

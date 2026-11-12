@@ -1,0 +1,681 @@
+/* Open request on the Appointments list: client & request on the left, conversation on the right. */
+
+.appt-table-open {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.85fr) minmax(380px, 1.15fr);
+  gap: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
+
+@media (max-width: 1100px) {
+  .appt-table-open {
+    grid-template-columns: 1fr;
+  }
+}
+
+.req-details,
+.req-convo {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+/* ---------- Left: client & request ---------- */
+
+.req-details-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.req-details-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.req-details-chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.req-details-chip--existing {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.req-details-chip--new {
+  background: #ea580c;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* New patient on an open request: same strong orange as New client. */
+.req-details .appt-request-detail-pet-badge:not(.appt-request-detail-pet-badge--existing) {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.req-details .appt-request-pet-summary-nochart {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+/* Client and pet names that open their Scout record in a pop-up. */
+.req-record-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #1d4ed8;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: #bfdbfe;
+  text-underline-offset: 3px;
+}
+
+.req-record-link:hover {
+  text-decoration-color: currentColor;
+}
+
+/* "Checking email… · Texts ✓" while the conversation fills in. */
+.req-convo-checking {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.req-convo-checking-part {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.req-convo-checking-part--busy {
+  background: #eff6ff;
+  color: #1d4ed8;
+  animation: req-convo-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes req-convo-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .req-convo-checking-part--busy {
+    animation: none;
+  }
+}
+
+.req-convo-callnote {
+  font-size: 0.8rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+.req-details-contact {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 0.88rem;
+  color: #334155;
+}
+
+.req-details-alt {
+  color: #9a3412;
+}
+
+.req-details-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 12px 0 0;
+  font-size: 0.88rem;
+}
+
+.req-details-facts dt {
+  color: #64748b;
+}
+
+.req-details-facts dd {
+  margin: 0;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.req-details-pets {
+  margin-top: 12px;
+}
+
+.req-details-notes-label {
+  display: block;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.req-details-save {
+  margin-left: 8px;
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.req-details-save--saved {
+  color: #15803d;
+}
+
+.req-details-save--error {
+  color: #b91c1c;
+}
+
+.req-details-notes {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 400;
+  resize: vertical;
+}
+
+.req-details-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+
+.req-details-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0f766e;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.req-details-full {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* ---------- Right: conversation ---------- */
+
+.req-convo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.req-convo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.req-convo-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.req-convo-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.req-convo-status--none {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.req-convo-status--waiting {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.req-convo-status--replied {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.req-convo-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.req-convo-event {
+  align-self: center;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.req-convo-event span {
+  font-weight: 600;
+}
+
+.req-convo-row {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+}
+
+.req-convo-row--in {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.req-convo-row--out {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.req-convo-bubble {
+  padding: 9px 12px;
+  border-radius: 14px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #0f172a;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.req-convo-row--in .req-convo-bubble {
+  background: #f1f5f9;
+  border-bottom-left-radius: 4px;
+}
+
+.req-convo-row--out .req-convo-bubble--email {
+  background: #eef2ff;
+  border-bottom-right-radius: 4px;
+}
+
+.req-convo-row--out .req-convo-bubble--text {
+  background: #ccfbf1;
+  border-bottom-right-radius: 4px;
+}
+
+.req-convo-bubble--call {
+  background: #fffbeb;
+  border: 1px dashed #fcd34d;
+}
+
+.req-convo-call-title {
+  font-weight: 600;
+}
+
+.req-convo-more {
+  margin-top: 4px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0f766e;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.req-convo-meta {
+  margin-top: 3px;
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.req-convo-channel {
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.req-convo-channel--email {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.req-convo-channel--text {
+  background: #ccfbf1;
+  color: #115e59;
+}
+
+.req-convo-channel--call {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.req-convo-earlier {
+  align-self: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 12px;
+  font-size: 0.78rem;
+  color: #475569;
+  cursor: pointer;
+}
+
+.req-convo-loading,
+.req-convo-warning {
+  align-self: center;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.req-convo-warning {
+  color: #9a3412;
+}
+
+.req-convo-compose {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fcfdfe;
+}
+
+.req-convo-tabs {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  gap: 2px;
+}
+
+.req-convo-tab {
+  border: none;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.req-convo-tab--active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.req-convo-to {
+  margin: 8px 0 6px;
+  font-size: 0.82rem;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+
+.req-convo-subject {
+  color: #64748b;
+}
+
+.req-convo-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+
+.req-convo-outcome {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.req-convo-outcome--active {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.req-convo-phone {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.req-convo-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.req-convo-input:focus,
+.req-details-notes:focus {
+  outline: 2px solid #99f6e4;
+  border-color: #14b8a6;
+}
+
+.req-convo-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.req-convo-suggest {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0f766e;
+  cursor: pointer;
+}
+
+.req-convo-send {
+  border: none;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #fff;
+  padding: 8px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.req-convo-send:disabled,
+.req-convo-suggest:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.req-convo-error,
+.req-action-error {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #b91c1c;
+}
+
+/* Next-step buttons under the conversation. */
+.req-convo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.req-action {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.req-action--primary {
+  border-color: #15803d;
+  background: #15803d;
+  color: #fff;
+}
+
+.req-action--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: #475569;
+}
+
+.req-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Pet card: booking type in bold, the client's reason after it in normal weight. */
+.appt-request-pet-summary-reason {
+  font-weight: 400;
+  color: #475569;
+}
+
+/* All / Email / Text / Calls switch above the conversation. */
+.req-convo-filter {
+  display: inline-flex;
+  margin-right: auto;
+  margin-left: 12px;
+  padding: 2px;
+  border-radius: 9px;
+  background: #f1f5f9;
+  gap: 2px;
+}
+
+.req-convo-filter-btn {
+  border: none;
+  background: transparent;
+  padding: 3px 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.req-convo-filter-btn--on {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.req-convo-filter-count {
+  margin-left: 4px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+/* Call tab: dial through Quo; logging by hand is the fallback. */
+.req-convo-callbox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.req-convo-dial {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.req-convo-callhelp {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+/* Quo call transcript under the call's summary. */
+.req-convo-transcript {
+  margin-top: 6px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #fde68a;
+  font-size: 0.82rem;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+/* Hold tab: the hold's own card (visits, contact log, Open / convert…) beside the conversation. */
+.hold-open-card {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.hold-open-card .appt-request-row-actions {
+  width: 100%;
+}
+
+.req-convo-compose-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

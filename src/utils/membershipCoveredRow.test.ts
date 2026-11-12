@@ -33,8 +33,8 @@ describe('membership covered row', () => {
     expect(membershipCoveredLabel([])).toBe('Included in membership');
   });
 
-  it('shows a true minus before the dollar sign', () => {
-    expect(membershipCoveredAmount(-75)).toBe('−$75.00');
-    expect(membershipCoveredAmount('1234.5')).toBe('−$1,234.50');
+  it('shows the amount as covered, no minus sign', () => {
+    expect(membershipCoveredAmount(-75)).toBe('$75.00 covered');
+    expect(membershipCoveredAmount('1234.5')).toBe('$1,234.50 covered');
   });
 });

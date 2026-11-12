@@ -23,9 +23,12 @@ function plainClick(e: MouseEvent): boolean {
 export function SoapRecordModal({
   record,
   onClose,
+  hint = 'Your SOAP stays open underneath. Links that leave this record open in a new tab ↗',
 }: {
   record: SoapRecordRef;
   onClose: () => void;
+  /** Line under the title (the page behind it differs by caller). */
+  hint?: string;
 }) {
   const [stack, setStack] = useState<SoapRecordRef[]>([record]);
   const shown = stack[stack.length - 1];
@@ -82,9 +85,7 @@ export function SoapRecordModal({
           <h2 id="soap-record-modal-title" className="soap-record-modal__title">
             {title}
           </h2>
-          <span className="soap-record-modal__hint">
-            Your SOAP stays open underneath. Links that leave this record open in a new tab ↗
-          </span>
+          <span className="soap-record-modal__hint">{hint}</span>
           <a
             className="soap-record-modal__full"
             href={fullHref}

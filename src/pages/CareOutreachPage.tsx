@@ -92,7 +92,6 @@ import {
   readForwardBookingReturnSession,
   type ForwardBookingReturnSessionV1,
 } from '../utils/forwardBookingReturnSession';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import {
@@ -158,36 +157,6 @@ function extractClient(r: UnscheduledReminder) {
   };
 }
 
-const evetLinkStyle: React.CSSProperties = {
-  color: 'inherit',
-  textDecoration: 'none',
-  fontWeight: 'inherit',
-};
-
-function EvetInlineLink({
-  href,
-  children,
-}: {
-  href: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      style={evetLinkStyle}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.textDecoration = 'underline';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.textDecoration = 'none';
-      }}
-    >
-      {children}
-    </a>
-  );
-}
 
 function dueSortTime(dueIso: string | null | undefined): number {
   if (!dueIso) return Number.MAX_SAFE_INTEGER;
@@ -1507,13 +1476,7 @@ export default function CareOutreachPage() {
               >
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'baseline' }}>
                 <strong style={{ fontSize: '1.05rem' }}>
-                  {client.clientPimsId ? (
-                    <EvetInlineLink href={evetClientLink(client.clientPimsId)}>
-                      {client.displayName}
-                    </EvetInlineLink>
-                  ) : (
-                    client.displayName
-                  )}
+                  {client.displayName}
                 </strong>
                 {client.phone ? (
                   <a
@@ -1606,13 +1569,7 @@ export default function CareOutreachPage() {
                       }}
                     >
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        {pg.patientPimsId ? (
-                          <EvetInlineLink href={evetPatientLink(pg.patientPimsId)}>
-                            {pg.patientName}
-                          </EvetInlineLink>
-                        ) : (
-                          pg.patientName
-                        )}
+                        {pg.patientName}
                         {pg.isMember ? (
                           <PatientMembershipHeart membershipName={pg.membershipName} />
                         ) : null}

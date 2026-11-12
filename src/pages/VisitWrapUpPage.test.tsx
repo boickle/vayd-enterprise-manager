@@ -185,3 +185,31 @@ describe('malformed wrap-up response', () => {
     expect(await screen.findByPlaceholderText(/owner@example.com/)).toBeTruthy();
   });
 });
+
+describe('SCR-02 stale recap draft', () => {
+  const BANNER = /Charts changed after this recap was written/;
+
+  it('SCR-02-2: a stale draft shows the banner and is not rewritten until Regenerate is clicked', async () => {
+    state.wrapUp = { ...baseWrapUp, emailDraftStale: true };
+    renderPage();
+    expect(await screen.findByText(BANNER)).toBeTruthy();
+    const subject = screen.getByDisplayValue('Saved subject') as HTMLInputElement;
+    expect(subject.value).toBe('Saved subject');
+    await new Promise((r) => setTimeout(r, 1000)); // past the autosave delay
+    expect(state.calls.some((c) => c.url.endsWith('/scribe/client-recap'))).toBe(false);
+    expect(state.calls.some((c) => c.url.endsWith('/recap-draft') && (c.body as { fromCharts?: boolean }).fromCharts)).toBe(false);
+
+    fireEvent.click(screen.getByTestId('recap-stale-regenerate'));
+    await waitFor(() => expect(screen.queryByText(BANNER)).toBeNull());
+    expect((screen.getByDisplayValue('Hi') as HTMLInputElement).value).toBe('Hi');
+    const put = state.calls.find((c) => c.method === 'put' && c.url.endsWith('/recap-draft') && (c.body as { fromCharts?: boolean }).fromCharts);
+    expect(put).toBeTruthy();
+  });
+
+  it('SCR-02-3: a fresh draft shows no banner', async () => {
+    state.wrapUp = { ...baseWrapUp, emailDraftStale: false };
+    renderPage();
+    await screen.findByPlaceholderText(/owner@example.com/);
+    expect(screen.queryByText(BANNER)).toBeNull();
+  });
+});

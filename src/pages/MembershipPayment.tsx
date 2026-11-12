@@ -12,6 +12,9 @@ import {
   resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { fetchClientInfo } from '../api/clientPortal';
+import { myStoreCards, type StoreSavedCard } from '../api/onlineStore';
+import MembershipSavedCardChoice, { cardOnFileFrom } from './MembershipSavedCardChoice';
 import { getFrontendPaymentProvider } from '../config/paymentProvider';
 import { loadStripePublishableKey } from '../api/practicePublicConfig';
 import { trackPurchase } from '../utils/analytics';
@@ -168,6 +171,12 @@ export type MembershipPaymentModalProps = {
   onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
+/** True for a client's own login. `role` from useAuth is a list (['client']); a single string is accepted too. */
+export function isClientLogin(role: unknown): boolean {
+  const roles = Array.isArray(role) ? role : role ? [role] : [];
+  return roles.some((r) => String(r).toLowerCase() === 'client');
+}
+
 export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -175,7 +184,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const fromModal = props?.fromModal === true;
   const onEnrollmentSucceeded = props?.onEnrollmentSucceeded;
   const state = fromModal ? (props?.initialState ?? locationState) : locationState;
-  const { userEmail, userId } = useAuth() as any;
+  const { userEmail, userId, role } = useAuth() as any;
+  const clientLogin = isClientLogin(role);
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
@@ -401,16 +411,70 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [administrativeDistrictLevel1, setAdministrativeDistrictLevel1] = useState('');
   const [postalCode, setPostalCode] = useState('');
 
+  // PAY-C7: a portal client with a card on file can pay with it (chosen by default) or enter a new card.
+  const [savedCard, setSavedCard] = useState<StoreSavedCard | null>(null);
+  const [useSavedCard, setUseSavedCard] = useState(true);
+  useEffect(() => {
+    if (paymentProvider !== 'stripe' || !clientLogin || !Number.isFinite(Number(userId)) || Number(userId) <= 0) {
+      setSavedCard(null);
+      return;
+    }
+    let cancelled = false;
+    void myStoreCards()
+      .then((row) => {
+        if (cancelled) return;
+        const onFile = row?.hasCard ? cardOnFileFrom(row.cards) : null;
+        setSavedCard(onFile);
+        setUseSavedCard(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSavedCard(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientLogin, userId]);
+  const payingWithSavedCard = paymentProvider === 'stripe' && savedCard != null && useSavedCard;
+
+  // Pre-fill the cardholder and billing address from the household record; the client can still change them.
+  useEffect(() => {
+    // Only for the client's own login (a staff login's id is not a household).
+    if (!clientLogin) return;
+    const clientId = Number(userId);
+    if (!Number.isFinite(clientId) || clientId <= 0) return;
+    let cancelled = false;
+    void fetchClientInfo(clientId)
+      .then((c: any) => {
+        if (cancelled || !c) return;
+        const name = [c.firstName, c.lastName].filter(Boolean).join(' ').trim();
+        setCardholderName((prev) => prev || state?.customerName || name);
+        setAddressLine1((prev) => prev || c.address1 || '');
+        setAddressLine2((prev) => prev || c.address2 || '');
+        setLocality((prev) => prev || c.city || '');
+        setAdministrativeDistrictLevel1((prev) => prev || c.state || '');
+        setPostalCode((prev) => prev || c.zipcode || '');
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [clientLogin, userId, state?.customerName]);
+
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!state) return;
     if (paymentProvider === 'square' && !card) return;
-    if (paymentProvider === 'stripe' && (!stripeCardReady || !stripeRef.current || !stripeCardRef.current)) return;
-    if (!cardholderName.trim()) {
+    if (
+      paymentProvider === 'stripe' &&
+      !payingWithSavedCard &&
+      (!stripeCardReady || !stripeRef.current || !stripeCardRef.current)
+    )
+      return;
+    if (!payingWithSavedCard && !cardholderName.trim()) {
       setError('Please enter the cardholder name.');
       return;
     }
-    if (!addressLine1.trim() || !locality.trim() || !administrativeDistrictLevel1.trim() || !postalCode.trim()) {
+    if (!payingWithSavedCard && (!addressLine1.trim() || !locality.trim() || !administrativeDistrictLevel1.trim() || !postalCode.trim())) {
       setError('Please complete the billing address.');
       return;
     }
@@ -560,7 +624,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       }
 
       // Stripe: same intent as navigation state (membership enrollments use SUBSCRIPTION)
-      const { error: pmError, paymentMethod } = await stripeRef.current!.createPaymentMethod({
+      // PAY-C7: the saved card is already on the household's customer; nothing new is created.
+      const { error: pmError, paymentMethod } = payingWithSavedCard
+        ? { error: undefined, paymentMethod: { id: savedCard!.paymentMethodId } }
+        : await stripeRef.current!.createPaymentMethod({
         type: 'card',
         card: stripeCardRef.current!,
         billing_details: {
@@ -631,15 +698,17 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           ...(petIdForPayload !== '' && { petId: petIdForPayload }),
           ...(petNameForPayload !== '' && { petName: petNameForPayload }),
           ...(emailForSquare && { customerEmail: emailForSquare }),
-          cardholderName: cardholderName.trim(),
-          billingAddress: {
-            addressLine1: addressLine1.trim(),
-            addressLine2: addressLine2.trim() || undefined,
-            locality: locality.trim(),
-            administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
-            postalCode: postalCode.trim(),
-            country: 'US',
-          },
+          ...(!payingWithSavedCard && {
+            cardholderName: cardholderName.trim(),
+            billingAddress: {
+              addressLine1: addressLine1.trim(),
+              addressLine2: addressLine2.trim() || undefined,
+              locality: locality.trim(),
+              administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
+              postalCode: postalCode.trim(),
+              country: 'US',
+            },
+          }),
         },
         membershipTransaction: membershipTransactionPayload,
         ...(state.membershipDiscountToken || state.membershipDiscount
@@ -796,7 +865,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
             Payment Successful
           </h1>
           <p className="cp-muted" style={{ marginBottom: 20 }}>
-            {`${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`}
+            {`${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly.`}
           </p>
           {state.multiPetCreditEligible && (
             <p style={{ marginBottom: 20, padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: 15, lineHeight: 1.5 }}>
@@ -935,7 +1004,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           !state.fromRoomLoaderPublicForm && (
           <div className="cp-card" style={{ marginTop: 24, padding: 20, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
             <p className="cp-muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-              <strong>NOTE:</strong> If you want to sign-up another pet from your household or if you want to make an appointment for {state.petName}, please{' '}
+              <strong>NOTE:</strong> To sign up another pet from your household, or to make an appointment for {state.petName}, go to{' '}
               <a 
                 href="/client-portal" 
                 onClick={(e) => {
@@ -944,7 +1013,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 }}
                 style={{ color: '#4FB128', textDecoration: 'underline', fontWeight: 600 }}
               >
-                login to your client portal
+                your client portal
               </a>
               .
             </p>
@@ -1257,6 +1326,16 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   </p>
                 </div>
               )}
+              {paymentProvider === 'stripe' && savedCard && (
+                <MembershipSavedCardChoice
+                  card={savedCard}
+                  useSaved={useSavedCard}
+                  onChange={setUseSavedCard}
+                  disabled={processing}
+                />
+              )}
+              {!payingWithSavedCard && (
+              <>
               <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Cardholder Name</label>
                 <input
@@ -1318,6 +1397,8 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   />
                 </div>
               </div>
+              </>
+              )}
             </div>
 
             {paymentProvider === 'square' && (!squareAppId || !locationId) ? (
@@ -1330,7 +1411,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               </p>
             ) : (
               <>
-                <div key={formResetKey}>
+                <div key={formResetKey} style={payingWithSavedCard ? { display: 'none' } : undefined}>
                   <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
                 </div>
                 {paymentProvider === 'stripe' && !state.membershipDiscount && (
@@ -1488,7 +1569,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   disabled={
                     processing ||
                     initializingPaymentForm ||
-                    (paymentProvider === 'square' ? !card : !stripeCardReady)
+                    (paymentProvider === 'square' ? !card : !stripeCardReady && !payingWithSavedCard)
                   }
                   style={{
                     minWidth: 200,
@@ -1497,13 +1578,13 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                     opacity:
                       processing ||
                       initializingPaymentForm ||
-                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                      (paymentProvider === 'square' ? !card : !stripeCardReady && !payingWithSavedCard)
                         ? 0.6
                         : 1,
                     cursor:
                       processing ||
                       initializingPaymentForm ||
-                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                      (paymentProvider === 'square' ? !card : !stripeCardReady && !payingWithSavedCard)
                         ? 'not-allowed'
                         : 'pointer',
                   }}

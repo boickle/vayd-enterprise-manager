@@ -205,6 +205,15 @@ export default function SettingsGmailMailboxPermissions({ onMessage }: Props) {
                   <div className="settings-muted" style={{ fontWeight: 400, fontSize: 12 }}>
                     {mb.email}
                   </div>
+                  {mb.connected === false ? (
+                    <div
+                      role="alert"
+                      data-testid={`gmail-mailbox-disconnected-${mb.email}`}
+                      style={{ fontWeight: 600, fontSize: 12, color: '#b71c1c' }}
+                    >
+                      Disconnected — reconnect
+                    </div>
+                  ) : null}
                 </th>
               ))}
               <th scope="col" rowSpan={2} />

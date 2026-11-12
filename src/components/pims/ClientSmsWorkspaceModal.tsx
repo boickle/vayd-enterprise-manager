@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
-import { sendClientSms } from '../../api/clientSms';
+import { fetchPreferredSmsFrom, sendClientSms, type PreferredSmsFrom } from '../../api/clientSms';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { Message } from '../../api/clientPortal';
 import {
@@ -21,9 +21,9 @@ import {
   useOpenPhoneLineDirectory,
 } from '../../hooks/useOpenPhoneLineDirectory';
 import type { ClientReachPet, ClientReachPhone } from '../../utils/clientReachContacts';
-import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../../utils/doNotSmsWarning';
+import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../../utils/doNotSmsWarning';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { smsAllowsProductionOverride } from '../../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../../utils/smsEnvironment';
 import { appAlert } from '../../utils/appDialog';
 import MessageTemplatePicker from '../messageTemplates/MessageTemplatePicker';
 import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
@@ -38,6 +38,8 @@ type Props = {
   historyOnly?: boolean;
   pets: ClientReachPet[];
   defaultPatientIds?: number[];
+  /** The visit this text is about, when opened from one: its doctor's line comes first. */
+  appointmentId?: number | null;
   doNotSms?: boolean;
   onClose: () => void;
   onPostedToEmr?: () => void;
@@ -73,6 +75,7 @@ export function ClientSmsWorkspaceModal({
   historyOnly = false,
   pets,
   defaultPatientIds,
+  appointmentId = null,
   doNotSms,
   onClose,
   onPostedToEmr,
@@ -89,12 +92,15 @@ export function ClientSmsWorkspaceModal({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [resolvedDoNotSms, setResolvedDoNotSms] = useState(doNotSms === true);
+  const [textsOffReason, setTextsOffReason] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [emrPets, setEmrPets] = useState<number[]>(defaultPatientIds ?? []);
   const [postingEmr, setPostingEmr] = useState(false);
   const [overrideNonProd, setOverrideNonProd] = useState(false);
   const [openLineKeys, setOpenLineKeys] = useState<Set<string>>(() => new Set());
   const [fromPhone, setFromPhone] = useState('');
+  /** Owner, Nov 11, 2026: start on the visit's or primary provider's own Quo line. */
+  const [preferredFrom, setPreferredFrom] = useState<PreferredSmsFrom | null | undefined>(undefined);
   const isHistory = mode === 'history';
 
   function firstSendablePhone(): string {
@@ -123,19 +129,44 @@ export function ClientSmsWorkspaceModal({
     setFromPhone('');
   }, [open, initialPhone, historyOnly, phones, defaultPatientIds]);
 
+  const preferredPatientId = defaultPatientIds && defaultPatientIds.length === 1 ? defaultPatientIds[0] : null;
+  useEffect(() => {
+    if (!open || historyOnly) return;
+    let cancelled = false;
+    setPreferredFrom(undefined);
+    fetchPreferredSmsFrom({ clientId, patientId: preferredPatientId, appointmentId })
+      .then((r) => {
+        if (!cancelled) setPreferredFrom(r);
+      })
+      .catch(() => {
+        if (!cancelled) setPreferredFrom(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, historyOnly, clientId, preferredPatientId, appointmentId]);
+
   useEffect(() => {
     if (!open) return;
-    if (doNotSms === true || doNotSms === false) {
-      setResolvedDoNotSms(doNotSms);
+    if (doNotSms === false) {
+      setResolvedDoNotSms(false);
+      setTextsOffReason(null);
       return;
     }
+    // Texts are off (or unknown): load the client so a STOP reply or Quo block shows its reason
+    // and blocks sending, rather than the staff "send anyway" prompt (COM-03).
+    if (doNotSms === true) setResolvedDoNotSms(true);
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
-        if (!cancelled) setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        if (cancelled) return;
+        setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+        setTextsOffReason(clientTextsOffReason(raw));
       })
       .catch(() => {
-        if (!cancelled) setResolvedDoNotSms(false);
+        if (cancelled) return;
+        setResolvedDoNotSms(false);
+        setTextsOffReason(null);
       });
     return () => {
       cancelled = true;
@@ -206,8 +237,17 @@ export function ClientSmsWorkspaceModal({
     quoLines.find((line) => phonesMatchForQuo(line.phone, fromPhone)) ??
     (fromPhone ? resolveLineDirectoryEntry(directory, fromPhone) : null);
 
+  const providerLine = preferredFrom?.phone
+    ? quoLines.find((q) => phonesMatchForQuo(q.phone, preferredFrom.phone ?? ''))
+    : undefined;
   useEffect(() => {
     if (!open || isHistory || fromPhone || quoLines.length === 0) return;
+    // Wait for the provider lookup so the line doesn't jump after it answers.
+    if (preferredFrom === undefined) return;
+    if (providerLine) {
+      setFromPhone(providerLine.phone);
+      return;
+    }
     const clientPhones = phones.map((p) => p.phone);
     const lastPracticeLine = messages
       .map((m) => practiceLineOnMessage(m, clientPhones))
@@ -217,7 +257,7 @@ export function ClientSmsWorkspaceModal({
       quoLines[0]?.phone ??
       '';
     if (preferred) setFromPhone(preferred);
-  }, [open, isHistory, fromPhone, quoLines, messages, phones]);
+  }, [open, isHistory, fromPhone, quoLines, messages, phones, preferredFrom, providerLine]);
   const phoneLabel =
     phoneFilter === 'all'
       ? 'All numbers'
@@ -408,10 +448,22 @@ export function ClientSmsWorkspaceModal({
                 ))}
               </select>
             )}
+            {providerLine && phonesMatchForQuo(fromPhone, providerLine.phone) && preferredFrom?.providerName ? (
+              <p className="client-reach-sms__hint" data-testid="send-from-provider">
+                {preferredFrom.source === 'appointment'
+                  ? `${preferredFrom.providerName}'s line (the visit's doctor)`
+                  : `${preferredFrom.providerName}'s line (primary doctor)`}
+              </p>
+            ) : null}
           </label>
         ) : null}
 
-        {resolvedDoNotSms ? (
+        {textsOffReason ? (
+          <p className="client-reach-sms__warn" role="alert" data-testid="texts-off-reason">
+            {textsOffReason}.{' '}
+            {isHistory ? 'You can still review history.' : "Texts can't be sent to this client."}
+          </p>
+        ) : resolvedDoNotSms ? (
           <p className="client-reach-sms__warn" role="alert">
             {isHistory
               ? 'Do not SMS is on. You can still review history.'
@@ -589,6 +641,7 @@ export function ClientSmsWorkspaceModal({
                   onChange={(e) => setOverrideNonProd(e.target.checked)}
                 />
                 Send to the actual client
+                <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>{SMS_OUTSIDE_PRODUCTION_NOTE}</span>
               </label>
             ) : null}
             {sendError ? <p className="client-reach-sms__error">{sendError}</p> : null}
@@ -599,7 +652,13 @@ export function ClientSmsWorkspaceModal({
               <button
                 type="button"
                 className="brief-btn primary"
-                disabled={sending || !draft.trim() || !sendToPhone || (quoLines.length > 0 && !fromPhone)}
+                disabled={
+                  sending ||
+                  Boolean(textsOffReason) ||
+                  !draft.trim() ||
+                  !sendToPhone ||
+                  (quoLines.length > 0 && !fromPhone)
+                }
                 onClick={() => void handleSend()}
               >
                 {sending ? 'Sending…' : 'Send text'}

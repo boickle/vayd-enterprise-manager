@@ -75,3 +75,20 @@ describe('LAB-A10 summary draft date', () => {
     expect(sent.sourceText).not.toContain('collected 2026-11-07');
   });
 });
+
+describe('client summary greeting and placeholders (owner, Nov 8, 2026)', () => {
+  it('greets the owner by first name, replacing whatever greeting the draft used', async () => {
+    const { withGreeting, ownerFirstName } = await import('./idexxClientSummaryDraft');
+    expect(ownerFirstName('Maria Rivera')).toBe('Maria');
+    expect(withGreeting('Dear Rivera,\n\nJuniper is fine.', 'Maria')).toBe('Dear Maria,\n\nJuniper is fine.');
+    expect(withGreeting('Hi Mrs. Rivera,\nJuniper is fine.', 'Maria')).toBe('Dear Maria,\nJuniper is fine.');
+    expect(withGreeting('Juniper is fine.', 'Maria')).toBe('Dear Maria,\n\nJuniper is fine.');
+    expect(withGreeting('Dear Rivera,', null)).toBe('Dear Rivera,');
+  });
+
+  it('finds a placeholder the doctor still has to fill in', async () => {
+    const { summaryPlaceholder } = await import('./idexxClientSummaryDraft');
+    expect(summaryPlaceholder('Next steps: [doctor to add]')).toBe('[doctor to add]');
+    expect(summaryPlaceholder('Next steps: recheck in two weeks.')).toBeNull();
+  });
+});

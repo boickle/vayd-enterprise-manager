@@ -7,9 +7,10 @@ export type TaskAutomationTrigger =
   | 'order_list_item'
   | 'call_unfiled'
   | 'lab_result_missing'
-  | 'membership_signup_failed';
+  | 'membership_signup_failed'
+  | 'vetsnap_weekly_upload';
 
-export type TaskAutomationTiming = 'age' | 'end_of_day';
+export type TaskAutomationTiming = 'age' | 'end_of_day' | 'weekly';
 
 export type TaskAutomationAssignee = 'owner' | 'role' | 'employee' | 'queue';
 
@@ -22,6 +23,8 @@ export type TaskAutomationRule = {
   timingMode: TaskAutomationTiming;
   thresholdMinutes: number;
   endOfDayHour: number;
+  /** Weekly rules: 0 = Sunday … 6 = Saturday. */
+  weeklyDay: number;
   assigneeMode: TaskAutomationAssignee;
   assigneeRoleId: number | null;
   assigneeEmployeeId: number | null;
@@ -35,6 +38,9 @@ export type TaskAutomationRule = {
   dueInHours: number | null;
   recreateIfIncomplete: boolean;
   lastRunAt: string | null;
+  /** Most recent row error from the last run (includes the source key); null after a clean run. */
+  lastError?: string | null;
+  lastErrorAt?: string | null;
 };
 
 export type TaskAutomationRulesResponse = {
@@ -44,7 +50,7 @@ export type TaskAutomationRulesResponse = {
 };
 
 export type PatchTaskAutomationRuleBody = Partial<
-  Omit<TaskAutomationRule, 'id' | 'practiceId' | 'trigger' | 'lastRunAt'>
+  Omit<TaskAutomationRule, 'id' | 'practiceId' | 'trigger' | 'lastRunAt' | 'lastError' | 'lastErrorAt'>
 >;
 
 export async function listTaskAutomationRules(

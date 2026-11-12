@@ -288,11 +288,18 @@ export type PatientMembership = {
   membershipFeePaid: boolean;
   /** Set while a card dispute is open: no member pricing or covered services. */
   benefitsPaused: { since: string; reason: string | null } | null;
+  /**
+   * Enrolled at the visit with the first fee on this invoice, not paid yet (Nov 10, 2026). Older APIs omit it.
+   * Stripe billing, the multi-pet credit and the welcome email start when it is paid.
+   */
+  awaitingPayment?: { invoiceId: string; since: string } | null;
   /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
   ownerChange: MembershipOwnerChange | null;
   groups: MembershipGroup[];
   /** Covered services given this term, newest first. */
   usage?: MembershipUsage[];
+  /** After a card change on a past-due membership: whether the missed payment was taken and benefits resumed. */
+  cardRetry?: { chargedNow: boolean; amountPaid: number; error: string | null; benefitsResumed: boolean } | null;
 };
 
 export type MembershipUsage = {
@@ -686,6 +693,16 @@ export async function createPatientMembership(input: {
   agreementSignatureData?: string;
   agreementSignedAt?: string;
   agreementText?: string;
+  /** Start Stripe billing now (first period charged today) on the entered card or the client's card on file. */
+  startBilling?: boolean;
+  /** First fee on the pet's open visit invoice, paid at checkout (Nov 10, 2026). */
+  feeOnInvoice?: boolean;
+  /** Practice setting `membership.assignFeeToProvider`. */
+  feeToProvider?: boolean;
+  clientId?: number;
+  paymentMethodId?: string;
+  /** Owner agreed to keep the new card as the household's card on file. */
+  saveCardOnFile?: boolean;
 }): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>('/memberships/patient-memberships', {
     practiceId: currentPracticeId(),
@@ -856,6 +873,20 @@ export async function updateMembershipCard(
   return data;
 }
 
+/**
+ * Undo an at-visit enrollment whose fee on the visit invoice isn't paid yet: removes the membership and the fee,
+ * and puts the visit back to regular prices (open invoices only; void a finalized one instead).
+ */
+export async function cancelMembershipEnrolment(
+  membershipId: number,
+): Promise<{ removed: true; invoiceId: string }> {
+  const { data } = await http.post<{ removed: true; invoiceId: string }>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel-enrolment`,
+    { practiceId: currentPracticeId() },
+  );
+  return data;
+}
+
 export async function resumeMembershipBenefits(
   membershipId: number,
   note?: string | null
@@ -905,7 +936,10 @@ export type MembershipCancelPreview = {
   paidThisTerm: number;
   usedThisTerm: number;
   chargeAmount: number;
+  /** $0 unless staff refund the unused part as an exception. */
   refundAmount: number;
+  /** Paid this year minus used. The agreement gives no partial refund, so it's kept unless staff refund it. */
+  unusedAmount?: number;
   hasCard: boolean;
   /** No payment record was found, so the amount paid is estimated from the listed price. */
   paymentUnknown?: boolean;
@@ -944,7 +978,14 @@ export async function previewMembershipCancel(
 export async function cancelMembership(
   membershipId: number,
   reason: string,
-  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean }
+  confirm?: {
+    chargeAmount?: number;
+    refundAmount?: number;
+    skipMoney?: boolean;
+    /** Refund the unused part as an exception to the agreement; needs a reason. */
+    refundUnused?: boolean;
+    refundReason?: string;
+  }
 ): Promise<MembershipCancelResult> {
   const { data } = await http.post<MembershipCancelResult>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
@@ -954,6 +995,7 @@ export async function cancelMembership(
       ...(confirm?.chargeAmount != null ? { confirmChargeAmount: confirm.chargeAmount } : {}),
       ...(confirm?.refundAmount != null ? { confirmRefundAmount: confirm.refundAmount } : {}),
       ...(confirm?.skipMoney ? { skipMoney: true } : {}),
+      ...(confirm?.refundUnused ? { refundUnused: true, refundReason: confirm.refundReason ?? '' } : {}),
     }
   );
   return data;
@@ -1059,6 +1101,8 @@ export type PostVisitSignupResult = {
     membershipAdjustments: number;
     amountPaid: number;
     balanceDue: number;
+    /** Paid beyond the re-priced total and not refunded (refund failed or skipped). Older APIs omit it. */
+    owedToClient?: number;
   };
   invoices?: Array<{
     id: string;
@@ -1152,6 +1196,10 @@ export type MembershipRenewalPreview = {
   /** Still billed through the old (Square) system: ask for a card and plan. */
   needsCard: boolean;
   planOptions: MembershipRenewalPlanOption[];
+  /** What the pet keeps by staying: the renewal plan's signup-card lines. */
+  benefits?: string[];
+  /** Covered services this membership year at full price; null when unknown. */
+  coveredThisYear?: number | null;
   recommendedPackageId: number;
   /** What renews: the owner's choice if any, else the recommended plan. */
   nextPackageId: number;

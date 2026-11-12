@@ -177,7 +177,7 @@ export default function SettingsCountAlerts() {
         Units 0 means any difference is flagged. $ 0 turns off the dollar check for that class.
         Counts still post to inventory right away; the task goes to whoever has “Count report and
         variance review” at that office (practice-wide holders if nobody local). First counts
-        that set an opening balance are never flagged. Results: Analytics → Inventory.
+        that set an opening balance are never flagged. Results: Analytics &amp; Reports → Inventory.
       </p>
       <h3 style={{ fontSize: 15, fontWeight: 600, margin: '20px 0 8px' }}>Monthly shrink review</h3>
       <label className="settings-checkbox-item" style={{ marginBottom: 10 }}>
@@ -210,12 +210,12 @@ export default function SettingsCountAlerts() {
       <p className="settings-muted" style={{ fontSize: 13 }}>
         Typical targets: shrink under 2%, with over 3% usually meaning missed charges or unlogged
         waste; accuracy 95%+. Accuracy is only judged once an office has 10 or more counts that
-        month. The same limits drive the red ! on Analytics → Inventory → Shrink &amp; Accuracy.
+        month. The same limits drive the red ! on Analytics &amp; Reports → Inventory → Shrink &amp; Accuracy.
         If an office has no inventory manager, a practice manager gets the task.
       </p>
       <h3 style={{ fontSize: 15, fontWeight: 600, margin: '20px 0 8px' }}>Stale lots review</h3>
       <p className="settings-muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Analytics → Inventory → Stale lots flags a lot that still has stock when any of these is true.
+        Analytics &amp; Reports → Inventory → Stale lots flags a lot that still has stock when any of these is true.
       </p>
       <div style={{ display: 'grid', gap: 10, marginBottom: 8 }}>
         <label className="settings-label">

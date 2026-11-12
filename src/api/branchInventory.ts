@@ -172,7 +172,13 @@ export type InventoryStockMovement = {
   movedByEmployeeId?: number | null;
   movedByEmployee?: InventoryMovementParty | null;
   movedByUser?: InventoryMovementParty | null;
-  inventoryItem?: { id: number; name: string } | null;
+  inventoryItem?: {
+    id: number;
+    name: string;
+    sellUnitType?: string | null;
+    sellUnitTypeDetail?: string | null;
+    isControlled?: boolean;
+  } | null;
   branch?: { id: number; name: string } | null;
   fromBranchLocation?: { id: number; name: string } | null;
   toBranchLocation?: { id: number; name: string } | null;
@@ -750,6 +756,8 @@ export type FirstCountSheetItem = {
   measure: 'volume' | 'weight' | 'both';
   weightUnit: 'g' | 'oz';
   trackLots: boolean;
+  /** Lots on this shelf with stock (no amounts: the count is blind). One row each on the sheet. */
+  lots?: Array<{ id: number; lotNumber: string | null; expirationDate: string | null }>;
   requireLotNumber: boolean;
   requireExpiration: boolean;
   firstCountedAt: string | null;
@@ -794,6 +802,8 @@ export type FirstCountResult = {
   recounts: number;
   openingItems: number;
   itemsOff: number;
+  /** Lots with stock that aren't on the count: saving sets them to 0. */
+  lotsZeroed?: number;
   blankRows: number;
   errors: Array<{ rowNumber: number | null; message: string }>;
   unmatched: Array<{
@@ -823,6 +833,10 @@ export type FirstCountResult = {
     change: number;
     afterApply: number;
     lots: Array<{ lotNumber: string | null; expirationDate: string | null; quantity: number }>;
+    /** Lots left blank: they keep this amount. */
+    keptLots?: Array<{ label: string; quantity: number }>;
+    /** Lots with stock not on the count: saving sets them to 0. */
+    zeroedLots?: Array<{ label: string; quantity: number }>;
     warnings: string[];
     /** e.g. "Lot K12: 118 g (2 bottles) = 52.73 mL" */
     weighings?: string[];
@@ -843,6 +857,19 @@ export async function getUncountedShelfLot(
   const { data } = await http.post(
     `/practice/${practiceId}/inventory-items/${inventoryItemId}/uncounted-shelf-lot`,
     { branchLocationId }
+  );
+  return data;
+}
+
+/** Whether this shelf has had its first count. Add lot and receiving don't count it. */
+export async function getShelfCountStatus(
+  practiceId: number,
+  inventoryItemId: number,
+  branchLocationId: number
+): Promise<{ counted: boolean }> {
+  const { data } = await http.get<{ counted: boolean }>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/uncounted-shelf-lot`,
+    { params: { branchLocationId } }
   );
   return data;
 }
@@ -876,6 +903,8 @@ export async function submitFirstCount(
     mode?: CountUploadMode;
     /** Post controlled lines whose weighed and counted mL disagree (staff confirmed). */
     confirmWeighMismatch?: boolean;
+    /** Lots listed on the sheet and left blank: they keep their amount. */
+    keepLotIds?: number[];
   }
 ): Promise<FirstCountResult> {
   const { data } = await http.post<FirstCountResult>(

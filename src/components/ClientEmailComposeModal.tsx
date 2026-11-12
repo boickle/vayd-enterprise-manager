@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Paperclip, X } from 'lucide-react';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { recordScoutChartCommunication } from '../api/scoutChart';
 import EmailRecipientInput, { type EmailRecipientChoice } from './EmailRecipientInput';
 import {
   fetchGmailMailboxes,
@@ -345,6 +346,28 @@ export function ClientEmailComposeModal({
         to,
         from,
       });
+      // COM-07: every email Scout sends to a client shows in their Communications. Screens that pass
+      // onAfterSend write their own entry (with their own label); the rest are logged here.
+      if (!onAfterSend && clientId != null) {
+        const patientIds = [
+          ...(regardingPatientIds ?? []),
+          ...(regardingPatientId != null ? [regardingPatientId] : []),
+        ];
+        try {
+          await recordScoutChartCommunication({
+            clientId,
+            patientIds: [...new Set(patientIds)],
+            channel: 'email',
+            subject: subject.trim(),
+            body: text,
+            destination: to,
+            sentFrom: from,
+            typeLabel: 'Email sent',
+          });
+        } catch {
+          // The email already went out; a missing chart entry must not show as a send failure.
+        }
+      }
       onClose();
     } catch (e: unknown) {
       setSendError(gmailErrorMessage(e));
@@ -625,8 +648,8 @@ export function ClientEmailComposeModal({
                       Put on these patient charts
                     </legend>
                     <p style={{ margin: '0 0 8px', color: '#6b7280', fontSize: 13 }}>
-                      Choose every pet this invoice or receipt belongs on. One household visit can
-                      include more than one.
+                      Choose every pet this email is about. One household visit can include more
+                      than one.
                     </p>
                     {regardingPatients.map((p) => {
                       const checked = (regardingPatientIds ?? []).includes(p.id);

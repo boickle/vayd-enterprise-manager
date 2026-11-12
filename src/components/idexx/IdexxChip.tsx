@@ -28,3 +28,12 @@ export default function IdexxChip({ order, className }: Props) {
     </span>
   );
 }
+
+/** On a charge Scout added because the doctor added the test inside IDEXX. */
+export function IdexxAddedTag() {
+  return (
+    <span className="idexx-added-tag" title="The doctor added this test in IDEXX's order page; Scout charged it.">
+      Added in IDEXX
+    </span>
+  );
+}

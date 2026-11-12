@@ -15,6 +15,7 @@ import {
   type GmailDraftResponse,
   type GmailAddress,
   type GmailComposeAttachment,
+  type GmailComposePayload,
   type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../../api/gmail';
@@ -773,6 +774,8 @@ export async function submitCompose(opts: {
   /** Defaults to tracked; false sends without a read receipt. */
   trackOpens?: boolean;
   attachments?: GmailComposeAttachment[];
+  /** COM-07d: have the API write the chart entry after the send (see GmailComposePayload.chartLog). */
+  chartLog?: GmailComposePayload['chartLog'];
 }) {
   const to = opts.to
     .split(/[,;]/)
@@ -795,6 +798,7 @@ export async function submitCompose(opts: {
     references: opts.references,
     trackOpens: opts.trackOpens,
     attachments: opts.attachments?.length ? opts.attachments : undefined,
+    ...(opts.chartLog ? { chartLog: opts.chartLog } : {}),
   });
 }
 
@@ -846,6 +850,9 @@ export function loadComposeFromThreadDraft(
   cc: string;
   subject: string;
   from: string;
+  threadId?: string;
+  inReplyTo?: string;
+  references?: string;
 } | null {
   const draft = findThreadDraftMessage(threadMessages ?? []);
   if (!draft) return null;
@@ -858,6 +865,9 @@ export function loadComposeFromThreadDraft(
       .filter(Boolean)
       .join(', ') ||
     '';
+  const threadId = draft.threadId?.trim() || undefined;
+  const inReplyTo = draft.headers.inReplyTo?.trim() || undefined;
+  const references = draft.headers.references?.trim() || undefined;
   return {
     draftId,
     bodyHtml: fullHtmlFromDraftMessage(draft),
@@ -865,7 +875,43 @@ export function loadComposeFromThreadDraft(
     cc: draft.headers.cc?.trim() ?? '',
     subject: draft.subject?.trim() || draft.headers.subject?.trim() || '',
     from: draft.headers.from?.trim() || formatGmailAddress(draft.from),
+    threadId,
+    inReplyTo,
+    references,
   };
+}
+
+/**
+ * Threading fields for reply/forward compose. Prefer explicit context, then the
+ * message being replied to, then an existing thread draft — never leave these
+ * empty while a draft autosave can still run.
+ */
+export function resolveComposeThreading(
+  ctx: Pick<ComposeContext, 'threadId' | 'replyTo' | 'mode'>,
+  threadMessages?: GmailThreadMessage[],
+): { threadId?: string; inReplyTo?: string; references?: string } {
+  const built = buildComposeDraft(ctx);
+  const existing = loadComposeFromThreadDraft(threadMessages);
+  const threadId =
+    built.threadId?.trim() ||
+    ctx.threadId?.trim() ||
+    ctx.replyTo?.threadId?.trim() ||
+    existing?.threadId?.trim() ||
+    undefined;
+  const inReplyTo = built.inReplyTo?.trim() || existing?.inReplyTo?.trim() || undefined;
+  const references = built.references?.trim() || existing?.references?.trim() || undefined;
+  return { threadId, inReplyTo, references };
+}
+
+/** Reply drafts must keep Gmail threadId or autosave creates a standalone Drafts item. */
+export function composeDraftThreadingReady(
+  mode: ComposeMode,
+  fields: { threadId?: string; inReplyTo?: string },
+): boolean {
+  if (mode !== 'reply' && mode !== 'replyAll') return true;
+  if (fields.threadId?.trim()) return true;
+  // inReplyTo without threadId is exactly the orphaning case — block save.
+  return false;
 }
 
 function composePayloadFromFields(opts: {
@@ -931,16 +977,24 @@ export async function saveComposeDraft(opts: {
   threadMessages?: GmailThreadMessage[];
 }): Promise<GmailDraftResponse> {
   let draftId = opts.draftId?.trim();
-  if (!draftId && opts.threadId?.trim() && opts.threadMessages?.length) {
+  let threadId = opts.threadId?.trim() || undefined;
+  if ((!draftId || !threadId) && opts.threadMessages?.length) {
     const existing = findAllThreadDraftMessages(opts.threadMessages);
     const latest = existing[existing.length - 1];
     if (latest) {
-      draftId = latest.draftId?.trim() || latest.id;
+      if (!draftId) draftId = latest.draftId?.trim() || latest.id;
+      if (!threadId) threadId = latest.threadId?.trim() || undefined;
     }
   }
 
+  // Never create/update a reply-shaped draft without threadId — Gmail stores it
+  // as a standalone Drafts conversation (Re: subject kept, thread link lost).
+  if (!threadId && opts.inReplyTo?.trim()) {
+    throw new Error('Cannot save a reply draft without a Gmail thread id');
+  }
+
   const payload = {
-    ...composePayloadFromFields(opts),
+    ...composePayloadFromFields({ ...opts, threadId }),
     ...(opts.threadInInbox === false ? { keepOutOfInbox: true as const } : {}),
   };
   const result = draftId

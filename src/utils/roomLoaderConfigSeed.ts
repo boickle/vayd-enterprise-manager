@@ -73,12 +73,27 @@ const LEPTO_EQUIVALENTS = [
   item('inventory', 64, 'Leptospirosis Vaccine - Annual', 'LEPTOANNUAL'),
   item('inventory', 445, 'Lyme/Lepto Combo Vaccine - Annual', 'LYME/LEPTOANNUAL'),
   item('inventory', 446, 'Lyme/Lepto Combo Vaccine - Initial', 'LYME/LEPTOINIT'),
-  item('inventory', 3919, 'Wellness Clinic - Leptospirosis Vaccine - Annual', 'WC-VXCLINICLEPTOANNUAL'),
-  item('inventory', 3918, 'Wellness Clinic - Leptospirosis Vaccine - Initial', 'WC-VXCLINICLEPTOINIT'),
+  item(
+    'inventory',
+    3919,
+    'Wellness Clinic - Leptospirosis Vaccine - Annual',
+    'WC-VXCLINICLEPTOANNUAL'
+  ),
+  item(
+    'inventory',
+    3918,
+    'Wellness Clinic - Leptospirosis Vaccine - Initial',
+    'WC-VXCLINICLEPTOINIT'
+  ),
 ];
 const BORDETELLA = item('inventory', 2031, 'Bordetella Oral Vaccine - Annual', 'BORDORAL');
 const BORDETELLA_EQUIVALENTS = [
-  item('inventory', 3940, 'Wellness Clinic - Bordetella Oral Vaccine - Annual', 'WC-VXCLINICBORDORAL'),
+  item(
+    'inventory',
+    3940,
+    'Wellness Clinic - Bordetella Oral Vaccine - Annual',
+    'WC-VXCLINICBORDORAL'
+  ),
 ];
 const FELV_INITIAL = item('inventory', 74, 'FeLV (Leukemia) Vaccine - Initial', 'FELVINIT');
 const FELV_EQUIVALENTS = [
@@ -86,7 +101,12 @@ const FELV_EQUIVALENTS = [
   item('inventory', 233, 'FeLV (Leukemia) Vaccine - 2 year', 'FELV2'),
   item('inventory', 3927, 'Wellness Clinic - FeLV (Leukemia) Vaccine - 1 year', 'WC-VXCLINICFELV1'),
   item('inventory', 3928, 'Wellness Clinic - FeLV (Leukemia) Vaccine - 2 year', 'WC-VXCLINICFELV2'),
-  item('inventory', 3929, 'Wellness Clinic - FeLV (Leukemia) Vaccine - Initial', 'WC-VXCLINICFELVINT'),
+  item(
+    'inventory',
+    3929,
+    'Wellness Clinic - FeLV (Leukemia) Vaccine - Initial',
+    'WC-VXCLINICFELVINT'
+  ),
 ];
 const RABIES_ITEMS = [
   item('inventory', 56, 'Rabies Vaccine - 1 year', 'RABIES1'),
@@ -95,9 +115,19 @@ const RABIES_ITEMS = [
   item('inventory', 540, 'Rabies Feline Vaccine (Purevax) - 1 year', 'RABIESPUREVAX1'),
   item('inventory', 2915, 'Rabies Feline Vaccine (Purevax) - 3 year', 'RABIESPUREVAX3'),
   item('inventory', 3930, 'Wellness Clinic - Rabies Vaccine - 1 year', 'WC-VXCLINICRABIES1'),
-  item('inventory', 3931, 'Wellness Clinic - Rabies Vaccine - 1 year (package)', 'WC-VXCLINICRABIES1INC'),
+  item(
+    'inventory',
+    3931,
+    'Wellness Clinic - Rabies Vaccine - 1 year (package)',
+    'WC-VXCLINICRABIES1INC'
+  ),
   item('inventory', 3932, 'Wellness Clinic - Rabies Vaccine - 3 year', 'WC-VXCLINICRABIES3'),
-  item('inventory', 3933, 'Wellness Clinic - Rabies Vaccine - 3 year (package)', 'WC-VXCLINICRABIES3INC'),
+  item(
+    'inventory',
+    3933,
+    'Wellness Clinic - Rabies Vaccine - 3 year (package)',
+    'WC-VXCLINICRABIES3INC'
+  ),
 ];
 const FVRCP_ITEMS = [
   item('inventory', 71, 'FVRCP (Distemper) Initial Vaccine', 'FVRCPBOOST'),
@@ -105,24 +135,59 @@ const FVRCP_ITEMS = [
   item('inventory', 232, 'FVRCP (Distemper) Vaccine - 3 year', 'FVRCP3'),
   item('inventory', 3625, 'FVRCP Booster', 'FVRCPBOOSTER2'),
   item('inventory', 3644, 'FVRCP (Distemper) Vaccine - Litter', 'FVRCPLITTER'),
-  item('inventory', 3926, 'Wellness Clinic - FVRCP (Distemper) Vaccine - 1 year', 'WC-VXCLINICFVRCP1'),
-  item('inventory', 3925, 'Wellness Clinic - FVRCP (Distemper) Vaccine - 3 year', 'WC-VXCLINICFVRCP3'),
-  item('inventory', 3924, 'Wellness Clinic - FVRCP (Distemper) Vaccine Booster', 'WC-VXCLINICFVRCPBOOST'),
+  item(
+    'inventory',
+    3926,
+    'Wellness Clinic - FVRCP (Distemper) Vaccine - 1 year',
+    'WC-VXCLINICFVRCP1'
+  ),
+  item(
+    'inventory',
+    3925,
+    'Wellness Clinic - FVRCP (Distemper) Vaccine - 3 year',
+    'WC-VXCLINICFVRCP3'
+  ),
+  item(
+    'inventory',
+    3924,
+    'Wellness Clinic - FVRCP (Distemper) Vaccine Booster',
+    'WC-VXCLINICFVRCPBOOST'
+  ),
 ];
 const DAPP_ITEMS = [
   item('inventory', 2034, 'DAPP (Distemper) Vaccine - 1 year', 'DAPP1'),
   item('inventory', 2035, 'DAPP (Distemper) Vaccine - 3 year', 'DAPP3'),
   item('inventory', 2033, 'DAPP (Distemper) Vaccine Booster', 'DAPPBOOST'),
   item('inventory', 2190, 'DAPP (Distemper) Vaccine - Litter', 'DAPPLITTER'),
-  item('inventory', 3916, 'Wellness Clinic - DAPP (Distemper) Vaccine - 1 year', 'WC-VXCLINICDAPP1'),
-  item('inventory', 3917, 'Wellness Clinic - DAPP (Distemper) Vaccine - 3 year', 'WC-VXCLINICDAPP3'),
-  item('inventory', 3915, 'Wellness Clinic - DAPP (Distemper) Vaccine Booster', 'WC-VXCLINICDAPPBOOSTER'),
+  item(
+    'inventory',
+    3916,
+    'Wellness Clinic - DAPP (Distemper) Vaccine - 1 year',
+    'WC-VXCLINICDAPP1'
+  ),
+  item(
+    'inventory',
+    3917,
+    'Wellness Clinic - DAPP (Distemper) Vaccine - 3 year',
+    'WC-VXCLINICDAPP3'
+  ),
+  item(
+    'inventory',
+    3915,
+    'Wellness Clinic - DAPP (Distemper) Vaccine Booster',
+    'WC-VXCLINICDAPPBOOSTER'
+  ),
 ];
 
 const FECAL_O_P = item('lab', 137, 'Fecal Ova & Parasites', 'FIL5010');
 const FECAL_COMP = item('lab', 139, 'Comprehensive Fecal (O&P + Giardia)', 'FIL24639');
 const CANINE_4DX = item('lab', 132, 'Heartworm / Tick Test (4Dx)', 'F4DX');
-const FELINE_3DX = item('lab', 992, 'Feline Tripe Snap Test (FELV/FIV/HW)  - in house', 'FELINE3DX');
+const FELINE_3DX = item(
+  'lab',
+  992,
+  'Feline Tripe Snap Test (FELV/FIV/HW)  - in house',
+  'FELINE3DX'
+);
 const FELINE_3DX_LAB = item('lab', 901, 'Lab Feline Triple Test (FIV/FeLV/HW)', 'IL3755');
 const EARLY_DOG = item('lab', 953, 'Early Detection Panel - Canine', 'FIL48719999');
 const EARLY_CAT = item('lab', 954, 'Early Detection Panel - Feline', 'FIL48119999');
@@ -153,7 +218,7 @@ const SAMPLE_INSTRUCTIONS: RoomLoaderSampleInstruction[] = [
     triggerItems: [FECAL_COMP, FECAL_O_P, EARLY_DOG, SENIOR_DOG_EXT],
     heading: 'How to collect {petName}’s stool sample',
     bodyHtml:
-      '<p>Please set aside a stool sample for us before the visit. A piece about the size of a grape is plenty, and it should be from the last 12 hours or so.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can send a container home with you.</p>',
+      '<p>Please set aside a stool sample for us before the visit. A piece about the size of a grape is plenty, and it should be from the last 12 hours or so.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can give you a container.</p>',
     sortOrder: 0,
   },
   {
@@ -164,7 +229,7 @@ const SAMPLE_INSTRUCTIONS: RoomLoaderSampleInstruction[] = [
     triggerItems: [FECAL_COMP, FECAL_O_P, EARLY_CAT, SENIOR_CAT_EXT],
     heading: 'How to collect {petName}’s stool sample',
     bodyHtml:
-      '<p>Please scoop a stool sample out of the litter box before the visit. A piece about the size of a grape is plenty, it should be from the last 12 hours or so, and a little litter stuck to it is fine.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can send a container home with you.</p>',
+      '<p>Please scoop a stool sample out of the litter box before the visit. A piece about the size of a grape is plenty, it should be from the last 12 hours or so, and a little litter stuck to it is fine.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can give you a container.</p>',
     sortOrder: 1,
   },
   {
@@ -194,7 +259,8 @@ const SAMPLE_INSTRUCTIONS: RoomLoaderSampleInstruction[] = [
 function option(
   id: string,
   ref: RoomLoaderItemRef,
-  extras: Partial<RoomLoaderPanelOption> & Pick<RoomLoaderPanelOption, 'displayName' | 'descriptionHtml'>
+  extras: Partial<RoomLoaderPanelOption> &
+    Pick<RoomLoaderPanelOption, 'displayName' | 'descriptionHtml'>
 ): RoomLoaderPanelOption {
   return {
     id,
@@ -613,27 +679,6 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
         ],
         sortOrder: 0,
       },
-      {
-        id: 'ask_cat_rabies_form',
-        enabled: true,
-        label: 'Cat rabies 1-year vs 3-year',
-        species: ['cat'],
-        age: { minMonths: 0, maxMonths: null },
-        triggerItems: RABIES_ITEMS,
-        historyItems: [],
-        askOnlyIfNeverHad: false,
-        history: gate({ showEvenIfPreviouslyDeclined: true }),
-        questionText:
-          'We offer two rabies vaccines for cats — a one year and a three year. Which would you prefer for {petName}?',
-        helpHtml: '',
-        required: true,
-        choices: [
-          { id: '1year', label: 'Purevax Rabies 1 year' },
-          { id: '3year', label: 'Purevax Rabies 3 year' },
-          { id: 'no', label: 'No thank you, I do not want a rabies vaccine given to my cat.' },
-        ],
-        sortOrder: 1,
-      },
     ],
     outdoor: {
       enabled: true,
@@ -732,7 +777,8 @@ export function vaydRoomLoaderConfigSeed(): RoomLoaderConfig {
               approach: 'All-in-One Protection',
               medication: 'Revolution Plus',
               schedule: 'Monthly topical',
-              coversHtml: '<p>Fleas, ticks, heartworm, and intestinal parasites (except tapeworms)</p>',
+              coversHtml:
+                '<p>Fleas, ticks, heartworm, and intestinal parasites (except tapeworms)</p>',
             },
             {
               id: 'row_c2',
