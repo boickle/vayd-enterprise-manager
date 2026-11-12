@@ -25,6 +25,7 @@ import {
 } from '../../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../../utils/scribeAudioCapture';
 import { requestKeepAwake, type KeepAwakeHandle } from '../../utils/keepAwake';
+import { playScribeAlertTone } from '../../utils/scribeAlertTone';
 import {
   createProblem,
   getEncounter,
@@ -126,6 +127,13 @@ const PE_LABEL_BY_KEY = Object.fromEntries(PE_SYSTEMS.map((s) => [s.key, s.label
 function norm(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase();
 }
+
+/** No speech this long: warn with a tone and a banner (SCR-A16). */
+export const SCRIBE_SILENCE_WARN_MS = 3 * 60 * 1000;
+/** No speech this long: the take stops by itself and is saved (SCR-A16). */
+export const SCRIBE_SILENCE_STOP_MS = 5 * 60 * 1000;
+
+type AutoStopReason = 'silence' | 'max_length';
 
 function formatElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -397,6 +405,10 @@ export default function ScribePanel({
   const [takes, setTakes] = useState<ScribeTake[]>([]);
   const [activeTake, setActiveTake] = useState<number | null>(null);
   const [lastStopNote, setLastStopNote] = useState<string | null>(null);
+  /** The connection dropped mid-take and is reconnecting into the same take (SCR-A2). */
+  const [connectionLost, setConnectionLost] = useState(false);
+  /** Nothing heard for a while; the take will stop by itself (SCR-A16). */
+  const [silenceWarning, setSilenceWarning] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissedKeys(soapEncounterId));
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
   /** Doctor's edits to suggested problem wording, keyed by suggestion key — this text is what
@@ -435,6 +447,12 @@ export default function ScribePanel({
   onRecordingChangeRef.current = onRecordingChange;
   const [screenHeld, setScreenHeld] = useState(false);
   const timerRef = useRef<number | null>(null);
+  /** When words were last heard (any transcript, interim or final). */
+  const lastHeardRef = useRef(0);
+  const silenceWarnedRef = useRef(false);
+  const connectionLostRef = useRef(false);
+  /** Why the take ended without a Stop tap, for the saved-take note. */
+  const autoStopReasonRef = useRef<AutoStopReason | null>(null);
   const prevSuggestionRef = useRef<ScribeSuggestion | null>(null);
   const logKeyRef = useRef(0);
 
@@ -478,6 +496,10 @@ export default function ScribePanel({
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    connectionLostRef.current = false;
+    setConnectionLost(false);
+    silenceWarnedRef.current = false;
+    setSilenceWarning(false);
     audioRef.current?.stop();
     audioRef.current = null;
     keepAwakeRef.current?.release();
@@ -819,16 +841,39 @@ export default function ScribePanel({
     prevSuggestionRef.current = null;
 
     let live = false;
+    autoStopReasonRef.current = null;
     const socket = createScribeSocket({
       onStatusChange: (next) => {
         setStatus(next);
-        // The connection dropped mid-take: end the take so its words join the transcript.
+        // The connection could not come back: end the take so its words join the transcript.
         if (next === 'error' && live) {
           live = false;
           void stopRecordingRef.current();
         }
       },
+      onConnectionLost: () => {
+        connectionLostRef.current = true;
+        setConnectionLost(true);
+        playScribeAlertTone('drop');
+      },
+      onReconnected: () => {
+        connectionLostRef.current = false;
+        setConnectionLost(false);
+        // Time offline is not silence.
+        lastHeardRef.current = Date.now();
+      },
+      onServerStopped: (reason) => {
+        if (!live) return;
+        live = false;
+        autoStopReasonRef.current = reason === 'max_length' ? 'max_length' : null;
+        void stopRecordingRef.current();
+      },
       onTranscript: (evt) => {
+        lastHeardRef.current = Date.now();
+        if (silenceWarnedRef.current) {
+          silenceWarnedRef.current = false;
+          setSilenceWarning(false);
+        }
         if (evt.isFinal) {
           // One final utterance per line, matching what the API saves.
           setFinalTranscript((prev) => `${prev}\n${evt.text}`.trim());
@@ -851,7 +896,24 @@ export default function ScribePanel({
       audioRef.current = audio;
       onRecordingChangeRef.current?.(true);
       setElapsed(0);
-      timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
+      lastHeardRef.current = Date.now();
+      silenceWarnedRef.current = false;
+      timerRef.current = window.setInterval(() => {
+        setElapsed((e) => e + 1);
+        // A forgotten recording (tablet in a pocket) must not capture the drive or the next
+        // household (SCR-A16): warn after 3 quiet minutes, end the take at 5.
+        if (connectionLostRef.current || !live) return;
+        const quietMs = Date.now() - lastHeardRef.current;
+        if (quietMs >= SCRIBE_SILENCE_STOP_MS) {
+          live = false;
+          autoStopReasonRef.current = 'silence';
+          void stopRecordingRef.current();
+        } else if (quietMs >= SCRIBE_SILENCE_WARN_MS && !silenceWarnedRef.current) {
+          silenceWarnedRef.current = true;
+          setSilenceWarning(true);
+          playScribeAlertTone('silence');
+        }
+      }, 1000);
     } catch (err) {
       live = false;
       setErrorMessage(err instanceof Error ? err.message : 'Could not start the scribe.');
@@ -871,6 +933,14 @@ export default function ScribePanel({
    * processing the first, and nothing gets silently dropped.
    */
   const stopRecording = useCallback(async () => {
+    const autoReason = autoStopReasonRef.current;
+    autoStopReasonRef.current = null;
+    const autoNote =
+      autoReason === 'silence'
+        ? ' Stopped by itself after 5 minutes with no speech.'
+        : autoReason === 'max_length'
+          ? ' Stopped by itself at the 2-hour limit.'
+          : '';
     teardown();
     const socket = socketRef.current;
     let segment = finalTranscript.trim();
@@ -897,16 +967,17 @@ export default function ScribePanel({
         return combined;
       });
       setLastStopNote(
-        takes.length === 0
+        (takes.length === 0
           ? `Take 1 saved (${formatElapsed(elapsed)}, ${wordCount} word${wordCount === 1 ? '' : 's'}). Start again to add another take — they combine into one transcript.`
-          : `Take ${takeNum} saved (${formatElapsed(elapsed)}, ${wordCount} word${wordCount === 1 ? '' : 's'}) and added to the combined transcript.`
+          : `Take ${takeNum} saved (${formatElapsed(elapsed)}, ${wordCount} word${wordCount === 1 ? '' : 's'}) and added to the combined transcript.`) +
+          autoNote
       );
       setPasteOpen(true);
       setTranscriptOpen(false);
     } else {
       setFinalTranscript((prev) => prev || pasteText.trim());
       setLastStopNote(
-        `Take ${takeNum} stopped (${formatElapsed(elapsed)}) — no words captured. The mic may have been muted, or nothing was said. Start again to try another take.`
+        `Take ${takeNum} stopped (${formatElapsed(elapsed)}) — no words captured. The mic may have been muted, or nothing was said. Start again to try another take.${autoNote}`
       );
       if (pasteText.trim()) setPasteOpen(true);
     }
@@ -1445,6 +1516,18 @@ export default function ScribePanel({
                 ? `${savedTakeCount || 1} take${(savedTakeCount || 1) === 1 ? '' : 's'} on this visit. Start another take to add on, or Process the combined transcript.`
                 : 'Each Start is a new take. Stop saves it; Start again adds another. All takes combine into one transcript before Process.'}
       </p>
+      {recording && connectionLost && (
+        <p className="soap-scribe-alert" role="alert">
+          Connection lost — reconnecting. Keep talking: this take continues on its own when the
+          connection is back.
+        </p>
+      )}
+      {recording && silenceWarning && !connectionLost && (
+        <p className="soap-scribe-alert" role="alert">
+          No speech heard for 3 minutes. This take stops by itself at 5 minutes and is saved. Tap
+          Stop if the visit is over.
+        </p>
+      )}
       {recording && (
         <p className="soap-scribe-awake-hint">
           {screenHeld
