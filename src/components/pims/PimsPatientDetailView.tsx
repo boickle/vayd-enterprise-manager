@@ -2723,7 +2723,7 @@ export default function PimsPatientDetailView({
                         {' · '}
                         <button
                           type="button"
-                          className={`chronic-rx-refills-btn${(Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
+                          className={`chronic-rx-refills-btn${!rx.prn && (Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
                           title="Refills and online reorder"
                           onClick={() => setRefillsRxId(rx.id)}
                         >

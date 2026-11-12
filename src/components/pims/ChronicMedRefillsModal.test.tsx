@@ -96,3 +96,15 @@ describe('ChronicMedRefillsModal', () => {
     expect(screen.queryByPlaceholderText('Search inventory to link…')).toBeNull();
   });
 });
+
+describe('PRN (owner, Nov 11, 2026)', () => {
+  it('labels an item that needs no prescription PRN', () => {
+    expect(chronicRefillLabel({ refill: 0, refillExpiration: null, prn: true })).toBe('PRN');
+  });
+  it('the window shows PRN and no refill controls', () => {
+    state.keys = new Set(['rx.sig.draft', 'rx.sig.enter']);
+    render(<ChronicMedRefillsModal rx={rx({ prn: true, inventoryItemId: 5 })} practiceId={1} patientId={9} onClose={() => {}} onChanged={() => {}} />);
+    expect(screen.getByTestId('chronic-rx-refills').textContent).toContain('PRN');
+    expect(screen.queryByLabelText('Refills left')).toBeNull();
+  });
+});

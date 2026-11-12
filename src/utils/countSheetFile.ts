@@ -66,7 +66,7 @@ export async function downloadCountSheetXlsx(
   sheet: FirstCountSheet,
   items: FirstCountSheetItem[]
 ): Promise<void> {
-  const { default: writeXlsxFile } = await import('write-excel-file');
+  const { default: writeXlsxFile } = await import('write-excel-file/browser');
   const header = COUNT_SHEET_HEADER.map((h) => ({
     value: h,
     fontWeight: 'bold' as const,
@@ -99,19 +99,16 @@ export async function downloadCountSheetXlsx(
   const directions = COUNT_SHEET_DIRECTIONS.map((line, n) => [
     { value: line, fontWeight: n === 0 ? ('bold' as const) : undefined, wrap: true },
   ]);
-  await writeXlsxFile(
-    // Directions first so Excel opens on it; the upload still reads only the Count sheet tab.
-    [directions, [header, ...rows]] as never,
+  // Directions first so Excel opens on it; the upload still reads only the Count sheet tab.
+  await writeXlsxFile([
+    { data: directions as never, sheet: DIRECTIONS_TAB, columns: [{ width: 110 }], stickyRowsCount: 1 },
     {
-      sheets: [DIRECTIONS_TAB, COUNT_TAB],
-      columns: [
-        [{ width: 110 }],
-        [18, 36, 8, 26, 11, 15, 10, 16, 13, 30].map((width) => ({ width })),
-      ],
+      data: [header, ...rows] as never,
+      sheet: COUNT_TAB,
+      columns: [18, 36, 8, 26, 11, 15, 10, 16, 13, 30].map((width) => ({ width })),
       stickyRowsCount: 1,
-      fileName: countSheetFileName(sheet),
-    } as never
-  );
+    },
+  ]).toFile(countSheetFileName(sheet));
 }
 
 /** Minimal RFC 4180 parser: quoted fields, doubled quotes, CRLF. */

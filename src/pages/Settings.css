@@ -238,6 +238,12 @@
   border: 1px solid #a7f3d0;
 }
 
+.settings-warning-message {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
 .settings-info-message {
   background: #dbeafe;
   color: #1e40af;

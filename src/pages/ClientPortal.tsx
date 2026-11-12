@@ -1065,7 +1065,11 @@ export default function ClientPortal() {
                                   {rx.strength ? <span className="pp-muted"> · {rx.strength}</span> : null}
                                 </div>
                                 <div className="pp-row-sub">
-                                  {rx.refill != null ? `${rx.refill} refill${rx.refill === 1 ? '' : 's'} left` : 'Chronic medication'}
+                                  {rx.prn
+                                    ? 'PRN (as needed)'
+                                    : rx.refill != null
+                                      ? `${rx.refill} refill${rx.refill === 1 ? '' : 's'} left`
+                                      : 'Chronic medication'}
                                   {rx.autoshipStartedAt ? (
                                     <>
                                       {' · '}

@@ -11,6 +11,8 @@ import {
   resolveMailOrderCancellation,
   formatBackInStock,
   mailCancelPending,
+  mailClientReplied,
+  refreshMailNavCounts,
   mailLinePassedThrough,
   type MailFulfillmentSource,
   MAIL_CANCEL_REASON_LABELS,
@@ -489,6 +491,8 @@ function mailQueueSynopsisBadges(order: MailOrder): MailSynopsisBadge[] {
 
   if (stage === 'pending_client') {
     badges.push({ label: STAGE_LABEL.pending_client, completed: false, kind: 'wait' });
+    // Owner (Nov 11, 2026): the client texted back, so the ball is in our court again.
+    if (mailClientReplied(order)) badges.push({ label: 'Client replied', completed: false, kind: 'stop' });
     return badges;
   }
 
@@ -860,6 +864,11 @@ export default function MailOrdersPage() {
     ];
   }, [rows, filter, search]);
   const cancelRequestCount = useMemo(() => rows.filter(mailCancelPending).length, [rows]);
+  const clientReplyCount = useMemo(() => rows.filter(mailClientReplied).length, [rows]);
+  // Keep the Pharmacy tab's red count in step with what this page shows.
+  useEffect(() => {
+    refreshMailNavCounts();
+  }, [clientReplyCount]);
   const rejectedNeedsContactCount = useMemo(
     () => rows.filter(mailRejectedNeedsClientContact).length,
     [rows],
@@ -1038,6 +1047,15 @@ export default function MailOrdersPage() {
               onClick={() => applyFilter(key)}
             >
               {key === 'rejected' ? 'Rejected' : label}
+              {key === 'pending_client' && clientReplyCount > 0 ? (
+                <span
+                  className="mail-queue__filter-alert"
+                  data-testid="pending-client-replies"
+                  aria-label={`${clientReplyCount} client${clientReplyCount === 1 ? '' : 's'} replied`}
+                >
+                  {clientReplyCount}
+                </span>
+              ) : null}
               {rejectedAlert ? (
                 <span
                   className="mail-queue__filter-alert"

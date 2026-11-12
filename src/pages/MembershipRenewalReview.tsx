@@ -12,6 +12,9 @@ import RenewalComparison from './RenewalComparison';
 import { formatMembershipCalendarDay } from '../utils/membershipCalendarDay';
 import './MembershipRenewalReview.css';
 
+/** Below this, "covered $X of care" reads as a reason to leave, so it's left off. */
+const COVERED_SHOW_MIN = 100;
+
 function money(value: number | null): string {
   if (value == null || !Number.isFinite(Number(value))) return '';
   return new Intl.NumberFormat('en-US', {
@@ -94,6 +97,11 @@ export default function MembershipRenewalReview() {
     const cadence = preview.billingInterval === 'annual' ? 'year' : 'month';
     return `${amount} / ${cadence}`;
   }, [preview]);
+
+  // Why stay (owner, Nov 11, 2026): the plan's signup-card lines, and the care it covered this year when that's
+  // a meaningful amount.
+  const benefits = (preview?.benefits ?? []).filter((b) => b.trim());
+  const showCovered = (preview?.coveredThisYear ?? 0) >= COVERED_SHOW_MIN;
 
   async function onCancel(event: FormEvent) {
     event.preventDefault();
@@ -188,6 +196,29 @@ export default function MembershipRenewalReview() {
             <strong>{formatDay(preview.termEnd)}</strong>.
             {preview.needsCard ? '' : ' Unless you cancel, it renews automatically.'}
           </p>
+
+          {benefits.length || showCovered ? (
+            <section className="renewal-review__why" aria-label="Why stay a member">
+              <h2>
+                {preview.nextPlanName === preview.currentPlanName
+                  ? `What ${preview.petName} keeps by staying a member`
+                  : `What ${preview.petName} gets next year`}
+              </h2>
+              {showCovered ? (
+                <p className="renewal-review__covered">
+                  This year, {preview.petName}&apos;s membership covered{' '}
+                  <strong>{money(preview.coveredThisYear ?? null)}</strong> of care.
+                </p>
+              ) : null}
+              {benefits.length ? (
+                <ul className="renewal-review__benefits">
+                  {benefits.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
 
           {comparison ? (
             <RenewalComparison
@@ -309,11 +340,26 @@ export default function MembershipRenewalReview() {
           ) : (
             <form className="renewal-review__cancel" onSubmit={(e) => void onCancel(e)}>
               <h2>Cancel at the end of this year</h2>
-              <p>
-                Coverage continues through {formatDay(preview.termEnd)}. After that,{' '}
-                {preview.petName} loses included exams, labs, and member pricing. This cannot be
-                undone from this page.
-              </p>
+              {benefits.length ? (
+                <>
+                  <p>
+                    Coverage continues through {formatDay(preview.termEnd)}. After that,{' '}
+                    {preview.petName} loses:
+                  </p>
+                  <ul className="renewal-review__benefits renewal-review__benefits--lose">
+                    {benefits.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+                  <p>This cannot be undone from this page.</p>
+                </>
+              ) : (
+                <p>
+                  Coverage continues through {formatDay(preview.termEnd)}. After that,{' '}
+                  {preview.petName} loses included exams, labs, and member pricing. This cannot be
+                  undone from this page.
+                </p>
+              )}
               <label>
                 Type {preview.petName}&apos;s name
                 <input value={petName} onChange={(e) => setPetName(e.target.value)} required />
