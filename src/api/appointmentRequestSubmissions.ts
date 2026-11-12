@@ -4,6 +4,29 @@ export type AppointmentRequestSubmissionKind = 'submission' | 'abandoned';
 
 export type AppointmentRequestSubmissionStatus = 'new' | 'contacted' | 'booked' | 'dismissed';
 
+/** Communication with the client, separate from booking. */
+export type AppointmentRequestCommunicationStatus =
+  | 'not_contacted'
+  | 'contacted'
+  | 'owner_replied'
+  | 'complete';
+
+/** Staff's records choice; null follows the records requests for the request's pets. */
+export type AppointmentRequestRecordsChoice = 'not_needed' | 'waiting' | 'complete';
+
+/** Records column, worked out on the server from the records requests and the staff choice. */
+export type AppointmentRequestRecordsSummary = {
+  state: 'none' | 'not_needed' | 'waiting' | 'requested' | 'received' | 'done' | 'complete';
+  /** Records part finished, so it does not hold the request on the list. */
+  finished: boolean;
+  choice: AppointmentRequestRecordsChoice | null;
+  total: number;
+  pending: number;
+  /** Received but not summarized in the chart yet. */
+  toSummarize: number;
+  patientId: number | null;
+};
+
 /** GET /appointments/request-submissions item shape */
 export type AppointmentRequestSubmissionItem = {
   kind?: AppointmentRequestSubmissionKind;
@@ -45,6 +68,10 @@ export type AppointmentRequestSubmissionItem = {
   zoneName?: string | null;
   /** Open requests only: a visit (or upcoming hold) for one of the pets since the request came in. */
   visitSinceRequest?: VisitSinceRequest | null;
+  communicationStatus?: AppointmentRequestCommunicationStatus;
+  recordsStatus?: AppointmentRequestRecordsChoice | null;
+  /** Records column; null for Not booked requests (or if it could not be worked out). */
+  records?: AppointmentRequestRecordsSummary | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -93,6 +120,10 @@ export type PatchAppointmentRequestSubmissionBody = {
   confirm?: boolean;
   /** Request owner. `null` clears it. Anyone may reassign to anyone. */
   liaisonEmployeeId?: number | null;
+  /** A step on a New request also moves it to Contacted. */
+  communicationStatus?: AppointmentRequestCommunicationStatus;
+  /** `null` goes back to following the records requests. */
+  recordsStatus?: AppointmentRequestRecordsChoice | null;
 };
 
 export type BookAppointmentRequestSubmissionBody = {

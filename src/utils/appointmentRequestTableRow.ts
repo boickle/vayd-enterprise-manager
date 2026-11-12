@@ -91,22 +91,100 @@ export function appointmentRequestBookingPill(args: {
   return { tone: 'none', label: 'Not booked yet', detail: null };
 }
 
-export type CommunicationTone = 'none' | 'contacted' | 'complete';
+export type CommunicationTone = 'none' | 'contacted' | 'replied' | 'complete';
+
+export type CommunicationStatus = 'not_contacted' | 'contacted' | 'owner_replied' | 'complete';
+
+export const COMMUNICATION_OPTIONS: ReadonlyArray<{ value: CommunicationStatus; label: string }> = [
+  { value: 'not_contacted', label: 'Not contacted' },
+  { value: 'contacted', label: 'Contacted' },
+  { value: 'owner_replied', label: 'Owner replied' },
+  { value: 'complete', label: 'Communication complete' },
+];
+
+/** Communication step, from the request's own field (older rows: from the triage status). */
+export function requestCommunicationStatus(item: {
+  status?: 'new' | 'contacted' | 'booked' | 'dismissed' | null;
+  communicationStatus?: CommunicationStatus | null;
+}): CommunicationStatus {
+  if (item.communicationStatus) return item.communicationStatus;
+  const status = item.status ?? 'new';
+  if (status === 'new') return 'not_contacted';
+  if (status === 'contacted') return 'contacted';
+  return 'complete';
+}
+
+/** Communication Status column. */
+export function appointmentRequestCommunicationPill(
+  communication: CommunicationStatus
+): { tone: CommunicationTone; label: string } {
+  const label = COMMUNICATION_OPTIONS.find((o) => o.value === communication)?.label ?? 'Not contacted';
+  const tone: CommunicationTone =
+    communication === 'complete'
+      ? 'complete'
+      : communication === 'owner_replied'
+        ? 'replied'
+        : communication === 'contacted'
+          ? 'contacted'
+          : 'none';
+  return { tone, label };
+}
+
+export type RecordsSummaryLike = {
+  state: 'none' | 'not_needed' | 'waiting' | 'requested' | 'received' | 'done' | 'complete';
+  finished: boolean;
+  total: number;
+  pending: number;
+  toSummarize: number;
+};
+
+export type RecordsTone = 'none' | 'open' | 'complete';
+
+/** Records column: what is still to do with records for this request. */
+export function appointmentRequestRecordsPill(records: RecordsSummaryLike | null | undefined): {
+  tone: RecordsTone;
+  label: string;
+  detail: string | null;
+} {
+  if (!records) return { tone: 'none', label: 'No records', detail: null };
+  switch (records.state) {
+    case 'requested': {
+      const inCount = records.total - records.pending;
+      return {
+        tone: 'open',
+        label: 'Requested',
+        detail: records.total > 1 ? `${inCount} of ${records.total} in` : 'Waiting on hospital',
+      };
+    }
+    case 'received':
+      return {
+        tone: 'open',
+        label: 'Received',
+        detail: 'Summarize in chart',
+      };
+    case 'waiting':
+      return { tone: 'open', label: 'Waiting on client', detail: null };
+    case 'done':
+      return { tone: 'complete', label: 'Records complete', detail: 'In chart' };
+    case 'complete':
+      return { tone: 'complete', label: 'Records complete', detail: null };
+    case 'not_needed':
+      return { tone: 'none', label: 'Not needed', detail: null };
+    default:
+      return { tone: 'none', label: 'No records', detail: null };
+  }
+}
 
 /**
- * Communication Status column, read from the request's triage status until the
- * separate communication status lands. An auto-booked request nobody has confirmed
- * has not been contacted yet.
+ * Communication complete and records done: a booked request may leave the list.
+ * (Booking is checked separately: a hold never counts as booked.)
  */
-export function appointmentRequestCommunicationPill(
-  status: 'new' | 'contacted' | 'booked' | 'dismissed',
-  opts?: { needsStaffConfirmation?: boolean }
-): { tone: CommunicationTone; label: string } {
-  if (status === 'new' || opts?.needsStaffConfirmation) {
-    return { tone: 'none', label: 'Not contacted' };
-  }
-  if (status === 'contacted') return { tone: 'contacted', label: 'Contacted' };
-  return { tone: 'complete', label: 'Communication complete' };
+export function requestWorkIsFinished(item: {
+  status?: 'new' | 'contacted' | 'booked' | 'dismissed' | null;
+  communicationStatus?: CommunicationStatus | null;
+  records?: { finished: boolean } | null;
+}): boolean {
+  return requestCommunicationStatus(item) === 'complete' && (item.records?.finished ?? true);
 }
 
 /** "12/1/26 AM": visit date plus morning/afternoon, in the practice time zone. */

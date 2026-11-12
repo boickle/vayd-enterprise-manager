@@ -6,6 +6,7 @@ import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequest
 import type { AppointmentRequestBookedApptSummary } from './appointmentRequestOnHold';
 import { appointmentRequestSubmissionCountsAsBooked, appointmentRequestSubmissionIsOnHold } from './appointmentRequestOnHold';
 import { appointmentRequestNeedsStaffConfirmation } from './appointmentRequestStaffConfirm';
+import { requestWorkIsFinished } from './appointmentRequestTableRow';
 import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
@@ -831,7 +832,8 @@ export function appointmentRequestListTabForSubmission(
     return 'on_hold';
   }
   if (appointmentRequestSubmissionCountsAsBooked(item, bookedApptMeta, typeCatalog)) {
-    return 'booked';
+    // Booked, but communication or records still open: it stays In progress.
+    return requestWorkIsFinished(item) ? 'booked' : 'contacted';
   }
   return 'new';
 }

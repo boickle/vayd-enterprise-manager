@@ -13,6 +13,7 @@ import {
   sendAppointmentRequestSubmissionSms,
   type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
+  type VisitSinceRequest,
   type AppointmentRequestSubmissionStatus,
 } from '../api/appointmentRequestSubmissions';
 import {
@@ -162,11 +163,21 @@ import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisp
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
+import {
+  StatusPillMenu,
+  type StatusMenuItem,
+} from '../components/appointmentRequests/StatusPillMenu';
+import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
+  appointmentRequestRecordsPill,
+  COMMUNICATION_OPTIONS,
+  type CommunicationStatus,
+  requestCommunicationStatus,
+  requestWorkIsFinished,
   receivedDateLabel,
   matchesLiaisonFilter,
   parseLiaisonFilter,
@@ -199,7 +210,8 @@ type AppointmentRequestsPageProps = {
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'new', label: 'New' },
   { key: 'to_confirm', label: 'Auto-Booked' },
-  { key: 'contacted', label: 'Contacted' },
+  // Contacted requests, and booked ones whose communication or records are not done yet.
+  { key: 'contacted', label: 'In progress' },
   { key: 'booked', label: 'Booked' },
   { key: 'dismissed', label: 'Not Booked' },
 ];
@@ -580,6 +592,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [openRowIds, setOpenRowIds] = useState<Set<number>>(() => new Set());
   const [liaisons, setLiaisons] = useState<ClientLiaisonOption[]>([]);
   const [liaisonSaving, setLiaisonSaving] = useState<Record<number, boolean>>({});
+  /** Which status pill is saving on a row (Communication or Records). */
+  const [pillSaving, setPillSaving] = useState<Record<number, 'comm' | 'records' | undefined>>({});
   const [listPage, setListPage] = useState(1);
 
   const rowsRef = useRef(rows);
@@ -1165,6 +1179,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       if (submissionShowsContactedChip(row)) counts.contacted += 1;
       if (status === 'contacted') continue;
       if (isOnHold || needsAutoBooked) continue;
+      // Booked stays In progress until communication is complete and records are done.
+      if (status === 'booked' && !requestWorkIsFinished(row)) {
+        counts.contacted += 1;
+        continue;
+      }
       counts[status] += 1;
     }
     return counts;
@@ -1232,16 +1251,24 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       .filter((item) => {
         // An open row stays put while staff work it, even after its status moves on.
         if (exitingRows.has(item.id) || openRowIds.has(item.id)) return true;
-        if (submissionStatus(item) !== statusFilter) return false;
-        if (
-          statusFilter !== 'contacted' &&
-          appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)
-        ) {
+        const itemStatus = submissionStatus(item);
+        if (statusFilter === 'contacted') {
+          if (itemStatus === 'contacted') return true;
+          // Booked, but communication or records still open.
+          return (
+            itemStatus === 'booked' &&
+            !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog) &&
+            !appointmentRequestNeedsStaffConfirmation(item) &&
+            !requestWorkIsFinished(item)
+          );
+        }
+        if (itemStatus !== statusFilter) return false;
+        if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
           return false;
         }
         if (
           statusFilter === 'booked' &&
-          appointmentRequestNeedsStaffConfirmation(item)
+          (appointmentRequestNeedsStaffConfirmation(item) || !requestWorkIsFinished(item))
         ) {
           return false;
         }
@@ -1553,13 +1580,26 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     });
   }, []);
 
+  /**
+   * After a request is booked: it moves to Booked only when communication and records are done
+   * too (a hold goes to On hold as before); otherwise it moves to, or stays in, In progress.
+   */
+  const exitAfterBooking = useCallback(
+    (updated: AppointmentRequestSubmissionItem) => {
+      const finished = updated.linkedVisitIsHold === true || requestWorkIsFinished(updated);
+      if (finished) beginRowExit(updated.id, 'booked');
+      else if (statusFilterRef.current !== 'contacted') beginRowExit(updated.id, 'contacted');
+    },
+    [beginRowExit],
+  );
+
   const handleLinkedAppointment = useCallback(
     (updated: AppointmentRequestSubmissionItem) => {
       mergeSubmission({ ...updated, kind: 'submission' });
-      beginRowExit(updated.id, 'booked');
+      exitAfterBooking(updated);
       notifySchedulingToolsNavCountsRefresh();
     },
-    [mergeSubmission, beginRowExit],
+    [mergeSubmission, exitAfterBooking],
   );
 
   const handleRelinkedAppointment = useCallback(
@@ -1596,7 +1636,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         if (status === 'dismissed') {
           beginRowExit(item.id, 'dismissed');
         } else if (status === 'booked') {
-          beginRowExit(item.id, 'booked');
+          exitAfterBooking({ ...item, ...updated });
         } else if (status === 'contacted') {
           beginRowExit(item.id, 'contacted');
         } else if (status !== submissionStatus(item)) {
@@ -1613,7 +1653,54 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         setStatusUpdating((s) => ({ ...s, [item.id]: false }));
       }
     },
-    [mergeSubmission, beginRowExit]
+    [mergeSubmission, beginRowExit, exitAfterBooking]
+  );
+
+  /**
+   * Communication and Records columns. A booked request whose last open part is finished
+   * leaves for Booked; a New request with a communication step moves to In progress.
+   */
+  const changeRequestProgress = useCallback(
+    async (
+      item: AppointmentRequestSubmissionItem,
+      body: {
+        communicationStatus?: CommunicationStatus;
+        recordsStatus?: 'not_needed' | 'waiting' | 'complete' | null;
+      },
+      column: 'comm' | 'records',
+    ) => {
+      setPillSaving((s) => ({ ...s, [item.id]: column }));
+      setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+      setStatusError((e) => ({ ...e, [item.id]: null }));
+      try {
+        const updated = await patchAppointmentRequestSubmission(item.id, body);
+        const merged = { ...item, ...updated, kind: 'submission' as const };
+        mergeSubmission(merged);
+        const before = submissionStatus(item);
+        const after = submissionStatus(merged);
+        if (before === 'new' && after === 'contacted' && statusFilterRef.current === 'new') {
+          beginRowExit(item.id, 'contacted');
+        } else if (
+          after === 'booked' &&
+          merged.linkedVisitIsHold !== true &&
+          !appointmentRequestNeedsStaffConfirmation(merged) &&
+          !requestWorkIsFinished(item) &&
+          requestWorkIsFinished(merged)
+        ) {
+          beginRowExit(item.id, 'booked');
+        }
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not save';
+        setStatusError((er) => ({ ...er, [item.id]: String(msg) }));
+      } finally {
+        setPillSaving((s) => ({ ...s, [item.id]: undefined }));
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      }
+    },
+    [mergeSubmission, beginRowExit],
   );
 
   /** Liaison column: anyone can hand a request to anyone, or clear it. */
@@ -1881,9 +1968,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   /** Contact from the conversation panel: mark a New request Contacted without moving the row away. */
   const markContactedInPlace = useCallback(
     async (item: AppointmentRequestSubmissionItem) => {
-      if (submissionStatus(item) !== 'new') return;
+      const isNew = submissionStatus(item) === 'new';
+      // Booked or contacted rows: a first email or text still moves Not contacted on.
+      if (!isNew && requestCommunicationStatus(item) !== 'not_contacted') return;
+      if (submissionStatus(item) === 'dismissed') return;
       try {
-        const updated = await patchAppointmentRequestSubmission(item.id, { status: 'contacted' });
+        const updated = await patchAppointmentRequestSubmission(
+          item.id,
+          isNew ? { status: 'contacted' } : { communicationStatus: 'contacted' },
+        );
         mergeSubmission({ ...updated, kind: 'submission' });
       } catch (e: unknown) {
         const msg =
@@ -1984,6 +2077,93 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     } finally {
       setSmsSending(false);
     }
+  };
+
+  /** Booking column menu: the next booking step for this request. */
+  const bookingMenuItems = (args: {
+    item: AppointmentRequestSubmissionItem;
+    visitSince: VisitSinceRequest | null;
+    isDismissed: boolean;
+    needsStaffConfirmation: boolean;
+    needsManualBook: boolean;
+    hasLinkedAppointment: boolean;
+    isOnHoldVisit: boolean;
+  }): StatusMenuItem[] => {
+    const { item, visitSince } = args;
+    const items: StatusMenuItem[] = [];
+    if (args.isDismissed) {
+      items.push({ label: 'Reopen', hint: 'Back to New', onClick: () => void updateStatus(item, 'new') });
+      return items;
+    }
+    if (visitSince) {
+      items.push({
+        label: `Link this visit (${visitSinceLabel(visitSince, practiceTz)})`,
+        hint: visitSince.isHold ? 'Puts the request on that hold' : 'Marks the request booked',
+        onClick: () => void linkVisitSince(item, visitSince.appointmentId),
+      });
+    }
+    if (args.needsStaffConfirmation) {
+      items.push({ label: 'Confirm appointment', onClick: () => openConfirmPreview(item) });
+    }
+    if (args.needsManualBook) {
+      items.push({ label: 'Route to book…', onClick: () => onBook(item) });
+      items.push({
+        label: 'Link existing appointment…',
+        onClick: () => setManualBookModal({ item, relink: false }),
+      });
+    }
+    if (args.hasLinkedAppointment && !args.needsStaffConfirmation) {
+      items.push({
+        label: args.isOnHoldVisit ? 'Open hold' : 'View appointment',
+        onClick: () => onViewAppointment(item),
+      });
+      items.push({
+        label: 'Re-link appointment…',
+        onClick: () => setManualBookModal({ item, relink: true }),
+      });
+    }
+    if (items.length > 0) items.push({ divider: true });
+    items.push({ label: 'Not booked…', hint: 'Choose a reason', onClick: () => openNotBookedModal(item) });
+    return items;
+  };
+
+  /** Records column menu: follow the records requests, or say what staff know. */
+  const recordsMenuItems = (item: AppointmentRequestSubmissionItem, clientName: string): StatusMenuItem[] => {
+    const choice = item.recordsStatus ?? null;
+    const set = (next: 'not_needed' | 'waiting' | 'complete' | null) => {
+      if (next !== choice) void changeRequestProgress(item, { recordsStatus: next }, 'records');
+    };
+    const items: StatusMenuItem[] = [
+      {
+        label: 'Follow records requests',
+        hint: 'Done when every request is in and summarized in the chart',
+        selected: choice == null,
+        onClick: () => set(null),
+      },
+      {
+        label: 'Waiting on client',
+        hint: 'The client is sending records',
+        selected: choice === 'waiting',
+        onClick: () => set('waiting'),
+      },
+      {
+        label: 'Records complete',
+        hint: 'Done, even if a request is still out',
+        selected: choice === 'complete',
+        onClick: () => set('complete'),
+      },
+      { label: 'Not needed', selected: choice === 'not_needed', onClick: () => set('not_needed') },
+    ];
+    if ((item.records?.total ?? 0) > 0) {
+      items.push({ divider: true });
+      items.push({
+        label: 'Open records requests',
+        hint: item.records?.toSummarize ? 'Summarize and close out there' : undefined,
+        onClick: () =>
+          navigate(`${SCHEDULING_TOOLS_PATH_PREFIX}/records?q=${encodeURIComponent(clientName)}`),
+      });
+    }
+    return items;
   };
 
   const onViewAppointment = (item: AppointmentRequestSubmissionItem) => {
@@ -2174,7 +2354,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         </p>
       ) : (
         <div className="appt-request-list-wrap">
-        <div className="appt-table-head" role="presentation">
+        <div className="appt-table-head appt-table--with-records" role="presentation">
           <span>Request received</span>
           <span />
           <span>Client / Patient</span>
@@ -2184,6 +2364,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           <span>Route visit</span>
           <span>Booking status</span>
           <span>Communication status</span>
+          <span>Records</span>
         </div>
         <ul className="appt-request-list appt-request-list--table">
           {displayList.map((item) => {
@@ -2363,7 +2544,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
               visitDateLabel: visitDateShortLabel(displayBookedSummary?.start, practiceTz),
               notBookedReason: item.notBookedReason,
             });
-            const commPill = appointmentRequestCommunicationPill(status, { needsStaffConfirmation });
+            const communication = requestCommunicationStatus(item);
+            const commPill = appointmentRequestCommunicationPill(communication);
+            const recordsPill = appointmentRequestRecordsPill(item.records);
             const quiet = requestIsQuiet(item);
             // A pet on this open request was already seen (or has a visit coming) since it came in.
             const visitSince =
@@ -2392,12 +2575,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     {exitKind === 'booked'
                       ? 'Booked'
                       : exitKind === 'contacted'
-                        ? 'Contacted'
+                        ? 'In progress'
                         : 'Not Booked'}
                   </div>
                 ) : null}
                 <div
-                  className={`appt-table-row${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}`}
+                  className={`appt-table-row appt-table--with-records${howSoonUrgency ? ' appt-table-row--urgent' : ''}${rowOpen ? ' appt-table-row--open' : ''}`}
                 >
                   <div className="appt-table-cell appt-table-received">
                     <button
@@ -2481,27 +2664,66 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     />
                   </div>
                   <div className="appt-table-cell">
-                    {visitSince ? (
-                      <span
-                        className="appt-table-pill appt-table-pill--seen"
-                        title={`${visitSince.typeName ?? 'Visit'} since this request — open it to link the visit`}
-                      >
-                        <span>{visitSince.isHold ? 'Hold since request' : visitSince.past ? 'Seen since request' : 'Visit since request'}</span>
-                        <span className="appt-table-pill-detail">{visitSinceLabel(visitSince, practiceTz)}</span>
-                      </span>
-                    ) : (
-                    <span className={`appt-table-pill appt-table-pill--${bookingPill.tone}`}>
-                      <span>{bookingPill.label}</span>
-                      {bookingPill.detail ? (
-                        <span className="appt-table-pill-detail">{bookingPill.detail}</span>
-                      ) : null}
-                    </span>
-                    )}
+                    <StatusPillMenu
+                      ariaLabel={`Booking for ${name}`}
+                      tone={visitSince ? 'seen' : bookingPill.tone}
+                      label={
+                        visitSince
+                          ? visitSince.isHold
+                            ? 'Hold since request'
+                            : visitSince.past
+                              ? 'Seen since request'
+                              : 'Visit since request'
+                          : bookingPill.label
+                      }
+                      detail={visitSince ? visitSinceLabel(visitSince, practiceTz) : bookingPill.detail}
+                      title={
+                        visitSince
+                          ? `${visitSince.typeName ?? 'Visit'} since this request`
+                          : undefined
+                      }
+                      saving={Boolean(statusUpdating[item.id]) && pillSaving[item.id] == null}
+                      items={bookingMenuItems({
+                        item,
+                        visitSince,
+                        isDismissed,
+                        needsStaffConfirmation,
+                        needsManualBook,
+                        hasLinkedAppointment,
+                        isOnHoldVisit,
+                      })}
+                    />
                   </div>
                   <div className="appt-table-cell">
-                    <span className={`appt-table-pill appt-table-pill--comm-${commPill.tone}`}>
-                      {commPill.label}
-                    </span>
+                    <StatusPillMenu
+                      ariaLabel={`Communication for ${name}`}
+                      tone={`comm-${commPill.tone}`}
+                      label={commPill.label}
+                      saving={pillSaving[item.id] === 'comm'}
+                      items={COMMUNICATION_OPTIONS.map((o) => ({
+                        label: o.label,
+                        selected: o.value === communication,
+                        onClick: () => {
+                          if (o.value !== communication) {
+                            void changeRequestProgress(item, { communicationStatus: o.value }, 'comm');
+                          }
+                        },
+                      }))}
+                    />
+                  </div>
+                  <div className="appt-table-cell">
+                    {isDismissed ? (
+                      <span className="settings-muted">—</span>
+                    ) : (
+                      <StatusPillMenu
+                        ariaLabel={`Records for ${name}`}
+                        tone={`records-${recordsPill.tone}`}
+                        label={recordsPill.label}
+                        detail={recordsPill.detail}
+                        saving={pillSaving[item.id] === 'records'}
+                        items={recordsMenuItems(item, name)}
+                      />
+                    )}
                   </div>
                 </div>
                 {rowOpen ? (

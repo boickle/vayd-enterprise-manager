@@ -3,6 +3,9 @@ import {
   appointmentLocationLabel,
   appointmentRequestBookingPill,
   appointmentRequestCommunicationPill,
+  appointmentRequestRecordsPill,
+  requestCommunicationStatus,
+  requestWorkIsFinished,
   receivedDateLabel,
   visitDateShortLabel,
   requestDataTown,
@@ -84,16 +87,69 @@ describe('appointmentRequestBookingPill', () => {
   });
 });
 
-describe('appointmentRequestCommunicationPill', () => {
-  it('maps triage status', () => {
-    expect(appointmentRequestCommunicationPill('new').label).toBe('Not contacted');
-    expect(appointmentRequestCommunicationPill('contacted').label).toBe('Contacted');
-    expect(appointmentRequestCommunicationPill('booked').label).toBe('Communication complete');
+describe('communication status', () => {
+  it('uses the request field, falling back to the triage status on older rows', () => {
+    expect(requestCommunicationStatus({ status: 'booked', communicationStatus: 'contacted' })).toBe(
+      'contacted'
+    );
+    expect(requestCommunicationStatus({ status: 'new' })).toBe('not_contacted');
+    expect(requestCommunicationStatus({ status: 'contacted' })).toBe('contacted');
+    expect(requestCommunicationStatus({ status: 'dismissed' })).toBe('complete');
   });
-  it('treats an unconfirmed auto-booked request as not contacted', () => {
+  it('labels each step', () => {
+    expect(appointmentRequestCommunicationPill('not_contacted')).toEqual({
+      tone: 'none',
+      label: 'Not contacted',
+    });
+    expect(appointmentRequestCommunicationPill('owner_replied').tone).toBe('replied');
+    expect(appointmentRequestCommunicationPill('complete').label).toBe('Communication complete');
+  });
+});
+
+describe('appointmentRequestRecordsPill', () => {
+  const base = { finished: false, total: 0, pending: 0, toSummarize: 0 };
+  it('shows what is still to do', () => {
+    expect(appointmentRequestRecordsPill({ ...base, state: 'requested', total: 1, pending: 1 })).toEqual({
+      tone: 'open',
+      label: 'Requested',
+      detail: 'Waiting on hospital',
+    });
     expect(
-      appointmentRequestCommunicationPill('booked', { needsStaffConfirmation: true }).label
-    ).toBe('Not contacted');
+      appointmentRequestRecordsPill({ ...base, state: 'requested', total: 3, pending: 1 }).detail
+    ).toBe('2 of 3 in');
+    expect(appointmentRequestRecordsPill({ ...base, state: 'received', total: 1, toSummarize: 1 })).toEqual({
+      tone: 'open',
+      label: 'Received',
+      detail: 'Summarize in chart',
+    });
+    expect(appointmentRequestRecordsPill({ ...base, state: 'waiting' }).label).toBe('Waiting on client');
+  });
+  it('shows finished states', () => {
+    expect(appointmentRequestRecordsPill({ ...base, state: 'done', finished: true }).tone).toBe('complete');
+    expect(appointmentRequestRecordsPill({ ...base, state: 'not_needed', finished: true }).label).toBe(
+      'Not needed'
+    );
+    expect(appointmentRequestRecordsPill({ ...base, state: 'none', finished: true }).label).toBe(
+      'No records'
+    );
+    expect(appointmentRequestRecordsPill(null).label).toBe('No records');
+  });
+});
+
+describe('requestWorkIsFinished', () => {
+  it('needs communication complete and records done', () => {
+    expect(
+      requestWorkIsFinished({ status: 'booked', communicationStatus: 'complete', records: { finished: true } })
+    ).toBe(true);
+    expect(
+      requestWorkIsFinished({ status: 'booked', communicationStatus: 'contacted', records: { finished: true } })
+    ).toBe(false);
+    expect(
+      requestWorkIsFinished({ status: 'booked', communicationStatus: 'complete', records: { finished: false } })
+    ).toBe(false);
+  });
+  it('treats missing records as done (nothing to wait for)', () => {
+    expect(requestWorkIsFinished({ status: 'booked', communicationStatus: 'complete' })).toBe(true);
   });
 });
 
