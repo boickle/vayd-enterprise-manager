@@ -220,6 +220,13 @@ export type PatientDocDraft = {
   rxRefills: string;
   rxDate: string;
   rxNumber: string;
+  /** Free text for the filling pharmacist (substitution, packaging, call-back). Prints separately from the owner's directions. */
+  rxPharmacistNotes: string;
+  /**
+   * Prescriber's DEA number, typed in per script for controlled drugs. Never saved to the
+   * employee or anywhere else; it only exists on the PDF that is printed and filed.
+   */
+  rxDeaNumber: string;
   dateOfDeath: string;
   causeOfDeath: string;
   mannerOfDeath: string;
@@ -381,6 +388,8 @@ function emptyDraft(): PatientDocDraft {
     rxCompoundingReason: 'Reason for compounding is compliance and ease of administration.',
     rxDate: DateTime.now().toFormat('yyyy-LL-dd'),
     rxNumber: '',
+    rxPharmacistNotes: '',
+    rxDeaNumber: '',
     dateOfDeath: '',
     causeOfDeath: '',
     mannerOfDeath: 'Euthanasia',
@@ -457,12 +466,15 @@ export function applyProvider(
       veterinarianLicense: '',
       veterinarianEmployeeId: null,
       veterinarianSignaturePng: null,
+      rxDeaNumber: '',
     };
   }
   const p = providers.find((x) => String(x.id) === id);
   if (!p) return draft;
   return {
     ...draft,
+    // A DEA number belongs to one prescriber; never carry it over to another signer.
+    rxDeaNumber: String(p.id) === String(draft.veterinarianEmployeeId) ? draft.rxDeaNumber : '',
     veterinarianName: p.label,
     veterinarianLicense: p.license,
     veterinarianEmployeeId: p.id,
@@ -896,6 +908,7 @@ function drawSignature(
   license: string,
   png?: string | null,
   followContent = false,
+  deaNumber?: string,
 ): number {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -922,6 +935,11 @@ function drawSignature(
   doc.setTextColor(...INK);
   if (vetName) doc.text(vetName, x, y + 28);
   if (license) doc.text(`Lic. # ${license}`, x, y + 42);
+  const dea = deaNumber?.trim();
+  if (dea) {
+    doc.text(`DEA # ${dea}`, x, license ? y + 56 : y + 42);
+    return y + 70;
+  }
   return y + 56;
 }
 
@@ -1105,10 +1123,28 @@ export async function generatePatientDocumentPdf(
     doc.setTextColor(...INK);
     doc.text(`Refills: ${draft.rxRefills.trim() || '0'}`, margin, y);
     y += 16;
+    const pharmacistNotes = (draft.rxPharmacistNotes ?? '').trim();
+    if (pharmacistNotes) {
+      y += 4;
+      doc.setFont('times', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(...INK);
+      const notes = wrapLines(doc, `Notes to pharmacist: ${pharmacistNotes}`, pageW - margin * 2);
+      doc.text(notes, margin, y);
+      y += notes.length * 14 + 6;
+    }
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
     doc.text('May be filled at any licensed pharmacy. Not valid unless signed by the veterinarian.', margin, y);
-    drawSignature(doc, y, draft.veterinarianName, draft.veterinarianLicense, draft.veterinarianSignaturePng);
+    drawSignature(
+      doc,
+      y,
+      draft.veterinarianName,
+      draft.veterinarianLicense,
+      draft.veterinarianSignaturePng,
+      false,
+      draft.rxDeaNumber,
+    );
   }
 
   if (kind === 'death') {

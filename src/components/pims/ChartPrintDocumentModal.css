@@ -323,3 +323,17 @@
     grid-template-columns: 1fr;
   }
 }
+
+.chart-print-doc__hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #6b7280;
+}
+
+.chart-print-doc__preview-frame {
+  width: 100%;
+  height: min(70vh, 760px);
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f4f6;
+}
