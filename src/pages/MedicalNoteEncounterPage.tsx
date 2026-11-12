@@ -572,7 +572,7 @@ export default function MedicalNoteEncounterPage() {
     void copyText([...charts, recap].filter(Boolean).join('\n\n'), 'all');
   };
 
-  // A medical note is signed by a vet or a licensed technician (EMR-07, D2).
+  // Anyone on staff signs a medical note (owner, Nov 12, 2026; was vet or licensed tech, D2).
   const signOffBlocked = useSignOffBlock(['medical_note']);
 
   const wrapUp = async () => {

@@ -3,8 +3,7 @@ import { createPortal } from 'react-dom';
 import { FileText, Phone, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
 import {
-  createScoutChartNote,
-  finalizeScoutChartNote,
+  createAndSignScoutChartNote,
   recordScoutChartCommunication,
 } from '../../api/scoutChart';
 import { resolveCall, type ClientCall } from '../../api/calls';
@@ -192,14 +191,13 @@ export function CallTranscriptModal({
       if (patientIds.length > 0) {
         const notes = await Promise.all(
           patientIds.map(async (patientId) => {
-            const note = await createScoutChartNote({
+            const note = await createAndSignScoutChartNote({
               patientId,
               clientId,
               body,
               // Midday, so a date-only choice cannot land on the previous day in another zone.
               noteDate,
             });
-            await finalizeScoutChartNote(note.id);
             return { noteId: note.id, patientId };
           }),
         );
