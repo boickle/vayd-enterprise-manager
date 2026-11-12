@@ -126,7 +126,7 @@ function cardCopy(call: StackedCall): {
       gripLabel: 'No client matched',
       state: <>Summary ready</>,
       note: call.call?.counterpartyPhone?.trim()
-        ? 'Quo could not match this number to a client, so there is no chart to file it to. Add the number to the client’s record and it will match next time.'
+        ? 'Quo could not match this number to a client. Add the number to the client’s record (or add the new client) and this call matches within 10 minutes. If it isn’t matched in 7 days, it clears itself.'
         : 'This call had no outside number (staff to staff, or a transfer), so there is no chart to file it to.',
     };
   }
@@ -310,6 +310,8 @@ export default function MyCallIndicator() {
             : undefined
         }
         onSelectBehind={setFrontKey}
+        hidden={reviewing != null}
+        urgent={front.optimistic || phase === 'ringing' || phase === 'active'}
         onDismiss={
           // Clinical summaries stay until filed or skipped in the review modal, unless there
           // is no client to file them to.

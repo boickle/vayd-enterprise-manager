@@ -169,7 +169,7 @@ export default function EmailTrackingAnalyticsPage() {
       const status = (e as { response?: { status?: number } })?.response?.status;
       if (status === 401 || status === 403) {
         setSummaryError(
-          'You do not have access to email tracking analytics (admin, owner, or superadmin required).'
+          'You do not have access to Email Tracking. Practice managers and admins can see it.'
         );
       } else {
         setSummaryError('Failed to load email tracking analytics.');
