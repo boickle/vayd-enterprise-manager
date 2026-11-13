@@ -474,6 +474,7 @@ export default function EmailCampaignEditorPage() {
           protections={campaign.protections}
           options={options}
           onChange={(audience) => patch({ audience })}
+          onProtectionsChange={(protections) => patch({ protections })}
           readOnly={readOnly}
           preview={preview}
         />
