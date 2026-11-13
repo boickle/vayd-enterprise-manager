@@ -36,7 +36,8 @@ describe('Training: INV-20 replace or remove a card', () => {
       section().find('.client-card__box iframe', { timeout: 60000 }).should('exist');
     });
     line('inv20-06', () => {
-      typeSlowly(() => section().find('.client-card__field input').first(), 'Maria Rivera');
+      section().find('.client-card__field input').first().should('have.value', 'Maria Rivera');
+      pointAt(() => section().find('.client-card__field input').first(), 1500);
       stripeField('.client-card__box', 'cardnumber', '5555555555554444');
       stripeField('.client-card__box', 'exp-date', '1234');
       stripeField('.client-card__box', 'cvc', '123');

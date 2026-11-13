@@ -15,10 +15,10 @@
 | Step | Screen | Action | Narration | Demo data needed |
 |---|---|---|---|---|
 | 1 | Clients → Maria Rivera → **Financial** tab | Point at the **Card on file** section: "Visa ending 4242, expires 12/34" | "The Riveras' card on file is here, on the Financial tab." | Maria has a saved Visa 4242 (test card) with consent recorded under the current agreement (`2026-11-12`), saved by staff |
-| 2 | Card on file | Point at the line "Owner agreed Nov 12, 2026, from entered by staff, agreement 2026-11-12." | "Scout keeps when and where Maria said yes." | — |
+| 2 | Card on file | Point at the line "Owner agreed Nov 12, 2026 (Tap to Pay at a visit, agreement 2026-11-12)." | "Scout keeps when and where Maria said yes." | — |
 | 3 | Voice-over over step 2 | — | "A card can be saved at a visit, in the online store, or when the family signs up for a membership. If they have no card yet, that card becomes the card on file." | — |
 | 4 | Card on file | Click **Replace card** | "Maria has a new card. Click Replace card." | — |
-| 5 | Replace card | Type 5555 5555 5555 4444, 12/34, 123 and the ZIP in the card box | "Type the new card. Nothing is charged." | Stripe test Mastercard |
+| 5 | Replace card | Name on card is already filled in (Maria Rivera). Type 5555 5555 5555 4444, 12/34, 123 and the ZIP in the card box | "Type the new card. Nothing is charged." | Stripe test Mastercard |
 | 6 | Replace card | Point at the box "Owner agrees we may keep this card on file and charge it for visits, refills, memberships and online store orders. Ask first. Tick this box when they say yes." and tick it | "Ask first. When Maria says yes, tick the box." | — |
 | 7 | Replace card | Click **Save card**; point at "New card saved. Nothing was charged." and the card now reading "Mastercard ending 4444" | "Saved. The next visit, refill or store order uses the new card." | — |
 | 8 | Card on file | Point at "Maple's membership is billed on a different card." and **Open Maple's membership** | "A membership keeps the card it's billed on. To move it to the new card, open the membership and use Update card." | Maple's membership is billed in Stripe test mode on the old Visa 4242 |
