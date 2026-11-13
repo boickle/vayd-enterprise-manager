@@ -6,9 +6,9 @@ Scripts: `docs/training/scripts/permissions/`. There are 18 scripts: PERM-01 to 
 
 - **All 18 videos are recorded and narrated**, in `~/Movies/VAYD Training`. None is linked from a Help topic yet.
 - **Approved (file name has "FINAL"):** PERM-01 to PERM-07, ROLE-01 and ROLE-02.
-- **Waiting for your review:** ROLE-03 to ROLE-11.
+- **Waiting for your review:** ROLE-03 to ROLE-11. ROLE-07 was re-recorded on Nov 12.
 - **File names and Help:** "FINAL" in a file name is fine. The Help page shows the topic's own title, never the file name. A topic's `video_source:` can be just the code (for example `PERM-01`): `npm run help:videos` uploads the file whose name starts with it, and prefers the FINAL one if two share the code (API c0cc7260, Nov 12).
-- **ROLE-07 (Executive) shows the old client record.** It was recorded on Nov 11 at 4:45 am, before the B7 fix, so it probably shows the editing pencils and **Save household defaults**. The Executive no longer sees those. ROLE-11 (Observer) opens only a paid bill, so it should be unaffected. Re-recording is your call.
+- **ROLE-07 (Executive) re-recorded on Nov 12, 9:37 pm.** The client record no longer shows the editing pencils, **Save household defaults** or Deactivate, and the pointer now rests on the client's name, not the top-bar client box. The Nov 11 take is in `Old takes` as "… (Nov 11, old client page).mp4". ROLE-11 (Observer) opens only a paid bill, so it is unaffected.
 - **Training branch:** `training/permissions-scripts` is pushed, with the 18 specs, narration, `permRecord.ts`, the probes (p01 to p08), `perm-seed.ts` and these docs. `build-doctor-flow` was last merged into it on Nov 12, after the state-license feature.
 - **State licenses** are on `build-doctor-flow`: API f8bbcec3 and app 8ee2c96f (Nov 12).
 
@@ -86,11 +86,10 @@ The first nine came from the Nov 9 check (RP-A10 to RP-A18 in `vayd-api/docs/tes
 
 ## Still open
 
-1. **ROLE-07 shows the old client record.** Re-record it or keep it (see "Where things stand").
-2. **Review ROLE-03 to ROLE-11**, and add "FINAL" to each one you approve.
-3. **Household default fields look editable to Executive and Observer.** They're switched off, but not greyed out. Cosmetic.
-4. **The Medical Director can't type license numbers on screen.** They see only the Access tab; the State licenses section is on the Profile tab. The server would accept their save.
-5. **Doctor license number template field:** checked only by a unit test, not in a real compose window.
+1. **Review ROLE-03 to ROLE-11** (ROLE-07 is the new Nov 12 take), and add "FINAL" to each one you approve.
+2. **Household default fields look editable to Executive and Observer.** They're switched off, but not greyed out. Cosmetic.
+3. **The Medical Director can't type license numbers on screen.** They see only the Access tab; the State licenses section is on the Profile tab. The server would accept their save.
+4. **Doctor license number template field:** checked only by a unit test, not in a real compose window.
 
 ## Test stack
 
@@ -118,7 +117,7 @@ cd "$API_DIR" && NODE_ENV=test npx tsx "$FE/cypress/training/stack/perm-seed.ts"
 | PERM-05 | An empty audit log at the start, then the changes from PERM-02, 03 and 06 | Partly (seed empties the log) |
 | PERM-06 | Lou Bennett (Client Liaison); Dana Cole (Lead CL) | Yes |
 | PERM-07 | — | Yes |
-| ROLE-01, 07 | Payments in the last 7 days; one draft email campaign (ROLE-07) | Payments partly; campaign: no |
+| ROLE-01, 07 | Payments in the last 7 days; one draft email campaign (ROLE-07) | Payments: the $75 paid bill (API calls, redo after every stack restart); campaign: yes (`draftCampaign()` in the spec) |
 | ROLE-03 | Production for Dr. Ortiz in the last 7 days | Yes (made-up lines) |
 | ROLE-04, 05, 08, 11 | A paid bill on the Chens ($75 cash, Office exam) | Made by API calls; add to the seed |
 | ROLE-06 | Count items due this week at Raleigh office | No |

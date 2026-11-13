@@ -45,7 +45,7 @@ describe('Training: ROLE-07 executive', () => {
         cy.contains(/Tom Chen/, { timeout: 60000 }).should('exist');
         cy.wait(1500);
       });
-      line('r07-12', () => pointAtSteady(() => cy.contains(/Tom Chen/).first(), 4000));
+      line('r07-12', () => pointAtSteady(() => cy.get('.pims-client-detail__title').first(), 4000));
       line('r07-13');
       line('r07-14');
       line('r07-15');
