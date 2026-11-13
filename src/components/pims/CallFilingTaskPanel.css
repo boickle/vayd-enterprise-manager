@@ -1,0 +1,43 @@
+/* T-B2: the call a "Call not filed" task is about. Sits in the task screen's .pims-fb-task box. */
+.pims-call-task__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-call-task__who {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.pims-call-task__meta {
+  margin: 2px 0 8px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.pims-call-task__summary {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.pims-call-task__transcript {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: #334155;
+}

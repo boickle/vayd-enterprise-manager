@@ -28,6 +28,8 @@ export function taskLinkLabelKey(entityType: string, entityId: number): string {
 }
 
 export function fallbackTaskLinkLabel(entityType: string, entityId: number): string {
+  // T-B2: the task screen shows the call itself; the link only needs a plain name.
+  if (entityType === 'openphone_call') return 'Phone call';
   const t = entityType.replace(/_/g, ' ');
   return `${t} #${entityId}`;
 }
