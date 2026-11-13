@@ -25,7 +25,7 @@ import {
 } from '../support/schedulingPortal';
 
 const D2_MESSAGE =
-  'That time was just taken. Our team will call you within one business hour to find another.';
+  'That time was just taken. Our team will call you soon to find another time.';
 
 /** A New York wall-clock time on the weekday `workdaysAhead` weekdays from today (DST-safe). */
 function workdayAt(hour: number, minute: number, workdaysAhead: number): Date {
