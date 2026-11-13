@@ -433,6 +433,8 @@ export default function PimsTasksPage() {
   const [tab, setTab] = useState<TabId>('active');
   const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
+  /** True once the assigned list has loaded, so the Active/Expired/Future counts can come from it (T-B7). */
+  const [myOpenTasksLoaded, setMyOpenTasksLoaded] = useState(false);
   const [watchingTasks, setWatchingTasks] = useState<TaskListItem[]>([]);
 
   const visibleWatchingTasks = useMemo(
@@ -588,6 +590,7 @@ export default function PimsTasksPage() {
   const loadAssignedOpenTasks = useCallback(async () => {
     if (viewedEmployeeId == null && myEmployeeIds.length === 0) {
       setMyOpenTasks([]);
+      setMyOpenTasksLoaded(true);
       return [];
     }
     const res = await listTasks({
@@ -599,6 +602,7 @@ export default function PimsTasksPage() {
       offset: 0,
     });
     setMyOpenTasks(res.items);
+    setMyOpenTasksLoaded(true);
     return res.items;
   }, [branchIdNum, myEmployeeIds, viewedEmployeeId]);
 
@@ -1161,6 +1165,20 @@ export default function PimsTasksPage() {
     );
   };
 
+  /**
+   * T-B7: a tab's count matches the list under it. The summary can lag behind the list and doesn't know the
+   * queue picker, so once a list has loaded its tab shows the list's own count. The summary is the fallback
+   * (before the list loads, and when the list is capped).
+   */
+  const bucketTabCount = (bucket: AssignedTasksTab): number =>
+    myOpenTasksLoaded && myOpenTasks.length < CLIENT_FILTER_CAP
+      ? filterMyOpenTasksByAssignedTab(myOpenTasks, bucket).length
+      : taskSummary.assigned[bucket];
+  const unassignedTabCount =
+    tab === 'unassigned' && !loading && !error
+      ? unassignedListTotal
+      : (taskSummary.unassigned?.total ?? unassignedListTotal);
+
   return (
     <div className="pims-tasks">
       <div className="pims-tasks__head">
@@ -1250,13 +1268,10 @@ export default function PimsTasksPage() {
         <div className="pims-tasks__tabs" role="tablist" aria-label="Task views">
           {(
             [
-              ['active', `Active (${taskSummary.assigned.active})`],
-              ['expired', `Expired (${taskSummary.assigned.expired})`],
-              ['upcoming', `Future (${taskSummary.assigned.upcoming})`],
-              [
-                'unassigned',
-                `Unassigned (${taskSummary.unassigned?.total ?? unassignedListTotal})`,
-              ],
+              ['active', `Active (${bucketTabCount('active')})`],
+              ['expired', `Expired (${bucketTabCount('expired')})`],
+              ['upcoming', `Future (${bucketTabCount('upcoming')})`],
+              ['unassigned', `Unassigned (${unassignedTabCount})`],
               ['watching', `Watching (${watchingTabCount})`],
               ['sent', 'Sent'],
               ['completed', 'Completed'],
