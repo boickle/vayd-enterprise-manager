@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { stripCitationTokens } from '../../utils/chartCitation';
 import { fetchPatientLabSource, type LabSourceEntry } from '../../utils/patientLabSource';
 import { Link } from 'react-router';
 import { DateTime } from 'luxon';
@@ -65,7 +66,8 @@ type Props = {
 };
 
 function excerptText(raw: string, max = 360): string {
-  const plain = raw.replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
+  // The short view has no links, so the citation tokens come out (B9).
+  const plain = stripCitationTokens(raw).replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
   if (plain.length <= max) return plain;
   const cut = plain.slice(0, max);
   const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf(' '));

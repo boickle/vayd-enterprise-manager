@@ -28,6 +28,8 @@ export type BriefSession = {
   status: BriefStatus;
   injectedAt?: string | null;
   audioFileName?: string | null;
+  /** From the server: true when you made this Jot. */
+  mine?: boolean;
 };
 
 export const BRIEF_KIND_LABEL: Record<BriefKind, string> = {

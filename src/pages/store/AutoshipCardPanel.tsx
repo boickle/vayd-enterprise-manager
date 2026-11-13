@@ -3,6 +3,7 @@ import type { AutoshipCard, AutoshipCardResult, AutoshipCards } from '../../api/
 import StoreCartCardEntry, { type StoreCartCardEntryHandle } from './StoreCartCardEntry';
 import './Store.css';
 import './AutoshipCardPanel.css';
+import { CARD_ON_FILE_CLIENT_WORDING } from '../../utils/cardOnFileWording';
 
 function cardLabel(c: AutoshipCard): string {
   const brand = c.brand ? c.brand.charAt(0).toUpperCase() + c.brand.slice(1) : 'Card';
@@ -126,6 +127,9 @@ export default function AutoshipCardPanel({
           billingPrefill={{ name, email: email || undefined, line1: '', line2: '', city: '', state: '', postal: '' }}
         />
       ) : null}
+      <div className="vayd-store__card-panel-muted" data-testid="autoship-card-wording">
+        {CARD_ON_FILE_CLIENT_WORDING}
+      </div>
       {error ? <div className="vayd-store__card-panel-error">{error}</div> : null}
       {message ? <div className="vayd-store__card-panel-ok">{message}</div> : null}
       <div className="vayd-store__card-panel-actions">

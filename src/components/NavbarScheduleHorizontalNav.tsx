@@ -7,6 +7,7 @@ import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalen
 import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import { APPOINTMENTS_PATH_PREFIX, APPOINTMENT_SEARCH_PATH } from '../appointments-nav';
 import { HOLDS_PATH } from '../holds-nav';
+import { RECORDS_PATH } from '../records-nav';
 import { EXIT_SURVEY_PATH } from '../tools-tabs';
 import { MEMBERSHIP_COMPARISON_PATH } from '../membership-comparison-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
@@ -91,6 +92,7 @@ function SchedulingSubmenuLinks({
     location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
     !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
+  const recordsActive = location.pathname.startsWith(RECORDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
@@ -150,6 +152,19 @@ function SchedulingSubmenuLinks({
       >
         Appointments
         {replyCounts ? <ReplyBadges mine={replyCounts.mine} others={replyCounts.others} /> : null}
+      </Link>
+      <Link
+        to={RECORDS_PATH}
+        className={`schedule-app__settings-link${
+          recordsActive ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={(e) => {
+          if (blockScheduleNavLeave(e)) return;
+          onNavigate();
+        }}
+      >
+        Records
       </Link>
       <Link
         to={EXIT_SURVEY_PATH}

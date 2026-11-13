@@ -133,6 +133,7 @@ import '../../pages/BriefWorkspacePage.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import { clientTextsOffReason } from '../../utils/doNotSmsWarning';
 import { useMayShow } from '../../permissions/PermissionContext';
+import { legacyReferral, REFERRAL_OPTIONS } from '../../utils/referralSources';
 import { useMayEditClientRecords } from '../../permissions/useMayEditClientRecords';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
@@ -376,11 +377,6 @@ const NAME_FIELDS: FieldSpec[] = [
   { key: 'lastName', label: 'Last name', required: true },
   { key: 'secondFirstName', label: 'Second contact first name' },
   { key: 'secondLastName', label: 'Second contact last name' },
-  {
-    key: 'referralSource',
-    label: 'How they heard about us',
-    full: true,
-  },
 ];
 
 const ALERT_FIELDS: FieldSpec[] = [
@@ -496,6 +492,8 @@ function ClientHouseholdDefaultsCard({
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [statuses, setStatuses] = useState<ClientStatusRow[]>([]);
+  /** Owner, Nov 13, 2026: only managers, billing and lead CLs set a standing discount. */
+  const maySetDiscount = useMayShow('client.discount.set');
   const [primaryProviderId, setPrimaryProviderId] = useState(
     () => String(Number(record.primaryProviderId) > 0 ? record.primaryProviderId : ''),
   );
@@ -645,6 +643,8 @@ function ClientHouseholdDefaultsCard({
                 className="input"
                 value={clientStatusId}
                 onChange={(e) => setClientStatusId(e.target.value)}
+                disabled={!maySetDiscount}
+                title={maySetDiscount ? undefined : 'Ask a manager, billing or a lead CL to set a discount.'}
               >
                 <option value="">None</option>
                 {statuses.map((s) => (
@@ -658,11 +658,22 @@ function ClientHouseholdDefaultsCard({
             </label>
             <label className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">How they heard about us</span>
-              <input
+              {/* Same list as Add client (owner, Nov 13, 2026). An older free-text answer stays as its own option. */}
+              <select
                 className="input"
                 value={referralSource}
                 onChange={(e) => setReferralSource(e.target.value)}
-              />
+              >
+                <option value="">Select…</option>
+                {legacyReferral(referralSource) ? (
+                  <option value={referralSource}>{referralSource}</option>
+                ) : null}
+                {REFERRAL_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">Referring client (friend/family)</span>
@@ -806,6 +817,7 @@ function ClientCommunicationPrefsCard({
   const [doNotEmail, setDoNotEmail] = useState(flagOn(record.doNotEmail));
   const [doNotSms, setDoNotSms] = useState(flagOn(record.doNotSms) || flagOn(record.smsOptOut));
   const [doNotSendReminders, setDoNotSendReminders] = useState(flagOn(record.doNotSendReminders));
+  const [doNotMarket, setDoNotMarket] = useState(flagOn(record.doNotMarket));
   const [preferSms, setPreferSms] = useState(record.preferSms !== false);
   const [preferPhone, setPreferPhone] = useState(record.preferPhone !== false);
   const [preferEmail, setPreferEmail] = useState(record.preferEmail !== false);
@@ -818,6 +830,7 @@ function ClientCommunicationPrefsCard({
     setDoNotEmail(flagOn(record.doNotEmail));
     setDoNotSms(flagOn(record.doNotSms) || flagOn(record.smsOptOut));
     setDoNotSendReminders(flagOn(record.doNotSendReminders));
+    setDoNotMarket(flagOn(record.doNotMarket));
     setPreferSms(record.preferSms !== false);
     setPreferPhone(record.preferPhone !== false);
     setPreferEmail(record.preferEmail !== false);
@@ -862,6 +875,25 @@ function ClientCommunicationPrefsCard({
       setSaving(false);
     }
   }
+  /** "Do not market" saves on its own: it never changes the other choices (D3, Oct 9, 2026). */
+  async function persistDoNotMarket(next: boolean) {
+    setSaving(true);
+    setSaveFlash('saving');
+    setError(null);
+    try {
+      await onSave({ doNotMarket: next });
+      setSaveFlash('saved');
+      if (saveFlashTimer.current) clearTimeout(saveFlashTimer.current);
+      saveFlashTimer.current = setTimeout(() => setSaveFlash('idle'), 1800);
+    } catch (err) {
+      setDoNotMarket(!next);
+      setError(extractErr(err));
+      setSaveFlash('idle');
+    } finally {
+      setSaving(false);
+    }
+  }
+
 
   return (
     <section className="pims-emr-story__card pims-client-detail__comms-prefs" aria-labelledby="pims-client-prefs">
@@ -943,6 +975,18 @@ function ClientCommunicationPrefsCard({
             />
             Do not send reminders
           </label>
+          <label title="No promotions, membership offers, surveys or referral emails. Reminders, visit notices and receipts still go.">
+            <input
+              type="checkbox"
+              checked={doNotMarket}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setDoNotMarket(next);
+                void persistDoNotMarket(next);
+              }}
+            />
+            Do not market
+          </label>
         </fieldset>
         <fieldset className="pims-client-detail__comms-set" disabled={saving || readOnly}>
           <legend>Prefer</legend>
@@ -1008,7 +1052,8 @@ function ClientCommunicationPrefsCard({
         </fieldset>
       </div>
       <p className="pims-client-detail__comms-hint">
-        Toggles save as you click. Do-not-contact blocks automated email/SMS.
+        Toggles save as you click. Do not email blocks every email, including ones you send. Do not market stops
+        promotions, membership offers and surveys only.
       </p>
     </section>
   );
@@ -1922,6 +1967,7 @@ export default function PimsClientDetailView({
               </PimsBadge>
             ) : null}
             {doNotSendReminders ? <PimsBadge tone="warn">No reminders</PimsBadge> : null}
+            {flagOn(record.doNotMarket) ? <PimsBadge tone="warn">Do not market</PimsBadge> : null}
             {portalAccounts.some((a) => a.hasLoggedIn) ? (
               <PimsBadge tone="ok">Portal login</PimsBadge>
             ) : portalAccounts.length ? (

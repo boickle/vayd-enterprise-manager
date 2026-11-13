@@ -9,9 +9,32 @@ import { appConfirm } from '../../utils/appDialog';
 type Props = {
   keepPatientId: string;
   keepPatientName: string;
+  /** After a merge worked: the chart reloads so the moved visits and records show. */
+  onMerged?: () => void;
 };
 
-export default function BriefMergePanel({ keepPatientId, keepPatientName }: Props) {
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : null;
+}
+
+/** "Canine · Golden Retriever · Male · born 2017 · chip …6543 · ID 8585": enough to tell two charts apart. */
+export function petMergeDetails(row: PatientSearchRow): string {
+  const r = row as Record<string, unknown>;
+  const dob = str(r.dob) ?? str(r.dateOfBirth);
+  const chip = str(r.microchip);
+  return [
+    str(r.species),
+    str(r.breed),
+    str(r.sex),
+    dob ? `born ${dob.slice(0, 4)}` : null,
+    chip ? `chip …${chip.slice(-4)}` : 'no microchip',
+    `ID ${row.id}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+export default function BriefMergePanel({ keepPatientId, keepPatientName, onMerged }: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<PatientSearchRow[]>([]);
   const [absorb, setAbsorb] = useState<PatientSearchRow | null>(null);
@@ -46,7 +69,10 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
     if (!absorb) return;
     const ok = await appConfirm({
       title: 'Merge charts?',
-      message: `Merge ${patientDisplayName(absorb)} into ${keepPatientName}? The absorbed chart should no longer be used.`,
+      message:
+        `Merge ${patientDisplayName(absorb)} (${petMergeDetails(absorb)}) into ${keepPatientName}? ` +
+        'Visits, records, vaccines, reminders, invoices and memberships move here, and the other chart is closed ' +
+        'as a duplicate. This can\'t be undone.',
       confirmLabel: 'Merge',
       danger: true,
     });
@@ -60,7 +86,8 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
     setOk(result.ok);
     setMessage(result.message);
     setBusy(false);
-  }, [absorb, keepPatientId, keepPatientName]);
+    if (result.ok) onMerged?.();
+  }, [absorb, keepPatientId, keepPatientName, onMerged]);
 
   return (
     <div className="brief-merge">
@@ -80,6 +107,8 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
           <span>
             Absorb <strong>{patientDisplayName(absorb)}</strong>
             {clientNameFromPatientRow(absorb) ? ` · ${clientNameFromPatientRow(absorb)}` : ''}
+            <br />
+            <small>{petMergeDetails(absorb)}</small>
           </span>
           <button type="button" className="brief-text-btn" onClick={() => setAbsorb(null)}>
             Change
@@ -102,7 +131,10 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
             <li key={String(row.id)}>
               <button type="button" className="brief-hit" onClick={() => setAbsorb(row)}>
                 <strong>{patientDisplayName(row)}</strong>
-                <span>{clientNameFromPatientRow(row) ?? `ID ${row.id}`}</span>
+                <span>
+                  {clientNameFromPatientRow(row) ? `${clientNameFromPatientRow(row)} · ` : ''}
+                  {petMergeDetails(row)}
+                </span>
               </button>
             </li>
           ))}
@@ -112,7 +144,7 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
       <button
         type="button"
         className="brief-btn primary"
-        disabled={!absorb || busy}
+        disabled={!absorb || busy || ok === true}
         onClick={() => void run()}
       >
         {busy ? 'Merging…' : 'Merge into this chart'}

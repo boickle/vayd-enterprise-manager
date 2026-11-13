@@ -89,6 +89,8 @@ type Props = {
   source: ConversationSource;
   practiceTz: string;
   actions?: ReactNode;
+  /** Techs and doctors read the conversation but can't send, call or summarize (Nov 13, 2026). */
+  readOnly?: boolean;
 };
 
 function errorText(e: unknown, fallback: string): string {
@@ -210,7 +212,7 @@ function Bubble({
   );
 }
 
-export function ConversationPanel({ source, practiceTz, actions }: Props) {
+export function ConversationPanel({ source, practiceTz, actions, readOnly = false }: Props) {
   const { phone, canText, email } = source;
   /** Texts and calls arrive separately when the source splits them. */
   const [textsPart, setTextsPart] = useState<ConversationLoad | null>(null);
@@ -499,7 +501,7 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
             tz={practiceTz}
             summary={entry.quoCallId != null ? summaries[entry.quoCallId] : undefined}
             onSummarize={
-              entry.quoCallId != null && summarizeFn
+              entry.quoCallId != null && summarizeFn && !readOnly
                 ? () => summarize(entry.quoCallId as number)
                 : undefined
             }
@@ -514,6 +516,9 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
         ) : null}
       </div>
 
+      {readOnly ? (
+        <p className="settings-muted req-convo-readonly">View only. Client liaisons and managers reply to the family.</p>
+      ) : (
       <div className="req-convo-compose">
         <div className="req-convo-tabs" role="tablist" aria-label="Reply by">
           {modes.map((m) => (
@@ -670,6 +675,7 @@ export function ConversationPanel({ source, practiceTz, actions }: Props) {
         )}
         {sendError ? <div className="req-convo-error">{sendError}</div> : null}
       </div>
+      )}
 
       {actions ? <div className="req-convo-actions">{actions}</div> : null}
     </section>

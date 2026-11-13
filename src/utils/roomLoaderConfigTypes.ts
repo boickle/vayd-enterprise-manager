@@ -9,6 +9,12 @@ import {
 import { migrateLegacyOutdoorPitchHtml } from './roomLoaderPetNameCopy';
 
 export type { RoomLoaderSpeciesSelection } from './roomLoaderSpecies';
+import {
+  defaultInvoiceOrderConfig,
+  normalizeInvoiceOrderConfig,
+  type RoomLoaderInvoiceOrderConfig,
+} from './roomLoaderInvoiceOrder';
+export type { RoomLoaderInvoiceOrderConfig } from './roomLoaderInvoiceOrder';
 
 export const ROOM_LOADER_CONFIG_VERSION = 1;
 
@@ -393,6 +399,8 @@ export type RoomLoaderConfig = {
   declineReasons: RoomLoaderDeclineReason[];
   /** Fallback caution when an offer has no `cautionHtml` of its own. HTML. */
   defaultDeclineCautionHtml: string;
+  /** Standard invoice order for Room Loader items (staff screen, client form, PDF, invoice). */
+  invoiceOrder: RoomLoaderInvoiceOrderConfig;
 };
 
 export function emptyRoomLoaderConfig(): RoomLoaderConfig {
@@ -457,6 +465,7 @@ export function emptyRoomLoaderConfig(): RoomLoaderConfig {
     },
     declineReasons: [],
     defaultDeclineCautionHtml: '',
+    invoiceOrder: defaultInvoiceOrderConfig(),
   };
 }
 
@@ -551,6 +560,7 @@ export function normalizeRoomLoaderConfig(raw: unknown): RoomLoaderConfig {
       typeof input.defaultDeclineCautionHtml === 'string'
         ? input.defaultDeclineCautionHtml
         : base.defaultDeclineCautionHtml,
+    invoiceOrder: normalizeInvoiceOrderConfig(input.invoiceOrder),
   };
 }
 

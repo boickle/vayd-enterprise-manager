@@ -2322,6 +2322,7 @@ export default function PimsPatientDetailView({
     sex: sexWordOf(record.sex) ?? '',
     neuterStatus: pickStr(record.neuterStatus) ?? '',
     color: pickStr(record.color) ?? '',
+    microchip: pickStr(record.microchip) ?? '',
   };
 
   const detailFields: FieldSpec[] = [
@@ -2364,6 +2365,8 @@ export default function PimsPatientDetailView({
     { key: 'sex', label: 'Sex', type: 'select', options: SEX_OPTIONS },
     { key: 'neuterStatus', label: 'Spay / neuter', type: 'select', options: NEUTER_OPTIONS },
     { key: 'color', label: 'Color' },
+    // Owner, Nov 13, 2026: record a chip implanted elsewhere (rescues, transfers).
+    { key: 'microchip', label: 'Microchip' },
   ];
 
   return (
@@ -2485,7 +2488,7 @@ export default function PimsPatientDetailView({
                 onError={() => setPhotoFailed(true)}
               />
             </button>
-          ) : (
+          ) : mayEditPatient ? (
             <button
               type="button"
               className="pims-detail__avatar pims-detail__avatar--btn"
@@ -2495,6 +2498,10 @@ export default function PimsPatientDetailView({
             >
               <Camera size={22} aria-hidden />
             </button>
+          ) : (
+            <span className="pims-detail__avatar" aria-hidden>
+              <Camera size={22} />
+            </span>
           )
         }
         title={
@@ -2643,6 +2650,7 @@ export default function PimsPatientDetailView({
                     : null
                 }
                 onSave={saveFields}
+                readOnly={!mayEditPatient}
               />
             ) : null}
             {patientAlert || ownerAlert || connectionNotes ? (
@@ -2699,6 +2707,7 @@ export default function PimsPatientDetailView({
                   {chronicProblems.map((p) => (
                     <li key={`prob-${p.id}`} className="pims-emr-story__chip--problem">
                       <span>{p.label}</span>
+                      {mayEditPatient ? (
                       <button
                         type="button"
                         className="pims-emr-story__chip-x"
@@ -2709,6 +2718,7 @@ export default function PimsPatientDetailView({
                       >
                         <X size={12} />
                       </button>
+                      ) : null}
                     </li>
                   ))}
                   {chronicMedications.map((rx) => (
@@ -2729,6 +2739,7 @@ export default function PimsPatientDetailView({
                           <span className="pims-emr-story__chip-catalog"> · catalog</span>
                         ) : null}
                         {' · '}
+                        {mayEditPatient ? (
                         <button
                           type="button"
                           className={`chronic-rx-refills-btn${!rx.prn && (Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
@@ -2737,7 +2748,11 @@ export default function PimsPatientDetailView({
                         >
                           {chronicRefillLabel(rx)}
                         </button>
+                        ) : (
+                          chronicRefillLabel(rx)
+                        )}
                       </span>
+                      {mayEditPatient ? (
                       <button
                         type="button"
                         disabled={discontinuingRxId != null}
@@ -2745,6 +2760,7 @@ export default function PimsPatientDetailView({
                       >
                         Stop
                       </button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -2764,7 +2780,7 @@ export default function PimsPatientDetailView({
                   />
                 ) : null;
               })()}
-              {showRecordHistoryTab && Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
+              {mayEditPatient && showRecordHistoryTab && Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
                 <EvetProblemSuggestions
                   patientId={Number(patientId)}
                   problems={problems}
@@ -2774,7 +2790,7 @@ export default function PimsPatientDetailView({
                   }}
                 />
               ) : null}
-              {Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
+              {mayEditPatient && Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
                 <PimsPatientChronicAdders
                   patientId={Number(patientId)}
                   practiceId={practiceId}
@@ -2791,23 +2807,31 @@ export default function PimsPatientDetailView({
         }
         actions={
           <>
-            <button
-              type="button"
-              className="pims-detail__btn-secondary"
-              onClick={() => setPhotoGalleryOpen(true)}
-            >
-              <Camera size={14} aria-hidden />
-              {petPhoto && !photoFailed ? 'Photos' : 'Add photo'}
-            </button>
-            <button
-              type="button"
-              className="pims-detail__btn-primary"
-              onClick={startAppointmentForThisPatient}
-            >
-              <Plus size={14} aria-hidden />
-              Appointment
-            </button>
-            <PimsPatientMergeButton patientId={patientId} patientName={pname} />
+            {mayEditPatient || (petPhoto && !photoFailed) ? (
+              <button
+                type="button"
+                className="pims-detail__btn-secondary"
+                onClick={() => setPhotoGalleryOpen(true)}
+              >
+                <Camera size={14} aria-hidden />
+                {petPhoto && !photoFailed ? 'Photos' : 'Add photo'}
+              </button>
+            ) : null}
+            {mayEditPatient ? (
+              <button
+                type="button"
+                className="pims-detail__btn-primary"
+                onClick={startAppointmentForThisPatient}
+              >
+                <Plus size={14} aria-hidden />
+                Appointment
+              </button>
+            ) : null}
+            <PimsPatientMergeButton
+              patientId={patientId}
+              patientName={pname}
+              onMerged={() => void reloadChartData()}
+            />
             {mayEditPatient ? (
               <button
                 type="button"
@@ -2835,6 +2859,7 @@ export default function PimsPatientDetailView({
                 const body: ScoutPatientWrite = {
                   name: v.name.trim() || null,
                   color: v.color.trim() || null,
+                  microchip: (v.microchip ?? '').trim() || null,
                   sex: v.sex.trim() || null,
                   neuterStatus: v.neuterStatus.trim() || null,
                   dob: dobToApi(v.dob),
@@ -2925,7 +2950,8 @@ export default function PimsPatientDetailView({
         onSummarize={requestSummarize}
         onStartSoap={openSoapForVisit}
         onOpenMedicalNote={openMedicalNoteForVisit}
-        onBookAppointment={canBookAppointment ? startAppointmentForThisPatient : undefined}
+        onBookAppointment={canBookAppointment && mayEditPatient ? startAppointmentForThisPatient : undefined}
+        readOnly={!mayEditPatient}
         onInvoice={() => openFinancial()}
         onRecordsChanged={(result) => {
           void (async () => {
@@ -3002,7 +3028,7 @@ export default function PimsPatientDetailView({
                 </span>
               ) : null}
             </button>
-            {Number.isFinite(Number(patientId)) ? (
+            {mayEditPatient && Number.isFinite(Number(patientId)) ? (
               <ChartAddFollowUp
                 patientId={Number(patientId)}
                 clientId={clientId ? Number(clientId) : null}
@@ -4854,6 +4880,7 @@ export default function PimsPatientDetailView({
         patientName={pname}
         notifyClientOnUpload
         patientActive={isActive}
+        readOnly={!mayEditPatient}
         onPrimaryChange={(imageUrl) => {
           setPayload((current) =>
             current ? { ...current, imageUrl: imageUrl || null } : current,

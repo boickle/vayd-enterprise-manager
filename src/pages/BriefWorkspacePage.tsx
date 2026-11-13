@@ -15,10 +15,10 @@ import type { Appointment } from '../api/roomLoader';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import { fetchSoapCalendarLockIndex, VISIT_WORKFLOW_PRACTICE_ID } from '../api/visitWorkflow';
-import { saveBrief } from '../api/briefs';
+import { getBrief, listBriefs, saveBrief } from '../api/briefs';
+import { appAlert } from '../utils/appDialog';
 import { DEFAULT_PRACTICE_TIMEZONE, practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { appointmentIsCalendarOnlyStaffItem } from '../utils/calendarOnlyStaffAppointment';
-import { listLocalBriefsForDate, getLocalBrief } from '../utils/briefStore';
 import type { BriefSession } from '../utils/briefTypes';
 import { BRIEF_KIND_LABEL, isBriefKind } from '../utils/briefTypes';
 import {
@@ -182,7 +182,7 @@ export default function BriefWorkspacePage() {
   const [searching, setSearching] = useState(false);
   const [archived, setArchived] = useState(false);
   const [dayAppts, setDayAppts] = useState<DoctorDayAppt[]>([]);
-  const [briefs, setBriefs] = useState<BriefSession[]>(() => listLocalBriefsForDate(date));
+  const [briefs, setBriefs] = useState<BriefSession[]>([]);
   const [lockedIds, setLockedIds] = useState<Set<number>>(new Set());
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providerFilter, setProviderFilter] = useState<'me' | 'all'>('me');
@@ -253,17 +253,35 @@ export default function BriefWorkspacePage() {
     return match?.quoLinePhone ?? null;
   }, [providers, selfId]);
 
+  /** Your Jots for this day, from the server (B8). */
+  const reloadBriefs = useCallback(() => {
+    void listBriefs({ date })
+      .then((rows) => setBriefs(rows.filter((s) => s.status !== 'archived')))
+      .catch(() => setBriefs([]));
+  }, [date]);
+
   useEffect(() => {
-    setBriefs(listLocalBriefsForDate(date));
-  }, [date, sessionId]);
+    reloadBriefs();
+  }, [reloadBriefs, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
       setSession(null);
       return;
     }
-    setSession(getLocalBrief(sessionId));
-  }, [sessionId, briefs]);
+    let canceled = false;
+    setSession((prev) => (prev?.id === sessionId ? prev : null));
+    void getBrief(sessionId)
+      .then((row) => {
+        if (!canceled) setSession(row);
+      })
+      .catch(() => {
+        if (!canceled) setSession(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     let canceled = false;
@@ -350,19 +368,31 @@ export default function BriefWorkspacePage() {
       );
       return;
     }
-    const created = await saveBrief({
-      kind: payload.kind,
-      title: payload.title,
-      date,
-      employeeId: selfId || null,
-      patientId: payload.patientId ?? null,
-      patientName: payload.patientName ?? null,
-      clientId: payload.clientId ?? null,
-      clientName: payload.clientName ?? null,
-      clientPhone: payload.clientPhone ?? null,
-      appointmentId: payload.appointmentId ?? null,
-    });
-    setBriefs(listLocalBriefsForDate(date));
+    let created: BriefSession;
+    try {
+      created = await saveBrief({
+        kind: payload.kind,
+        title: payload.title,
+        date,
+        employeeId: selfId || null,
+        patientId: payload.patientId ?? null,
+        patientName: payload.patientName ?? null,
+        clientId: payload.clientId ?? null,
+        clientName: payload.clientName ?? null,
+        clientPhone: payload.clientPhone ?? null,
+        appointmentId: payload.appointmentId ?? null,
+      });
+    } catch (err) {
+      await appAlert({
+        title: 'Could not start the Jot',
+        message:
+          err instanceof Error && err.message
+            ? `${err.message} Check your connection and try again.`
+            : 'Check your connection and try again.',
+      });
+      return;
+    }
+    reloadBriefs();
     patchParams({
       new: null,
       sessionId: created.id,
@@ -574,7 +604,7 @@ export default function BriefWorkspacePage() {
               </button>
             </div>
             <p className="brief-hint">
-              Search a pet or client, then start an Jot from their profile.
+              Search a pet or client, then start a Jot from their profile.
             </p>
             {query.trim() ? (
               <>
@@ -646,11 +676,11 @@ export default function BriefWorkspacePage() {
             quoFromLine={quoFromLine}
             onChange={(next) => {
               setSession(next);
-              setBriefs(listLocalBriefsForDate(date));
+              reloadBriefs();
             }}
             onDeleted={() => {
               setSession(null);
-              setBriefs(listLocalBriefsForDate(date));
+              reloadBriefs();
               patchParams({ sessionId: null });
             }}
           />

@@ -308,9 +308,9 @@ export function groupApptsByDay(appts: ClientAppointment[]) {
 
 /* ---------- misc ---------- */
 export function providerEmailFromName(providerName?: string | null): string {
-  if (!providerName) return 'support@vetatyourdoor.com';
+  if (!providerName) return 'info@vetatyourdoor.com';
   const parts = providerName.trim().split(/\s+/);
-  if (parts.length === 0) return 'support@vetatyourdoor.com';
+  if (parts.length === 0) return 'info@vetatyourdoor.com';
   if (parts.length === 1) return `${parts[0].toLowerCase()}@vetatyourdoor.com`;
   const emailName = `${parts[0].charAt(0)}${parts[parts.length - 1]}`.toLowerCase().replace(/[^a-z0-9]/g, '');
   return `${emailName}@vetatyourdoor.com`;

@@ -58,6 +58,10 @@ import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import {
+  loadPracticeLicenses,
+  saveEmployeeLicenses,
+} from '../../api/employeeLicenses';
+import {
   fetchQuoUsers,
   fetchUnlinkedQuoCallers,
   dismissUnlinkedQuoCalls,
@@ -221,6 +225,12 @@ export default function SettingsEmployeeDirectory({
   const [isProvider, setIsProvider] = useState(false);
   const [middleName, setMiddleName] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
+  /**
+   * Licenses per state (owner, Nov 12, 2026; DEA numbers stay in Vet Snap). The practice-state license
+   * is also kept in licenseNumber, which certificates and Rx labels print.
+   */
+  const [licenseRows, setLicenseRows] = useState<LicenseRow[]>([]);
+  const [practiceState, setPracticeState] = useState('ME');
   const [signatureImage, setSignatureImage] = useState<string | null>(null);
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
@@ -397,6 +407,7 @@ export default function SettingsEmployeeDirectory({
     setTitle('');
     setDesignation('');
     setLicenseNumber('');
+    setLicenseRows([]);
     setSignatureImage(null);
     setPimsId('');
     setPimsUserId('');
@@ -437,6 +448,22 @@ export default function SettingsEmployeeDirectory({
     setTitle(str(full.title));
     setDesignation(str(full.designation));
     setLicenseNumber(str(r.licenseNumber));
+    setLicenseRows(
+      str(r.licenseNumber) ? [{ state: practiceState, number: str(r.licenseNumber) }] : [],
+    );
+    if (full.id != null) {
+      const empId = Number(full.id);
+      void loadPracticeLicenses(true)
+        .then((all) => {
+          setPracticeState(all.practiceState);
+          setLicenseRows(
+            all.licenses
+              .filter((l) => l.employeeId === empId && l.kind === 'veterinary')
+              .map((l) => ({ state: l.state, number: l.number })),
+          );
+        })
+        .catch(() => undefined);
+    }
     const storedSig =
       typeof r.signatureImage === 'string' && r.signatureImage.startsWith('data:image/')
         ? r.signatureImage
@@ -655,7 +682,7 @@ export default function SettingsEmployeeDirectory({
       email: blankToNull(email),
       title: blankToNull(title),
       designation: blankToNull(designation),
-      licenseNumber: blankToNull(licenseNumber),
+      licenseNumber: primaryLicenseFromRows(licenseRows, practiceState) ?? blankToNull(licenseNumber),
       signatureImage,
       pimsId: blankToNull(pimsId),
       pimsUserId: blankToNull(pimsUserId),
@@ -788,6 +815,11 @@ export default function SettingsEmployeeDirectory({
         isDeleted: prev.isDeleted === true,
       } as EmployeeDto;
       await saveEmployees(merged);
+      await saveEmployeeLicenses(
+        editingId,
+        Number.isFinite(practiceId) && practiceId > 0 ? practiceId : DEFAULT_PRACTICE_ID,
+        licenseRows.filter((l) => l.number.trim()),
+      );
       await saveProviderSignature(editingId, signatureImage);
       await saveOfficeAndRoles(editingId);
       if (
@@ -1465,6 +1497,11 @@ export default function SettingsEmployeeDirectory({
                   </fieldset>
 
                   <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">State licenses</legend>
+                    <LicenseRowsEditor rows={licenseRows} practiceState={practiceState} onChange={setLicenseRows} />
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
                     <legend className="settings-employee-modal__legend">Login and works with</legend>
                     {loginUser ? (
                       <>
@@ -1818,7 +1855,7 @@ export default function SettingsEmployeeDirectory({
                     <input className="input" value={designation} onChange={(e) => setDesignation(e.target.value)} />
                   </label>
                   <label>
-                    <span className="label">License number</span>
+                    <span className="label">{practiceState} license number</span>
                     <input className="input" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
                   </label>
                   {isProvider ? (
@@ -2047,6 +2084,71 @@ export default function SettingsEmployeeDirectory({
           onDone={(result) => void offboardDone(result)}
         />
       ) : null}
+    </div>
+  );
+}
+
+type LicenseRow = { state: string; number: string };
+
+/** The license certificates and Rx labels print: the practice-state one, else the first. */
+function primaryLicenseFromRows(rows: LicenseRow[], practiceState: string): string | null {
+  const filled = rows.filter((r) => r.number.trim());
+  const home = filled.find((r) => r.state.trim().toUpperCase() === practiceState);
+  return (home ?? filled[0])?.number.trim() || null;
+}
+
+function LicenseRowsEditor({
+  rows,
+  practiceState,
+  onChange,
+}: {
+  rows: LicenseRow[];
+  practiceState: string;
+  onChange: (rows: LicenseRow[]) => void;
+}) {
+  const update = (i: number, patch: Partial<LicenseRow>) =>
+    onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="settings-employee-modal__full settings-licenses">
+      {rows.length === 0 ? <p className="settings-licenses__empty">None on file.</p> : null}
+      {rows.map((r, i) => (
+        <div key={i} className="settings-licenses__row">
+          <input
+            className="input settings-licenses__state"
+            aria-label="State"
+            placeholder="ME"
+            maxLength={2}
+            value={r.state}
+            onChange={(e) => update(i, { state: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })}
+          />
+          <input
+            className="input"
+            aria-label="License number"
+            placeholder="License number"
+            value={r.number}
+            onChange={(e) => update(i, { number: e.target.value })}
+          />
+          <button
+            type="button"
+            className="btn secondary btn-sm"
+            aria-label="Remove this license"
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn secondary btn-sm"
+        onClick={() => onChange([...rows, { state: practiceState, number: '' }])}
+      >
+        + Add state license
+      </button>
+      <p className="settings-licenses__hint">
+        The {practiceState} license prints on certificates and Rx labels. One license per state. DEA numbers
+        are kept in Vet Snap.
+      </p>
     </div>
   );
 }

@@ -741,3 +741,8 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
+/** Like useAuth, but undefined outside AuthProvider (for shared widgets also rendered in tests). */
+export function useOptionalAuth() {
+  return useContext(AuthContext);
+}

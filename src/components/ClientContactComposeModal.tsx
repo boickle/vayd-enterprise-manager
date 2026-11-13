@@ -436,6 +436,7 @@ export function ClientContactComposeModal({
                 mergeValuesFromNames({
                   clientFullName: clientLabel,
                   doctorLastName: providerLastName,
+                  doctorEmployeeId: smsPrimaryProviderId ?? null,
                 })
               }
               disabled={sending}
@@ -528,6 +529,7 @@ export function ClientContactComposeModal({
                     mergeValuesFromNames({
                       clientFullName: clientLabel,
                       doctorLastName: providerLastName,
+                  doctorEmployeeId: smsPrimaryProviderId ?? null,
                     })
                   }
                   disabled={sending}
