@@ -59,7 +59,7 @@ These videos are new. They build on these EMR videos, which are already recorded
 | INV-13 | Ready to record, reloading the ledger after Add credit (app bug: the pay-link line is stale until reload). |
 | INV-15 | Ready to record (manager's pencil, the discount window and the promotion walked). The Credits & Discounts report is admin-only, so it's not shown. |
 | INV-16 | **Deposit steps ready; the "Today's payments" lists are not.** The deposit steps (Create deposit, slip, Recent deposits) were walked on a fresh seed. The **All payments** and **View payments** windows fail for a practice manager and list only old eVet payments, so the script no longer opens them (app bug, to fix on build-doctor-flow). |
-| INV-18, INV-19 | **Written Nov 12; not checked in the app or recorded yet.** Merge build-doctor-flow into this branch first (deposits: web ae72a657, API b68359a9). No Cypress spec or narration yet. Record INV-19 before INV-18 on the same seed. |
+| INV-18, INV-19 | **Recorded Nov 13, 2026 (Nova, 1.25×).** INV-18: 108 s, 6 clicks in sync. INV-19: 58 s, 2 clicks in sync. Shows D7 option 3 (deposit held for its visit) and the tidied deposit window. Specs `inv-18-appointment-deposits.cy.ts`, `inv-19-mark-deposit-required.cy.ts` reset Tom Chen themselves. |
 
 **App bugs found Nov 7 (not fixed here; fixes go on build-doctor-flow):**
 - Analytics, Payments: **All payments** and **View payments** call an admin-only endpoint that reads only old eVet payments (INV-16).

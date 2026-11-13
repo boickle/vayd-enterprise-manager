@@ -209,3 +209,4 @@ Dry runs only, free Mac voice (Samantha). No final takes yet.
 - **INV-18:** the client's payment stays off camera; "CL, Tech, DVM, Manager" approved.
 - **Deposit window style:** fix approved and made (stacked amount field, tighter spacing, red "Deposit required" box).
 - **Commits:** option 3 committed on `build-doctor-flow` in both repos (vayd-api `36554d01`, web `7fd75600`), merged into `training/invoicing-videos`; training files committed.
+- **Pass 2 (Nov 13):** both final takes recorded with Nova on the committed code. INV-18 108 s (6 clicks in sync), INV-19 58 s (2 clicks in sync). The "Summarize household" highlight is the app's primary button style, not a text selection.
