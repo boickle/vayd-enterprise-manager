@@ -47,7 +47,11 @@ export type EmailCampaignGoal = {
   appointmentTypeIds: number[];
 };
 
-export type EmailCampaignProtections = { petLossWindowDays: number };
+export type EmailCampaignProtections = {
+  petLossWindowDays: number;
+  /** A household whose pets are all inactive is mailed. Missing on older campaigns. */
+  includeInactivePetHouseholds?: boolean;
+};
 
 export type EmailCampaign = {
   id: string;

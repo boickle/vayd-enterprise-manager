@@ -2,6 +2,8 @@ import {
   Alert,
   Autocomplete,
   Box,
+  Checkbox,
+  FormControlLabel,
   MenuItem,
   Paper,
   Slider,
@@ -109,12 +111,41 @@ export default function GoalStep({
         <Typography variant="subtitle1" fontWeight={700} gutterBottom>
           Pet-loss protection
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          These households never receive the campaign: clients with no living pets; clients with a
-          pet that died or was made inactive recently; and clients with a euthanasia,
-          quality-of-life or other end-of-life visit recently or coming up. Pet names in the email
-          only ever include living pets.
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          A household with no pet on the chart is left out. A household that still has a living pet
+          is left out after a pet died or was made inactive recently, or after a euthanasia,
+          quality-of-life or other end-of-life visit recently or coming up. Pet names are living
+          pets, or the inactive pets when that household has no living pet and the box below is
+          checked.
         </Typography>
+        <FormControlLabel
+          sx={{ alignItems: 'flex-start', mx: 0, mb: 1 }}
+          control={
+            <Checkbox
+              size="small"
+              sx={{ pt: 0.25 }}
+              checked={protections.includeInactivePetHouseholds === true}
+              disabled={readOnly}
+              onChange={(e) =>
+                onProtectionsChange({
+                  ...protections,
+                  includeInactivePetHouseholds: e.target.checked,
+                })
+              }
+            />
+          }
+          label={
+            <Box>
+              <Typography variant="body2" fontWeight={700}>
+                Include households with inactive pets
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Sends to a household when every pet on the chart, or on a past visit, is inactive.
+                The same rule applies to a pasted list.
+              </Typography>
+            </Box>
+          }
+        />
         <Box sx={{ px: 1 }}>
           <Typography variant="body2" fontWeight={600}>
             “Recently” means the last {protections.petLossWindowDays} days
@@ -124,7 +155,9 @@ export default function GoalStep({
             max={730}
             step={15}
             value={protections.petLossWindowDays}
-            onChange={(_e, v) => onProtectionsChange({ petLossWindowDays: v as number })}
+            onChange={(_e, v) =>
+              onProtectionsChange({ ...protections, petLossWindowDays: v as number })
+            }
             disabled={readOnly}
             marks={[
               { value: 30, label: '30 days' },

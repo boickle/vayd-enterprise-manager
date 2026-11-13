@@ -162,6 +162,12 @@ export default function ReviewStep({
           </Typography>
           <Typography variant="body2">{campaign.protections.petLossWindowDays} days</Typography>
           <Typography variant="body2" color="text.secondary">
+            Inactive-pet households
+          </Typography>
+          <Typography variant="body2">
+            {campaign.protections.includeInactivePetHouseholds ? 'Included' : 'Left out'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
             Sending pace
           </Typography>
           <Typography variant="body2">

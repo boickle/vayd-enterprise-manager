@@ -3,6 +3,7 @@ import {
   Alert,
   Autocomplete,
   Box,
+  Checkbox,
   Chip,
   CircularProgress,
   FormControlLabel,
@@ -38,6 +39,7 @@ type Props = {
   protections: EmailCampaignProtections;
   options: CampaignOptions | null;
   onChange: (audience: EmailCampaignAudience) => void;
+  onProtectionsChange: (protections: EmailCampaignProtections) => void;
   readOnly: boolean;
   preview: { summary: AudienceSummary | null; loading: boolean; error: string | null };
 };
@@ -226,6 +228,7 @@ export default function AudienceStep({
   protections,
   options,
   onChange,
+  onProtectionsChange,
   readOnly,
   preview,
 }: Props) {
@@ -478,7 +481,12 @@ export default function AudienceStep({
       </Grid>
 
       <Grid item xs={12} md={5}>
-        <AudienceSummaryPanel {...preview} protections={protections} />
+        <AudienceSummaryPanel
+          {...preview}
+          protections={protections}
+          readOnly={readOnly}
+          onProtectionsChange={onProtectionsChange}
+        />
       </Grid>
     </Grid>
   );
@@ -489,12 +497,17 @@ export function AudienceSummaryPanel({
   loading,
   error,
   protections,
+  readOnly,
+  onProtectionsChange,
 }: {
   summary: AudienceSummary | null;
   loading: boolean;
   error: string | null;
   protections: EmailCampaignProtections;
+  readOnly: boolean;
+  onProtectionsChange: (protections: EmailCampaignProtections) => void;
 }) {
+  const includeInactive = protections.includeInactivePetHouseholds === true;
   const excluded = Object.entries(summary?.excluded ?? {}) as Array<
     [EmailCampaignSkipReason, number]
   >;
@@ -523,16 +536,47 @@ export function AudienceSummaryPanel({
         {summary ? ` (of ${summary.total.toLocaleString()} in this audience)` : ''}
       </Typography>
 
-      <Alert severity="info" icon={<ShieldCheck size={20} />} sx={{ mt: 2 }}>
+      <FormControlLabel
+        sx={{ mt: 2, alignItems: 'flex-start', mx: 0 }}
+        control={
+          <Checkbox
+            size="small"
+            sx={{ pt: 0.25 }}
+            checked={includeInactive}
+            disabled={readOnly}
+            onChange={(e) =>
+              onProtectionsChange({
+                ...protections,
+                includeInactivePetHouseholds: e.target.checked,
+              })
+            }
+          />
+        }
+        label={
+          <Box>
+            <Typography variant="body2" fontWeight={700}>
+              Include households with inactive pets
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              A household is included when every pet on the chart, or on a past visit, is inactive.
+              Households with no pet at all stay out. A household that still has a living pet is
+              still left out after a recent loss or an end-of-life visit. A pasted address is
+              checked the same way.
+            </Typography>
+          </Box>
+        }
+      />
+
+      <Alert severity="info" icon={<ShieldCheck size={20} />} sx={{ mt: 1 }}>
         <Typography variant="body2" fontWeight={700}>
-          Pet-loss protection is always on
+          {includeInactive ? 'Inactive-pet households are included' : 'Pet-loss protection is on'}
         </Typography>
         <Typography variant="body2">
-          Households with no living pets, a pet that died or was made inactive in the last{' '}
-          {protections.petLossWindowDays} days, or a euthanasia or other end-of-life visit in that
-          time are left out. People added by name and email are included too. If that address
-          belongs to a client, the same protections apply. This is checked again right before each
-          email is sent.
+          {includeInactive
+            ? `Households with no pet on the chart are still left out. A household that still has a living pet is left out after a pet died or was made inactive in the last ${protections.petLossWindowDays} days, or a euthanasia or other end-of-life visit in that time.`
+            : `Households with no living pets, a pet that died or was made inactive in the last ${protections.petLossWindowDays} days, or a euthanasia or other end-of-life visit in that time are left out.`}{' '}
+          People added by name and email are included too. If that address belongs to a client, the
+          same protections apply. This is checked again right before each email is sent.
         </Typography>
       </Alert>
 
