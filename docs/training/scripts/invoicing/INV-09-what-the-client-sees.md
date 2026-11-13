@@ -49,3 +49,7 @@
 - The open bill is a $25 nail trim for Juniper (not $22.50 for Maple), so the numbers on screen are $25.00.
 - Maria already has a saved Visa in the shared Stripe test account, so the pay form first shows **Card on file** (Visa 4242) and **Use a different card**. The video points at the saved card, clicks **Use a different card**, then shows **Name on card**, **Card number** and the save-my-card box.
 - Added "Done closes it" as its own click after the invoice window.
+
+## Change after recording (Nov 12, 2026)
+
+- The pay form's save box (step 7) now reads "Keep this card on file. Vet At Your Door may charge it for visits, refills, memberships and online store orders. You can ask us to remove it at any time." (PAY-C3), and the card on file is listed first (PAY-C4). See the README, "Saved cards changes".

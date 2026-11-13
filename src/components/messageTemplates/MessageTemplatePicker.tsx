@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useOptionalAuth } from '../../auth/AuthProvider';
+import { doctorLicenseNumber, loadPracticeLicenses, type PracticeLicenses } from '../../api/employeeLicenses';
 import { useMessageTemplates } from '../../hooks/useMessageTemplates';
 import {
   applyMergeFields,
@@ -21,13 +23,35 @@ type Props = {
 
 export default function MessageTemplatePicker({
   channel,
-  mergeValues,
+  mergeValues: baseMergeValues,
   disabled,
   onApply,
   currentSubject = '',
   currentBody = '',
 }: Props) {
   const { templates, loading } = useMessageTemplates(channel);
+  const myEmployeeId = (useOptionalAuth() as { employeeId?: string | null } | undefined)?.employeeId ?? null;
+  const [licenses, setLicenses] = useState<PracticeLicenses | null>(null);
+  useEffect(() => {
+    if (!baseMergeValues) return;
+    let live = true;
+    void loadPracticeLicenses()
+      .then((all) => live && setLicenses(all))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [baseMergeValues]);
+  /**
+   * Doctor license number (owner, Nov 12, 2026): the visit's doctor when the screen passes one, else
+   * the person writing (blank unless they hold a license in the practice's state).
+   */
+  const mergeValues = useMemo(() => {
+    if (!baseMergeValues) return baseMergeValues;
+    const doctorId = Number(baseMergeValues.doctor_employee_id || myEmployeeId || NaN);
+    const license = licenses ? doctorLicenseNumber(licenses, Number.isFinite(doctorId) ? doctorId : null) : '';
+    return { doctor_license_number: license, ...baseMergeValues };
+  }, [baseMergeValues, licenses, myEmployeeId]);
   const [selectedId, setSelectedId] = useState('');
   const [applyOnInsert, setApplyOnInsert] = useState(true);
 

@@ -3,7 +3,7 @@
  * Training video, INV-17: the most common money mistakes
  * (docs/training/scripts/invoicing/INV-17-common-money-mistakes.md). TEST stack, demo names only: Maria Rivera and Maple
  * (on the Adult plan), signed in as the manager (Robin Hale, so the Create deposit menu link shows). Maria has a saved
- * Stripe test card and $30 of account credit. Pointing only, except opening Card over phone and cancelling it.
+ * Stripe test card and $30 of account credit. Pointing only, except opening Type card manually and cancelling it.
  */
 import '../support/e2e';
 import { schedulingApi, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
@@ -59,10 +59,10 @@ describe('Training: INV-17 common money mistakes', () => {
     line('inv17-06', () => pointAt(() => btn('Tap to Pay'), 4000));
     line('inv17-07');
     line('inv17-08', () => {
-      tap(() => btn('Card over phone'));
-      cy.contains('Owner agreed to keep this card on file', { timeout: 30000 }).should('exist');
+      tap(() => btn('Type card manually'));
+      cy.contains('Owner agrees we may keep this card on file', { timeout: 30000 }).should('exist');
     });
-    line('inv17-09', () => pointAt(() => cy.contains('Owner agreed to keep this card on file'), 4500));
+    line('inv17-09', () => pointAt(() => cy.contains('Owner agrees we may keep this card on file'), 4500));
     line('inv17-10', () => {
       tap(() => cy.contains('.virtual-terminal__actions button', 'Cancel'));
       cy.get('.virtual-terminal').should('not.exist');

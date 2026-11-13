@@ -1,118 +1,122 @@
 [
- {
-  "id": "inv05-01",
-  "text": "Declines happen. How you handle them decides whether the family leaves confused, or charged twice."
- },
- {
-  "id": "inv05-02",
-  "text": "Tom Chen's saved card is on file for Biscuit's exam."
- },
- {
-  "id": "inv05-03",
-  "text": "If a card is declined, don't keep trying it."
- },
- {
-  "id": "inv05-04",
-  "text": "Click Card on file to charge it."
- },
- {
-  "id": "inv05-05",
-  "text": "Scout says the card was declined."
- },
- {
-  "id": "inv05-06",
-  "text": "Check the bill. The total is seventy five dollars, and nothing is paid."
- },
- {
-  "id": "inv05-07",
-  "text": "Tell Tom kindly, and ask for another card."
- },
- {
-  "id": "inv05-tap1",
-  "text": "In the field, you'll usually take a new card with Tap to Pay on the Stripe reader."
- },
- {
-  "id": "inv05-tap2",
-  "text": "This demo has no reader connected, so we'll use Card over phone. It works the same way."
- },
- {
-  "id": "inv05-08",
-  "text": "Click Card over phone to take the new card."
- },
- {
-  "id": "inv05-09",
-  "text": "Type the name on the card."
- },
- {
-  "id": "inv05-10",
-  "text": "Tom reads out the card number."
- },
- {
-  "id": "inv05-11",
-  "text": "The expiry."
- },
- {
-  "id": "inv05-12",
-  "text": "The security code."
- },
- {
-  "id": "inv05-13",
-  "text": "And the ZIP."
- },
- {
-  "id": "inv05-14",
-  "text": "Click Charge, once."
- },
- {
-  "id": "inv05-15",
-  "text": "This card is declined too. If a card you type in is declined, the message says to check the number. Check the number once, with Tom."
- },
- {
-  "id": "inv05-16",
-  "text": "He misread a digit. Click Cancel, and start the card again. If it's declined again, ask for another card."
- },
- {
-  "id": "inv05-16b",
-  "text": "Click Card over phone."
- },
- {
-  "id": "inv05-16c",
-  "text": "The name on the card."
- },
- {
-  "id": "inv05-16d",
-  "text": "This time, the right card number."
- },
- {
-  "id": "inv05-16e",
-  "text": "The expiry."
- },
- {
-  "id": "inv05-16f",
-  "text": "The security code."
- },
- {
-  "id": "inv05-16g",
-  "text": "And the ZIP."
- },
- {
-  "id": "inv05-17",
-  "text": "Click Charge, once."
- },
- {
-  "id": "inv05-18",
-  "text": "Scout says the card was charged and the invoice is paid."
- },
- {
-  "id": "inv05-19",
-  "text": "The old decline message is gone, and the bill shows paid."
- },
- {
-  "id": "inv05-20",
-  "text": "If the family can't pay today, leave the bill open and send a pay link. That's in the pay links video."
- },
- {
-  "id": "inv05-21",
-  "text": "The most common mistakes are trying the same card again and again, and taking a second card before checking the first wasn't charged. Remember: don't retry again and again. Check the invoice, then ask for another card."
- }
+  {
+    "id": "inv05-01",
+    "text": "Declines happen. How you handle them decides whether the family leaves confused, or charged twice."
+  },
+  {
+    "id": "inv05-02",
+    "text": "Tom Chen's saved card is on file for Biscuit's exam."
+  },
+  {
+    "id": "inv05-03",
+    "text": "If a card is declined, don't keep trying it."
+  },
+  {
+    "id": "inv05-04",
+    "text": "Click Card on file to charge it."
+  },
+  {
+    "id": "inv05-04b",
+    "text": "Scout shows the amount and the card first. Click Charge to confirm."
+  },
+  {
+    "id": "inv05-05",
+    "text": "Scout says the card was declined."
+  },
+  {
+    "id": "inv05-06",
+    "text": "Check the bill. The total is seventy five dollars, and nothing is paid."
+  },
+  {
+    "id": "inv05-07",
+    "text": "Tell Tom kindly, and ask for another card."
+  },
+  {
+    "id": "inv05-tap1",
+    "text": "In the field, you'll usually take a new card with Tap to Pay on the Stripe reader."
+  },
+  {
+    "id": "inv05-tap2",
+    "text": "This demo has no reader connected, so we'll type the card in instead."
+  },
+  {
+    "id": "inv05-08",
+    "text": "Click Type card manually to take the new card."
+  },
+  {
+    "id": "inv05-09",
+    "text": "Type the name on the card."
+  },
+  {
+    "id": "inv05-10",
+    "text": "Tom reads out the card number."
+  },
+  {
+    "id": "inv05-11",
+    "text": "The expiry."
+  },
+  {
+    "id": "inv05-12",
+    "text": "The security code."
+  },
+  {
+    "id": "inv05-13",
+    "text": "And the ZIP."
+  },
+  {
+    "id": "inv05-14",
+    "text": "Click Charge, once."
+  },
+  {
+    "id": "inv05-15",
+    "text": "This card is declined too. If a card you type in is declined, the message says to check the number. Check the number once, with Tom."
+  },
+  {
+    "id": "inv05-16",
+    "text": "He misread a digit. Click Cancel, and start the card again. If it's declined again, ask for another card."
+  },
+  {
+    "id": "inv05-16b",
+    "text": "Click Type card manually."
+  },
+  {
+    "id": "inv05-16c",
+    "text": "The name on the card."
+  },
+  {
+    "id": "inv05-16d",
+    "text": "This time, the right card number."
+  },
+  {
+    "id": "inv05-16e",
+    "text": "The expiry."
+  },
+  {
+    "id": "inv05-16f",
+    "text": "The security code."
+  },
+  {
+    "id": "inv05-16g",
+    "text": "And the ZIP."
+  },
+  {
+    "id": "inv05-17",
+    "text": "Click Charge, once."
+  },
+  {
+    "id": "inv05-18",
+    "text": "Scout says the card was charged and the invoice is paid."
+  },
+  {
+    "id": "inv05-19",
+    "text": "The old decline message is gone, and the bill shows paid."
+  },
+  {
+    "id": "inv05-20",
+    "text": "If the family can't pay today, leave the bill open and send a pay link. That's in the pay links video."
+  },
+  {
+    "id": "inv05-21",
+    "text": "The most common mistakes are trying the same card again and again, and taking a second card before checking the first wasn't charged. Remember: don't retry again and again. Check the invoice, then ask for another card."
+  }
 ]

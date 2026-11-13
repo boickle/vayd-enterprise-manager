@@ -5,6 +5,7 @@ import { loadStripePublishableKey } from '../../api/practicePublicConfig';
 import { isNetworkError, NOT_CHARGED_OFFLINE_MESSAGE } from '../../api/http';
 import { chargeKeyedCard, type VisitInvoice } from '../../api/visitWorkflow';
 import './VirtualTerminalModal.css';
+import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 type Props = {
   invoiceId: string;
@@ -109,7 +110,10 @@ export default function VirtualTerminalModal({
   return createPortal(
     <div className="virtual-terminal-backdrop" role="dialog" aria-modal="true">
       <div className="virtual-terminal">
-        <h3>Card over the phone</h3>
+        <h3>Type card manually</h3>
+        <p className="virtual-terminal__hint">
+          Typed-in cards cost us a higher card fee than Tap to Pay. Use this when the reader isn&apos;t working, the card won&apos;t tap, or the owner isn&apos;t with you.
+        </p>
         <p className="virtual-terminal__amount">
           Charge <strong>${amountDue.toFixed(2)}</strong>
         </p>
@@ -133,7 +137,7 @@ export default function VirtualTerminalModal({
             onChange={(e) => setSaveCard(e.target.checked)}
           />
           <span>
-            Owner agreed to keep this card on file
+            {CARD_ON_FILE_STAFF_WORDING}
             <span className="virtual-terminal__hint">
               {declinedBefore
                 ? 'They said no last time — only tick this if they have changed their mind.'

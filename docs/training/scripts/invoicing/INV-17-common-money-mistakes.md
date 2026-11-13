@@ -18,7 +18,7 @@
 | 3 | Checkout | Point at **Total** and **Paid** | "Two: retrying a declined card. Check Paid first, then ask for another card." | — |
 | 4 | Checkout | Point at a line with **Member 10%** | "Three: charging a member full price. Look for covered and Member 10%, or Reprice." | — |
 | 5 | Checkout | Point at **Gift card** and **Account credit** | "Four: charging the card when the family has credit or a gift card. Apply those first." | — |
-| 6 | Checkout | Point at "Owner agreed to keep this card on file" in Card over phone, or the consent box above the payment buttons | "Five: saving a card without asking." | — |
+| 6 | Checkout | Point at "Owner agrees we may keep this card on file…" in Type card manually, or the consent box above the payment buttons | "Five: saving a card without asking." | — |
 | 7 | Left menu | Point at **Create deposit** | "Six: checks left in the car. Deposit cash and checks the same day." | Signed in as Robin Hale (manager): a plain CL has no **Create deposit** in the menu |
 | 8 | Voice-over | — | "Seven: voiding a paid bill. Scout stops you. Refund the card payment first." | — |
 | 9 | Voice-over | — | "Eight: a plain refund when items came back. Use Return items, so stock and the chart are right, and the money goes back card first, then credit." | — |
@@ -41,3 +41,7 @@
 - **Returns:** the return mistake (step 9) is back in now that the return-balance bug is fixed (INV-11, Nov 7).
 - **Create deposit** is hidden from a plain CL (checked Nov 7, INV-16), so step 7 is recorded as the manager.
 - **Ready to record.**
+
+## Change after recording (Nov 12, 2026)
+
+- Step 6's consent box now uses the practice-wide staff wording (PAY-C3). See the README, "Saved cards changes".

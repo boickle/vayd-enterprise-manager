@@ -18,7 +18,7 @@ describe('Training: INV-03 card on file', () => {
     loadNarration();
     resetInvoicingWorld();
     // The Riveras have no card saved and no recorded refusal.
-    // Stripe finds saved cards by the client's email, so each take uses a fresh Rivera email that Stripe has never seen.
+    // A fresh Rivera email per take keeps each take's Stripe test customer separate (Scout no longer finds cards by email, PAY-C1).
     sql(`UPDATE clients SET email='maria.rivera.inv03.${Date.now()}@example.com', "stripeCustomerId"=NULL, "savedPaymentMethodId"=NULL, "cardOnFileConsentAt"=NULL, "cardOnFileDeclinedAt"=NULL, "cardOnFileConsentAgreementVersion"=NULL WHERE id=${client}`);
 
     // A visit with a bill: charge items straight onto the open bill (setup, before the clock).
@@ -40,7 +40,7 @@ describe('Training: INV-03 card on file', () => {
     let first = 0;
     bill(90, [['Nail trim', 22.5], ['Dental X-rays', 162]]).then((a) => (first = a));
     cy.then(() => signInAsScheduling('cl', page(first)));
-    cy.contains('button', 'Card over phone', { timeout: 60000 }).should('exist');
+    cy.contains('button', 'Type card manually', { timeout: 60000 }).should('exist');
     cy.contains('.soap-invoice-row.total', '$184.50', { timeout: 60000 }).should('exist');
     cy.wait(1500);
 
@@ -58,9 +58,10 @@ describe('Training: INV-03 card on file', () => {
     line('inv03-tap1', () => pointAt(() => btn('Tap to Pay'), 4000));
     line('inv03-tap2');
     line('inv03-05', () => {
-      tap(() => btn('Card over phone'));
-      cy.contains('h3', 'Card over the phone').should('be.visible');
+      tap(() => btn('Type card manually'));
+      cy.contains('h3', 'Type card manually').should('be.visible');
     });
+    line('inv03-05b', () => pointAt(() => cy.contains('.virtual-terminal__hint', 'Typed-in cards cost'), 5000));
     line('inv03-06', () => {
       cy.get('.virtual-terminal__field input').first().clear();
       typeSlowly(() => cy.get('.virtual-terminal__field input').first(), 'Maria Rivera');
@@ -74,8 +75,8 @@ describe('Training: INV-03 card on file', () => {
     line('inv03-10', () => stripeField('.virtual-terminal__card', 'postal', '27606'));
     line('inv03-11', () => tap(() => cy.get('.virtual-terminal__check')));
     line('inv03-12', () => tap(() => cy.get('.virtual-terminal__actions .btn.primary')));
-    offCamera(() => cy.contains('Card charged over the phone', { timeout: 90000 }).should('exist'));
-    line('inv03-13', () => pointAt(() => cy.contains('Card charged over the phone'), 4500));
+    offCamera(() => cy.contains('Card charged — invoice marked paid', { timeout: 90000 }).should('exist'));
+    line('inv03-13', () => pointAt(() => cy.contains('Card charged — invoice marked paid'), 4500));
     line('inv03-14', () => pointAt(() => cy.get('.soap-invoice-badge'), 3500));
     // Later that day: a second visit and a small bill for Maple.
     let second = 0;

@@ -133,6 +133,7 @@ function invoiceLineIdFromNotes(notes: string | null | undefined): string | null
 }
 
 function mailOrderOriginLabel(order: MailOrder): string {
+  if (order.packageShipment) return 'Package mail';
   if (order.origin === 'staff_mail') {
     if (invoiceLineIdFromNotes(order.notes)) return 'Staff mail from visit';
     if (linkedInvoiceId(order)) return 'Staff mail via direct invoice';
@@ -150,7 +151,7 @@ type MailSynopsisPetItems = {
 function mailSynopsisItemsByPet(order: MailOrder): MailSynopsisPetItems[] {
   const groups = new Map<string, MailSynopsisPetItems>();
   for (const line of order.lines || []) {
-    const patientName = line.patientName || 'Household';
+    const patientName = line.patientName || (order.packageShipment ? 'Package' : 'Household');
     const patientId = line.patientId ?? null;
     const groupKey = patientId != null ? `p-${patientId}` : `n-${patientName}`;
     const group =
@@ -198,6 +199,7 @@ type QueueFilter =
   | 'cancel_requests'
   | MailPharmacyStage
   | 'ready'
+  | 'packages'
   | 'all';
 
 function matchesMailSearch(order: MailOrder, query: string): boolean {
@@ -221,6 +223,8 @@ function matchesMailSearch(order: MailOrder, query: string): boolean {
 function matchesQueueFilter(order: MailOrder, filter: QueueFilter): boolean {
   const stage = pharmacyStageOf(order);
   if (filter === 'all') return true;
+  // Packages (ashes etc.) at every stage, shipped ones included, so they can be found later.
+  if (filter === 'packages') return Boolean(order.packageShipment);
   // A cancellation request stays in front of the team until they decide, even on a finished order.
   if (filter === 'cancel_requests') return mailCancelPending(order);
   if (filter === 'open') return mailCancelPending(order) || (stage !== 'done' && stage !== 'rejected');
@@ -816,7 +820,13 @@ export default function MailOrdersPage() {
 
   useEffect(() => {
     const id = Number(searchParams.get('orderId'));
-    if (Number.isFinite(id) && id > 0) setOpenId(id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (id === openId) return;
+    // Opened from a link: don't carry the last order's weight or rates over.
+    const row = rows.find((r) => r.id === id);
+    setOpenId(id);
+    setRates({ rates: [], carriers: [], notes: [] });
+    setWeight(row?.packageWeightOz != null ? String(row.packageWeightOz) : '');
   }, [searchParams]);
 
   useEffect(() => {
@@ -1031,6 +1041,7 @@ export default function MailOrdersPage() {
             ['contacted', 'Contacted'],
             ['done', 'Done'],
             ['rejected', 'Rejected'],
+            ['packages', 'Packages'],
             ['all', 'All'],
           ] as Array<[QueueFilter, string]>
         ).map(([key, label]) => {
@@ -1156,7 +1167,9 @@ export default function MailOrdersPage() {
                             )}
                           </span>
                         ))
-                      : 'No pet on file'}
+                      : row.packageShipment
+                        ? ''
+                        : 'No pet on file'}
                   </div>
                   <div className="mail-queue__meta">
                     {(() => {
@@ -1165,9 +1178,9 @@ export default function MailOrdersPage() {
                           ? (row.lines || []).find((line) => line.scriptPrescriberName)
                               ?.scriptPrescriberName
                           : row.doctorName;
+                      if (row.packageShipment) return '';
                       return name ? `Dr ${name}` : 'No doctor on script';
-                    })()}{' '}
-                    · Created by{' '}
+                    })()}{row.packageShipment ? '' : ' · '}Created by{' '}
                     {row.createdByName || row.customerName || '—'}
                   </div>
                 </div>
@@ -1266,6 +1279,9 @@ export default function MailOrdersPage() {
             setRows((rs) => [created, ...rs]);
             setStaffOpen(false);
             setOpenId(created.id);
+            // A new order starts with no weight or rates, not the last order's.
+            setRates({ rates: [], carriers: [], notes: [] });
+            setWeight(created.packageWeightOz != null ? String(created.packageWeightOz) : '');
             const nextParams = new URLSearchParams(searchParams);
             nextParams.set('orderId', String(created.id));
             setSearchParams(nextParams, { replace: true });
@@ -1681,8 +1697,11 @@ function OrderDetail({
   const [shipError, setShipError] = useState<string | null>(null);
   const [sendingThanks, setSendingThanks] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
-  const shipBlocked = !mailFillDone(open) || !open.fillBranchId
-    ? 'Mark this filled before buying a label.'
+  const shipsFromTyped = Boolean(open.packageShipment && open.shipFromLine1);
+  const shipBlocked = !mailFillDone(open) || (!open.fillBranchId && !shipsFromTyped)
+    ? open.packageShipment
+      ? 'Choose where this package ships from: make it again with + New mail order.'
+      : 'Mark this filled before buying a label.'
     : !(Number(weight) > 0)
       ? 'Enter the package weight in ounces to get rates or print a label.'
       : null;
@@ -2497,9 +2516,11 @@ function OrderDetail({
                     EasyPost only returns carriers connected on that account — add UPS
                     there if it is missing. These are EasyPost retail/account rates, not
                     Stamps.com negotiated postage.
-                    {open.fillBranchName
-                      ? ` Quotes ship from ${open.fillBranchName}.`
-                      : ' Fill the order first so quotes use that office ZIP.'}
+                    {shipsFromTyped
+                      ? ` Quotes ship from ${open.shipFromLine1}, ${open.shipFromCity} ${open.shipFromState} ${open.shipFromPostal}.`
+                      : open.fillBranchName
+                        ? ` Quotes ship from ${open.fillBranchName}.`
+                        : ' Fill the order first so quotes use that office ZIP.'}
                   </p>
                   {open.labelRefundStatus ? (
                     <p className="settings-muted">
@@ -2926,6 +2947,20 @@ function OrderDetail({
               const currentScript = scriptsByLine[line.id] ?? line.scriptText ?? '';
               const scriptDirty = currentScript.trim() !== (line.scriptText || '').trim();
               const stockItemId = line.stockInventoryItemId ?? line.inventoryItemId ?? null;
+              if (open.packageShipment) {
+                return (
+                  <div key={line.id} className="mail-queue__line" data-testid="mail-package-line">
+                    <div className="mail-queue__line-head">
+                      <h4>
+                        {line.name} × {Number(line.quantity)}
+                      </h4>
+                    </div>
+                    <p className="settings-muted" style={{ margin: 0 }}>
+                      Package mail, not a pharmacy fill: no approval, directions or Rx label.
+                    </p>
+                  </div>
+                );
+              }
               return (
               <div key={line.id} className="mail-queue__line">
                 <div className="mail-queue__line-head">
@@ -3892,15 +3927,33 @@ function OrderDetail({
               onRun={onRun}
             />
           )}
-          <p className="settings-muted" style={{ margin: 0 }}>
-            Doctor {open.doctorName || '—'}
-            <br />
-            Created by {open.createdByName || open.customerName || '—'}
-            <br />
-            Filled by {open.fillerName || '—'}
-            {open.fillBranchName ? ` at ${open.fillBranchName}` : ''}
-            {open.secondCheckerName ? ` · Checked by ${open.secondCheckerName}` : ''}
-          </p>
+          {open.packageShipment ? (
+            <p className="settings-muted" style={{ margin: 0 }} data-testid="mail-ship-from">
+              Ships from{' '}
+              {shipsFromTyped
+                ? [
+                    open.shipFromName,
+                    open.shipFromLine1,
+                    open.shipFromLine2,
+                    `${open.shipFromCity || ''} ${open.shipFromState || ''} ${open.shipFromPostal || ''}`.trim(),
+                  ]
+                    .filter(Boolean)
+                    .join(', ')
+                : open.fillBranchName || '—'}
+              <br />
+              Package mail, made by {open.createdByName || '—'}
+            </p>
+          ) : (
+            <p className="settings-muted" style={{ margin: 0 }}>
+              Doctor {open.doctorName || '—'}
+              <br />
+              Created by {open.createdByName || open.customerName || '—'}
+              <br />
+              Filled by {open.fillerName || '—'}
+              {open.fillBranchName ? ` at ${open.fillBranchName}` : ''}
+              {open.secondCheckerName ? ` · Checked by ${open.secondCheckerName}` : ''}
+            </p>
+          )}
           {(open.labelUrl || open.trackingCode) && (
             <>
               <p>
@@ -4530,6 +4583,39 @@ export function StaffCreate({
   const [sendTo, setSendTo] = useState('');
   const [busy, setBusy] = useState(false);
   const recipient = client ? clientDisplayName(client) : sendTo.trim();
+  /** Where the package leaves from: an office id, or 'other' for a typed address. */
+  const [offices, setOffices] = useState<PracticeBranch[]>([]);
+  const [shipFromChoice, setShipFromChoice] = useState('');
+  const [fromAddr, setFromAddr] = useState({ name: '', line1: '', line2: '', city: '', state: '', postal: '' });
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      listPracticeBranches(practiceId).catch(() => [] as PracticeBranch[]),
+      getPracticeSettings(practiceId).catch(() => ({})),
+    ]).then(([rows, settings]) => {
+      if (cancelled) return;
+      const active = rows.filter((row) => row.isActive !== false);
+      setOffices(active);
+      const preferred = parseOnlineStoreFulfillmentBranchId(settings);
+      const pick =
+        active.find((row) => row.id === preferred) || active.find((row) => row.isDefault) || active[0];
+      setShipFromChoice((prev) => prev || (pick ? String(pick.id) : 'other'));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
+  const fromTyped = shipFromChoice === 'other';
+  const fromComplete =
+    !fromTyped ||
+    Boolean(
+      fromAddr.line1.trim() &&
+        fromAddr.city.trim() &&
+        /^[A-Za-z]{2}$/.test(fromAddr.state.trim()) &&
+        /^\d{5}(-\d{4})?$/.test(fromAddr.postal.trim()),
+    );
+  const setFrom = (key: keyof typeof fromAddr, value: string) =>
+    setFromAddr((prev) => ({ ...prev, [key]: value }));
 
   useEffect(() => {
     const q = clientQ.trim();
@@ -4703,6 +4789,73 @@ export function StaffCreate({
               placeholder="e.g. Ashes — small urn for Maple"
             />
           </label>
+          <label className="settings-label">
+            Ship from
+            <select
+              className="settings-input"
+              data-testid="new-mail-ship-from"
+              value={shipFromChoice}
+              onChange={(e) => setShipFromChoice(e.target.value)}
+            >
+              {offices.map((row) => (
+                <option key={row.id} value={String(row.id)}>
+                  {row.name}
+                </option>
+              ))}
+              <option value="other">Another address…</option>
+            </select>
+          </label>
+          {fromTyped ? (
+            <div className="mail-ship-picker__manual" data-testid="new-mail-ship-from-address">
+              <input
+                className="mail-ship-picker__input"
+                aria-label="Ship from name"
+                placeholder="Name on the return address (optional)"
+                value={fromAddr.name}
+                onChange={(e) => setFrom('name', e.target.value)}
+              />
+              <input
+                className="mail-ship-picker__input"
+                aria-label="Ship from street"
+                placeholder="Street or PO Box"
+                value={fromAddr.line1}
+                onChange={(e) => setFrom('line1', e.target.value)}
+              />
+              <input
+                className="mail-ship-picker__input"
+                aria-label="Ship from line 2"
+                placeholder="Apt, suite (optional)"
+                value={fromAddr.line2}
+                onChange={(e) => setFrom('line2', e.target.value)}
+              />
+              <div className="mail-ship-picker__row">
+                <input
+                  className="mail-ship-picker__input mail-ship-picker__city"
+                  aria-label="Ship from city"
+                  placeholder="City"
+                  value={fromAddr.city}
+                  onChange={(e) => setFrom('city', e.target.value)}
+                />
+                <input
+                  className="mail-ship-picker__input mail-ship-picker__state"
+                  aria-label="Ship from state"
+                  placeholder="NC"
+                  maxLength={2}
+                  value={fromAddr.state}
+                  onChange={(e) => setFrom('state', e.target.value.toUpperCase())}
+                />
+                <input
+                  className="mail-ship-picker__input mail-ship-picker__zip"
+                  aria-label="Ship from ZIP"
+                  placeholder="ZIP"
+                  inputMode="numeric"
+                  maxLength={10}
+                  value={fromAddr.postal}
+                  onChange={(e) => setFrom('postal', e.target.value)}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="settings-modal-actions">
             <button type="button" className="btn secondary" onClick={onClose}>
               Cancel
@@ -4710,7 +4863,7 @@ export function StaffCreate({
             <button
               type="button"
               className="btn primary"
-              disabled={busy || !recipient || !packageInfo.trim()}
+              disabled={busy || !recipient || !packageInfo.trim() || !shipFromChoice || !fromComplete}
               onClick={() => {
                 const clientId = Number(client?.id);
                 const patientId = patient ? Number(patient.id) : null;
@@ -4743,6 +4896,18 @@ export function StaffCreate({
                       }
                     : { name: recipient },
                   lines: [{ name: packageInfo.trim(), quantity: 1 }],
+                  ...(fromTyped
+                    ? {
+                        shipFrom: {
+                          name: fromAddr.name.trim() || undefined,
+                          line1: fromAddr.line1.trim(),
+                          line2: fromAddr.line2.trim() || undefined,
+                          city: fromAddr.city.trim(),
+                          state: fromAddr.state.trim().toUpperCase(),
+                          postal: fromAddr.postal.trim(),
+                        },
+                      }
+                    : { fillBranchId: Number(shipFromChoice) }),
                 }).finally(() => setBusy(false));
               }}
             >

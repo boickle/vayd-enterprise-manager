@@ -46,6 +46,7 @@ describe('Training: INV-05 card declined', () => {
     line('inv05-02', () => pointAt(() => btn('Card on file'), 3500));
     line('inv05-03');
     line('inv05-04', () => tap(() => btn('Card on file')));
+    line('inv05-04b', () => tap(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/)));
     offCamera(() => cy.contains('Your card was declined', { timeout: 90000 }).should('exist'));
     line('inv05-05', () => pointAt(() => cy.contains('Your card was declined'), 4000));
     line('inv05-06', () => pointAt(() => cy.get('.soap-invoice-row.total'), 3500));
@@ -53,8 +54,8 @@ describe('Training: INV-05 card declined', () => {
     line('inv05-tap1', () => pointAt(() => btn('Tap to Pay'), 4000));
     line('inv05-tap2');
     line('inv05-08', () => {
-      tap(() => btn('Card over phone'));
-      cy.contains('h3', 'Card over the phone').should('be.visible');
+      tap(() => btn('Type card manually'));
+      cy.contains('h3', 'Type card manually').should('be.visible');
     });
     line('inv05-09', () => {
       cy.get('.virtual-terminal__field input').first().clear();
@@ -75,8 +76,8 @@ describe('Training: INV-05 card declined', () => {
       cy.get('.virtual-terminal').should('not.exist');
     });
     line('inv05-16b', () => {
-      tap(() => btn('Card over phone'));
-      cy.contains('h3', 'Card over the phone').should('be.visible');
+      tap(() => btn('Type card manually'));
+      cy.contains('h3', 'Type card manually').should('be.visible');
     });
     line('inv05-16c', () => {
       cy.get('.virtual-terminal__field input').first().clear();
@@ -90,8 +91,8 @@ describe('Training: INV-05 card declined', () => {
     line('inv05-16f', () => stripeField(card, 'cvc', '123'));
     line('inv05-16g', () => stripeField(card, 'postal', '27513'));
     line('inv05-17', () => tap(() => cy.get('.virtual-terminal__actions .btn.primary')));
-    offCamera(() => cy.contains('Card charged over the phone', { timeout: 90000 }).should('exist'));
-    line('inv05-18', () => pointAt(() => cy.contains('Card charged over the phone'), 4000));
+    offCamera(() => cy.contains('Card charged — invoice marked paid', { timeout: 90000 }).should('exist'));
+    line('inv05-18', () => pointAt(() => cy.contains('Card charged — invoice marked paid'), 4000));
     line('inv05-19', () => {
       cy.contains('Your card was declined').should('not.exist');
       pointAt(() => cy.contains('.soap-invoice-row', 'Paid'), 4000);
