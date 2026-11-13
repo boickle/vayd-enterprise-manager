@@ -146,6 +146,36 @@ function formatEastern(iso: string): string {
   });
 }
 
+/**
+ * Sample values for the {{placeholders}} the rules can use (API: TASK_AUTOMATION_PLACEHOLDERS).
+ * The read-only view shows wording with these filled in, so nobody sees raw braces.
+ */
+const SAMPLE_VALUES: Record<string, string> = {
+  client: 'Maria Rivera',
+  patient: 'Maple',
+  plan: 'PLUS',
+  doctor: 'Dr. Frey',
+  opened: 'Nov 10, 9:15 AM',
+  branch: 'Main Street',
+  invoice: '#1042',
+  total: '$184.50',
+  headline: '2 items on the order list',
+  items: 'Heartgard Plus, 2 boxes',
+  item: 'Heartgard Plus',
+  count: '2',
+  lab: 'CBC panel',
+  forms: 'Lab form',
+  phone: '(555) 555-0142',
+  reason: 'No answer',
+  when: 'Nov 12, 10:15 AM',
+  week: 'Nov 9',
+  lastDownload: 'Nov 6',
+};
+
+function fillSampleValues(template: string): string {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, key: string) => SAMPLE_VALUES[key] ?? '');
+}
+
 /** Eastern time in the page's usual "ET" wording, e.g. "Nov 12, 6:00 PM ET". */
 function formatEasternTime(iso: string): string {
   const when = new Date(iso).toLocaleString('en-US', {
@@ -337,7 +367,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
             ) : null}
 
             {readOnly && rule.bodyTemplate ? (
-              <p className="auto-tasks__builtin-copy">{rule.bodyTemplate}</p>
+              <p className="auto-tasks__builtin-copy">{fillSampleValues(rule.bodyTemplate)}</p>
             ) : null}
 
             {!readOnly && open && (
