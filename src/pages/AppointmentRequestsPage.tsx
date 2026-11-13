@@ -153,6 +153,7 @@ import {
   type AppointmentRequestListTab,
 } from '../appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
+import { recordsPath } from '../records-nav';
 import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { RouteButton } from '../components/appointmentRequests/RouteButton';
@@ -179,7 +180,6 @@ import {
   StatusPillMenu,
   type StatusMenuItem,
 } from '../components/appointmentRequests/StatusPillMenu';
-import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
@@ -2344,7 +2344,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         label: 'Open records requests',
         hint: item.records?.toSummarize ? 'Summarize and close out there' : undefined,
         onClick: () =>
-          navigate(`${SCHEDULING_TOOLS_PATH_PREFIX}/records?q=${encodeURIComponent(clientName)}`),
+          navigate(recordsPath(clientName)),
       });
     }
     return items;
