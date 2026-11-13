@@ -311,6 +311,8 @@ type LedgerRow = {
   creditActivity?: EvetCreditActivity;
   /** Running eVet account credit balance row. */
   isAccountCredit?: boolean;
+  /** Appointment deposit bill (PAY-A19): shown as a deposit, not a $0 bill. */
+  deposit?: DepositRowInfo | null;
 };
 
 const FIN_SPLIT_KEY = 'scout.clientFin.ledgerSplitPct';
@@ -762,6 +764,36 @@ export function LineAmount({
 
 function dueOf(inv: VisitInvoice): number {
   return (Number(inv.total) || 0) - (Number(inv.amountPaid) || 0);
+}
+
+export type DepositRowInfo = {
+  asked: number;
+  paid: number;
+  /** What is still on the account from it (spending credit lowers the bill's amount paid). */
+  creditLeft: number;
+};
+
+/**
+ * Appointment deposit bill (PAY-A19): what was asked for, what the client paid (real money, not
+ * account credit), and how much of it is still on the account. Null for any other bill.
+ */
+export function depositRowInfo(inv: VisitInvoice): DepositRowInfo | null {
+  if (inv.depositForAppointmentId == null) return null;
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const paid = (inv.tenders ?? [])
+    .filter((t) => !t.voidedAt && t.method !== 'account_credit' && (t as { isDeleted?: boolean }).isDeleted !== true)
+    .reduce((sum, t) => sum + (Number(t.amount) || 0) - (Number(t.refundedAmount) || 0), 0);
+  return {
+    asked: round(Number(inv.depositAmount) || 0),
+    paid: round(paid),
+    creditLeft: round(Math.max(0, -dueOf(inv))),
+  };
+}
+
+/** Status words for a deposit row: Not paid, Part paid, Paid. */
+export function depositStatusText(d: DepositRowInfo): string {
+  if (d.paid < 0.009) return 'Not paid';
+  return d.asked - d.paid > 0.009 ? 'Part paid' : 'Paid';
 }
 
 function invoiceMailPaymentStatus(inv: VisitInvoice): 'paid' | 'awaiting_payment' {
@@ -1323,10 +1355,11 @@ function tenderPayLabel(tender: VisitInvoiceTender): string {
   return cardFingerprint(tender) ?? methodLabel(tender.method, tender.paymentTypeName);
 }
 
-export type InvoiceWhere = 'Online store' | 'Visit' | 'Direct invoice';
+export type InvoiceWhere = 'Online store' | 'Visit' | 'Deposit' | 'Direct invoice';
 
-/** Where the charge was taken: the store, a SOAP visit, or a counter invoice. */
+/** Where the charge was taken: the store, a SOAP visit, an appointment deposit, or a counter invoice. */
 function invoiceWhere(inv: VisitInvoice, orders: MailOrder[]): InvoiceWhere {
+  if (inv.depositForAppointmentId != null) return 'Deposit';
   const token = `invoice:${inv.id}`;
   if (orders.some((o) => o.origin === 'online_store' && (o.notes || '').includes(token))) {
     return 'Online store';
@@ -1348,9 +1381,10 @@ function directInvoiceSummary(inv: VisitInvoice, orders: MailOrder[]): string | 
   return lines.length > 1 ? `${short} +${lines.length - 1} more` : short;
 }
 
-function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'direct' {
+function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'deposit' | 'direct' {
   if (where === 'Online store') return 'store';
   if (where === 'Visit') return 'visit';
+  if (where === 'Deposit') return 'deposit';
   return 'direct';
 }
 
@@ -2867,7 +2901,14 @@ export default function ClientFinancialWorkspace({
         }),
         actorNote,
         where: invoiceWhere(inv, mailOrders),
-        lineSummary: directInvoiceSummary(inv, mailOrders),
+        lineSummary:
+          inv.depositForAppointmentId != null
+            ? (() => {
+                const visit = visitLabel(inv.depositForAppointmentId);
+                return visit ? `For ${visit}` : 'For an upcoming visit';
+              })()
+            : directInvoiceSummary(inv, mailOrders),
+        deposit: deleted || inv.status === 'void' ? null : depositRowInfo(inv),
         paidHow: paidHowLabel(inv),
         paymentNote: voidedPaymentNote(
           (inv.tenders ?? [])
@@ -5572,26 +5613,46 @@ export default function ClientFinancialWorkspace({
                             {row.actorNote ? ` · ${row.actorNote}` : ''}
                           </div>
                         </td>
-                        <td>{statusLabel(row.status)}</td>
+                        <td>{row.deposit ? depositStatusText(row.deposit) : statusLabel(row.status)}</td>
                         <td>
-                          {money(
-                            row.scout && selected?.id === row.scout.id && hasUnsavedDeletes
-                              ? previewTotal
-                              : row.total
+                          {row.deposit ? (
+                            <>
+                              {money(row.deposit.asked)}
+                              <div className="client-fin__muted">Deposit asked</div>
+                            </>
+                          ) : (
+                            money(
+                              row.scout && selected?.id === row.scout.id && hasUnsavedDeletes
+                                ? previewTotal
+                                : row.total
+                            )
                           )}
                         </td>
                         <td>
-                          {money(row.paid)}
+                          {money(row.deposit ? row.deposit.paid : row.paid)}
                           {row.paidHow ? <div className="client-fin__muted">{row.paidHow}</div> : null}
                           {row.paymentNote ? (
                             <div className="client-fin__muted">{row.paymentNote}</div>
                           ) : null}
                         </td>
-                        <td>
-                          {money(
-                            row.scout && selected?.id === row.scout.id && hasUnsavedDeletes
-                              ? previewTotal - (Number(selected.amountPaid) || 0)
-                              : row.due
+                        <td data-testid={row.deposit ? 'ledger-deposit-due' : undefined}>
+                          {row.deposit ? (
+                            row.deposit.creditLeft > 0.009 ? (
+                              <>
+                                {money(row.deposit.creditLeft)}
+                                <div className="client-fin__muted">Credit on account</div>
+                              </>
+                            ) : row.deposit.paid > 0.009 ? (
+                              <div className="client-fin__muted">Used</div>
+                            ) : (
+                              <div className="client-fin__muted">Nothing paid yet</div>
+                            )
+                          ) : (
+                            money(
+                              row.scout && selected?.id === row.scout.id && hasUnsavedDeletes
+                                ? previewTotal - (Number(selected.amountPaid) || 0)
+                                : row.due
+                            )
                           )}
                         </td>
                       </tr>
@@ -6053,7 +6114,9 @@ export default function ClientFinancialWorkspace({
                         ? 'Deleted invoice'
                         : selected.status === 'void'
                           ? 'Voided invoice'
-                          : selected.status === 'open' && visibleLines.length === 0
+                          : selected.depositForAppointmentId != null
+                            ? 'Appointment deposit'
+                            : selected.status === 'open' && visibleLines.length === 0
                             ? 'New invoice'
                             : dueOf(selected) > 0.009
                               ? 'Open invoice'

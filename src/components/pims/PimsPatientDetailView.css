@@ -1341,6 +1341,21 @@
   gap: 4px;
 }
 
+/* A real button in this row of text links (Summarize household): undo the link look, which left a
+   tight dark box with underlined text that looked like selected text. */
+.pims-emr-story__actions .brief-btn {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.pims-emr-story__actions .brief-btn.primary {
+  background: #1e4d8c;
+  border-color: #1e4d8c;
+  color: #fff;
+}
+
 .pims-emr-prep__title {
   margin: 0 0 4px;
   font-size: 14px;
