@@ -1287,6 +1287,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     // Price-list users see bundles in this list; editors open the bundle view instead.
     // Missing cost loads with no search text too: it scans the whole inventory list.
     if ((!q && !showAllItems && !missingCostOnly) || (typeFilter === 'bundle' && !priceListOnly)) {
+      searchSeq.current += 1;
+      setSearching(false);
       setSearchResults([]);
       setBundleHits([]);
       setSearchError(null);
@@ -1294,6 +1296,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       return;
     }
     const seq = ++searchSeq.current;
+    // Searching starts now, not after the debounce, so "No matches." never shows while results are on the way.
+    setSearching(true);
     const t = window.setTimeout(async () => {
       setSearching(true);
       setSearchError(null);
@@ -2859,6 +2863,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           searchError && (
           <p className="settings-error-message" style={{ marginTop: 0 }}>
             {searchError}
+          </p>
+        )}
+        {listActive &&
+          searching &&
+          searchResults.length === 0 &&
+          bundleHits.length === 0 && (
+          <p className="settings-muted" style={{ marginTop: 0 }} role="status">
+            Searching…
           </p>
         )}
         {listActive &&
@@ -5080,7 +5092,18 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     item={detail.item}
                     priceBreaks={detail.priceBreaks}
                     onChanged={async () => {
-                      await refreshDetailBundle(selected, { keepOpen: true });
+                      // Only the breaks changed: re-read them, not the whole item (that reload also
+                      // recalculates ABC classes and every branch's prices and stock, and is slow).
+                      const fresh = await getItemWithPriceBreaks(
+                        selected.itemType,
+                        selected.itemId,
+                        practiceId
+                      );
+                      setDetail((d) =>
+                        d && d.item && (d.item as { id?: number }).id === selected.itemId
+                          ? { ...d, priceBreaks: fresh.priceBreaks }
+                          : d
+                      );
                     }}
                   />
                 </>
