@@ -1,4 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  InvoiceLineGripIcon,
+  InvoiceSectionOrderReset,
+  useInvoiceLineDrag,
+} from './invoiceLineDrag';
 import { membershipCoveredAmount, membershipCoveredLabel } from '../../utils/membershipCoveredRow';
 import { PrevisitCheckinPriceNote } from './PrevisitCheckinPriceNote';
 import { INVOICE_HAS_RETURNS_MESSAGE } from '../inventory/returnLineStock';
@@ -55,6 +60,7 @@ import {
   type VisitInvoiceLine,
   type VisitTenderMethod,
   getInvoiceVaccinations,
+  reorderInvoiceLines,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 import { showPaymentSuccess } from './checkoutSuccessNote';
@@ -2151,6 +2157,25 @@ export default function VisitCheckoutPanel({
     !needsStockShelf ||
     (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
+  /** Invoice order: staff drag a pet's lines; the API keeps the order (and resets it). */
+  const saveLineOrder = async (patientIdForOrder: number | null, lineIds?: string[]) => {
+    if (!invoice?.id) return;
+    setError(null);
+    try {
+      onInvoiceChange(
+        await reorderInvoiceLines(
+          invoice.id,
+          lineIds ? { patientId: patientIdForOrder, lineIds } : { patientId: patientIdForOrder, reset: true }
+        )
+      );
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ?? 'Could not save the line order.');
+    }
+  };
+  const lineDrag = useInvoiceLineDrag((groupKey, ids) => {
+    const section = groupKey.startsWith('pet:') ? Number(groupKey.slice(4)) : null;
+    return saveLineOrder(section != null && Number.isFinite(section) ? section : null, ids);
+  });
   // D1: the old prepay (Save card / Authorize / Convert) only for invoices that already use it.
   const legacyPrepay = usesLegacyEuthanasiaPrepay(invoice);
   const canChangePrice = useCan('invoice.price.change');
@@ -2856,6 +2881,13 @@ export default function VisitCheckoutPanel({
                     ))}
                   </div>
                 ) : null}
+                {canEditLines && section.lines.some((row) => row.sortOrder != null) ? (
+                  <div className="invoice-order-bar">
+                    <InvoiceSectionOrderReset
+                      onReset={() => void saveLineOrder(section.patientId ?? null)}
+                    />
+                  </div>
+                ) : null}
                 {section.lines.map((l) => {
                 const order =
                   l.orderId != null
@@ -2920,8 +2952,16 @@ export default function VisitCheckoutPanel({
                     id={`checkout-line-${l.id}`}
                     className={`soap-invoice-line ${lineReady ? 'is-ready' : 'is-pending'}${
                       focusedLineId === l.id ? ' is-focus' : ''
-                    }`}
+                    }${canEditLines && section.lines.length > 1 ? ` soap-invoice-line--draggable${lineDrag.rowDragClass(l.id)}` : ''}`}
+                    {...(canEditLines && section.lines.length > 1
+                      ? lineDrag.rowDropProps(section.key, l.id, section.lines.map((row) => row.id))
+                      : {})}
                   >
+                    {canEditLines && section.lines.length > 1 ? (
+                      <span {...lineDrag.gripProps(section.key, l.id, l.description)}>
+                        <InvoiceLineGripIcon />
+                      </span>
+                    ) : null}
                     {canExpand ? (
                       <button
                         type="button"
