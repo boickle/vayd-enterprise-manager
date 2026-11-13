@@ -32,6 +32,15 @@ export function fallbackTaskLinkLabel(entityType: string, entityId: number): str
   return `${t} #${entityId}`;
 }
 
+/**
+ * True for the stand-ins a link label shows before (or without) the real name: "client #12",
+ * "Client". Greeting a family with one of those reads "Hi client,".
+ */
+export function isPlaceholderClientName(name: string | null | undefined): boolean {
+  const t = String(name ?? '').trim();
+  return !t || /^client(\s*#?\d+)?$/i.test(t) || /^the owner$/i.test(t);
+}
+
 export async function resolveTaskLinkLabelMap(links: TaskLinkRow[]): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const patientIds = new Set<number>();
