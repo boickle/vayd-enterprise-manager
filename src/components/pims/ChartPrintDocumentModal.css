@@ -176,6 +176,44 @@
   color: #b91c1c;
 }
 
+.chart-print-doc__warn {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 12.5px;
+  color: #92400e;
+}
+
+.chart-print-doc__sign {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chart-print-doc__sign .consent-signature-pad {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: 120px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.chart-print-doc__sign .consent-btn {
+  margin-top: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
 .chart-print-doc__ok {
   margin: 0;
   font-size: 12.5px;
