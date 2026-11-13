@@ -15,11 +15,11 @@ import {
 } from '../utils/taskDateTime';
 import {
   type TaskPriorityChoice,
-  isTaskPriorityUrgent,
   priorityToApi,
 } from '../utils/taskPriority';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { extractActivePatientsFromClientStaffRecord } from '../utils/routingPatientHoverData';
+import { isUrgentTask } from '../utils/taskUrgency';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDisplay';
 import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
 import {
@@ -138,16 +138,6 @@ function humanDueLine(iso: string | null): string {
   if (d < startToday) return `Overdue · ${when}`;
   if (d < endToday) return `Due today · ${when}`;
   return `Due ${when}`;
-}
-
-function isUrgentTask(t: TaskListItem): boolean {
-  if (t.status === 'done') return false;
-  if (isTaskPriorityUrgent(t.priority)) return true;
-  if (t.status === 'open' && t.assignedToEmployeeId == null) return true;
-  if (!t.dueAt) return false;
-  const due = new Date(t.dueAt).getTime();
-  const day = 24 * 60 * 60 * 1000;
-  return due <= Date.now() + day;
 }
 
 function canActOnTask(t: TaskListItem, myEmployeeIds: number[], isPracticeAdmin: boolean): boolean {
