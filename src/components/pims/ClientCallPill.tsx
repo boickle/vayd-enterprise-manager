@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { apiErrorMessage } from '../../api/http';
 import { createPortal } from 'react-dom';
 import { FileText, Phone, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
@@ -228,7 +229,7 @@ export function CallTranscriptModal({
       }
       onFiled(firstNoteId, firstPatientId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not file that call.');
+      setError(apiErrorMessage(e));
     } finally {
       setFiling(false);
     }
@@ -243,7 +244,7 @@ export function CallTranscriptModal({
       }
       onFiled(null, null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not dismiss that call.');
+      setError(apiErrorMessage(e));
       setSkipping(false);
     }
   };

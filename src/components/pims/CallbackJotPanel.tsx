@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { apiErrorMessage } from '../../api/http';
 import { Check, FileText, Phone, Save, ScrollText, Sparkles, Trash2, UserPlus, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
 import { createAndSignScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
@@ -270,7 +271,7 @@ export default function CallbackJotPanel({
       await patchTask(task.id, { body: writeCallNoteDraft(task.body, transcript) });
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save that note.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -355,7 +356,7 @@ export default function CallbackJotPanel({
       );
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not file that to the chart.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -407,7 +408,7 @@ export default function CallbackJotPanel({
       setStaffNote('');
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not chart and re-assign that.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -437,7 +438,7 @@ export default function CallbackJotPanel({
       setStaffNote('');
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not re-assign that.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -467,7 +468,7 @@ export default function CallbackJotPanel({
       setDoneLabel(`${chartHeading} removed. Nothing was filed to the chart.`);
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not remove that callback.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
       setConfirmRemove(false);

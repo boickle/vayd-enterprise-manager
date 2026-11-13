@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiErrorMessage } from '../../api/http';
 import { Link } from 'react-router';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { resolveCall } from '../../api/calls';
@@ -54,7 +55,7 @@ export default function TaskRowCallNote({ task, clientId, clientLabel, onChanged
       await patchTask(task.id, { body: writeCallNoteDraft(task.body, text) });
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save that note.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -102,7 +103,7 @@ export default function TaskRowCallNote({ task, clientId, clientLabel, onChanged
       if (detail.status !== 'done') await completeTask(task.id, choice);
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not file that to the chart.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
