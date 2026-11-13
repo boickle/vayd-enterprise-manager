@@ -133,6 +133,7 @@ import '../../pages/BriefWorkspacePage.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import { clientTextsOffReason } from '../../utils/doNotSmsWarning';
 import { useMayShow } from '../../permissions/PermissionContext';
+import { legacyReferral, REFERRAL_OPTIONS } from '../../utils/referralSources';
 import { useMayEditClientRecords } from '../../permissions/useMayEditClientRecords';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
@@ -376,11 +377,6 @@ const NAME_FIELDS: FieldSpec[] = [
   { key: 'lastName', label: 'Last name', required: true },
   { key: 'secondFirstName', label: 'Second contact first name' },
   { key: 'secondLastName', label: 'Second contact last name' },
-  {
-    key: 'referralSource',
-    label: 'How they heard about us',
-    full: true,
-  },
 ];
 
 const ALERT_FIELDS: FieldSpec[] = [
@@ -662,11 +658,22 @@ function ClientHouseholdDefaultsCard({
             </label>
             <label className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">How they heard about us</span>
-              <input
+              {/* Same list as Add client (owner, Nov 13, 2026). An older free-text answer stays as its own option. */}
+              <select
                 className="input"
                 value={referralSource}
                 onChange={(e) => setReferralSource(e.target.value)}
-              />
+              >
+                <option value="">Select…</option>
+                {legacyReferral(referralSource) ? (
+                  <option value={referralSource}>{referralSource}</option>
+                ) : null}
+                {REFERRAL_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">Referring client (friend/family)</span>

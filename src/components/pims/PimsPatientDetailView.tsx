@@ -2322,6 +2322,7 @@ export default function PimsPatientDetailView({
     sex: sexWordOf(record.sex) ?? '',
     neuterStatus: pickStr(record.neuterStatus) ?? '',
     color: pickStr(record.color) ?? '',
+    microchip: pickStr(record.microchip) ?? '',
   };
 
   const detailFields: FieldSpec[] = [
@@ -2364,6 +2365,8 @@ export default function PimsPatientDetailView({
     { key: 'sex', label: 'Sex', type: 'select', options: SEX_OPTIONS },
     { key: 'neuterStatus', label: 'Spay / neuter', type: 'select', options: NEUTER_OPTIONS },
     { key: 'color', label: 'Color' },
+    // Owner, Nov 13, 2026: record a chip implanted elsewhere (rescues, transfers).
+    { key: 'microchip', label: 'Microchip' },
   ];
 
   return (
@@ -2839,6 +2842,7 @@ export default function PimsPatientDetailView({
                 const body: ScoutPatientWrite = {
                   name: v.name.trim() || null,
                   color: v.color.trim() || null,
+                  microchip: (v.microchip ?? '').trim() || null,
                   sex: v.sex.trim() || null,
                   neuterStatus: v.neuterStatus.trim() || null,
                   dob: dobToApi(v.dob),
