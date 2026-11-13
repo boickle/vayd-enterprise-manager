@@ -250,7 +250,7 @@ export default function PimsChartWorkBar({
                 style={{ width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
               >
                 <div className="pims-chart-pick__head">
-                  <h3 id="pims-upload-title">Upload records · {patientName}</h3>
+                  <h3 id="pims-upload-title">Upload files · {patientName}</h3>
                   <button
                     type="button"
                     className="pims-chart-pick__close"
