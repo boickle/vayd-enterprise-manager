@@ -266,6 +266,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
         >
           {running ? 'Running…' : 'Run now'}
         </button>
+        <span className="auto-tasks__toolbar-note">End-of-day rules wait for their hour.</span>
         <span className="auto-tasks__toolbar-note">
           Rules otherwise run on their own every half hour.
         </span>
