@@ -512,9 +512,12 @@ function PimsChartCommunicationLogModal({
 export function PimsPatientMergeButton({
   patientId,
   patientName,
+  onMerged,
 }: {
   patientId: string;
   patientName: string;
+  /** Reload the chart after a merge, so the moved records show. */
+  onMerged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // A merge cannot be undone, so the control is absent rather than greyed out
@@ -548,7 +551,7 @@ export function PimsPatientMergeButton({
                     ×
                   </button>
                 </div>
-                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} />
+                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} onMerged={onMerged} />
               </div>
             </div>,
             document.body,

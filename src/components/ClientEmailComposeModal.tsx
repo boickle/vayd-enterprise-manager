@@ -15,6 +15,7 @@ import {
 } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
+import { clientHasDoNotEmail, doNotEmailMessage, toLineHitsClient } from '../utils/doNotEmail';
 import {
   defaultSharedMailbox,
   NO_SHARED_GMAIL_MESSAGE,
@@ -225,14 +226,22 @@ export function ClientEmailComposeModal({
         if (clientId != null) {
           const clientRaw = await fetchClientByIdStaff(clientId);
           if (cancelled) return;
+          const firstTo =
+            initialTo != null ? initialTo : clientEmailsFromStaffPayload(clientRaw).join(', ');
+          // "Do not email" (owner, Nov 13, 2026): say so now, instead of after the message is written.
+          // Sending to someone else from here (another vet) is still allowed.
+          if (clientHasDoNotEmail(clientRaw) && (initialTo == null || toLineHitsClient(initialTo, clientRaw))) {
+            const c = clientRaw as Record<string, unknown>;
+            const name = [c.firstName, c.lastName].filter((v) => typeof v === 'string' && v.trim()).join(' ');
+            throw new Error(doNotEmailMessage(name || null));
+          }
           if (initialTo != null) {
             setTo(initialTo);
           } else {
-            const emails = clientEmailsFromStaffPayload(clientRaw);
-            if (emails.length === 0) {
+            if (!firstTo) {
               throw new Error('No client email address on file.');
             }
-            setTo(emails.join(', '));
+            setTo(firstTo);
           }
         } else {
           setTo(initialTo!.trim());

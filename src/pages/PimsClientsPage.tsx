@@ -99,7 +99,6 @@ export default function PimsClientsPage() {
   const clientIdParam = searchParams.get('clientId') ?? '';
   const addParam = searchParams.get('add') === '1';
 
-  const [searchBy, setSearchBy] = useState('all');
   const [query, setQuery] = useState(() => initialClientsSearchFromUrlAndSession().q);
   const [includeInactive, setIncludeInactive] = useState(() => initialClientsSearchFromUrlAndSession().includeInactive);
   const [rows, setRows] = useState<ClientSearchRow[]>([]);
@@ -166,7 +165,10 @@ export default function PimsClientsPage() {
 
   const phonesFor = (row: ClientSearchRow) => {
     const r = row as Record<string, unknown>;
-    return readList(r.phones ?? r.phoneNumbers ?? r.phone ?? r.mobilePhone);
+    const listed = readList(r.phones ?? r.phoneNumbers ?? r.phone ?? r.mobilePhone);
+    if (listed.length) return listed;
+    // /clients/search returns the client row itself: phone1 and phone2.
+    return readList([r.phone1, r.phone2].filter((v) => v != null && String(v).trim() !== ''));
   };
 
   const emailsFor = (row: ClientSearchRow) => {
@@ -216,23 +218,6 @@ export default function PimsClientsPage() {
       </div>
 
       <div className="pims-clients__toolbar">
-        <label className="pims-clients__searchby">
-          <span className="pims-clients__searchby-label">Search by</span>
-          <select
-            className="pims-clients__select"
-            value={searchBy}
-            onChange={(e) => setSearchBy(e.target.value)}
-            aria-label="Search by"
-          >
-            <option value="all">All Results</option>
-            <option value="name" disabled>
-              Name (API: all)
-            </option>
-            <option value="phone" disabled>
-              Phone (needs API)
-            </option>
-          </select>
-        </label>
         <div className="pims-clients__search-wrap">
           <span className="pims-clients__search-icon" aria-hidden>
             🔍
@@ -240,7 +225,7 @@ export default function PimsClientsPage() {
           <input
             type="search"
             className="pims-clients__search-input"
-            placeholder="Search clients…"
+            placeholder="Name, email or phone…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onBlur={() => syncQueryToUrl()}
