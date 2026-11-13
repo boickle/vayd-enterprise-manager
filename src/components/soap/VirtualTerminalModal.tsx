@@ -21,7 +21,8 @@ type Props = {
   /** The card already on file, e.g. "Visa •••• 4242". Saving this card replaces it. */
   currentCardLabel?: string | null;
   onCancel: () => void;
-  onPaid: (invoice: VisitInvoice) => void;
+  /** savedCard: the card the owner agreed to keep (its id), or null when used for this payment only. */
+  onPaid: (invoice: VisitInvoice, savedCard: string | null) => void;
 };
 
 export default function VirtualTerminalModal({
@@ -101,7 +102,7 @@ export default function VirtualTerminalModal({
         paymentMethodId: result.paymentMethod.id,
         saveCard,
       });
-      onPaid(invoice);
+      onPaid(invoice, saveCard ? result.paymentMethod.id : null);
     } catch (e) {
       if (isNetworkError(e)) {
         setError(NOT_CHARGED_OFFLINE_MESSAGE);

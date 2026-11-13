@@ -11,6 +11,7 @@ import {
 } from '../../api/visitWorkflow';
 import { getMembershipCard, listPatientMemberships } from '../../api/memberships';
 import ClientCardSetupEntry from './ClientCardSetupEntry';
+import HouseholdCardOfferDialog from '../payments/HouseholdCardOfferDialog';
 import { expiredCardText } from '../soap/checkoutPaymentText';
 import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
@@ -138,6 +139,8 @@ export default function ClientCardOnFileSection({
     setError(null);
   }
 
+  const [offerCard, setOfferCard] = useState(false);
+
   async function replaceCard() {
     if (!confirmRef.current) return;
     setBusy(true);
@@ -148,6 +151,8 @@ export default function ClientCardOnFileSection({
       setInfo(await saveClientCardOnFile(clientId, { setupIntentId: confirmedId || setupIntentId, consent }));
       setSaved('New card saved. Nothing was charged.');
       close();
+      // One card, everywhere (Nov 13, 2026): offer memberships and auto-ships still on another card.
+      setOfferCard(true);
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -282,6 +287,9 @@ export default function ClientCardOnFileSection({
             Removes the card everywhere: visits, the online store and portal bill pay. The reason is kept in the financial audit log.
           </p>
         </div>
+      ) : null}
+      {offerCard ? (
+        <HouseholdCardOfferDialog audience="staff" clientId={clientId} onClose={() => setOfferCard(false)} />
       ) : null}
     </section>
   );

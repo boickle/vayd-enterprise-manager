@@ -8,6 +8,7 @@ import {
 } from '../../api/onlineStore';
 import './Store.css';
 import { useStorePracticeId } from './useStorePracticeId';
+import HouseholdCardOfferDialog from '../../components/payments/HouseholdCardOfferDialog';
 
 function sendLabel(deliverAt: string | null) {
   if (!deliverAt) return 'on its way now';
@@ -21,6 +22,10 @@ export default function StoreThanks() {
   const { id } = useParams();
   const location = useLocation();
   const order = (location.state as { order?: StoreCheckoutResult } | null)?.order;
+  // One card, everywhere (Nov 13, 2026): the card just kept at checkout, once.
+  const [offerCardPm, setOfferCardPm] = useState<string | null>(
+    () => (location.state as { offerCardPm?: string | null } | null)?.offerCardPm ?? null,
+  );
   const giftCards = order?.giftCards ?? [];
   const giftOnly = id === 'gift-cards' || order?.kind === 'gift_cards';
   const pickup = order?.origin === 'office_pickup';
@@ -131,6 +136,14 @@ export default function StoreThanks() {
       ) : null}
       {giftSection}
       <Link to="/store">Back to the store</Link>
+      {offerCardPm ? (
+        <HouseholdCardOfferDialog
+          audience="client"
+          clientId={null}
+          paymentMethodId={offerCardPm}
+          onClose={() => setOfferCardPm(null)}
+        />
+      ) : null}
     </>
   );
 }

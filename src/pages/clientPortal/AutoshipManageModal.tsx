@@ -6,6 +6,7 @@ import { Icon, PortalModal } from './PortalPrimitives';
 import AutoshipCardPanel from '../store/AutoshipCardPanel';
 import { listMyAutoshipCards, setMyAutoshipCard } from '../../api/autoshipCard';
 import { fmtDayLong, type PetWithWellness } from './portalShared';
+import HouseholdCardOfferDialog from '../../components/payments/HouseholdCardOfferDialog';
 
 function isoPlusDays(days: number): string {
   const d = new Date();
@@ -61,6 +62,8 @@ export default function AutoshipManageModal({
   const [showPause, setShowPause] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [showCard, setShowCard] = useState(false);
+  /** One card, everywhere (Nov 13, 2026): offer the client's other places on the card just chosen. */
+  const [offerPm, setOfferPm] = useState<string | null>(null);
 
   const petDbId = pet.dbId && Number.isFinite(Number(pet.dbId)) ? Number(pet.dbId) : null;
 
@@ -296,7 +299,11 @@ export default function AutoshipManageModal({
         showCard ? (
           <AutoshipCardPanel
             load={() => listMyAutoshipCards(practiceId, sub.id)}
-            save={(pm) => setMyAutoshipCard(practiceId, sub.id, pm)}
+            save={async (pm) => {
+              const saved = await setMyAutoshipCard(practiceId, sub.id, pm);
+              setOfferPm(pm);
+              return saved;
+            }}
             name=""
             buttonClass="pp-btn pp-btn--primary pp-btn--sm"
             secondaryButtonClass="pp-btn pp-btn--ghost pp-btn--sm"
@@ -376,6 +383,9 @@ export default function AutoshipManageModal({
           </button>
         )}
       </div>
+      {offerPm ? (
+        <HouseholdCardOfferDialog audience="client" clientId={null} paymentMethodId={offerPm} onClose={() => setOfferPm(null)} />
+      ) : null}
     </PortalModal>
   );
 }

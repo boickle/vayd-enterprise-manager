@@ -138,6 +138,7 @@ import {
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
 import VirtualTerminalModal from '../soap/VirtualTerminalModal';
+import HouseholdCardOfferDialog from '../payments/HouseholdCardOfferDialog';
 import { cardText } from '../soap/checkoutPaymentText';
 import {
   InvoiceRefillsButton,
@@ -1809,6 +1810,8 @@ export default function ClientFinancialWorkspace({
   /** Type card manually (virtual terminal): key in a card number. */
   const [payByPhone, setPayByPhone] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
+  /** One card, everywhere (Nov 13, 2026): the card just kept, to offer the household's other places. */
+  const [cardOfferPm, setCardOfferPm] = useState<string | null>(null);
   /** Shown after this invoice's payment makes a pet inactive. */
   const [invoiceWrapUp, setInvoiceWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
   const prevInvoiceStatusRef = useRef<{ id: string; status: string } | null>(null);
@@ -9111,12 +9114,21 @@ export default function ClientFinancialWorkspace({
           ownerName={clientName}
           currentCardLabel={cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : null}
           onCancel={() => setPhoneCardOpen(false)}
-          onPaid={(next) => {
+          onPaid={(next, savedCard) => {
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
             showPaymentSuccess({ setError, setNote }, 'Card charged.');
+            if (savedCard) setCardOfferPm(savedCard);
           }}
+        />
+      ) : null}
+      {cardOfferPm ? (
+        <HouseholdCardOfferDialog
+          audience="staff"
+          clientId={clientId}
+          paymentMethodId={cardOfferPm}
+          onClose={() => setCardOfferPm(null)}
         />
       ) : null}
       <PostedPaymentEditDialog

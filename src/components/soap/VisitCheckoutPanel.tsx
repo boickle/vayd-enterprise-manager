@@ -79,6 +79,7 @@ import { searchItems as searchCatalogItems } from '../../api/roomLoader';
 import { createOrderFromSearchItem } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from './TerminalReaderPicker';
 import VirtualTerminalModal from './VirtualTerminalModal';
+import HouseholdCardOfferDialog from '../payments/HouseholdCardOfferDialog';
 import CheckoutReminders from './CheckoutReminders';
 import { usesLegacyEuthanasiaPrepay } from '../../utils/euthanasiaPrepay';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
@@ -1326,6 +1327,11 @@ export default function VisitCheckoutPanel({
   // Asked out loud at the door. Starts unchecked if this household said no before.
   // Starts unticked: staff ask the owner first, and only a ticked box saves the card.
   const [saveCardConsent, setSaveCardConsent] = useState(false);
+  // One card, everywhere (owner, Nov 13, 2026): after a card is kept, offer the household's
+  // memberships and auto-ships billed on another card. A reader-saved card lands a moment later.
+  const [cardOffer, setCardOffer] = useState<{ paymentMethodId: string | null; delayMs: number } | null>(null);
+  const saveCardConsentRef = useRef(false);
+  saveCardConsentRef.current = saveCardConsent;
   const [cardDeclinedAt, setCardDeclinedAt] = useState<string | null>(null);
   const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
     Record<string, OrderPrescription>
@@ -1761,6 +1767,7 @@ export default function VisitCheckoutPanel({
         if (payload.invoiceId !== invoiceId) return;
         setActiveCheckoutId(null);
         showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
+        if (saveCardConsentRef.current) setCardOffer({ paymentMethodId: null, delayMs: 2500 });
         onInvoiceChange({
           ...invoice,
           status: 'paid',
@@ -1983,6 +1990,7 @@ export default function VisitCheckoutPanel({
         if (stopped || fresh.status !== 'paid') return;
         setActiveCheckoutId(null);
         showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
+        if (saveCardConsentRef.current) setCardOffer({ paymentMethodId: null, delayMs: 2500 });
         onInvoiceChange(fresh);
       } catch {
         /* keep polling; a transient failure should not end the wait */
@@ -4339,11 +4347,21 @@ export default function VisitCheckoutPanel({
           consentFromCheckout={!legacyPrepay && !hasSavedCard ? saveCardConsent : undefined}
           currentCardLabel={cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : hasSavedCard ? 'the card on file' : null}
           onCancel={() => setPhoneCardOpen(false)}
-          onPaid={(next) => {
+          onPaid={(next, savedCard) => {
             setPhoneCardOpen(false);
             onInvoiceChange(next);
             showPaymentSuccess({ setError, setNote }, 'Card charged — invoice marked paid.');
+            if (savedCard) setCardOffer({ paymentMethodId: savedCard, delayMs: 0 });
           }}
+        />
+      ) : null}
+      {cardOffer && invoice?.clientId ? (
+        <HouseholdCardOfferDialog
+          audience="staff"
+          clientId={invoice.clientId}
+          paymentMethodId={cardOffer.paymentMethodId}
+          delayMs={cardOffer.delayMs}
+          onClose={() => setCardOffer(null)}
         />
       ) : null}
     </div>
