@@ -146,6 +146,18 @@ function formatEastern(iso: string): string {
   });
 }
 
+/** Eastern time in the page's usual "ET" wording, e.g. "Nov 12, 6:00 PM ET". */
+function formatEasternTime(iso: string): string {
+  const when = new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${when} ET`;
+}
+
 export default function SettingsAutomaticTasks({ practiceId, readOnly = false, onMessage }: Props) {
   const [rules, setRules] = useState<TaskAutomationRule[]>([]);
   const [placeholders, setPlaceholders] = useState<
@@ -617,7 +629,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
 
                 {rule.lastRunAt && (
                   <p className="auto-tasks__last-run">
-                    Last checked {new Date(rule.lastRunAt).toLocaleString()}.
+                    Last checked {formatEasternTime(rule.lastRunAt)}.
                   </p>
                 )}
               </div>
