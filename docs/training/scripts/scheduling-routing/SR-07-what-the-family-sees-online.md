@@ -24,7 +24,7 @@
 | 7 | Form | Point at **Preferred days/times or anything we should know about scheduling** | "Otherwise they tell us what works, and a CL calls them." | — |
 | 8 | Form | Click **Submit** | "Submit." | — |
 | 9 | **Thank You!** | Point at "We are working on booking your appointment and will be in touch shortly." and **Review & Join Membership Now** | "They see this, with an offer to look at membership." | — |
-| 10 | Voice-over | — | "They also get an email: We Received Your Appointment Request. If the time they picked was taken while they were on the page, Scout doesn't book it. It tells them a CL will call within one business hour." | — |
+| 10 | Voice-over | — | "They also get an email: We Received Your Appointment Request. If the time they picked was taken while they were on the page, Scout doesn't book it. It tells them our team will call soon to find another time." | — |
 
 ## What other roles see
 
