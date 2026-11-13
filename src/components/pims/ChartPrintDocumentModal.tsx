@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { DateTime } from 'luxon';
 import { ArrowLeft, Eye, Mail, Printer, X } from 'lucide-react';
 import { fetchEmployee } from '../../api/appointmentSettings';
 import type { GmailComposeAttachment } from '../../api/gmail';
@@ -100,6 +101,23 @@ type PdfPreview = {
   /** Set once this exact PDF is on the chart, so printing or sending it again files no second copy. */
   filed: boolean;
 };
+
+/**
+ * The chart document's date as a full timestamp. A bare "2026-11-12" is read by the API as midnight UTC,
+ * which is the evening before in US time zones, so the document landed on the previous day's timeline.
+ * Today's date files at the current time; any other date at noon local time.
+ */
+export function chartServiceDate(
+  day: string | undefined,
+  now: Date = new Date()
+): string | undefined {
+  const d = day?.trim();
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return d || undefined;
+  const local = DateTime.fromISO(d);
+  if (!local.isValid) return undefined;
+  const today = DateTime.fromJSDate(now);
+  return local.hasSame(today, 'day') ? today.toISO()! : local.set({ hour: 12 }).toISO()!;
+}
 
 function escapeEmailHtml(value: string): string {
   return value
@@ -262,7 +280,7 @@ export default function ChartPrintDocumentModal({
       name: `${title} — ${draft.patientName || patientName || 'Patient'}`,
       description: title,
       documentType: 'other',
-      serviceDate:
+      serviceDate: chartServiceDate(
         kind === 'rabies'
           ? draft.vaccinationDate
           : kind === 'death'
@@ -273,7 +291,8 @@ export default function ChartPrintDocumentModal({
                 ? draft.rxDate
                 : kind === 'health' || kind === 'litterCheck'
                   ? draft.examDate
-                  : undefined,
+                  : undefined
+      ),
     });
     onFiled?.();
   }
