@@ -35,7 +35,6 @@ import { RouteButton } from '../components/appointmentRequests/RouteButton';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { HoldConversationPanel } from '../components/appointmentRequests/HoldConversationPanel';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
-import { ReadOnlyConversationNote } from '../components/appointmentRequests/ReadOnlyConversationNote';
 import '../components/appointmentRequests/requestPanels.css';
 import { receivedDateLabel, visitDateShortLabel } from '../utils/appointmentRequestTableRow';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
@@ -1544,15 +1543,14 @@ export default function HoldsPage() {
                     </div>
                   </div>
                   </div>
-                  {!mayWork ? (
-                    <ReadOnlyConversationNote />
-                  ) : groupSubmission ? (
+                  {groupSubmission ? (
                     <RequestConversationPanel
                       item={groupSubmission}
                       practiceId={PRACTICE_ID}
                       practiceTz={PRACTICE_TZ}
                       onContacted={() => void load({ silent: true })}
                       onSubmissionUpdated={() => void load({ silent: true })}
+                      readOnly={!mayWork}
                     />
                   ) : (
                     <HoldConversationPanel
@@ -1560,6 +1558,7 @@ export default function HoldsPage() {
                       canText={canSms}
                       practiceTz={PRACTICE_TZ}
                       onChanged={() => void load({ silent: true })}
+                      readOnly={!mayWork}
                     />
                   )}
                   </div>

@@ -160,7 +160,6 @@ import { useAuth } from '../auth/useAuth';
 import { useMayWorkAppointments } from '../permissions/useMayWorkAppointments';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
-import { ReadOnlyConversationNote } from '../components/appointmentRequests/ReadOnlyConversationNote';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { SoapRecordModal, type SoapRecordRef } from '../components/soap/SoapHeaderRecords';
 import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
@@ -3059,15 +3058,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         ) : null
                       }
                     />
-                    {!mayWork ? (
-                      <ReadOnlyConversationNote>
-                        {hasLinkedAppointment ? (
-                          <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
-                            {isOnHoldVisit ? 'Open hold' : 'View appointment'}
-                          </button>
-                        ) : null}
-                      </ReadOnlyConversationNote>
-                    ) : (
                     <RequestConversationPanel
                       item={item}
                       practiceId={PRACTICE_ID}
@@ -3078,7 +3068,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         gmailThreadId: patch.gmailThreadId,
                         gmailMailbox: patch.gmailMailbox,
                       })}
+                      readOnly={!mayWork}
                       actions={
+                        !mayWork ? (
+                          hasLinkedAppointment ? (
+                            <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
+                              {isOnHoldVisit ? 'Open hold' : 'View appointment'}
+                            </button>
+                          ) : null
+                        ) : (
                         <>
                           {needsStaffConfirmation ? (
                             <button
@@ -3161,9 +3159,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             <span className="req-action-error">{statusError[item.id]}</span>
                           ) : null}
                         </>
+                        )
                       }
                     />
-                    )}
                   </div>
                 ) : null}
               </li>
