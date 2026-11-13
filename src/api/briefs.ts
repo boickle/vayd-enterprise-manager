@@ -83,9 +83,9 @@ export async function mergePatientsStaff(opts: {
 }): Promise<{ ok: boolean; message: string }> {
   try {
     await http.post(`/patients/${encodeURIComponent(String(opts.keepPatientId))}/merge`, {
-      sourcePatientId: opts.absorbPatientId,
+      sourcePatientId: Number(opts.absorbPatientId),
     });
-    return { ok: true, message: 'Patients merged.' };
+    return { ok: true, message: 'Charts merged. Visits, records and reminders are on this chart now.' };
   } catch (err) {
     if (isNotImplemented(err)) {
       return {

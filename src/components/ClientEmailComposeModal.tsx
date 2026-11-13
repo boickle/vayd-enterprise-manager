@@ -15,6 +15,7 @@ import {
 } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
+import { clientHasDoNotEmail, doNotEmailMessage, toLineHitsClient } from '../utils/doNotEmail';
 import {
   defaultSharedMailbox,
   NO_SHARED_GMAIL_MESSAGE,
@@ -216,23 +217,30 @@ export function ClientEmailComposeModal({
 
     void (async () => {
       try {
+        // "Do not email" first: it's the real reason, whatever the Gmail set-up (owner, Nov 13, 2026).
+        const clientRaw = clientId != null ? await fetchClientByIdStaff(clientId) : null;
+        if (cancelled) return;
+        if (clientRaw && clientHasDoNotEmail(clientRaw) && (initialTo == null || toLineHitsClient(initialTo, clientRaw))) {
+          const c = clientRaw as Record<string, unknown>;
+          const name = [c.firstName, c.lastName].filter((v) => typeof v === 'string' && v.trim()).join(' ');
+          throw new Error(doNotEmailMessage(name || null));
+        }
         if (!gmailAllowed) {
           throw new Error('Gmail access is not available for your account.');
         }
         const mailboxesRes = await fetchGmailMailboxes();
         if (cancelled) return;
 
-        if (clientId != null) {
-          const clientRaw = await fetchClientByIdStaff(clientId);
-          if (cancelled) return;
+        if (clientRaw) {
+          const firstTo =
+            initialTo != null ? initialTo : clientEmailsFromStaffPayload(clientRaw).join(', ');
           if (initialTo != null) {
             setTo(initialTo);
           } else {
-            const emails = clientEmailsFromStaffPayload(clientRaw);
-            if (emails.length === 0) {
+            if (!firstTo) {
               throw new Error('No client email address on file.');
             }
-            setTo(emails.join(', '));
+            setTo(firstTo);
           }
         } else {
           setTo(initialTo!.trim());
