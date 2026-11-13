@@ -424,6 +424,8 @@ export default function PimsTasksPage() {
     if (myEmployeeIds.includes(id)) return undefined;
     return id;
   }, [isPracticeAdmin, viewEmployeeId, myEmployeeIds]);
+  /** Whose tasks the bulk Re-assign buttons move: the person picked in the Person box, else me. */
+  const bulkFromEmployeeId = viewedEmployeeId ?? myEmployeeId;
   const [tab, setTab] = useState<TabId>('active');
   const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
@@ -999,7 +1001,7 @@ export default function PimsTasksPage() {
     const canClaim = canClaimTask(row, myEmployeeIds);
     return (
       <article key={row.id} className="pims-task-card">
-        {tab === 'upcoming' && (
+        {isBucketTab(tab) && bulkFromEmployeeId != null && (
           <label className="pims-task-card__pick">
             <input
               type="checkbox"
@@ -1329,7 +1331,7 @@ export default function PimsTasksPage() {
         )}
       </p>
 
-      {tab === 'upcoming' && items.length > 0 && myEmployeeId != null && (
+      {isBucketTab(tab) && items.length > 0 && bulkFromEmployeeId != null && (
         <div className="pims-tasks__bulk">
           <label className="pims-tasks__bulk-select">
             <input
@@ -1430,17 +1432,18 @@ export default function PimsTasksPage() {
         />
       )}
 
-      {bulkReassignIds && myEmployeeId != null && (
+      {bulkReassignIds && bulkFromEmployeeId != null && (
         <TaskReassignModal
           bulk={{
-            fromEmployeeId: myEmployeeId,
+            fromEmployeeId: bulkFromEmployeeId,
             taskIds: bulkReassignIds,
-            upcomingOnly: true,
-            label: `Move ${bulkReassignIds.length} future task${
+            // Only the Future tab is limited to tasks that have not started.
+            upcomingOnly: tab === 'upcoming',
+            label: `Move ${bulkReassignIds.length} ${tab === 'upcoming' ? 'future ' : ''}task${
               bulkReassignIds.length === 1 ? '' : 's'
             } to someone else`,
           }}
-          employees={employees.filter((e) => e.id !== myEmployeeId && e.isActive !== false)}
+          employees={employees.filter((e) => e.id !== bulkFromEmployeeId && e.isActive !== false)}
           requireAssignee
           onClose={() => setBulkReassignIds(null)}
           onSaved={() => {
