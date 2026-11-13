@@ -217,24 +217,23 @@ export function ClientEmailComposeModal({
 
     void (async () => {
       try {
+        // "Do not email" first: it's the real reason, whatever the Gmail set-up (owner, Nov 13, 2026).
+        const clientRaw = clientId != null ? await fetchClientByIdStaff(clientId) : null;
+        if (cancelled) return;
+        if (clientRaw && clientHasDoNotEmail(clientRaw) && (initialTo == null || toLineHitsClient(initialTo, clientRaw))) {
+          const c = clientRaw as Record<string, unknown>;
+          const name = [c.firstName, c.lastName].filter((v) => typeof v === 'string' && v.trim()).join(' ');
+          throw new Error(doNotEmailMessage(name || null));
+        }
         if (!gmailAllowed) {
           throw new Error('Gmail access is not available for your account.');
         }
         const mailboxesRes = await fetchGmailMailboxes();
         if (cancelled) return;
 
-        if (clientId != null) {
-          const clientRaw = await fetchClientByIdStaff(clientId);
-          if (cancelled) return;
+        if (clientRaw) {
           const firstTo =
             initialTo != null ? initialTo : clientEmailsFromStaffPayload(clientRaw).join(', ');
-          // "Do not email" (owner, Nov 13, 2026): say so now, instead of after the message is written.
-          // Sending to someone else from here (another vet) is still allowed.
-          if (clientHasDoNotEmail(clientRaw) && (initialTo == null || toLineHitsClient(initialTo, clientRaw))) {
-            const c = clientRaw as Record<string, unknown>;
-            const name = [c.firstName, c.lastName].filter((v) => typeof v === 'string' && v.trim()).join(' ');
-            throw new Error(doNotEmailMessage(name || null));
-          }
           if (initialTo != null) {
             setTo(initialTo);
           } else {
