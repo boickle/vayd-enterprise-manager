@@ -13,6 +13,7 @@ import type {
 import { assignedWeekZones, type WeekZoneAssign } from '../../utils/employeeWeekZones';
 import { WorkZonesMapModal } from '../WorkZonesMapModal';
 import DepotBranchField from './DepotBranchField';
+import SettingsPastSchedules from './SettingsPastSchedules';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const PRACTICE_ID = currentPracticeId();
@@ -343,6 +344,8 @@ export default function SettingsEmployeeSchedulePanel({
           {saving ? 'Saving...' : 'Save schedule'}
         </button>
       </div>
+
+      <SettingsPastSchedules employeeId={employee.id} />
     </div>
   );
 }

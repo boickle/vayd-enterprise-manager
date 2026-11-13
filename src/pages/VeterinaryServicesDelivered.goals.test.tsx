@@ -1,7 +1,8 @@
 /**
- * Goals vs actual (owner, Nov 13, 2026): a day counts only when the API says countsForGoals
+ * Goals vs actual (owner, Nov 13, 2026): the goal adds up days the API marks countsForGoals
  * (scheduled, inside the goal window: goals start or first appointment, to last day or, for
- * someone deactivated without one, last appointment). The card says what it counts.
+ * someone deactivated without one, last appointment). Actual counts all their VSD inside the
+ * window, days off too. The card says what it counts.
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
@@ -26,13 +27,18 @@ vi.mock('../api/opsStats', () => ({
     };
   }),
 }));
-// Doctor 1 is working today; doctor 2 (departed) is outside their goal window today, even though
-// their weekly schedule still says workday.
+// Doctor 1 is scheduled today. Doctor 2 isn't scheduled today; `window2` says whether today is
+// inside their goal window (a lab called in on a day off) or after it (they left).
+const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+const lastMonth = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+const win = vi.hoisted(() => ({ doctor2End: null as string | null }));
 vi.mock('../api/employeeGoals', async (importActual) => {
   const actual = await importActual<typeof import('../api/employeeGoals')>();
   return {
     ...actual,
     fetchEmployeeGoals: vi.fn(async (id: number) => ({
+      goalWindowStart: lastMonth,
+      goalWindowEnd: id === 2 ? win.doctor2End : null,
       dailyRevenueGoal: 1000,
       dailyPointGoal: 8,
       dailyGoalBreakdown: [
@@ -67,17 +73,27 @@ vi.mock('../utils/practiceIdFromToken', () => ({
 
 import VeterinaryServicesDeliveredPage from './VeterinaryServicesDelivered';
 
-it('counts only goal-window days: the departed doctor adds neither goal nor VSD', async () => {
+it('a day off inside the goal window: no goal, but their VSD counts (a lab called in)', async () => {
+  win.doctor2End = null;
+  fetchPrimaryProviders.mockResolvedValue([
+    { id: 1, pimsId: 1, name: 'Ann Active', email: '' },
+    { id: 2, pimsId: 2, name: 'Otto Offday', email: '' },
+  ]);
+  render(<VeterinaryServicesDeliveredPage />);
+  await waitFor(() => expect(screen.getByText(/Practice total:\s*\$1,500\.00/)).toBeTruthy());
+  // Goal: Ann's scheduled day only. Actual: both doctors' VSD.
+  await waitFor(() => expect(screen.getByText(/\$1,500\.00 \/ \$1,000\.00/)).toBeTruthy());
+  expect(screen.getByText(/actual includes all their VSD in that time, days off too/)).toBeTruthy();
+});
+
+it('after their goal window (left yesterday): neither goal nor VSD counts', async () => {
+  win.doctor2End = yesterday;
   fetchPrimaryProviders.mockResolvedValue([
     { id: 1, pimsId: 1, name: 'Ann Active', email: '' },
     { id: 2, pimsId: 2, name: 'Dee Departed', email: '', isActive: false },
   ]);
-
   render(<VeterinaryServicesDeliveredPage />);
-
-  // Practice total still has both; goals vs actual only Ann.
   await waitFor(() => expect(screen.getByText(/Practice total:\s*\$1,500\.00/)).toBeTruthy());
   await waitFor(() => expect(screen.getByText(/\$1,000\.00 \/ \$1,000\.00/)).toBeTruthy());
-  expect(screen.getByText(/Counts only doctors with goals set/)).toBeTruthy();
   expect(screen.getByText(/lower than the practice total below/)).toBeTruthy();
 });

@@ -168,6 +168,27 @@ function dayCountsForGoals(
   return isWeeklyWorkday(emp, dateStr);
 }
 
+/**
+ * Whether a date's VSD and points count as actual (owner, Nov 13, 2026): every day inside the
+ * doctor's goal window, worked or not, so a lab called in on a day off still counts. The goal
+ * itself stays on scheduled days. Older APIs without the window: scheduled days only.
+ */
+function dayCountsForActuals(
+  emp: EmployeeWithGoals,
+  dateStr: string,
+  resolvedIsWorkday?: boolean | null,
+  resolvedCountsForGoals?: boolean | null
+): boolean {
+  const g = emp.goals;
+  if (g.goalWindowStart === undefined && g.goalWindowEnd === undefined) {
+    return dayCountsForGoals(emp, dateStr, resolvedIsWorkday, resolvedCountsForGoals);
+  }
+  if (!g.goalWindowStart) return false;
+  if (dateStr < g.goalWindowStart) return false;
+  if (g.goalWindowEnd && dateStr > g.goalWindowEnd) return false;
+  return true;
+}
+
 /** Sum series by date into a map; missing dates are 0. */
 function seriesByDate(series: DoctorRevenuePoint[]): Map<string, number> {
   const m = new Map<string, number>();
@@ -893,7 +914,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return { totalPointGoal, totalRevenueGoal };
   }, [goalScope, employeesWithGoals, employeesForGoalScopeSelect, restrictEmployeeAnalytics, start, end]);
 
-  /** Actual points and VSD for the selected scope (only on days the doctor(s) are working). */
+  /** Actual points and VSD for the selected scope: every day inside each doctor's goal window. */
   const actualsForGoalScope = useMemo(() => {
     const dates = dateRange(start, end);
     let actualPoints = 0;
@@ -904,7 +925,7 @@ export default function VeterinaryServicesDeliveredPage() {
         const dayOfWeek = dayjs(dateStr).day();
         for (const emp of empsForActuals) {
           const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-          if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
+          if (!dayCountsForActuals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
           const id = emp.id;
           actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
           const dr = doctorResponses.find((r) => String(r.doctorId) === id);
@@ -918,7 +939,7 @@ export default function VeterinaryServicesDeliveredPage() {
       for (const dateStr of dates) {
         const dayOfWeek = dayjs(dateStr).day();
         const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
+        if (!dayCountsForActuals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
         actualPoints += pointsByDoctorByDate[emp.id]?.[dateStr] ?? 0;
         const dr = doctorResponses.find((r) => String(r.doctorId) === emp.id);
         const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
@@ -1253,8 +1274,8 @@ export default function VeterinaryServicesDeliveredPage() {
                     </Box>
                     <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
                       {goalScope === PRACTICE_TOTAL_ID
-                        ? 'Counts only doctors with goals set, on the days they are scheduled to work, from their goals start (or first appointment) to their last day. Not Specified, Tech Team, Hospital Account and VSD on days off are left out, so this is lower than the practice total below.'
-                        : 'Counts only the days this doctor is scheduled to work, from their goals start (or first appointment) to their last day. VSD on days off is left out.'}
+                        ? 'Counts doctors with goals set, from their goals start (or first appointment) to their last day. The goal adds up the days they were scheduled; actual includes all their VSD in that time, days off too. Rows without goals (Not Specified, Hospital Account) are left out, so this is lower than the practice total below.'
+                        : 'From their goals start (or first appointment) to their last day. The goal adds up the days they were scheduled; actual includes all their VSD in that time, days off too.'}
                     </Typography>
                   </>
                 )}
