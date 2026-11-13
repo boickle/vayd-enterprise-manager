@@ -16,6 +16,7 @@
 | 1 | Biscuit's Checkout page | Point at **Card on file**, tooltip "Visa •••• 0341" | "Tom Chen's saved card is on file." | Chen bill: Office exam $75. Tom's saved card is Stripe's test card that declines (…0341), with consent recorded. Use a Chen email only this video uses |
 | 2 | Checkout | Point at the one thing to remember | "If a card is declined, don't keep trying it." | — |
 | 3 | Checkout | Click **Card on file** | "Charge the card on file." | — |
+| 3b | Checkout | Click the confirm button **Charge $75.00 to Visa •0341** | "Scout shows the amount and the card first. Click Charge to confirm." | — |
 | 4 | Checkout | Point at the red message "Your card was declined." | "Scout says the card was declined." | — |
 | 5 | Checkout | Point at **Total** $75.00, with nothing paid | "Check the bill: nothing is paid." | — |
 | 6 | Voice-over | — | "Tell Tom kindly, and ask for another card." | — |

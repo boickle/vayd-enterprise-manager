@@ -16,6 +16,10 @@
     "text": "Click Card on file to charge it."
   },
   {
+    "id": "inv05-04b",
+    "text": "Scout shows the amount and the card first. Click Charge to confirm."
+  },
+  {
     "id": "inv05-05",
     "text": "Scout says the card was declined."
   },

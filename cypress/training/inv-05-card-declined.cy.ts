@@ -46,6 +46,7 @@ describe('Training: INV-05 card declined', () => {
     line('inv05-02', () => pointAt(() => btn('Card on file'), 3500));
     line('inv05-03');
     line('inv05-04', () => tap(() => btn('Card on file')));
+    line('inv05-04b', () => tap(() => cy.contains('.soap-checkout-card-confirm button', /Charge \$/)));
     offCamera(() => cy.contains('Your card was declined', { timeout: 90000 }).should('exist'));
     line('inv05-05', () => pointAt(() => cy.contains('Your card was declined'), 4000));
     line('inv05-06', () => pointAt(() => cy.get('.soap-invoice-row.total'), 3500));
