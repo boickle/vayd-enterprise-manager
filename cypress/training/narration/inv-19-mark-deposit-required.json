@@ -1,0 +1,14 @@
+[
+ {"id":"inv19-01","text":"When a client hasn't paid in the past, we ask for a deposit before each visit. Marking the client tells everyone who books."},
+ {"id":"inv19-02","text":"Mark the client once, with a reason. It's here on the client page, under the client alerts."},
+ {"id":"inv19-03","text":"Click Mark deposit required."},
+ {"id":"inv19-04","text":"Scout asks why, so the team knows."},
+ {"id":"inv19-05","text":"For example, two unpaid visits."},
+ {"id":"inv19-06","text":"Then click Mark deposit required."},
+ {"id":"inv19-07","text":"Now it's on the client, with the reason and your name, and it says how to collect the deposit."},
+ {"id":"inv19-08","text":"When the client is back in good standing, click Clear to take it off."},
+ {"id":"inv19-09","text":"On the schedule, anyone who opens one of his visits"},
+ {"id":"inv19-10","text":"sees Deposit required at the top of the client alerts, with what to do."},
+ {"id":"inv19-11","text":"Managers, billing and lead client liaisons can mark or clear it. Everyone else sees it, but can't change it."},
+ {"id":"inv19-12","text":"The most common mistake is marking a client without a reason, so nobody knows when to clear it. Remember: mark the client once, with a reason, and every booking reminds the team to collect a deposit."}
+]

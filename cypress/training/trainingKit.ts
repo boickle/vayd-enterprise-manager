@@ -247,6 +247,16 @@ export function pointAt(get: () => Cypress.Chainable<JQuery<HTMLElement>>, outli
 }
 
 /**
+ * Like pointAt, but never scrolls: for things that close when the page scrolls (the schedule's visit pop-up).
+ */
+export function pointAtInPlace(get: () => Cypress.Chainable<JQuery<HTMLElement>>, outlineMs = 2500) {
+  get().then(($el) => {
+    moveTo($el[0].ownerDocument, $el[0].getBoundingClientRect(), outlineMs);
+  });
+  cy.wait(800, { log: false });
+}
+
+/**
  * Cypress can't follow a new browser tab, so a page that opens one (window.open) shows it here in a
  * browser-style window over the page instead. The page underneath stays exactly as it was.
  */

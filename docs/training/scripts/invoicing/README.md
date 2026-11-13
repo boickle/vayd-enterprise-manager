@@ -39,6 +39,8 @@ These videos are new. They build on these EMR videos, which are already recorded
 | [INV-15](INV-15-manual-discounts.md) | Manual discounts and promotions | Managers | Nice |
 | [INV-16](INV-16-end-of-day.md) | End of day: today's payments, and the bank deposit | Techs, doctors, managers, billing, lead CLs (not plain CLs) | Must |
 | [INV-17](INV-17-common-money-mistakes.md) | The most common money mistakes | All | Nice |
+| [INV-18](INV-18-appointment-deposits.md) | Appointment deposits: ask by text or email, then use it at checkout | All who book (CLs mainly) | Must |
+| [INV-19](INV-19-mark-deposit-required.md) | Mark a client "Deposit required" | Managers, billing, lead CLs | Must |
 
 **Status (Nov 7, 2026):** checked in the app on build-doctor-flow (frontend 5a13205, API 221ea76a) in Stripe test mode. Each script ends with "Notes from the check in the app" listing what was confirmed and any bugs.
 
@@ -57,6 +59,7 @@ These videos are new. They build on these EMR videos, which are already recorded
 | INV-13 | Ready to record, reloading the ledger after Add credit (app bug: the pay-link line is stale until reload). |
 | INV-15 | Ready to record (manager's pencil, the discount window and the promotion walked). The Credits & Discounts report is admin-only, so it's not shown. |
 | INV-16 | **Deposit steps ready; the "Today's payments" lists are not.** The deposit steps (Create deposit, slip, Recent deposits) were walked on a fresh seed. The **All payments** and **View payments** windows fail for a practice manager and list only old eVet payments, so the script no longer opens them (app bug, to fix on build-doctor-flow). |
+| INV-18, INV-19 | **Written Nov 12; not checked in the app or recorded yet.** Merge build-doctor-flow into this branch first (deposits: web ae72a657, API b68359a9). No Cypress spec or narration yet. Record INV-19 before INV-18 on the same seed. |
 
 **App bugs found Nov 7 (not fixed here; fixes go on build-doctor-flow):**
 - Analytics, Payments: **All payments** and **View payments** call an admin-only endpoint that reads only old eVet payments (INV-16).
