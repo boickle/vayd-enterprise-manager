@@ -4,12 +4,12 @@ import { Link } from 'react-router';
 import type { BriefSession } from '../../utils/briefTypes';
 import { BRIEF_KIND_LABEL } from '../../utils/briefTypes';
 import { useBriefRecorder } from '../../hooks/useBriefRecorder';
-import { patchBrief, removeBrief } from '../../api/briefs';
+import { markBriefsInjected, patchBrief, removeBrief } from '../../api/briefs';
 import { createEncounter, updateEncounter } from '../../api/visitWorkflow';
 import { polishSpokenNotes } from '../../api/soapScribe';
 import { createScoutChartNote, finalizeScoutChartNote } from '../../api/scoutChart';
 import { mergeClinicianPrevisitNotes } from '../../utils/roomLoaderSubjectiveText';
-import { markBriefsInjected } from '../../utils/briefStore';
+import ScribeConsentModal from '../soap/ScribeConsentModal';
 import { buildPhoneDialHref } from '../../utils/quoContact';
 import BriefEmailModal from './BriefEmailModal';
 import RecordDocumentsReview from '../records/RecordDocumentsReview';
@@ -29,7 +29,10 @@ function formatElapsed(sec: number): string {
 }
 
 export default function BriefSessionView({ session, quoFromLine, onChange, onDeleted }: Props) {
-  const recorder = useBriefRecorder(session.soapEncounterId);
+  // Every Jot records through the scribe's transcription service, saved on the Jot (B7).
+  const recorder = useBriefRecorder(null, { jotId: session.id });
+  /** Consent before recording (B5). For a call it comes before dialing. */
+  const [consentFor, setConsentFor] = useState<'record' | 'call' | null>(null);
   const [title, setTitle] = useState(session.title);
   const [emailOpen, setEmailOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -89,7 +92,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
         await updateEncounter(enc.id, {
           subjective: { ...(enc.subjective ?? {}), history: nextHistory },
         });
-        markBriefsInjected([session.id]);
+        await markBriefsInjected([session.id]).catch(() => undefined);
         await persist({ soapEncounterId: enc.id, status: 'injected' });
         setHint(
           'Prep notes were added to this visit’s SOAP history, separate from the in-room discussion.'
@@ -199,6 +202,11 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
       setHint('No phone number on this client.');
       return;
     }
+    setConsentFor('call');
+  };
+
+  const dialAndRecord = () => {
+    if (!session.clientPhone) return;
     window.location.href = buildPhoneDialHref(session.clientPhone, { fromLine: quoFromLine });
     void recorder.start();
   };
@@ -255,14 +263,18 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
               className="brief-btn record is-on"
               onClick={() => void stopAndSave()}
             >
-              <Square size={15} aria-hidden /> Stop {formatElapsed(recorder.elapsed)}
+              <Square size={15} aria-hidden />{' '}
+              {/* Words said before the connection is up are not heard: say so until it is. */}
+              {recorder.status === 'connecting'
+                ? 'Connecting…'
+                : `Stop ${formatElapsed(recorder.elapsed)}`}
             </button>
           ) : (
             <button
               type="button"
               className="brief-btn record"
               disabled={cleaning}
-              onClick={() => void recorder.start()}
+              onClick={() => setConsentFor('record')}
             >
               <Mic size={15} aria-hidden /> Record
             </button>
@@ -408,6 +420,20 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           <Trash2 size={14} aria-hidden /> Delete
         </button>
       </div>
+
+      {consentFor ? (
+        <ScribeConsentModal
+          variant="jot"
+          jotKind={session.kind}
+          onClose={() => setConsentFor(null)}
+          onConfirm={() => {
+            const forCall = consentFor === 'call';
+            setConsentFor(null);
+            if (forCall) dialAndRecord();
+            else void recorder.start();
+          }}
+        />
+      ) : null}
 
       <BriefEmailModal
         open={emailOpen}
