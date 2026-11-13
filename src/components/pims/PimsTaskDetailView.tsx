@@ -626,7 +626,7 @@ export default function PimsTaskDetailView({
           )}
           {task.source !== 'manual' && mailOrderId == null && (
             <span className="pims-task-detail__pill">
-              {panelKind === 'order_list' ? 'Order list' : task.source}
+              {panelKind === 'order_list' ? 'Order list' : 'Automatic'}
             </span>
           )}
         </div>
