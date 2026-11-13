@@ -10,6 +10,8 @@ import {
   type ZoneMapFeatureCollection,
   type ZoneMapProperties,
 } from '../api/zones';
+import { formatMiles, googleMapsUrl, locateInZones } from '../utils/zoneMapLocate';
+import { ZoneMapAddressSearch, type ZoneMapSearchResult } from './ZoneMapAddressSearch';
 import '../pages/Scheduler.css';
 import './WorkZonesMapModal.css';
 
@@ -54,6 +56,11 @@ const DOCTOR_COLORS = [
 /** All zones, drawn quietly under the selected doctors' zones. */
 const MUTED_ZONE_COLOR = '#64748b';
 
+/** Searched address pin and its line to the nearest zone edge. */
+const SEARCH_PIN_COLOR = '#dc2626';
+/** Leaflet pane above zones and labels (markerPane is 600) but below popups (700). */
+const SEARCH_PANE = 'work-zones-search';
+
 function zoneColor(index: number): string {
   return ZONE_COLORS[index % ZONE_COLORS.length];
 }
@@ -70,6 +77,7 @@ export function WorkZonesMapModal({ onClose }: Props) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
+  const searchLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [zones, setZones] = useState<ZoneMapFeatureCollection | null>(null);
   const [doctors, setDoctors] = useState<ZoneMapDoctor[]>([]);
@@ -77,6 +85,7 @@ export function WorkZonesMapModal({ onClose }: Props) {
   const [doctorsError, setDoctorsError] = useState<string | null>(null);
   const [showAllZones, setShowAllZones] = useState(true);
   const [selectedDoctorIds, setSelectedDoctorIds] = useState<number[]>([]);
+  const [found, setFound] = useState<ZoneMapSearchResult | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,6 +131,22 @@ export function WorkZonesMapModal({ onClose }: Props) {
     [doctors, selectedDoctorIds]
   );
 
+  const foundLocation = useMemo(
+    () => (zones && found ? locateInZones(zones.features, found.lat, found.lon) : null),
+    [zones, found]
+  );
+
+  /** Doctors covering the zones the searched address falls in, primary first. */
+  const foundCoverage = useMemo(() => {
+    const zoneIds = new Set(foundLocation?.inside.map((z) => z.zoneId) ?? []);
+    if (zoneIds.size === 0) return [];
+    return doctors
+      .flatMap((doc) =>
+        doc.zones.filter((z) => zoneIds.has(z.zoneId)).map((z) => ({ doctor: doc, zone: z }))
+      )
+      .sort((a, b) => Number(b.zone.isPrimary) - Number(a.zone.isPrimary));
+  }, [foundLocation, doctors]);
+
   // Create the map once the zones have loaded.
   useEffect(() => {
     if (!zones || !mapEl.current) return;
@@ -133,6 +158,8 @@ export function WorkZonesMapModal({ onClose }: Props) {
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
     overlayRef.current = L.layerGroup().addTo(map);
+    map.createPane(SEARCH_PANE).style.zIndex = '650';
+    searchLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const bounds = L.geoJSON(zones).getBounds();
@@ -143,8 +170,69 @@ export function WorkZonesMapModal({ onClose }: Props) {
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
+      searchLayerRef.current = null;
     };
   }, [zones]);
+
+  // Draw the searched address: a pin plus a dashed line to the nearest zone edge.
+  useEffect(() => {
+    const layer = searchLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!found) return;
+
+    const pin: L.LatLngTuple = [found.lat, found.lon];
+    const edge = foundLocation?.inside[0] ?? foundLocation?.nearest ?? null;
+
+    if (edge) {
+      const edgeLabel = foundLocation?.inside.length
+        ? `${formatMiles(edge.edgeMiles)} to edge of ${edge.name}`
+        : `${formatMiles(edge.edgeMiles)} to ${edge.name}`;
+      L.polyline([pin, edge.edgePoint], {
+        pane: SEARCH_PANE,
+        color: SEARCH_PIN_COLOR,
+        weight: 2,
+        dashArray: '4 6',
+        interactive: false,
+      })
+        .bindTooltip(escapeHtml(edgeLabel), {
+          permanent: true,
+          direction: 'center',
+          className: 'work-zones-map-modal__distance',
+        })
+        .addTo(layer);
+    }
+
+    L.circleMarker(pin, {
+      pane: SEARCH_PANE,
+      radius: 8,
+      color: '#fff',
+      weight: 3,
+      fillColor: SEARCH_PIN_COLOR,
+      fillOpacity: 1,
+    })
+      .bindPopup(
+        `<strong>${escapeHtml(found.label)}</strong><br/>` +
+          `<a href="${googleMapsUrl(found.lat, found.lon)}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>`
+      )
+      .addTo(layer);
+  }, [found, foundLocation]);
+
+  // Bring a new search result into view, with the nearest zone edge alongside it.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !found) return;
+    const location = zones ? locateInZones(zones.features, found.lat, found.lon) : null;
+    const edge = location?.inside[0] ?? location?.nearest ?? null;
+    const pin = L.latLng(found.lat, found.lon);
+    if (edge) {
+      map.fitBounds(L.latLngBounds([pin, L.latLng(edge.edgePoint)]).pad(0.6), { maxZoom: 13 });
+    } else {
+      map.setView(pin, 11);
+    }
+    // Re-frame only when the searched place changes, not when layers are toggled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [found]);
 
   // Redraw the zones and labels whenever the selection changes.
   useEffect(() => {
@@ -293,7 +381,85 @@ export function WorkZonesMapModal({ onClose }: Props) {
             <div className="work-zones-map-modal__status">Loading work zones…</div>
           ) : (
             <div className="work-zones-map-modal__layout">
-              <aside className="work-zones-map-modal__panel" aria-label="Map layers">
+              <aside className="work-zones-map-modal__panel" aria-label="Map search and layers">
+                <ZoneMapAddressSearch onFound={setFound} onClear={() => setFound(null)} />
+                {found && foundLocation ? (
+                  <div className="work-zones-map-modal__found" aria-live="polite">
+                    {foundLocation.inside.length > 0 ? (
+                      <ul className="work-zones-map-modal__found-zones">
+                        {foundLocation.inside.map((z) => (
+                          <li key={z.zoneId}>
+                            Inside{' '}
+                            <button
+                              type="button"
+                              className="work-zones-map-modal__zone-link is-strong"
+                              onClick={() => fitToZones([z.zoneId])}
+                              title={`Zoom to ${z.name}`}
+                            >
+                              {z.name}
+                            </button>
+                            <span className="work-zones-map-modal__muted">
+                              {' '}
+                              · {formatMiles(z.edgeMiles)} from the edge
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : foundLocation.nearest ? (
+                      <p className="work-zones-map-modal__found-outside">
+                        Not in any zone. Nearest is{' '}
+                        <button
+                          type="button"
+                          className="work-zones-map-modal__zone-link is-strong"
+                          onClick={() => fitToZones([foundLocation.nearest!.zoneId])}
+                          title={`Zoom to ${foundLocation.nearest.name}`}
+                        >
+                          {foundLocation.nearest.name}
+                        </button>
+                        , {formatMiles(foundLocation.nearest.edgeMiles)} away.
+                      </p>
+                    ) : (
+                      <p className="work-zones-map-modal__found-outside">Not in any zone.</p>
+                    )}
+
+                    {foundCoverage.length > 0 ? (
+                      <>
+                        <h3 className="work-zones-map-modal__heading">Covered by</h3>
+                        <ul className="work-zones-map-modal__found-doctors">
+                          {foundCoverage.map(({ doctor, zone }) => (
+                            <li key={`${doctor.employeeId}-${zone.zoneId}`}>
+                              <span
+                                className="work-zones-map-modal__swatch"
+                                style={{ background: doctorColorById.get(doctor.employeeId) }}
+                                aria-hidden="true"
+                              />
+                              <span>
+                                {doctor.name}{' '}
+                                <span className="work-zones-map-modal__muted">
+                                  {zoneRoleLabel(zone.isPrimary)}
+                                  {foundLocation.inside.length > 1 ? `, ${zone.name}` : ''}
+                                  {!zone.acceptingNewPatients ? ', not taking new patients' : ''}
+                                  {zone.transitioningOutOfZone ? ', transitioning out' : ''}
+                                </span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+
+                    <a
+                      className="work-zones-map-modal__gmaps"
+                      href={googleMapsUrl(found.lat, found.lon)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open in Google Maps ↗
+                    </a>
+                  </div>
+                ) : null}
+
+                <h3 className="work-zones-map-modal__heading">Layers</h3>
                 <label className="work-zones-map-modal__layer">
                   <input
                     type="checkbox"
