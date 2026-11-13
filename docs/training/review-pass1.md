@@ -1,3 +1,72 @@
+# Invoicing videos: Pass 1 review, Nov 13, 2026
+
+Branch `training/invoicing-nov13` (training/invoicing-videos + training/invoicing-cards + local build-doctor-flow 8de1a37e).
+Stack: test database `vayd_api_test_invn13`, API at local build-doctor-flow 5b1c0345, Stripe test mode, free Mac voice
+(Samantha). Dry runs: `~/.vayd-training-invn13/dry/INV-xx.mp4`. No final takes. The Nov 7 review is further down.
+
+## Blocking question: local build-doctor-flow is behind origin
+
+Origin has 27 API and 19 web commits that the local branch lacks, including the saved-cards wave (PAY-C0 to PAY-C9:
+the new card agreement version 2026-11-12, expired cards, Update card filling an empty slot). The local branch has 15
+API and 18 web commits origin lacks. These dry runs used the local API, so the card videos (INV-03, 04, 05, 17, 20)
+were checked against a server without that wave. Merging origin into the training API copy conflicts in
+`src/visitWorkflow/visit-invoice.controller.ts` (app code), so I stopped. **Options:** (a) you or your developer
+merge origin into local build-doctor-flow (or push local), then I re-run the card videos; (b) I resolve the
+conflict in the training copy only (not committed anywhere), to dry-run against both.
+
+## Status
+
+| ID | Dry run | Length (1.25x) | Clicks | Notes |
+|---|---|---|---|---|
+| INV-01 | Passed | 88 s | 5, in sync | — |
+| INV-02 | Passed | 55 s | 0 (points only) | — |
+| INV-03 | Passed | 89 s | 6, in sync | Re-check after the origin merge |
+| INV-04 | Passed | 86 s | 1 late by 0.1 s (inv04-19) | Re-check after the origin merge |
+| INV-05 | Passed | 92 s | 7, in sync | Re-check after the origin merge |
+| INV-06 | Passed | 61 s | 3 late by 0.1 to 0.2 s | — |
+| INV-07 | Passed | 65 s | 7, in sync | — |
+| INV-08 | Passed | 41 s | 1 late by 0.2 s | — |
+| INV-09 | Passed | 43 s | 4, in sync | — |
+| INV-10 | Passed | 59 s | 2, in sync | — |
+| INV-11 | Passed | 34 s | 4, in sync | — |
+| INV-12 | Passed | 59 s | 6, in sync | — |
+| INV-13 | Passed | 66 s | 6, in sync | — |
+| INV-14 | Passed | 50 s | 2, in sync | — |
+| INV-15 | Passed | 50 s | 4, in sync | Nice to have |
+| INV-16 | Passed | 59 s | 8, in sync | — |
+| INV-17 | Passed | 63 s | 2, in sync | Nice to have; re-check after the origin merge |
+| INV-18, INV-19 | Not re-run | — | — | Recorded with Nova this morning by the deposits session (done) |
+| INV-20 | Passed (new spec) | 61 s | 1 late by 0.8 s (inv20-06) | Steps 13 and 14 left out: Q20-1 |
+
+The late clicks are a fraction of a second; I'll shorten the pointer pause before them in Pass 2.
+
+## Questions for every video
+
+1. **File names.** Same as the comms review: the recording queue requires `<ID> - <roles> - <title>.mp4`.
+2. **"NOT PRODUCTION" banner** shows across the top of every frame. Recommendation: hide it in training videos
+   (training-only change in `cypress/support/e2e.ts`).
+3. **The README status table** still lists five bugs from Nov 7 as open. All were fixed Nov 7 and 8 (API 2fb73293,
+   83edf8fd) and the scripts already show the fixed screens. I'll update the table.
+
+## INV-20 Replace or remove a card (new spec)
+
+- **Q20-1. Expired card (steps 13, 14).** Stripe test mode refuses a past expiry date, so an expired card can't be
+  made for real. Options: (a) leave the expired card out of the video (current dry run); (b) a training-only stand-in
+  that makes the test stack report Tom's card as expired, so the real screens show it.
+- **Q20-2 (possible bug). After Replace card, the card says "agreement 2026-10-07".** The local API still records
+  2026-10-07; the bump to 2026-11-12 is only on origin (c58d059b). Goes away with the origin merge.
+- **Q20-3 (wording).** "Owner agreed Nov 12, 2026, from entered by staff, agreement 2026-11-12." "from entered by
+  staff" reads oddly. Suggest "Owner agreed Nov 12, 2026 (entered by staff, agreement 2026-11-12)." App change.
+- **Q20-4 (small).** **Name on card** in Replace card starts empty, and Save card says "Enter the name on the card."
+  Checkout's card form fills in the client's name. Suggest filling it here too. App change. The spec now types it.
+- **Script changes:** step 1 shows the test Visa as "expires 11/27" (Stripe's test card), not 12/34. Step 5 now types
+  the name first. Closing line adds the most common mistake: "saving a card without asking".
+- **Demo data:** `setup/stripe-inv20.sh` makes the Stripe test customer, the Visa, and a test subscription for
+  Maple's plan on that Visa, so "Maple's membership is billed on a different card" shows after Replace card (seen in
+  the dry run).
+
+---
+
 # Invoicing and payments videos: Pass 1 review (dry runs only)
 
 Nov 7, 2026. Branch `training/invoicing-videos`. Stack: test database `vayd_api_test_inv`, API on build-doctor-flow (f620ada2), Stripe test mode, free Mac voice (Samantha). Dry runs are in `~/.vayd-training-inv/dry/`; the frames `record.sh` saved are in `~/.vayd-training-inv/<spec name>/frames/`. Batch A: INV-01 to INV-06. No final takes yet.

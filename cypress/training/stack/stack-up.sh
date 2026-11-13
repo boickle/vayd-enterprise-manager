@@ -16,7 +16,7 @@ psql -h localhost -U vayd -d postgres -q -c "DROP DATABASE IF EXISTS $DB" -c "CR
 cd "$API"
 (MIGRATION_DB_NAME=$DB NODE_OPTIONS=--no-experimental-strip-types npm run -s migration:run > "$S/migrate.log" 2>&1)
 rm -f tsconfig.build.tsbuildinfo tsconfig.tsbuildinfo; npx nest build > "$S/build.log" 2>&1
-rm -f "$S/world.json"; : > "$S/emails.jsonl"; : > "$S/stripe.jsonl"; : > "$S/sms.jsonl"
+rm -f "$S/world.json"; : > "$S/emails.jsonl"; : > "$S/stripe.jsonl"; : > "$S/sms.jsonl"; : > "$S/expired-pms.txt"
 NODE_ENV=test NODE_OPTIONS=--no-experimental-strip-types npx ts-node -T test/scripts/scheduling-e2e-seed.ts seed $DB "$S/world.json" > "$S/seed.log" 2>&1
 bash "$HERE/demo-names.sh" $DB "$S/world.json" > "$S/demo-names.log" 2>&1
 (PORT=$TRAINING_OSRM_PORT nohup node test/scripts/e2e-fake-osrm.js > "$S/osrm.log" 2>&1 & echo $! > "$S/osrm.pid")
@@ -40,8 +40,8 @@ if [ "${TRAINING_SMS_CAPTURE:-0}" = 1 ]; then SMS_KEY=captured-not-real; SMS_FRO
   E2E_API_DIR="$API" EMAIL_CAPTURE_PATH="$S/emails.jsonl" APPOINTMENT_REQUEST_TEST_EMAIL=deirdre@vetatyourdoor.com \
   APPOINTMENT_REQUEST_TEST_SMS= ROOM_LOADER_TEST_SMS= OPENPHONE_API_KEY=$SMS_KEY OPENPHONE_FROM=$SMS_FROM SMS_REMINDERS_FROM=$SMS_FROM SMS_TEST_NUMBER=9195550199 \
   SMS_CAPTURE_PATH="$S/sms.jsonl" GMAIL_SMTP_PASS= GMAIL_SMTP_USER= GMAIL_OAUTH_CLIENT_SECRET= GMAIL_OAUTH_CLIENT_ID= GMAIL_TOKEN_ENCRYPTION_KEY= GMAIL_PUBSUB_TOPIC= \
-  NET_GUARD_LOG="$S/blocked.jsonl" NODE_OPTIONS="--require $HERE/net-guard-preload.cjs --require $API/test/scripts/e2e-capture-preload.js$SMS_PRELOAD" nohup node dist/main.js > "$S/api.log" 2>&1 & echo $! > "$S/api.pid")
+  NET_GUARD_LOG="$S/blocked.jsonl" TRAINING_EXPIRED_PMS="$S/expired-pms.txt" NODE_OPTIONS="--require $HERE/net-guard-preload.cjs --require $HERE/expired-card-preload.cjs --require $API/test/scripts/e2e-capture-preload.js$SMS_PRELOAD" nohup node dist/main.js > "$S/api.log" 2>&1 & echo $! > "$S/api.pid")
 cd "$FE"
-(VITE_API_BASE_URL=http://localhost:$TRAINING_API_PORT nohup npx vite --port $TRAINING_APP_PORT --strictPort > "$S/vite.log" 2>&1 & echo $! > "$S/vite.pid")
+(VITE_API_BASE_URL=http://localhost:$TRAINING_API_PORT nohup npx vite --config vite.sch.config.ts --port $TRAINING_APP_PORT --strictPort > "$S/vite.log" 2>&1 & echo $! > "$S/vite.pid")
 for i in $(seq 1 90); do curl -s -o /dev/null http://localhost:$TRAINING_API_PORT/health && curl -s -o /dev/null http://localhost:$TRAINING_APP_PORT && break; sleep 2; done
 echo "up: API :$TRAINING_API_PORT (DB $DB), app :$TRAINING_APP_PORT. Work files: $S"
