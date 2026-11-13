@@ -88,7 +88,7 @@ describe('fix check 2', () => {
       cy.contains('button', /Review & summarize/).first().click({ force: true });
       cy.wait(2000);
       cy.intercept('POST', '**/scribe/summarize-chart').as('summ');
-      cy.contains('button', 'Save names & summarize records').click();
+      cy.contains('button', 'Save & summarize records').click();
       cy.wait('@summ', { timeout: 120000 }).then((x: any) => {
         const req = x.request.body || {};
         const res = x.response?.body || {};

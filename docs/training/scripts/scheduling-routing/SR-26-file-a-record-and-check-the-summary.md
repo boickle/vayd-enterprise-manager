@@ -19,7 +19,7 @@
 | 4 | Records | Point at "Filed maplewood-biscuit-records.pdf on Biscuit's chart. Open Received → Review & summarize to name them and add a summary." | "It's on Biscuit's chart now, and the request moves to Received." | — |
 | 5 | Records | Click **Received**, then **Review & summarize** | "Open Received, then Review & summarize." | — |
 | 6 | **Review received records · Biscuit** | Point at the document name and **Preview** | "Give the document a clear name, like the hospital and what it is." | — |
-| 7 | Review | Click **Save names & summarize records** | "Save names and summarize." | — |
+| 7 | Review | Click **Save & summarize records** | "Save and summarize." | — |
 | 8 | **Review previous records · Biscuit** | Point at "Check the summary and reminders against the documents, then enter them in the medical record." | "The draft is ready. The document is beside it." | — |
 | 9 | **Reminders** tab | Point at the six reminders: DHPP, Leptospirosis and Bordetella **Overdue**, Rabies 3 yr **Up to date**, Heartworm test, Dental cleaning | "Scout found what's due, with when it was last done." | — |
 | 10 | Reminders | Point at Dental cleaning's due date, 04/02/2025 | "Check each date against the record. The record says a cleaning within 12 months of April 2025, so fix the date." | — |
@@ -32,7 +32,7 @@
 
 ## What else you can do here
 
-- **Save names only**, to file without summarizing yet.
+- **Save**, to file without summarizing yet (the button was **Save names only** until Nov 13, 2026).
 - **Add a reminder** that was missed. Untick any reminder that's wrong.
 - **Link a catalog item (optional)** on a reminder, so it books as the right service.
 - **Close out** the request once the summary is in.
@@ -47,6 +47,8 @@
 "The most common mistakes: entering the reminders without checking the dates, and missing a behavior warning in the summary. Remember: Scout drafts it, a person checks it, and nothing goes in the record until you click Enter."
 
 ## Notes from the check in the app (Nov 7, 2026)
+
+- **Nov 13, 2026:** the buttons were renamed **Save** and **Save & summarize records**. The recorded SR-26 video still shows **Save names & summarize records**; re-record it.
 
 - **Checked as a CL** on the training stack with the fictional record: filing, **Review & summarize**, and the review window with 6 reminders and the summary.
 - **Entered end to end as Dr. Lane (Nov 7):** the summary note was created and finalized, 6 reminders were added to Biscuit's chart (Dental cleaning, DHPP 1 yr, Leptospirosis 1 yr, Heartworm test, Bordetella intranasal 1 yr, Rabies 3 yr) and the records request was updated.

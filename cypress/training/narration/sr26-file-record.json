@@ -5,7 +5,7 @@
  {"id": "sr26-04", "text": "File the document on the request."},
  {"id": "sr26-05", "text": "It's on Biscuit's chart now, and the request moves to Received."},
  {"id": "sr26-06", "text": "Open Received, then Review and summarize."},
- {"id": "sr26-07", "text": "Give the document a clear name, like the hospital and what it is. Then save names and summarize."},
+ {"id": "sr26-07", "text": "Give the document a clear name, like the hospital and what it is. Then save and summarize."},
  {"id": "sr26-08", "text": "Scout reads the document. It takes a few seconds."},
  {"id": "sr26-09", "text": "The draft is ready. The document is beside it."},
  {"id": "sr26-10", "text": "Scout found what's due, with when it was last done. Check each date against the record, and fix any that are wrong."},

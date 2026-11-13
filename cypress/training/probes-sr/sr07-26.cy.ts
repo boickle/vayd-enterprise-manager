@@ -45,7 +45,7 @@ describe('SR-07 and SR-26', () => {
       cy.wait(30000);
       dump('sr26-review', 'body');
       cy.screenshot('sr26-review', { capture: 'viewport' });
-      cy.contains('button', 'Save names & summarize records').click();
+      cy.contains('button', 'Save & summarize records').click();
       cy.contains('Review previous records', { timeout: 120000 });
       cy.wait(3000);
       dump('sr26-reminders-tab');

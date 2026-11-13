@@ -67,11 +67,11 @@ describe('Training: SR-26 file a record', () => {
       line('sr26-06', () => {
         tap(() => cy.contains('button, [role="tab"]', /^Received/).first());
         tap(() => cy.contains('button', /Review & summarize/).first());
-        cy.contains('button', 'Save names & summarize records', { timeout: 60000 }).should('exist');
+        cy.contains('button', 'Save & summarize records', { timeout: 60000 }).should('exist');
       });
       line('sr26-07', () => {
         pointAt(() => cy.contains(/maplewood-biscuit-records/i).first(), 2500);
-        tap(() => cy.contains('button', 'Save names & summarize records'));
+        tap(() => cy.contains('button', 'Save & summarize records'));
       });
       line('sr26-08', () => cy.contains(/Review previous records/i, { timeout: 180000 }).should('exist'));
       line('sr26-09', () => pointAt(() => cy.contains(/Check the summary and reminders against the documents/i).first(), 3500));
