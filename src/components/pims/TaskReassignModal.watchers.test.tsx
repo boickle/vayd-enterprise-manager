@@ -137,3 +137,24 @@ describe('Move this task: watchers', () => {
     });
   });
 });
+
+describe('Bulk re-assign: nothing moved (T-B10-4)', () => {
+  it('shows an error and stays open instead of closing as saved', async () => {
+    reassignFromEmployee.mockReset();
+    reassignFromEmployee.mockResolvedValue({ reassigned: 0, taskIds: [], closedAsDuplicate: [] });
+    const onSaved = vi.fn();
+    render(
+      <TaskReassignModal
+        bulk={{ fromEmployeeId: 1, taskIds: [9], upcomingOnly: true, label: 'Move 1 future task to someone else' }}
+        employees={employees.filter((e) => e.id !== 1)}
+        requireAssignee
+        onClose={() => {}}
+        onSaved={onSaved}
+      />,
+    );
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: '2' } });
+    fireEvent.click(screen.getByText('Save'));
+    expect(await screen.findByText(/Nothing was moved/)).toBeTruthy();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});
