@@ -57,6 +57,8 @@ export const TASK_LINK_ENTITY_TYPES = [
   'reminder',
   'mail_order',
   'idexx_result',
+  /** A Quo call (Scout row id); "Call not filed" tasks link to theirs (T-B2). */
+  'openphone_call',
 ] as const;
 
 export type TaskLinkEntityType = (typeof TASK_LINK_ENTITY_TYPES)[number];

@@ -15,23 +15,11 @@ import {
 } from '../../hooks/useClientCallActivity';
 import CallDock, { type CallDockPeek, type CallDockTone } from './CallDock';
 import { CallTranscriptModal, type CallPillPatient } from './ClientCallPill';
+import { petsFromClient } from '../../utils/callPets';
 
 function mmss(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function petsFromClient(raw: unknown): CallPillPatient[] {
-  if (!raw || typeof raw !== 'object') return [];
-  const patients = (raw as { patients?: unknown }).patients;
-  if (!Array.isArray(patients)) return [];
-  return patients
-    .filter((p): p is Record<string, unknown> => p != null && typeof p === 'object' && p.id != null)
-    .map((p) => ({
-      id: Number(p.id),
-      name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Pet #${p.id}`,
-    }))
-    .filter((p) => Number.isFinite(p.id));
 }
 
 function isIncoming(call: StackedCall): boolean {

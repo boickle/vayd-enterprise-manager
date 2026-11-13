@@ -51,6 +51,7 @@ import { soapPathFromTaskLinks } from '../../utils/soapTask';
 import OrderListTaskPanel from './OrderListTaskPanel';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
 import CallbackJotPanel from './CallbackJotPanel';
+import CallFilingTaskPanel from './CallFilingTaskPanel';
 import VisitRefundTaskPanel from './VisitRefundTaskPanel';
 import { taskPanelKind } from '../../utils/taskPanelKind';
 import TaskReassignModal from './TaskReassignModal';
@@ -328,7 +329,9 @@ export default function PimsTaskDetailView({
     panelKind !== 'order_list' &&
     panelKind !== 'mail_order' &&
     panelKind !== 'soap' &&
-    panelKind !== 'lab_result';
+    panelKind !== 'lab_result' &&
+    // T-B2: the call panel files or dismisses; the callback form ("Open Quo call") never fits.
+    panelKind !== 'call_filing';
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -618,7 +621,9 @@ export default function PimsTaskDetailView({
             panelKind === 'lab_result' ||
             panelKind === 'idexx_result') && (
             <span className="pims-task-detail__kind">
-              {panelKind === 'invoice'
+              {panelKind === 'call_filing'
+                ? 'Unfiled call'
+                : panelKind === 'invoice'
                 ? taskKindLabel('invoice')
                 : panelKind === 'soap'
                   ? taskKindLabel('soap')
@@ -774,6 +779,19 @@ export default function PimsTaskDetailView({
           patientName={patientName}
           readOnly={!showPanels}
           onUpdated={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
+        />
+      ) : null}
+
+      {panelKind === 'call_filing' && task.status !== 'done' ? (
+        <CallFilingTaskPanel
+          task={task}
+          canAct={showPanels}
+          defaultPatientId={patientLinks[0]?.entityId ?? null}
+          onDone={(message) => {
+            setFiledNotice(message);
             void getTask(task.id).then(setTask).catch(() => undefined);
             onUpdated();
           }}
