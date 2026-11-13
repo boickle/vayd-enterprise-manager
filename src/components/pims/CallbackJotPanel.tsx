@@ -69,6 +69,8 @@ type Props = {
   /** Invoice follow-up files to the client unless staff pick a pet. */
   defaultChartToClient?: boolean;
   onDone: () => void | Promise<void>;
+  /** Chart & complete: the panel closes as the task completes, so the parent shows this message. */
+  onFiled?: (message: string) => void;
 };
 
 /**
@@ -84,6 +86,7 @@ export default function CallbackJotPanel({
   clientName: clientNameProp,
   defaultChartToClient = false,
   onDone,
+  onFiled,
 }: Props) {
   const isCallback = task.kind === 'callback';
   const noun = isCallback ? 'callback' : 'task';
@@ -275,11 +278,11 @@ export default function CallbackJotPanel({
         });
       }
       if (task.status !== 'done') await completeTask(task.id, choice);
-      setDoneLabel(
-        isCallback
-          ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
-          : `Filed to ${filedToLabel(chartDestinationNames())} and the task is done.`,
-      );
+      const filedMessage = isCallback
+        ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
+        : `Filed to ${filedToLabel(chartDestinationNames())} and the task is done.`;
+      setDoneLabel(filedMessage);
+      onFiled?.(filedMessage);
       await onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not file that to the chart.');

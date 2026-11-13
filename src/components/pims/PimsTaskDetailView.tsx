@@ -192,6 +192,8 @@ export default function PimsTaskDetailView({
   const [reassignOpen, setReassignOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
+  /** "Call filed to …" from Chart & complete. The panel closes when the task completes, so this stays here. */
+  const [filedNotice, setFiledNotice] = useState<string | null>(null);
   const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
 
   const employeeMap = useMemo(() => {
@@ -238,6 +240,7 @@ export default function PimsTaskDetailView({
   useEffect(() => {
     setEditing(false);
     setReassignOpen(false);
+    setFiledNotice(null);
   }, [taskId]);
 
   useEffect(() => {
@@ -700,6 +703,12 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
+      {filedNotice ? (
+        <p className="pims-callback-jot is-done pims-task-detail__filed" role="status">
+          <CheckCircle2 size={14} aria-hidden /> {filedNotice}
+        </p>
+      ) : null}
+
       {panelKind === 'forward_booking' && forwardBookingJustAdded ? (
         <div
           className={`pims-fb-added${task.status === 'done' ? ' pims-fb-added--done' : ''}`}
@@ -812,6 +821,7 @@ export default function PimsTaskDetailView({
               patients={chartPets}
               clientName={clientName}
               defaultChartToClient={panelKind === 'invoice'}
+              onFiled={setFiledNotice}
               onDone={() => {
                 void getTask(task.id).then(setTask).catch(() => undefined);
                 onUpdated();
@@ -826,6 +836,7 @@ export default function PimsTaskDetailView({
             patientName={patientName}
             patients={chartPets}
             clientName={clientName}
+            onFiled={setFiledNotice}
             onDone={() => {
               void getTask(task.id).then(setTask).catch(() => undefined);
               onUpdated();
