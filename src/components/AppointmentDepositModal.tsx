@@ -177,7 +177,7 @@ export function AppointmentDepositModal({
           </button>
         </div>
 
-        <div className="scheduler-modal-body">
+        <div className="scheduler-modal-body appointment-deposit__body">
           {depositRequiredNote !== undefined && depositRequiredNote !== null ? (
             <p className="appointment-deposit__flag" role="note">
               <strong>Deposit required</strong>
@@ -195,7 +195,7 @@ export function AppointmentDepositModal({
             </p>
           ) : null}
           <label className="appointment-deposit__amount">
-            Deposit amount ($)
+            <span>Deposit amount ($)</span>
             <input
               type="number"
               min={1}
@@ -208,9 +208,9 @@ export function AppointmentDepositModal({
             />
           </label>
           <p className="appointment-deposit__hint">
-            The deposit is kept on the client&apos;s account. At checkout, use <strong>Account credit</strong>{' '}
-            to apply it. If the client cancels or doesn&apos;t show, add the cancel fee to a bill and pay it
-            with Account credit.
+            The deposit is kept on the client&apos;s account for this visit. At checkout, <strong>Account credit</strong>{' '}
+            uses it first. If the client cancels or doesn&apos;t show, add the cancel fee to a bill and pay it
+            with Account credit (tick this visit&apos;s deposit there if the visit wasn&apos;t cancelled).
           </p>
           {error ? <p className="client-fin__err" role="alert">{error}</p> : null}
           {note ? <p role="status">{note}</p> : null}

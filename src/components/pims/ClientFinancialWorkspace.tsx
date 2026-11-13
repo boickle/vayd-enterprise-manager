@@ -6302,9 +6302,9 @@ export default function ClientFinancialWorkspace({
                 <p className="client-fin__deposit-note" data-testid="deposit-bill-note">
                   <strong>Appointment deposit</strong>: {money(Number(selected.depositAmount) || 0)} asked
                   for, {money(depositPaid)} paid
-                  {remaining > 0.009 ? `, ${money(remaining)} still to collect` : ''}. What is paid stays on
-                  the account as credit: at checkout use <strong>Account credit</strong>; if the client
-                  cancels or doesn&apos;t show, pay the cancel fee with Account credit.
+                  {remaining > 0.009 ? `, ${money(remaining)} still to collect` : ''}. What is paid is held as
+                  credit for that visit: at its checkout <strong>Account credit</strong> uses it first; if
+                  the client cancels or doesn&apos;t show, pay the cancel fee with Account credit.
                 </p>
               ) : visibleLines.length === 0 &&
               !(canEdit && displayPetSections.length) &&

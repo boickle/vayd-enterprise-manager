@@ -7694,3 +7694,47 @@ label.scheduler-household-pet-row {
   border-color: #93c5fd;
   background: #eff6ff;
 }
+
+/* Appointment deposit window (AppointmentDepositModal) */
+.appointment-deposit__body {
+  gap: 12px;
+}
+
+.appointment-deposit__body > p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.appointment-deposit__body > p.appointment-deposit__flag {
+  padding: 8px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.appointment-deposit__amount {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.appointment-deposit__amount input {
+  width: 160px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.appointment-deposit__body > p.appointment-deposit__hint {
+  font-size: 13px;
+  color: #64748b;
+}

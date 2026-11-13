@@ -22,3 +22,12 @@ it('PAY-W9B-2: the pay-link line recomputes after Add credit without a reload', 
   await waitFor(() => expect(result.current.credit).toBe(30));
   expect(payLinkPreviewText(100, result.current.credit, 1, money)).toContain('Sends $70.00');
 });
+
+it("PAY-A17-11: a deposit held for an unpaid bill's own visit comes off the pay-link line", async () => {
+  fetchCredit.mockReset();
+  fetchCredit.mockResolvedValue({ total: 0, depositHeld: 100, payLinkDeposit: 100 });
+  const { result } = renderHook(() => usePayLinkCredit(7, 187));
+  await waitFor(() => expect(result.current.credit).toBe(100));
+  expect(fetchCredit).toHaveBeenCalledWith(7, undefined, { forPayLink: true });
+  expect(payLinkPreviewText(187, result.current.credit, 2, money)).toContain('Sends $87.00');
+});
