@@ -38,19 +38,11 @@ describe('Training: INV-20 replace or remove a card', () => {
     const stackDir = String(Cypress.env('EMAIL_CAPTURE_PATH')).replace(/\/[^/]+$/, '');
     giveSavedCard(tom, `tom.chen.inv20.${Date.now()}@example.com`, 'Tom Chen');
     sql(`UPDATE clients SET "cardOnFileConsentSource"='manual' WHERE id=${tom}`);
+    // Tom's open demo eVet bill would open on the Financial tab and hide Card on file. Unlinked for this take only
+    // (not deleted, which would show a red Deleted row); invoicing-demo.sql links it back before the next video.
+    sql(`UPDATE invoices SET "clientId"=NULL WHERE "pimsId"='inv-train-evet-48213'`);
     sql(`SELECT "savedPaymentMethodId" FROM clients WHERE id=${tom}`).then((pm) => cy.writeFile(`${stackDir}/expired-pms.txt`, `${String(pm).trim()}\n`));
     let chenVisit = 0;
-    openVisit(biscuit, tom, 'Visit', 60).then(({ appt, enc }) => {
-      chenVisit = appt;
-      schedulingApi('cl', 'POST', '/visit-invoices', { practiceId: w.practiceId, appointmentId: appt, clientId: tom }).then(() => {
-        setBillBranch(tom);
-        catalogId('Office exam').then((c) =>
-          schedulingApi('doctorA', 'POST', `/soap-encounters/${enc}/orders`, {
-            practiceId: w.practiceId, name: 'Office exam', catalogItemId: c.id, catalogItemType: c.type, qty: 1, kind: 'treatment', state: 'accepted', unitPrice: 75,
-          })
-        );
-      });
-    });
     cy.then(() => signInAsScheduling('cl', `/schedule/clients?clientId=${client}&tab=financial`));
     const section = () => cy.get('section[aria-label="Card on file"]', { timeout: 60000 });
     section().contains('Visa ending 4242').should('exist');
@@ -93,7 +85,19 @@ describe('Training: INV-20 replace or remove a card', () => {
       cy.wait(1000);
     });
     line('inv20-16', () => pointAt(() => section().find('.client-card__card'), 5000));
+    // Biscuit's bill is made only now: with a bill open, the Financial tab hides Card on file.
     offCamera(() => {
+      openVisit(biscuit, tom, 'Visit', 60).then(({ appt, enc }) => {
+        chenVisit = appt;
+        schedulingApi('cl', 'POST', '/visit-invoices', { practiceId: w.practiceId, appointmentId: appt, clientId: tom }).then(() => {
+          setBillBranch(tom);
+          catalogId('Office exam').then((c) =>
+            schedulingApi('doctorA', 'POST', `/soap-encounters/${enc}/orders`, {
+              practiceId: w.practiceId, name: 'Office exam', catalogItemId: c.id, catalogItemType: c.type, qty: 1, kind: 'treatment', state: 'accepted', unitPrice: 75,
+            })
+          );
+        });
+      });
       cy.then(() => cy.visit(`/schedule/soap/${chenVisit}/${biscuit}/checkout?clientId=${tom}`));
       cy.contains('.soap-checkout-actions button', 'Card on file', { timeout: 60000 }).should('be.disabled');
       cy.wait(1500);

@@ -4,16 +4,15 @@
 // Scout's own expired-card handling (PAY-C5) does the rest.
 const fs = require('fs');
 const listPath = process.env.TRAINING_EXPIRED_PMS;
-const realFetch = globalThis.fetch;
-if (listPath && typeof realFetch === 'function') {
-  const listed = () => {
-    try {
-      return new Set(fs.readFileSync(listPath, 'utf8').split(/\s+/).filter(Boolean));
-    } catch {
-      return new Set();
-    }
-  };
-  globalThis.fetch = async function (input, init) {
+const listed = () => {
+  try {
+    return new Set(fs.readFileSync(listPath, 'utf8').split(/\s+/).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+};
+const wrap = (realFetch) =>
+  async function (input, init) {
     const res = await realFetch(input, init);
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input && input.url;
     const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
@@ -28,4 +27,13 @@ if (listPath && typeof realFetch === 'function') {
     pm.card.exp_year = d.getUTCFullYear();
     return new Response(JSON.stringify(pm), { status: res.status, headers: { 'content-type': 'application/json' } });
   };
+if (listPath) {
+  if (typeof globalThis.fetch === 'function') globalThis.fetch = wrap(globalThis.fetch);
+  // The API's Stripe calls use undici's fetch (import { fetch } from 'undici'), not the global one.
+  try {
+    const undici = require(require.resolve('undici', { paths: [process.cwd()] }));
+    if (typeof undici.fetch === 'function') undici.fetch = wrap(undici.fetch);
+  } catch {
+    // No undici next to the API: the global fetch is the only one.
+  }
 }

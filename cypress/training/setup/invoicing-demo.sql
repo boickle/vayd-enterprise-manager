@@ -101,6 +101,9 @@ INSERT INTO invoices ("pimsType", "pimsId", "invoiceNumber", "invoicedDate", "am
 SELECT 'EVET', 'inv-train-evet-48213', 48213, TIMESTAMPTZ '2025-06-10 10:00:00-04', 0, 80, 0, 0, 1, false, false, 1, c.id
   FROM clients c WHERE c."lastName"='Chen'
    AND NOT EXISTS (SELECT 1 FROM invoices WHERE "pimsId"='inv-train-evet-48213');
+-- INV-20 unlinks it for its take (an open bill hides Card on file); link it back for the next video.
+UPDATE invoices SET "clientId"=(SELECT id FROM clients WHERE "lastName"='Chen' ORDER BY id LIMIT 1), "isDeleted"=false
+ WHERE "pimsId"='inv-train-evet-48213' AND ("clientId" IS NULL OR "isDeleted");
 INSERT INTO invoice_items ("pimsType", "pimsId", "invoiceId", "practiceId", sequence, percentage, quantity, price, "totalPrice", "procedureName", "serviceDate")
 SELECT 'EVET', 'inv-train-evet-48213-1', i.id, 1, 1, 0, 1, 80, 80, 'Annual wellness exam', TIMESTAMPTZ '2025-06-10 10:00:00-04'
   FROM invoices i WHERE i."pimsId"='inv-train-evet-48213'
