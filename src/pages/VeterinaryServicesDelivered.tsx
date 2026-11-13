@@ -146,15 +146,18 @@ function isWeeklyWorkday(
 
 /**
  * Whether a date counts toward goals vs actual.
- * Schedule OFF overrides win; otherwise trust goals breakdown isWorkday (API already
- * applies weekly + overrides when fetched with startDate/endDate); else weekly schedule.
+ * The API's countsForGoals wins: it already applies the weekly schedule, schedule overrides and
+ * the goal window (goals start or first appointment, to last day or, deactivated, last appointment).
+ * Older APIs without it: schedule OFF overrides, then breakdown isWorkday, then weekly schedule.
  * Do not use doctor/month workStart/workEnd — those are often empty on real workdays.
  */
 function dayCountsForGoals(
   emp: EmployeeWithGoals,
   dateStr: string,
-  resolvedIsWorkday?: boolean | null
+  resolvedIsWorkday?: boolean | null,
+  resolvedCountsForGoals?: boolean | null
 ): boolean {
+  if (resolvedCountsForGoals != null) return resolvedCountsForGoals;
   const override = emp.scheduleOverridesByDate.get(dateStr);
   if (override) {
     return !scheduleOverrideIsOff(override);
@@ -882,7 +885,7 @@ export default function VeterinaryServicesDeliveredPage() {
       const dayOfWeek = dayjs(dateStr).day();
       for (const emp of emps) {
         const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
         totalPointGoal += resolved.pointGoal;
         totalRevenueGoal += resolved.revenueGoal;
       }
@@ -901,7 +904,7 @@ export default function VeterinaryServicesDeliveredPage() {
         const dayOfWeek = dayjs(dateStr).day();
         for (const emp of empsForActuals) {
           const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-          if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
+          if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
           const id = emp.id;
           actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
           const dr = doctorResponses.find((r) => String(r.doctorId) === id);
@@ -915,7 +918,7 @@ export default function VeterinaryServicesDeliveredPage() {
       for (const dateStr of dates) {
         const dayOfWeek = dayjs(dateStr).day();
         const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday, resolved.countsForGoals)) continue;
         actualPoints += pointsByDoctorByDate[emp.id]?.[dateStr] ?? 0;
         const dr = doctorResponses.find((r) => String(r.doctorId) === emp.id);
         const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
@@ -1248,6 +1251,11 @@ export default function VeterinaryServicesDeliveredPage() {
                         </Typography>
                       </Box>
                     </Box>
+                    <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1.5 }}>
+                      {goalScope === PRACTICE_TOTAL_ID
+                        ? 'Counts only doctors with goals set, on the days they are scheduled to work, from their goals start (or first appointment) to their last day. Not Specified, Tech Team, Hospital Account and VSD on days off are left out, so this is lower than the practice total below.'
+                        : 'Counts only the days this doctor is scheduled to work, from their goals start (or first appointment) to their last day. VSD on days off is left out.'}
+                    </Typography>
                   </>
                 )}
               </CardContent>
