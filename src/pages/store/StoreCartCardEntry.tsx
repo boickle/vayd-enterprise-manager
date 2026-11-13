@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
 import { loadStripePublishableKey } from '../../api/practicePublicConfig';
+import { CARD_ON_FILE_CLIENT_WORDING } from '../../utils/cardOnFileWording';
 
 export type StoreCartCardEntryHandle = {
   createPaymentMethod: () => Promise<{ paymentMethodId: string; saveCard: boolean }>;
@@ -191,7 +192,7 @@ const StoreCartCardEntry = forwardRef<StoreCartCardEntryHandle, Props>(function 
             checked={saveCard}
             onChange={(e) => setSaveCard(e.target.checked)}
           />
-          <span>Save my card on file to make future purchases easier</span>
+          <span>{CARD_ON_FILE_CLIENT_WORDING}</span>
         </label>
       ) : null}
       {onClose ? (

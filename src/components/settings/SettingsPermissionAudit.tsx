@@ -114,6 +114,25 @@ function isLicenseChange(
   return has(detail.before) && has(detail.after);
 }
 
+type LicenseRowDetail = { kind?: string; state?: string; number?: string };
+
+/** Settings → Staff state license saves (Nov 12, 2026): one line per license added, changed or removed. */
+export function describeLicenseList(detail: Record<string, unknown>): string[] {
+  const rows = (v: unknown): LicenseRowDetail[] => (Array.isArray(v) ? (v as LicenseRowDetail[]) : []);
+  const name = (r: LicenseRowDetail) => `License (${r.state ?? '?'})`;
+  const key = (r: LicenseRowDetail) => `${r.kind}:${r.state}`;
+  const before = new Map(rows(detail.before).map((r) => [key(r), r]));
+  const after = new Map(rows(detail.after).map((r) => [key(r), r]));
+  const lines: string[] = [];
+  for (const [k, r] of after) {
+    const was = before.get(k);
+    if (!was) lines.push(`${name(r)} added: ${r.number ?? ''}`);
+    else if (was.number !== r.number) lines.push(`${name(r)}: ${was.number ?? ''} → ${r.number ?? ''}`);
+  }
+  for (const [k, r] of before) if (!after.has(k)) lines.push(`${name(r)} removed (was ${r.number ?? ''})`);
+  return lines.length ? lines : ['Licenses saved, no change'];
+}
+
 function licenseWords(state: LicenseState): string {
   if (state.isLicensed !== true) return 'Not licensed';
   if (state.licenseType === 'veterinarian') return 'Licensed veterinarian';
@@ -133,6 +152,7 @@ export function describeDetail(
       describeAccessChange({ permissionKey: 'staff.role.assign', detail } as PermissionAuditEntry),
     ];
   }
+  if (detail.action === 'licenses') return describeLicenseList(detail);
   if ('offboardingId' in detail) return describeOffboard(detail, staffName);
   if (detail.action === 'grant' || detail.action === 'revoke') return describeGrant(detail, labelOf);
   if (isLicenseChange(detail)) {

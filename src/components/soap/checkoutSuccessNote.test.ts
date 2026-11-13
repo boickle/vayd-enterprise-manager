@@ -1,5 +1,5 @@
 /**
- * Wave 8 (bug 7): after a declined card, a later successful payment (card over the phone, Scout
+ * Wave 8 (bug 7): after a declined card, a later successful payment (Type card manually, Scout
  * Terminal, gift card, account credit) must clear "Your card was declined." instead of leaving it
  * above the success note.
  */
@@ -12,9 +12,9 @@ describe('showPaymentSuccess', () => {
     let note: string | null = null;
     showPaymentSuccess(
       { setError: (v) => (error = v), setNote: (v) => (note = v) },
-      'Card charged over the phone — invoice marked paid.',
+      'Card charged — invoice marked paid.',
     );
     expect(error).toBeNull();
-    expect(note).toBe('Card charged over the phone — invoice marked paid.');
+    expect(note).toBe('Card charged — invoice marked paid.');
   });
 });

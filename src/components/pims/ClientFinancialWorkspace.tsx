@@ -1771,7 +1771,7 @@ export default function ClientFinancialWorkspace({
   const [paymentTypes, setPaymentTypes] = useState<PracticePaymentType[]>([]);
   const [tenderPaymentType, setTenderPaymentType] = useState('');
   const [useSavedCard, setUseSavedCard] = useState(false);
-  /** Virtual terminal: key in a card the owner reads out over the phone. */
+  /** Type card manually (virtual terminal): key in a card number. */
   const [payByPhone, setPayByPhone] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   /** Shown after this invoice's payment makes a pet inactive. */
@@ -8449,7 +8449,7 @@ export default function ClientFinancialWorkspace({
                         {cardOnFile ? (
                           <option value="saved">Card on file · {formatCardOnFile(cardOnFile)}</option>
                         ) : null}
-                        <option value="phone">Card over the phone (virtual terminal)</option>
+                        <option value="phone">Type card manually</option>
                         {tenderPaymentTypes.map((r) => (
                           <option key={r.id} value={`type:${r.name}`}>
                             {r.name}
@@ -9050,7 +9050,7 @@ export default function ClientFinancialWorkspace({
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
-            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged.');
           }}
         />
       ) : null}
