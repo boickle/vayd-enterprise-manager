@@ -1245,7 +1245,7 @@ export function SelfScheduleCalendarModal({
           'day',
         );
         const resumeMonth = resumeFrom ?? startMonth;
-        let windowStart = today > resumeMonth ? today : resumeMonth;
+        let windowStart: DateTime = today > resumeMonth ? today : resumeMonth;
         if (windowStart < earliestDay) {
           windowStart = earliestDay;
         }

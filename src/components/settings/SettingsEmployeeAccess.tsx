@@ -214,8 +214,8 @@ export default function SettingsEmployeeAccess({
         <h3 className="settings-card-title">License</h3>
         <p className="settings-card-subtitle">
           Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and
-          medical notes, and may enter prescription directions for the vet. No role or grant
-          substitutes for a license.
+          may enter prescription directions for the vet. No role or grant substitutes for a
+          license. Anyone on staff may sign a medical note.
         </p>
         <PermissionGate
           permission="staff.license.manage"

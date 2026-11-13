@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { ChevronRight, Plus } from 'lucide-react';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import { listEncounters, type SoapEncounter } from '../../api/visitWorkflow';
-import { listLocalBriefsForPatient } from '../../utils/briefStore';
+import { listBriefs } from '../../api/briefs';
 import type { BriefSession } from '../../utils/briefTypes';
 import { BRIEF_KIND_LABEL } from '../../utils/briefTypes';
 import {
@@ -88,7 +88,13 @@ export default function BriefPatientPanel({
       .catch((err) => {
         if (!canceled) setError(err instanceof Error ? err.message : 'Could not load patient.');
       });
-    setSessions(listLocalBriefsForPatient(patientId));
+    void listBriefs({ patientId })
+      .then((rows) => {
+        if (!canceled) setSessions(rows);
+      })
+      .catch(() => {
+        if (!canceled) setSessions([]);
+      });
     void listEncounters({ patientId: Number(patientId) })
       .then((rows) => {
         if (!canceled) setEncounters(rows);

@@ -38,6 +38,8 @@ import { RequestConversationPanel } from '../components/appointmentRequests/Requ
 import '../components/appointmentRequests/requestPanels.css';
 import { receivedDateLabel, visitDateShortLabel } from '../utils/appointmentRequestTableRow';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { useMayWorkAppointments } from '../permissions/useMayWorkAppointments';
+import { holdLiaison } from '../utils/holdLiaison';
 import { useHoldsAppointmentRequestGmailLabels } from '../hooks/useHoldsAppointmentRequestGmailLabels';
 import {
   buildHoldGroupContactLogMeta,
@@ -213,6 +215,8 @@ function noteForPatch(value: string): string | null {
 }
 
 export default function HoldsPage() {
+  /** Techs and doctors see the Hold tab read-only (owner, Nov 13, 2026). */
+  const mayWork = useMayWorkAppointments();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const owner = useMemo(
@@ -672,7 +676,7 @@ export default function HoldsPage() {
   const toggleGroupRow = useCallback(
     (group: HoldHouseholdGroup) => {
       const unread = holdGroupUnreadReplies(group);
-      if (unread && !openGroupKeys.has(group.key)) {
+      if (mayWork && unread && !openGroupKeys.has(group.key)) {
         void markHoldRepliesRead(unread.holdId)
           .then(() => {
             notifyAppointmentRepliesChanged();
@@ -682,7 +686,7 @@ export default function HoldsPage() {
       }
       toggleGroupOpen(group.key);
     },
-    [openGroupKeys, toggleGroupOpen, load],
+    [openGroupKeys, toggleGroupOpen, load, mayWork],
   );
 
   const openInScheduler = useCallback(
@@ -1064,10 +1068,11 @@ export default function HoldsPage() {
               const groupOpen = openGroupKeys.has(group.key) || highlightGroupKey === group.key;
               const placedIso = holdHouseholdEarliestPlacedAt(holdsInGroup);
               const petNames = holdHouseholdPatientNames(holdsInGroup);
-              const ownerIds = [...new Set(holdsInGroup.map((h) => h.holdOwner?.id ?? null))];
+              // Assigned owner, or the CL who placed the hold (B6).
+              const ownerIds = [...new Set(holdsInGroup.map((h) => holdLiaison(h)?.id ?? null))];
               const sharedOwner =
                 ownerIds.length === 1 && ownerIds[0] != null
-                  ? (holdsInGroup.find((h) => h.holdOwner)?.holdOwner ?? null)
+                  ? (holdsInGroup.map(holdLiaison).find((o) => o != null) ?? null)
                   : null;
               const groupSubmissionId = groupSubmissionIds(holdsInGroup)[0];
               const groupSubmission =
@@ -1121,7 +1126,11 @@ export default function HoldsPage() {
                       </button>
                       <span>
                         {placedIso ? receivedDateLabel(placedIso, PRACTICE_TZ) : '—'}
-                        {urgent ? <span className="appt-table-urgent">Urgent</span> : null}
+                        {urgent ? (
+                          <span className="appt-table-urgent" title="The hold is in the next 3 business days">
+                            Within 3 days
+                          </span>
+                        ) : null}
                         {stale ? (
                           <span className="appt-table-quiet" title="Placed over 24 hours ago">
                             Over 24 h
@@ -1175,15 +1184,18 @@ export default function HoldsPage() {
                         saving={busy}
                         onChange={(employeeId) => void doAssignGroup(group, employeeId)}
                         ariaLabel={`Liaison for ${resolveHoldClientLabel(hold)}`}
+                        disabled={!mayWork}
                       />
                     </div>
                     <div className="appt-table-cell">
-                      <RouteButton
-                        hasVisit
-                        disabled={busy || rowExiting}
-                        onReschedule={() => openReschedule(hold, group)}
-                        onExploreAlternatives={() => openReschedule(hold, group, { exploreAlternatives: true })}
-                      />
+                      {mayWork ? (
+                        <RouteButton
+                          hasVisit
+                          disabled={busy || rowExiting}
+                          onReschedule={() => openReschedule(hold, group)}
+                          onExploreAlternatives={() => openReschedule(hold, group, { exploreAlternatives: true })}
+                        />
+                      ) : null}
                     </div>
                     <div className="appt-table-cell">
                       <span className="appt-table-pill appt-table-pill--hold">
@@ -1240,7 +1252,7 @@ export default function HoldsPage() {
                             </div>
                           ) : null}
                         </div>
-                        {rowExiting ? null : (
+                        {rowExiting || !mayWork ? null : (
                           <div className="holds-client-panel__contact">
                             <button
                               type="button"
@@ -1488,6 +1500,7 @@ export default function HoldsPage() {
                             >
                               Open / convert
                             </button>
+                            {mayWork ? (
                             <RouteButton
                               hasVisit
                               inline
@@ -1497,6 +1510,7 @@ export default function HoldsPage() {
                                 openReschedule(slotHold, group, { exploreAlternatives: true })
                               }
                             />
+                            ) : null}
                             {slot.holds.some((h) => resolveHoldSubmissionId(h) != null) ? (
                               <button
                                 type="button"
@@ -1511,14 +1525,16 @@ export default function HoldsPage() {
                                 View request
                               </button>
                             ) : null}
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ color: '#b91c1c', borderColor: '#fecaca' }}
-                              onClick={() => openRemoveSlot(slot, group.key)}
-                            >
-                              Remove hold{slotMulti ? 's' : ''}
-                            </button>
+                            {mayWork ? (
+                              <button
+                                type="button"
+                                className="btn secondary"
+                                style={{ color: '#b91c1c', borderColor: '#fecaca' }}
+                                onClick={() => openRemoveSlot(slot, group.key)}
+                              >
+                                Remove hold{slotMulti ? 's' : ''}
+                              </button>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1534,6 +1550,7 @@ export default function HoldsPage() {
                       practiceTz={PRACTICE_TZ}
                       onContacted={() => void load({ silent: true })}
                       onSubmissionUpdated={() => void load({ silent: true })}
+                      readOnly={!mayWork}
                     />
                   ) : (
                     <HoldConversationPanel
@@ -1541,6 +1558,7 @@ export default function HoldsPage() {
                       canText={canSms}
                       practiceTz={PRACTICE_TZ}
                       onChanged={() => void load({ silent: true })}
+                      readOnly={!mayWork}
                     />
                   )}
                   </div>

@@ -55,6 +55,7 @@ import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import MyCallIndicator from './components/pims/MyCallIndicator';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
+import RecordsPage from './pages/RecordsPage';
 import Catalog from './pages/Catalog';
 import { LegacyCatalogRedirect } from './pages/CatalogLayout';
 import InventoryLayout from './pages/InventoryLayout';
@@ -812,6 +813,7 @@ export default function App() {
                     />
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
                     <Route path="holds" element={<LegacyHoldsRedirect />} />
+                    <Route path="records" element={<RecordsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />

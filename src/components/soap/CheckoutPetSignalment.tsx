@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import { http } from '../../api/http';
-import { patientAgeYearsMonthsDisplay, patientSexNaturalLabelFromRecord } from '../../utils/schedulerVisitDisplay';
+import {
+  patientAgeYearsMonthsDisplay,
+  patientSexNaturalLabelFromRecord,
+  sixteenWeekBoosterNote,
+} from '../../utils/schedulerVisitDisplay';
 import { practiceTimeZoneOrDefault } from '../../utils/practiceTimezone';
 
 export type PetWeight = {
@@ -60,10 +64,11 @@ export function formatPetSignalment(data: PetSignalmentData): string {
     const species = str(speciesEntity?.name) ?? str(p.species);
     const breed = str(breedEntity?.name) ?? str(p.breed) ?? str(p.breedDescription);
     const sex = patientSexNaturalLabelFromRecord(p);
-    const age = patientAgeYearsMonthsDisplay(
-      { ...p, dob: str(p.dob) ?? str(p.dateOfBirth) } as never,
-      practiceTimeZoneOrDefault(undefined),
-    );
+    const dob = str(p.dob) ?? str(p.dateOfBirth);
+    const tz = practiceTimeZoneOrDefault(undefined);
+    const ageOnly = patientAgeYearsMonthsDisplay({ ...p, dob } as never, tz);
+    const booster = sixteenWeekBoosterNote(dob, tz);
+    const age = ageOnly && booster ? `${ageOnly} (${booster})` : ageOnly;
     for (const part of [species, breed, sex, age]) if (part) parts.push(part);
   }
   const w = data.weight;

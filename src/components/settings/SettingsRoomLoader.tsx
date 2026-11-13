@@ -25,6 +25,8 @@ import type { RoomLoaderSpeciesSelection } from '../../utils/roomLoaderConfigTyp
 import { ChevronDown, ChevronRight, ChevronUp, Eye, Plus, Trash2 } from 'lucide-react';
 import LabPanelsSection from '../../pages/roomLoader/LabPanelsSection';
 import RoomLoaderPreviewTab from './roomLoader/RoomLoaderPreviewTab';
+import InvoiceOrderEditor from './roomLoader/InvoiceOrderEditor';
+import { INVOICE_CATEGORY_LABELS } from '../../utils/roomLoaderInvoiceOrder';
 import { medicalConcernPanelRules, type EngineContext } from '../../utils/roomLoaderOfferEngine';
 import {
   emptyHistoryGate,
@@ -626,6 +628,19 @@ function SettingsRoomLoaderEditor({ practiceId, onMessage }: Props) {
           />
         ) : (
           <>
+            <Section
+              title="Invoice order"
+              description="Every Room Loader lists a pet's items in this order, and so do the client's check-in form, its PDF and the visit invoice. Staff can still move an item on one Room Loader. Drag a row or use the arrows."
+              meta={config.invoiceOrder.categories.map((key) => INVOICE_CATEGORY_LABELS[key]).join(' → ')}
+            >
+              <InvoiceOrderEditor
+                categories={config.invoiceOrder.categories}
+                onChange={(categories) =>
+                  setConfig((prev) => (prev ? { ...prev, invoiceOrder: { categories } } : prev))
+                }
+              />
+            </Section>
+
             <Section
               title="Lab panels by age & species"
               description={`${membershipCutoffHint()} A pet can match several rules; the lowest order asks first. Medical-concern overwrite is under Medical concern below.`}

@@ -65,8 +65,7 @@ import {
   getInvoiceByAppointment,
   type CalendarPaymentState,
 } from '../api/visitWorkflow';
-import { saveBrief } from '../api/briefs';
-import { findOpenPrevisitForAppointment } from '../utils/briefStore';
+import { findOpenPrevisitForAppointment, saveBrief } from '../api/briefs';
 import { BRIEF_KIND_LABEL } from '../utils/briefTypes';
 import {
   fetchAllAppointmentTypes,
@@ -372,6 +371,7 @@ import {
   appointmentLinkedClientLabel,
   patientSexAbbrevDisplay,
   patientSexHighlightTone,
+  sixteenWeekBoosterNote,
 } from '../utils/schedulerVisitDisplay';
 import { enrichAppointmentPatientProfiles } from '../utils/schedulerPatientEnrich';
 import {
@@ -2539,7 +2539,9 @@ export function SchedulerHoverContent({
               const pid = p.pimsId != null && String(p.pimsId).trim() !== '' ? p.pimsId : p.id;
               const pAlerts = p.alerts?.trim();
               const sexAbbr = patientSexAbbrevDisplay(p);
-              const ageStr = patientAgeYearsMonthsDisplay(p);
+              const ageOnly = patientAgeYearsMonthsDisplay(p);
+              const boosterNote = sixteenWeekBoosterNote(pickStr(p.dob), PRACTICE_TZ);
+              const ageStr = ageOnly && boosterNote ? `${ageOnly} (${boosterNote})` : ageOnly;
               const breedOnly = patientBreedDisplayOnly(p);
               const breedShort =
                 breedOnly && breedOnly.length > 42 ? `${breedOnly.slice(0, 40).trim()}…` : breedOnly;
@@ -11249,7 +11251,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             const date = start.isValid
               ? start.toFormat('yyyy-LL-dd')
               : DateTime.now().setZone(PRACTICE_TZ).toFormat('yyyy-LL-dd');
-            const existing = findOpenPrevisitForAppointment(apptId, firstPatient.id);
+            const existing = await findOpenPrevisitForAppointment(apptId, firstPatient.id).catch(
+              () => null
+            );
             const session =
               existing ??
               (await saveBrief({

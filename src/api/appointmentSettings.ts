@@ -78,6 +78,10 @@ export type Employee = {
   designation?: string;
   isProvider?: boolean;
   licenseNumber?: string | null;
+  /** Holds a current professional license (signing authority). */
+  isLicensed?: boolean;
+  /** `veterinarian` or `technician` when licensed. */
+  licenseType?: string | null;
   signatureImage?: string | null;
   /** Clinical / PIMS role ids from GET /employees/:id */
   roleIds?: number[];

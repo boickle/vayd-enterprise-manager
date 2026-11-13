@@ -30,16 +30,16 @@ vi.mock('../../api/memberships', async (importOriginal) => ({
 vi.mock('./ClientCardSetupEntry', async () => {
   const React = await import('react');
   return {
-    default: ({ onReady }: { onReady: (c: (s: string) => Promise<string>) => void }) => {
+    default: ({ name, onReady }: { name?: string | null; onReady: (c: (s: string) => Promise<string>) => void }) => {
       React.useEffect(() => {
         onReady(async () => 'seti_confirmed');
       }, [onReady]);
-      return <div>card box</div>;
+      return <div>card box{name ? ` for ${name}` : ''}</div>;
     },
   };
 });
 
-import ClientCardOnFileSection from './ClientCardOnFileSection';
+import ClientCardOnFileSection, { agreedHow } from './ClientCardOnFileSection';
 import { CARD_ON_FILE_STAFF_WORDING } from '../../utils/cardOnFileWording';
 
 const withCard = {
@@ -73,6 +73,30 @@ describe('Card on file section', () => {
     render(ui());
     expect(await screen.findByText(/Visa ending 4242, expires 12\/30/)).toBeTruthy();
     expect(screen.getByText(/Owner agreed .*Tap to Pay at a visit, agreement 2026-10-07/)).toBeTruthy();
+  });
+
+  it('INV-20 review (Nov 13, 2026): how the owner agreed reads as a note in brackets', async () => {
+    getClientCardOnFile.mockResolvedValue({ ...withCard, consentSource: 'manual', agreementVersion: '2026-11-12' });
+    render(ui());
+    expect(await screen.findByText(/Owner agreed .* \(entered by staff, agreement 2026-11-12\)\./)).toBeTruthy();
+    expect(screen.queryByText(/from entered by staff/)).toBeNull();
+  });
+
+  it('agreedHow: source and version, either one missing', () => {
+    expect(agreedHow('terminal', '2026-10-07')).toBe('Tap to Pay at a visit, agreement 2026-10-07');
+    expect(agreedHow(null, '2026-11-12')).toBe('agreement 2026-11-12');
+    expect(agreedHow('store', null)).toBe('the online store, before agreement versions were recorded');
+  });
+
+  it("INV-20 review: Replace card fills in Name on card with the client's name", async () => {
+    granted.add('card_on_file.manage');
+    render(
+      <MemoryRouter>
+        <ClientCardOnFileSection clientId={5} clientName="Maria Rivera" />
+      </MemoryRouter>
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace card' }));
+    expect(await screen.findByText('card box for Maria Rivera')).toBeTruthy();
   });
 
   it('PAY-C5-1: an expired card is shown as "Expired, ending 4242", not as a card to use', async () => {

@@ -27,6 +27,7 @@ import {
   patientSpeciesIconKind,
   pickStr,
   providerLabel,
+  sixteenWeekBoosterNote,
 } from '../utils/schedulerVisitDisplay';
 
 const SCHEDULER_ZONE_BADGE_COLORS = [
@@ -126,7 +127,9 @@ export function SchedulerVisitPatientContext({
         const pid = p.pimsId != null && String(p.pimsId).trim() !== '' ? p.pimsId : p.id;
         const pAlerts = p.alerts?.trim();
         const sexAbbr = patientSexAbbrevDisplay(p);
-        const ageStr = patientAgeYearsMonthsDisplay(p, practiceTz);
+        const ageOnly = patientAgeYearsMonthsDisplay(p, practiceTz);
+        const boosterNote = sixteenWeekBoosterNote(pickStr(p.dob), practiceTz);
+        const ageStr = ageOnly && boosterNote ? `${ageOnly} (${boosterNote})` : ageOnly;
         const breedOnly = patientBreedDisplayOnly(p);
         const breedShort =
           breedOnly && breedOnly.length > 42 ? `${breedOnly.slice(0, 40).trim()}…` : breedOnly;

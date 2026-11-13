@@ -1,4 +1,5 @@
-// Render a PDF as stacked pages (no browser thumbnail sidebar / PDF chrome)
+// Render a PDF as stacked pages (no browser thumbnail sidebar / PDF chrome, so no print or
+// download buttons that bypass the app, and it looks the same in every browser)
 import { useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -38,7 +39,9 @@ export function RoomLoaderPdfCanvas({ url, className }: Props) {
           if (cancelled) return;
           const page = await doc.getPage(pageNum);
           const baseViewport = page.getViewport({ scale: 1 });
-          const scale = width / baseViewport.width;
+          // Draw at the screen's pixel density (CSS shrinks the canvas to fit), so text stays sharp.
+          const density = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+          const scale = (width / baseViewport.width) * density;
           const viewport = page.getViewport({ scale });
 
           const canvas = document.createElement('canvas');

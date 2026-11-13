@@ -78,6 +78,8 @@ export type ScoutClientWrite = {
   preferSms?: boolean;
   preferPhone?: boolean;
   doNotSendReminders?: boolean;
+  /** D3 (Oct 9): no promotions, membership offers, surveys or referral emails; reminders and receipts still go. */
+  doNotMarket?: boolean;
   phone1SmsEnabled?: boolean;
   phone2SmsEnabled?: boolean;
   patientIds?: number[];

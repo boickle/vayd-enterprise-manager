@@ -32,6 +32,10 @@ export type StaffSmsDeliveryFailure = {
   errorMessage: string | null;
   source: string | null;
   created: string;
+  /** B13-1: true when the signed-in person sent it; managers also see other people's. */
+  sentByMe?: boolean;
+  /** Who sent it; null when Scout sent it on its own. */
+  senderName?: string | null;
 };
 
 export async function sendClientSms(
@@ -52,7 +56,7 @@ export async function fetchSchedulingOutreachSmsFrom(): Promise<string | null> {
   }
 }
 
-/** Undelivered staff SMS that Quo reported failed and staff have not dismissed. */
+/** Undelivered texts this person sent (and, for managers, everyone's) that they haven't dismissed. */
 export async function fetchStaffSmsDeliveryFailures(
   limit = 25,
 ): Promise<StaffSmsDeliveryFailure[]> {

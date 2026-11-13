@@ -38,6 +38,8 @@ type Props = {
   }) => void;
   /** Buttons for the request's next step (Route, Confirm, Not booked…). */
   actions?: ReactNode;
+  /** Techs and doctors: the conversation without the composer. */
+  readOnly?: boolean;
 };
 
 export function RequestConversationPanel({
@@ -48,6 +50,7 @@ export function RequestConversationPanel({
   onSubmissionUpdated,
   onGmailLinked,
   actions,
+  readOnly,
 }: Props) {
   const rd = item.requestData ?? {};
   const phone = requestDataPhone(rd);
@@ -106,7 +109,7 @@ export function RequestConversationPanel({
 
   return (
     <>
-      <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} />
+      <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} readOnly={readOnly} />
       {windowDraft != null ? (
         <AppointmentRequestEmailModal
           item={item}

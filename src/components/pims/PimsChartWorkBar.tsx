@@ -250,7 +250,7 @@ export default function PimsChartWorkBar({
                 style={{ width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
               >
                 <div className="pims-chart-pick__head">
-                  <h3 id="pims-upload-title">Upload records · {patientName}</h3>
+                  <h3 id="pims-upload-title">Upload files · {patientName}</h3>
                   <button
                     type="button"
                     className="pims-chart-pick__close"
@@ -520,9 +520,12 @@ function PimsChartCommunicationLogModal({
 export function PimsPatientMergeButton({
   patientId,
   patientName,
+  onMerged,
 }: {
   patientId: string;
   patientName: string;
+  /** Reload the chart after a merge, so the moved records show. */
+  onMerged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // A merge cannot be undone, so the control is absent rather than greyed out
@@ -556,7 +559,7 @@ export function PimsPatientMergeButton({
                     ×
                   </button>
                 </div>
-                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} />
+                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} onMerged={onMerged} />
               </div>
             </div>,
             document.body,

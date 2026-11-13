@@ -1,9 +1,10 @@
 // src/utils/recordSignOff.ts
-// Who may sign and lock a record (EMR-07, owner decision D2, Nov 2, 2026). Mirrors the API's
-// PermissionsService.signOffBlockReason; the server re-checks every sign-off.
+// Who may sign and lock a record (EMR-07, owner decision D2, Nov 2, 2026; medical notes changed
+// Nov 12, 2026). Mirrors the API's PermissionsService.signOffBlockReason; the server re-checks
+// every sign-off.
 //   - a full SOAP (`comprehensive`): a licensed veterinarian only
-//   - a quick visit or a medical note: a vet or a licensed technician
-//   - unlicensed staff sign nothing
+//   - a quick visit: a vet or a licensed technician
+//   - a medical note: anyone on staff (any role except a read-only observer)
 import type { EffectivePermissions } from '../api/permissions';
 import type { SoapEncounterMode } from '../api/visitWorkflow';
 
@@ -17,6 +18,7 @@ export type SignOffPermissions = {
 export const SOAP_SIGN_REASON = 'Only a licensed veterinarian can sign and lock a SOAP.';
 export const NOTE_SIGN_REASON =
   'Only a licensed veterinarian or licensed technician can sign this record.';
+export const MEDICAL_NOTE_SIGN_REASON = 'Only staff of this practice can sign a medical note.';
 
 /** Why this person can't sign a record of this type, or null when they can (or we don't know yet). */
 export function signOffBlockReason(
@@ -30,6 +32,10 @@ export function signOffBlockReason(
   const isVet = perms.isLicensed && perms.licenseType === 'veterinarian';
   if (mode == null || mode === 'comprehensive') {
     return canSign && isVet ? null : SOAP_SIGN_REASON;
+  }
+  if (mode === 'medical_note') {
+    const staff = (perms.effective.roles ?? []).some((role) => role !== 'observer');
+    return staff ? null : MEDICAL_NOTE_SIGN_REASON;
   }
   return canSign ? null : NOTE_SIGN_REASON;
 }

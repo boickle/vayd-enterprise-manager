@@ -1,13 +1,13 @@
 import type { JSX } from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 import FillDayPage from './pages/FillDay';
 import WaitlistPage from './pages/WaitlistPage';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
 import TextedOffersPage from './pages/TextedOffersPage';
 import ScheduleOptimizationPage from './pages/ScheduleOptimizationPage';
-import RecordsRequestsPage from './pages/RecordsRequestsPage';
 import { HOLDS_PATH } from './holds-nav';
+import { RECORDS_PATH } from './records-nav';
 import {
   LEGACY_WORKFLOW_STATUS_BY_PATH,
   SCHEDULING_TOOLS_PATH_PREFIX,
@@ -15,6 +15,11 @@ import {
   bookedListPath,
   type SchedulingToolTab,
 } from './scheduling-tools-nav';
+
+function LegacyRecordsRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: RECORDS_PATH, search, hash }} replace />;
+}
 
 export type SchedulingToolsTabPage = {
   path: string;
@@ -38,8 +43,6 @@ function elementForTab(path: string): JSX.Element {
       return <ForwardBookingPage />;
     case 'booked':
       return <ForwardBookingPage variant="booked" />;
-    case 'records':
-      return <RecordsRequestsPage />;
     default:
       return <ForwardBookingPage />;
   }
@@ -51,6 +54,12 @@ export const SCHEDULING_TOOLS_TAB_PAGES: SchedulingToolsTabPage[] = [
     label: tab.label,
     element: elementForTab(tab.path),
   })),
+  // Records moved to Scheduling → Records (Nov 13, 2026); old links keep their search.
+  {
+    path: 'records',
+    label: 'Records',
+    element: <LegacyRecordsRedirect />,
+  },
   // Legacy On hold route — holds board lives at /schedule/holds.
   {
     path: 'on-hold',

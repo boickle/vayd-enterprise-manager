@@ -220,6 +220,13 @@ export type PatientDocDraft = {
   rxRefills: string;
   rxDate: string;
   rxNumber: string;
+  /** Free text for the filling pharmacist (substitution, packaging, call-back). Prints separately from the owner's directions. */
+  rxPharmacistNotes: string;
+  /**
+   * Prescriber's DEA number, typed in per script for controlled drugs. Never saved to the
+   * employee or anywhere else; it only exists on the PDF that is printed and filed.
+   */
+  rxDeaNumber: string;
   dateOfDeath: string;
   causeOfDeath: string;
   mannerOfDeath: string;
@@ -243,7 +250,26 @@ export type PatientDocProvider = {
   label: string;
   license: string;
   active: boolean;
+  /** Licensed veterinarian (isLicensed + licenseType "veterinarian"). Only they may sign VET_SIGNED_KINDS. */
+  isVeterinarian?: boolean;
 };
+
+/** Documents only a licensed veterinarian may sign (owner decision, Nov 12, 2026). */
+/** Standard compounding wording, put in the Compounding note by a button. Starts blank so plain scripts don't carry it. */
+export const RX_STANDARD_COMPOUNDING_NOTE = 'Reason for compounding is compliance and ease of administration.';
+
+export const VET_SIGNED_KINDS: ReadonlySet<PatientDocKind> = new Set<PatientDocKind>(['rx', 'rabies', 'health']);
+
+/** Licensed veterinarian, the same test the API uses for prescription approval. */
+export function isLicensedVeterinarian(e: { isLicensed?: unknown; licenseType?: unknown } | null | undefined): boolean {
+  return e?.isLicensed === true && String(e?.licenseType ?? '').toLowerCase() === 'veterinarian';
+}
+
+/** Who may be chosen to sign this kind of document. */
+export function signerChoices(kind: PatientDocKind | null, providers: PatientDocProvider[]): PatientDocProvider[] {
+  const active = providers.filter((p) => p.active);
+  return kind && VET_SIGNED_KINDS.has(kind) ? active.filter((p) => p.isVeterinarian === true) : active;
+}
 
 export type PatientDocSource = {
   rabiesLogs: Record<string, unknown>[];
@@ -378,9 +404,11 @@ function emptyDraft(): PatientDocDraft {
     rxInstructions: '',
     rxQuantity: '',
     rxRefills: '0',
-    rxCompoundingReason: 'Reason for compounding is compliance and ease of administration.',
+    rxCompoundingReason: '',
     rxDate: DateTime.now().toFormat('yyyy-LL-dd'),
     rxNumber: '',
+    rxPharmacistNotes: '',
+    rxDeaNumber: '',
     dateOfDeath: '',
     causeOfDeath: '',
     mannerOfDeath: 'Euthanasia',
@@ -457,12 +485,15 @@ export function applyProvider(
       veterinarianLicense: '',
       veterinarianEmployeeId: null,
       veterinarianSignaturePng: null,
+      rxDeaNumber: '',
     };
   }
   const p = providers.find((x) => String(x.id) === id);
   if (!p) return draft;
   return {
     ...draft,
+    // A DEA number belongs to one prescriber; never carry it over to another signer.
+    rxDeaNumber: String(p.id) === String(draft.veterinarianEmployeeId) ? draft.rxDeaNumber : '',
     veterinarianName: p.label,
     veterinarianLicense: p.license,
     veterinarianEmployeeId: p.id,
@@ -486,6 +517,7 @@ function performerFromRabiesLog(
       label: name || pickStr(log.veterinarianName) || `Provider #${empId}`,
       license: pickStr(log.veterinarianLicense) ?? pickStr(emp?.licenseNumber) ?? '',
       active: emp?.isActive !== false && emp?.isDeleted !== true,
+      isVeterinarian: isLicensedVeterinarian(emp),
     };
   }
   const named = pickStr(log.veterinarianName);
@@ -501,7 +533,8 @@ export function applyRabiesSource(
   const log = source.rabiesLogs.find((l) => String(l.id) === id) ?? null;
   let next = applyRabiesLog(draft, log);
   const performer = performerFromRabiesLog(log, source.providers);
-  if (performer?.active) {
+  // Only a licensed veterinarian signs a rabies certificate; otherwise staff choose one.
+  if (performer?.active && performer.isVeterinarian === true) {
     // An eVet-imported dose names its vet only through the linked employee, who may not be in the
     // provider list (no license on file, or not marked as a provider). Print them anyway (EMR-A12).
     const listed = source.providers.some((p) => p.id === performer.id);
@@ -556,7 +589,7 @@ export function applyKindDefaults(kind: PatientDocKind, draft: PatientDocDraft, 
     }
   }
   const primary = source.primaryProviderId
-    ? source.providers.find((p) => p.id === source.primaryProviderId && p.active)
+    ? signerChoices(kind, source.providers).find((p) => p.id === source.primaryProviderId)
     : null;
   if (primary) return applyProvider(next, source.providers, String(primary.id), source.signatures);
   return applyProvider(next, source.providers, '', source.signatures);
@@ -612,6 +645,7 @@ export async function loadPatientDocumentContext(patientId: number): Promise<Pat
       label: employeeLabel(e),
       license: (e.licenseNumber ?? '').trim(),
       active: e.isActive !== false,
+      isVeterinarian: isLicensedVeterinarian(e),
     }))
     .filter((e) => e.label)
     .sort((a, b) => Number(b.active) - Number(a.active) || a.label.localeCompare(b.label));
@@ -896,6 +930,7 @@ function drawSignature(
   license: string,
   png?: string | null,
   followContent = false,
+  deaNumber?: string,
 ): number {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -922,6 +957,11 @@ function drawSignature(
   doc.setTextColor(...INK);
   if (vetName) doc.text(vetName, x, y + 28);
   if (license) doc.text(`Lic. # ${license}`, x, y + 42);
+  const dea = deaNumber?.trim();
+  if (dea) {
+    doc.text(`DEA # ${dea}`, x, license ? y + 56 : y + 42);
+    return y + 70;
+  }
   return y + 56;
 }
 
@@ -1105,10 +1145,28 @@ export async function generatePatientDocumentPdf(
     doc.setTextColor(...INK);
     doc.text(`Refills: ${draft.rxRefills.trim() || '0'}`, margin, y);
     y += 16;
+    const pharmacistNotes = (draft.rxPharmacistNotes ?? '').trim();
+    if (pharmacistNotes) {
+      y += 4;
+      doc.setFont('times', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(...INK);
+      const notes = wrapLines(doc, `Notes to pharmacist: ${pharmacistNotes}`, pageW - margin * 2);
+      doc.text(notes, margin, y);
+      y += notes.length * 14 + 6;
+    }
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
     doc.text('May be filled at any licensed pharmacy. Not valid unless signed by the veterinarian.', margin, y);
-    drawSignature(doc, y, draft.veterinarianName, draft.veterinarianLicense, draft.veterinarianSignaturePng);
+    drawSignature(
+      doc,
+      y,
+      draft.veterinarianName,
+      draft.veterinarianLicense,
+      draft.veterinarianSignaturePng,
+      false,
+      draft.rxDeaNumber,
+    );
   }
 
   if (kind === 'death') {

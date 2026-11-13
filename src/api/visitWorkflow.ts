@@ -119,6 +119,10 @@ export type VisitTenderMethod =
   | 'account_credit';
 
 export type VisitInvoiceLine = {
+  /** Where staff dragged this line among the pet's lines (invoice order); null = standard order. */
+  sortOrder?: number | null;
+  /** Place on the Room Loader check-in this line came from (pre-visit accept). */
+  roomLoaderPosition?: number | null;
   id: string;
   invoiceId: string;
   orderId: string | null;
@@ -1352,6 +1356,21 @@ export async function postAccountAdjustment(opts: {
   return data;
 }
 
+/**
+ * Invoice order: save one pet's lines in the order staff dragged them (top first), or reset that
+ * pet to the practice's standard order. Returns the invoice with lines in the new order.
+ */
+export async function reorderInvoiceLines(
+  invoiceId: string,
+  body: { patientId: number | null; lineIds?: string[]; reset?: boolean }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/line-order`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
 export async function patchVisitInvoice(
   invoiceId: string,
   body: {
@@ -1382,6 +1401,8 @@ export async function addVisitTender(
     /** Required when method is gift_card. */
     giftCardCode?: string | null;
     giftCardChannel?: 'visit' | 'staff_ledger';
+    /** Account credit: also use deposits held for other visits (a cancel or no-show fee). */
+    useHeldDeposits?: boolean;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1397,14 +1418,43 @@ export type AvailableAccountCredit = {
   evet: number;
   evetHeld: boolean;
   evetHeldAmount: number;
+  /** D7 option 3: deposit credit held for other visits (not in `total`). */
+  depositHeld?: number;
+  /** Every appointment deposit with credit left. */
+  deposits?: AccountCreditDeposit[];
+  /** With `forPayLink`: held deposits the client's unpaid bills' own visits use on a pay link. */
+  payLinkDeposit?: number;
   total: number;
   heldNote: string | null;
 };
 
-export async function fetchAvailableAccountCredit(clientId: number): Promise<AvailableAccountCredit> {
+export type AccountCreditDeposit = {
+  invoiceId: string;
+  appointmentId: number;
+  amount: number;
+  /** Still held for its visit (not checked out, not cancelled). */
+  held: boolean;
+  /** Its visit is on this bill, so it is used first. */
+  forThisBill: boolean;
+  /** "Deposit for Biscuit's visit on Nov 20". */
+  label: string | null;
+};
+
+/** With `invoiceId`, the total includes the deposits held for that bill's own visits. */
+export async function fetchAvailableAccountCredit(
+  clientId: number,
+  invoiceId?: string,
+  opts?: { forPayLink?: boolean }
+): Promise<AvailableAccountCredit> {
   const { data } = await http.get<AvailableAccountCredit>(
     `/visit-invoices/client/${encodeURIComponent(String(clientId))}/account-credit`,
-    { params: { practiceId: pid() } }
+    {
+      params: {
+        practiceId: pid(),
+        ...(invoiceId ? { invoiceId } : {}),
+        ...(opts?.forPayLink ? { forPayLink: 1 } : {}),
+      },
+    }
   );
   return data;
 }

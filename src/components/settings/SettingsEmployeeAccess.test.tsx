@@ -177,7 +177,8 @@ describe('SettingsEmployeeAccess wording (RP-A8-1)', () => {
     await screen.findByText('License');
     const intro = container.querySelector('.settings-card .settings-card-subtitle');
     expect(intro).toHaveTextContent(
-      'Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and medical notes, and may enter prescription directions for the vet. No role or grant substitutes for a license.'
+      // Owner, Nov 12, 2026: anyone on staff signs a medical note; a quick visit still needs a license.
+      'Signing a SOAP needs a veterinary license. A licensed technician may sign quick visits and may enter prescription directions for the vet. No role or grant substitutes for a license. Anyone on staff may sign a medical note.'
     );
     expect(intro).not.toHaveTextContent('Prescriptions and refill authorizations additionally');
     expect(intro).not.toHaveTextContent('no role or grant substitutes for either');
