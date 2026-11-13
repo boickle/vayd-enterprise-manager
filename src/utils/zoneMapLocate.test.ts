@@ -45,6 +45,14 @@ describe('zoneContains', () => {
     expect(zoneContains(zone, 44.5, -69.5)).toBe(false);
   });
 
+  it('ignores sliver holes left over from the KMZ import', () => {
+    // ~0.007 × 0.007 mi hole, well under MIN_HOLE_SQ_MILES.
+    const slivered = box(4, 'Sliver', [-71, 44, -70, 45], [-70.5001, 44.4999, -70.4999, 44.5001]);
+    expect(zoneContains(slivered, 44.5, -70.5)).toBe(true);
+    const edge = nearestBoundaryPoint(slivered, 44.5, -70.5)!;
+    expect(edge.miles).toBeGreaterThan(20); // the real outer edge (~25 mi east/west), not the sliver
+  });
+
   it('treats a hole as outside', () => {
     const donut = box(2, 'Donut', [-71, 44, -70, 45], [-70.6, 44.4, -70.4, 44.6]);
     expect(zoneContains(donut, 44.5, -70.5)).toBe(false);

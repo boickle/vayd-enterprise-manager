@@ -22,11 +22,39 @@ export type ZoneLocation = {
 const EARTH_RADIUS_MILES = 3958.8;
 const DEG = Math.PI / 180;
 
-/** Polygons of a zone as lists of rings ([outer, ...holes]) in [lon, lat]. */
+/**
+ * Holes smaller than this are ignored. The zone boundaries came from KMZ
+ * drawings, and cleaning them up left dozens of slivers inside each zone
+ * (BR3 had 79, all under 0.002 sq mi). Without this, "distance to the edge"
+ * measured to an invisible sliver instead of the zone's real boundary.
+ */
+export const MIN_HOLE_SQ_MILES = 0.1;
+
+/** Area of a [lon, lat] ring in square miles (flat projection; fine at zone scale). */
+export function ringAreaSqMiles(ring: Position[]): number {
+  if (ring.length < 3) return 0;
+  const lat0 = ring[0][1];
+  const kx = Math.cos(lat0 * DEG) * DEG * EARTH_RADIUS_MILES;
+  const ky = DEG * EARTH_RADIUS_MILES;
+  let twice = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    twice += ring[j][0] * kx * (ring[i][1] * ky) - ring[i][0] * kx * (ring[j][1] * ky);
+  }
+  return Math.abs(twice) / 2;
+}
+
+/**
+ * Polygons of a zone as lists of rings ([outer, ...holes]) in [lon, lat],
+ * with sliver holes dropped.
+ */
 function polygonsOf(zone: LocatableZone): Position[][][] {
   const g = zone.geometry;
   if (!g) return [];
-  return g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  const polygons = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  return polygons.map(([outer, ...holes]) => [
+    outer,
+    ...holes.filter((hole) => ringAreaSqMiles(hole) >= MIN_HOLE_SQ_MILES),
+  ]);
 }
 
 /** Ray-casting test; coordinates are [lon, lat]. */
