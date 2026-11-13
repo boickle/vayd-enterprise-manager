@@ -255,6 +255,9 @@ export type PatientDocProvider = {
 };
 
 /** Documents only a licensed veterinarian may sign (owner decision, Nov 12, 2026). */
+/** Standard compounding wording, put in the Compounding note by a button. Starts blank so plain scripts don't carry it. */
+export const RX_STANDARD_COMPOUNDING_NOTE = 'Reason for compounding is compliance and ease of administration.';
+
 export const VET_SIGNED_KINDS: ReadonlySet<PatientDocKind> = new Set<PatientDocKind>(['rx', 'rabies', 'health']);
 
 /** Licensed veterinarian, the same test the API uses for prescription approval. */
@@ -401,7 +404,7 @@ function emptyDraft(): PatientDocDraft {
     rxInstructions: '',
     rxQuantity: '',
     rxRefills: '0',
-    rxCompoundingReason: 'Reason for compounding is compliance and ease of administration.',
+    rxCompoundingReason: '',
     rxDate: DateTime.now().toFormat('yyyy-LL-dd'),
     rxNumber: '',
     rxPharmacistNotes: '',
