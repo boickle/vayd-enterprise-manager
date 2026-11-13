@@ -103,3 +103,19 @@
   background: #fff4e5;
   color: #b45309;
 }
+
+.emp-access-self-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.emp-access-recent {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.emp-access-recent li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border, #e5e5e5);
+}

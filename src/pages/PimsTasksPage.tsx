@@ -403,6 +403,17 @@ export default function PimsTasksPage() {
     [token, doctorId, userEmail, userId, employees]
   );
   const myEmployeeId = myEmployeeIds[0] ?? null;
+  // The Unassigned filter lists only the queues this person is in; admins (and anyone whose roles we can't find) get all.
+  const myQueueRoles = useMemo(() => {
+    if (isPracticeAdmin) return roles;
+    const mine = new Set<number>();
+    for (const e of employees) {
+      if (!myEmployeeIds.includes(Number(e.id))) continue;
+      for (const id of e.roleIds ?? []) mine.add(Number(id));
+    }
+    const filtered = roles.filter((r) => mine.has(Number(r.id)));
+    return filtered.length ? filtered : roles;
+  }, [isPracticeAdmin, roles, employees, myEmployeeIds]);
   const [branchFilter, setBranchFilter] = useState<string>('');
   /** Admin-only: empty means the signed-in person. */
   const [viewEmployeeId, setViewEmployeeId] = useState('');
@@ -620,7 +631,9 @@ export default function PimsTasksPage() {
     const onChanged = () => {
       void loadTaskSummary();
       void loadWatchingOpenTasks();
-      if (isBucketTab(tab)) void loadAssignedOpenTasks();
+      // Always: the Active/Expired/Future tabs read this list, and a claim from the Unassigned tab
+      // (or a task assigned by someone else) has to be there when the user switches to them (P-21).
+      void loadAssignedOpenTasks();
     };
     window.addEventListener(VAYD_TASKS_CHANGED, onChanged);
     // Cross-user/cross-tab updates arrive over the `/tasks` websocket instead of polling.
@@ -1085,8 +1098,11 @@ export default function PimsTasksPage() {
             </span>
           ) : (
             <span className="pims-task-card__assignee">
-              Unassigned
-              {row.queueRoleId != null ? ` · ${roleMap.get(row.queueRoleId) ?? `role #${row.queueRoleId}`}` : ''}
+              {/* Says who the task is for (owner, Nov 11, 2026): a role's queue, or anyone. */}
+              Unassigned ·{' '}
+              {row.queueRoleId != null
+                ? `${roleMap.get(row.queueRoleId) ?? `Role #${row.queueRoleId}`} queue`
+                : 'Anyone'}
             </span>
           )}
         </div>
@@ -1273,17 +1289,17 @@ export default function PimsTasksPage() {
         </label>
         {tab === 'unassigned' && (
           <label className="pims-tasks__filter">
-            <span>Role</span>
+            <span>Show</span>
             <select
               className="pims-tasks__select"
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              aria-label="Filter by role"
+              aria-label="Show a queue"
             >
-              <option value="">Any role</option>
-              {roles.map((r) => (
+              <option value="">All my queues</option>
+              {myQueueRoles.map((r) => (
                 <option key={r.id} value={String(r.id)}>
-                  {queueRoleLabel(r)}
+                  {queueRoleLabel(r)} queue
                 </option>
               ))}
             </select>
@@ -1392,6 +1408,7 @@ export default function PimsTasksPage() {
         <TaskReassignModal
           task={reassignTask}
           employees={employees}
+          myEmployeeId={myEmployeeId}
           onClose={() => setReassignTask(null)}
           onSaved={() => {
             setReassignTask(null);
@@ -1737,12 +1754,12 @@ function CreateTaskModal({
           </label>
 
           <label className="pims-tasks__modal-field">
-            <span>For role</span>
+            <span>Queue</span>
             <select value={queueRoleId} onChange={(e) => setQueueRoleId(e.target.value)} disabled={busy}>
-              <option value="">Any role</option>
+              <option value="">Anyone</option>
               {roles.map((r) => (
                 <option key={r.id} value={String(r.id)}>
-                  {queueRoleLabel(r)}
+                  {queueRoleLabel(r)} queue
                 </option>
               ))}
             </select>

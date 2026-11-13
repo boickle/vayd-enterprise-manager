@@ -1,6 +1,7 @@
 export type ClientReachPhone = { label: string; phone: string; sms: boolean };
 export type ClientReachEmail = { label: string; email: string };
-export type ClientReachPet = { id: number; name: string };
+/** `sex` (as the record has it, e.g. "Female Spayed") lets a template say he or she. */
+export type ClientReachPet = { id: number; name: string; sex?: string | null };
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -74,7 +75,7 @@ export function clientReachPets(patients: unknown): ClientReachPet[] {
     .filter((p): p is Record<string, unknown> => p != null && typeof p === 'object' && p.id != null)
     .map((p) => {
       const id = Number(p.id);
-      return { id, name: pickStr(p.name) ?? `Pet #${id}` };
+      return { id, name: pickStr(p.name) ?? `Pet #${id}`, sex: pickStr(p.sex) };
     })
     .filter((p) => Number.isFinite(p.id) && p.id > 0);
 }

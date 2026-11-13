@@ -90,7 +90,12 @@ import TaxLevelSelect, {
 } from '../components/catalog/TaxLevelSelect';
 import CategorySelect from '../components/catalog/CategorySelect';
 import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
-import { clientUnitPrice, priceVariants, type PriceVariant } from '../utils/catalogPriceList';
+import {
+  priceListChargeNote,
+  priceListUnitPrice,
+  priceVariants,
+  type PriceVariant,
+} from '../utils/catalogPriceList';
 import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './Catalog.css';
@@ -1282,6 +1287,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     // Price-list users see bundles in this list; editors open the bundle view instead.
     // Missing cost loads with no search text too: it scans the whole inventory list.
     if ((!q && !showAllItems && !missingCostOnly) || (typeFilter === 'bundle' && !priceListOnly)) {
+      searchSeq.current += 1;
+      setSearching(false);
       setSearchResults([]);
       setBundleHits([]);
       setSearchError(null);
@@ -1289,6 +1296,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       return;
     }
     const seq = ++searchSeq.current;
+    // Searching starts now, not after the debounce, so "No matches." never shows while results are on the way.
+    setSearching(true);
     const t = window.setTimeout(async () => {
       setSearching(true);
       setSearchError(null);
@@ -1440,8 +1449,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   );
 
   const refreshDetailBundle = useCallback(
-    async (sel: { itemType: ItemType; itemId: number }) => {
-      setDetailLoading(true);
+    // keepOpen: reload in place (no "Loading…" swap), so the popup keeps its scroll position.
+    async (sel: { itemType: ItemType; itemId: number }, opts?: { keepOpen?: boolean }) => {
+      if (!opts?.keepOpen) setDetailLoading(true);
       setDetailError(null);
       setStockError(null);
       setBranchPricesError(null);
@@ -2001,6 +2011,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           return { ...row, name: savedName || row.name };
         }),
       );
+      // Reload the saved row so its price, cost and fees show the new values right away (U11).
+      const savedType = selected.itemType;
+      const savedId = selected.itemId;
+      const isSaved = (row: SearchResultItem) =>
+        row.itemType === savedType && entityIdFromSelection(row.itemType, row) === savedId;
+      void fetchCatalogPage(0, Math.max(CATALOG_PAGE_SIZE, searchResults.length))
+        .then((fresh) => {
+          const hit = fresh.find(isSaved);
+          if (hit) setSearchResults((rows) => rows.map((row) => (isSaved(row) ? hit : row)));
+        })
+        .catch(() => undefined);
       setToast('Saved');
       window.setTimeout(() => setToast(null), 3500);
       setJustSavedKey(savedKey);
@@ -2845,6 +2866,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           </p>
         )}
         {listActive &&
+          searching &&
+          searchResults.length === 0 &&
+          bundleHits.length === 0 && (
+          <p className="settings-muted" style={{ marginTop: 0 }} role="status">
+            Searching…
+          </p>
+        )}
+        {listActive &&
           !searching &&
           !searchError &&
           searchResults.length === 0 &&
@@ -3039,7 +3068,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       </td>
                       {priceListOnly ? (
                         <td className="inv-catalog-results__td-num">
-                          {formatUsd(clientUnitPrice(itemType, baseMoney))}
+                          {formatUsd(priceListUnitPrice(itemType, baseMoney))}
+                          {priceListChargeNote(itemType, baseMoney) ? (
+                            <span className="inv-catalog-results__code" style={{ display: 'block' }}>
+                              {priceListChargeNote(itemType, baseMoney)}
+                            </span>
+                          ) : null}
                           {variantNote}
                         </td>
                       ) : (
@@ -5058,7 +5092,18 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     item={detail.item}
                     priceBreaks={detail.priceBreaks}
                     onChanged={async () => {
-                      await refreshDetailBundle(selected);
+                      // Only the breaks changed: re-read them, not the whole item (that reload also
+                      // recalculates ABC classes and every branch's prices and stock, and is slow).
+                      const fresh = await getItemWithPriceBreaks(
+                        selected.itemType,
+                        selected.itemId,
+                        practiceId
+                      );
+                      setDetail((d) =>
+                        d && d.item && (d.item as { id?: number }).id === selected.itemId
+                          ? { ...d, priceBreaks: fresh.priceBreaks }
+                          : d
+                      );
                     }}
                   />
                 </>
@@ -5319,7 +5364,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               {createType === 'inventory' && (
               <>
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 6px' }}>
-                Medication
+                Dispensed / prescribed
               </h4>
               <div
                 style={{
@@ -5338,11 +5383,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       setCreateForm((f) => ({ ...f, isMedication: e.target.checked }))
                     }
                   />
-                  <span>Medication</span>
+                  <span>Dispensed / prescribed (sent home with a label)</span>
                 </label>
                 <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                  Opens Dose &amp; Rx on the SOAP and adds it to the patient’s prescription
-                  history.
+                  Opens Dose &amp; Rx on the SOAP, asks for directions at checkout and adds it to the
+                  patient’s prescription history. Leave it off for drugs given during the visit.
                 </p>
               </div>
               {createForm.isMedication && (

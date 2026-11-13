@@ -57,6 +57,7 @@ import {
   geocodeRoutingAddressText,
   parseCoordinate,
 } from '../utils/verifiedAddress';
+import { findProviderByDisplayName } from '../utils/providerNameMatch';
 import { fetchPrimaryProviders } from '../api/employee';
 import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
@@ -2989,8 +2990,10 @@ export default function Routing({
       }
 
       const typeName = (() => {
-        // Schedule follow-ups picks a real visit type on the card; other forward
-        // bookings keep the default (usually HOLD).
+        // Schedule follow-ups picks a real visit type on the card. Every other follow-up
+        // (Forward booking list, care outreach, schedule loader, waitlist) starts with no type,
+        // and Get Best Route asks the CL to choose one (owner, Nov 9, 2026). A default here used
+        // to be the first type in the picker, e.g. Euthanasia for a recheck.
         if (intent.origin === 'follow_up_planner' && intent.appointmentTypeId != null) {
           const plannerTypeName = routingPickerTypeNameForAppointmentType(
             routingAppointmentTypes,
@@ -3003,12 +3006,8 @@ export default function Routing({
             return plannerTypeName;
           }
         }
-        const fallback = defaultRoutingAppointmentTypeSelection(routingAppointmentTypes);
-        if (fallback) {
-          setScheduleBookTypeId(fallback.id);
-          setRoutingApptStatsTypeKey(fallback.statsTypeKey);
-          return fallback.statsTypeKey;
-        }
+        setScheduleBookTypeId(null);
+        setRoutingApptStatsTypeKey('');
         return null;
       })();
 
@@ -3062,27 +3061,6 @@ export default function Routing({
     };
   }, [triggerRoutingPrefillFlash, routingAppointmentTypes]);
 
-  /** Forward booking: when types load after form hydrate, default Calculate Time if still empty. */
-  useEffect(() => {
-    if (!hasActiveForwardBookingWorkspace) return;
-    if (!form.doctorId.trim() || routingAppointmentTypes.length === 0) return;
-    if (routingApptStatsTypeKey.trim()) return;
-
-    const intent = readRoutingForwardBookingIntent();
-    if (!intent?.workspaceActive) return;
-
-    const fallback = defaultRoutingAppointmentTypeSelection(routingAppointmentTypes);
-    if (!fallback) return;
-
-    setRoutingApptStatsTypeKey(fallback.statsTypeKey);
-    setScheduleBookTypeId(fallback.id);
-  }, [
-    hasActiveForwardBookingWorkspace,
-    form.doctorId,
-    routingAppointmentTypes,
-    routingApptStatsTypeKey,
-  ]);
-
   /** Appointment request list → hydrate Routing form once per intent row. */
   useEffect(() => {
     let cancelled = false;
@@ -3103,16 +3081,21 @@ export default function Routing({
       let pimsDoc = '';
       let doctorDisplayName = intent.preferredDoctorDisplayName?.trim() ?? '';
       const preferredId = intent.preferredDoctorId?.trim();
-      if (preferredId) {
+      const primaryName = intent.primaryDoctorName?.trim();
+      if (preferredId || primaryName) {
         try {
           const providerRows = await fetchPrimaryProviders();
           if (cancelled) return;
-          const match = providerRows.find(
-            (p) =>
-              String(p.id) === preferredId ||
-              String(p.pimsId ?? '') === preferredId ||
-              String((p as { pimsId?: string }).pimsId ?? '') === preferredId
-          );
+          // Preferred doctor by id; otherwise the pet's primary doctor by name.
+          const match = preferredId
+            ? providerRows.find(
+                (p) =>
+                  String(p.id) === preferredId ||
+                  String(p.pimsId ?? '') === preferredId ||
+                  String((p as { pimsId?: string }).pimsId ?? '') === preferredId
+              )
+            : findProviderByDisplayName(providerRows, primaryName ?? '');
+          if (!preferredId && match) doctorDisplayName = '';
           if (match?.pimsId) {
             pimsDoc = String(match.pimsId).trim();
             doctorDisplayName =
@@ -5422,6 +5405,10 @@ export default function Routing({
 
     if (!form.newAppt.serviceMinutes || form.newAppt.serviceMinutes <= 0) {
       return { valid: false, error: 'Please enter a valid service duration.' };
+    }
+
+    if (hasActiveForwardBookingWorkspace && !routingApptStatsTypeKey.trim()) {
+      return { valid: false, error: 'Choose an appointment type for this follow-up.' };
     }
 
     const clientTypeConflict = getRoutingClientTypeConflictMessage();

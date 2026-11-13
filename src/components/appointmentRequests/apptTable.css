@@ -1,0 +1,445 @@
+/* Compact Appointments table: one summary line per request; the full card opens under it. */
+
+/* The table needs more room than the usual 1100px container / 1200px settings page. */
+.container.appt-requests-container {
+  max-width: min(1560px, calc(100vw - 24px));
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.settings-page.appt-requests-page {
+  max-width: none;
+}
+
+.appt-table-head,
+.appt-table-row {
+  display: grid;
+  grid-template-columns:
+    104px 58px minmax(140px, 1.4fr) minmax(90px, 1fr) minmax(90px, 0.9fr)
+    minmax(112px, 0.9fr) 104px minmax(118px, 1fr) minmax(118px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.appt-table-head > span,
+.appt-table-cell {
+  min-width: 0;
+}
+
+.appt-table-head {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: #e8ecf8;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.appt-request-list--table {
+  gap: 6px;
+}
+
+.appt-table-row {
+  padding: 10px 14px;
+  font-size: 0.92rem;
+}
+
+.appt-table-row:hover {
+  background: #f8fafc;
+}
+
+.appt-table-row--urgent {
+  background: #fff1f2;
+  box-shadow: inset 4px 0 0 #dc2626;
+}
+
+.appt-table-row--urgent:hover {
+  background: #ffe4e6;
+}
+
+.appt-table-row--open {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.appt-table-cell {
+  min-width: 0;
+}
+
+.appt-table-received {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.appt-table-received > span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.appt-table-chevron {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: #475569;
+  cursor: pointer;
+}
+
+.appt-table-urgent {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.appt-table-client-type {
+  color: #475569;
+  font-size: 0.85rem;
+}
+
+.appt-table-client {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  text-align: center;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.appt-table-client:hover {
+  border-color: #a5b4fc;
+  background: #eef2ff;
+}
+
+.appt-table-client-name {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.appt-table-pets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.appt-table-pet {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.appt-table-primary {
+  font-size: 0.75rem;
+  color: #475569;
+}
+
+.appt-table-strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.appt-table-liaison {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #64748b;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.appt-table-liaison--set {
+  border-color: #67e8f9;
+  background: #cffafe;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.appt-table-route-btn {
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 999px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.appt-table-route-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.appt-table-pill {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+  padding: 5px 12px;
+  border-radius: 12px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.appt-table-pill-detail {
+  font-size: 0.76rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.appt-table-pill--none {
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.appt-table-pill--hold {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.appt-table-pill--auto {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.appt-table-pill--booked {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.appt-table-pill--not-booked {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.appt-table-pill--comm-none {
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.appt-table-pill--comm-contacted {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.appt-table-pill--comm-complete {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Appointments requests: a tenth column for Records. */
+.appt-table-head.appt-table--with-records,
+.appt-table-row.appt-table--with-records {
+  grid-template-columns:
+    100px 54px minmax(140px, 1.4fr) minmax(86px, 1fr) minmax(86px, 0.9fr)
+    minmax(108px, 0.9fr) 100px minmax(114px, 1fr) minmax(114px, 1fr) minmax(110px, 0.95fr);
+}
+
+/* A status pill that opens a menu (Booking, Communication, Records). */
+.appt-table-pill--menu {
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.appt-table-pill--menu:hover {
+  filter: brightness(0.96);
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12) inset;
+}
+
+.appt-table-pill--menu:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 1px;
+}
+
+.appt-table-pill--menu:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.appt-table-pill-caret {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+.appt-table-pill--comm-replied {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.appt-table-pill--records-none {
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.appt-table-pill--records-open {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.appt-table-pill--records-complete {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Narrow screens: let the summary wrap rather than squeeze. */
+@media (max-width: 1100px) {
+  .appt-table-head {
+    display: none;
+  }
+  .appt-table-row,
+  .appt-table-row.appt-table--with-records {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Hold tab: whose holds (Me + unassigned / Mine / Unassigned / All), under the main tabs. */
+.holds-owner-filters .appt-request-status-tab {
+  font-size: 0.82rem;
+  padding: 4px 12px;
+}
+
+/* Re-Route beside the other hold actions on the Hold tab. */
+.appt-table-route-btn--inline {
+  width: auto;
+  padding: 8px 16px;
+}
+
+/* Location: town with the service zone as a chip beside it. */
+.appt-table-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.appt-table-zone {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Open request nobody has worked in 10 days. */
+.appt-table-quiet {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: normal;
+}
+
+/* A pet on this open request was already seen (or has a visit coming) since it came in. */
+.appt-table-pill--seen {
+  background: #ffedd5;
+  color: #9a3412;
+  border: 1px dashed #fb923c;
+}
+
+/* Liaison filter beside the search box. */
+.appt-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.appt-liaison-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.appt-liaison-filter select {
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  font: inherit;
+  font-weight: 500;
+}
+
+/* The latest unread reply under the client name. */
+.appt-table-reply {
+  display: block;
+  margin-top: 3px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.appt-table-reply--others {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.appt-table-row--unread {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.appt-table-row--unread-others {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+/* New client: stands out in the row (owner, Nov 12, 2026). */
+.appt-table-new-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: #ea580c;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.15;
+}

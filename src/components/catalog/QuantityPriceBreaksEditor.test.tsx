@@ -84,3 +84,74 @@ describe('QuantityPriceBreaksEditor range checks (CAT-A1)', () => {
     expect(await screen.findByText('Server says the range overlaps 12-100.')).toBeTruthy();
   });
 });
+
+describe('QuantityPriceBreaksEditor while the item reloads (PRC-04 take, Nov 12)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('lists a new break at once and lets the next one be added before the reload finishes', async () => {
+    vi.mocked(api.createQuantityPriceBreak).mockResolvedValueOnce({ ...brk(9, 1, 9), price: 9.5 });
+    // The parent's reload never finishes: the editor must not wait for it.
+    const onChanged = vi.fn(() => new Promise<void>(() => undefined));
+    render(
+      <QuantityPriceBreaksEditor
+        itemType="inventory"
+        itemId={5}
+        practiceId={1}
+        item={{ id: 5, name: 'X', price: '9.50', code: null } as api.InventoryItem}
+        priceBreaks={[]}
+        onChanged={onChanged}
+      />
+    );
+    expect(screen.getByText('No tiers configured.')).toBeTruthy();
+    fireEvent.click(screen.getByText('Add price break'));
+    const [low, high, price] = screen.getAllByRole('spinbutton');
+    fireEvent.change(low, { target: { value: '1' } });
+    fireEvent.change(high, { target: { value: '9' } });
+    fireEvent.change(price, { target: { value: '9.5' } });
+    fireEvent.click(screen.getByText('Create price break'));
+
+    expect(await screen.findByText('Price break created')).toBeTruthy();
+    expect(screen.queryByText('No tiers configured.')).toBeNull();
+    expect(screen.getByRole('cell', { name: '9' })).toBeTruthy();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+
+    // The next break can start straight away, and the new row counts for the overlap check.
+    fireEvent.click(screen.getByText('Add price break'));
+    const [low2, high2, price2] = screen.getAllByRole('spinbutton');
+    fireEvent.change(low2, { target: { value: '5' } });
+    fireEvent.change(high2, { target: { value: '999' } });
+    fireEvent.change(price2, { target: { value: '8.75' } });
+    fireEvent.click(screen.getByText('Create price break'));
+    expect(screen.getByText(/overlaps the active price break 1-9/)).toBeTruthy();
+  });
+
+  it('takes the reloaded list when the parent passes new breaks', () => {
+    const { rerender } = renderEditor([brk(1, 1, 9)]);
+    rerender(
+      <QuantityPriceBreaksEditor
+        itemType="inventory"
+        itemId={5}
+        practiceId={1}
+        item={{ id: 5, name: 'X', price: '14.26', code: null } as api.InventoryItem}
+        priceBreaks={[brk(1, 1, 9), brk(2, 10, 999)]}
+        onChanged={() => undefined}
+      />
+    );
+    expect(screen.getAllByText('Edit')).toHaveLength(2);
+  });
+
+  it('drops a deleted break from the list without waiting for the reload', async () => {
+    render(
+      <QuantityPriceBreaksEditor
+        itemType="inventory"
+        itemId={5}
+        practiceId={1}
+        item={{ id: 5, name: 'X', price: '14.26', code: null } as api.InventoryItem}
+        priceBreaks={[brk(1, 1, 9)]}
+        onChanged={() => new Promise<void>(() => undefined)}
+      />
+    );
+    fireEvent.click(screen.getByText('Delete'));
+    expect(await screen.findByText('No tiers configured.')).toBeTruthy();
+  });
+});

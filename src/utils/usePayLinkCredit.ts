@@ -19,9 +19,10 @@ export function usePayLinkCredit(
       return;
     }
     let cancelled = false;
-    void fetchAvailableAccountCredit(Number(clientId))
+    // D7 option 3: a deposit held for one of the unpaid bills' own visits comes off the link too.
+    void fetchAvailableAccountCredit(Number(clientId), undefined, { forPayLink: true })
       .then((c) => {
-        if (!cancelled) setCredit(Number(c.total) || 0);
+        if (!cancelled) setCredit((Number(c.total) || 0) + (Number(c.payLinkDeposit) || 0));
       })
       .catch(() => {
         if (!cancelled) setCredit(0);

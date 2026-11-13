@@ -140,4 +140,20 @@ describe('EMR-A13-3: certificates print every required field', () => {
     for (const f of [...COMMON, ...SIGNED, 'Carprofen', '25 mg', 'Quantity: 30', 'twice daily with food', 'Refills: 2', 'Beagle'])
       expect(text, f).toContain(f);
   });
+
+  it('prescription form prints pharmacist notes and a typed-in DEA number', async () => {
+    const text = await printedText('rx', {
+      ...base(),
+      rxPharmacistNotes: 'OK to substitute generic.',
+      rxDeaNumber: 'AB1234563',
+    });
+    expect(text).toContain('Notes to pharmacist: OK to substitute generic.');
+    expect(text).toContain('DEA # AB1234563');
+  });
+
+  it('prescription form leaves out the DEA line when none is typed', async () => {
+    const text = await printedText('rx', base());
+    expect(text).not.toContain('DEA #');
+    expect(text).not.toContain('Notes to pharmacist');
+  });
 });

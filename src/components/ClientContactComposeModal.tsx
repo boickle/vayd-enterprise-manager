@@ -7,7 +7,7 @@ import {
   useUnsentComposeClose,
 } from './unsentComposeClose';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
+import { clientDoNotSmsFromRecord, clientTextsOffReason, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { gmailErrorMessage } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { useClientEmailComposeSetup } from '../hooks/useClientEmailComposeSetup';
@@ -15,7 +15,7 @@ import {
   careOutreachSmsToEmail,
   forwardBookingSmsToEmail,
 } from '../utils/clientOutreachEmailMessage';
-import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
+import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../utils/smsEnvironment';
 import {
   composeBodiesFromUserContent,
   isEmailBodyEmpty,
@@ -57,6 +57,8 @@ type Props = {
   markInboxDone?: boolean;
   /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
   smsSource?: string;
+  /** Pets this message is about; the chart entry goes on each pet's record. Leave out for client-level. */
+  patientIds?: number[];
   mergeValues?: MergeValues;
   /** Called after a successful text or email, before the modal closes. */
   onSent?: () => void;
@@ -88,6 +90,7 @@ export function ClientContactComposeModal({
   smsFrom,
   markInboxDone,
   smsSource,
+  patientIds,
   mergeValues,
   onSent,
 }: Props) {
@@ -103,6 +106,7 @@ export function ClientContactComposeModal({
   const [subject, setSubject] = useState('');
   const [userBody, setUserBody] = useState('');
   const [doNotSms, setDoNotSms] = useState(false);
+  const [textsOffReason, setTextsOffReason] = useState<string | null>(null);
 
   const showText = canText;
   const showEmail = canEmail;
@@ -138,6 +142,7 @@ export function ClientContactComposeModal({
     setSendError(null);
     setChannel(canText ? 'text' : canEmail ? 'email' : 'text');
     setDoNotSms(false);
+    setTextsOffReason(null);
   }, [open, initialSmsMessage, canText, canEmail]);
 
   useEffect(() => {
@@ -145,10 +150,14 @@ export function ClientContactComposeModal({
     let cancelled = false;
     void fetchClientByIdStaff(clientId)
       .then((raw) => {
-        if (!cancelled) setDoNotSms(clientDoNotSmsFromRecord(raw));
+        if (cancelled) return;
+        setDoNotSms(clientDoNotSmsFromRecord(raw));
+        setTextsOffReason(clientTextsOffReason(raw));
       })
       .catch(() => {
-        if (!cancelled) setDoNotSms(false);
+        if (cancelled) return;
+        setDoNotSms(false);
+        setTextsOffReason(null);
       });
     return () => {
       cancelled = true;
@@ -170,7 +179,8 @@ export function ClientContactComposeModal({
     setSendError(null);
   };
 
-  const canSendText = showText && Boolean(clientId && smsMessage.trim()) && !sending;
+  const canSendText =
+    showText && !textsOffReason && Boolean(clientId && smsMessage.trim()) && !sending;
   const canSendEmail =
     showEmail &&
     Boolean(mailbox && from.trim() && to.trim() && subject.trim() && !isEmailBodyEmpty(userBody)) &&
@@ -199,6 +209,7 @@ export function ClientContactComposeModal({
         ...(markInboxDone ? { markInboxDone: true } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
         ...(smsSource ? { source: smsSource } : {}),
+        ...(patientIds?.length ? { patientIds } : {}),
       });
       onSent?.();
       onClose();
@@ -227,6 +238,12 @@ export function ClientContactComposeModal({
         subject: subject.trim(),
         bodyText,
         bodyHtml: bodyHtml || undefined,
+        // COM-07d: the API writes the chart entry after Gmail accepts the email.
+        chartLog: {
+          ...(clientId != null ? { clientId } : {}),
+          ...(patientIds?.length ? { patientIds } : {}),
+          typeLabel: emailFormat === 'forward_booking' ? 'Forward booking email' : 'Care outreach email',
+        },
       });
       onSent?.();
       onClose();
@@ -394,7 +411,17 @@ export function ClientContactComposeModal({
           </p>
         ) : null}
 
-        {channel === 'text' && showText && doNotSms ? (
+        {channel === 'text' && showText && textsOffReason ? (
+          <p
+            role="alert"
+            data-testid="texts-off-reason"
+            style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}
+          >
+            {textsOffReason}. Texts can&apos;t be sent to this client; call or email instead.
+          </p>
+        ) : null}
+
+        {channel === 'text' && showText && doNotSms && !textsOffReason ? (
           <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
             Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
           </p>
@@ -575,7 +602,7 @@ export function ClientContactComposeModal({
                   className="btn secondary"
                   disabled={!canSendText}
                   onClick={() => void handleSendText(true)}
-                  title="Send to the client's real number (non-production only)"
+                  title={SMS_OUTSIDE_PRODUCTION_NOTE}
                 >
                   {sending ? 'Sending…' : 'Send to actual client'}
                 </button>

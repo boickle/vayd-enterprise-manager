@@ -2069,6 +2069,36 @@ export default function AppointmentRequestForm() {
     [formData.selectedPetIds, pets],
   );
 
+  // The doctor lists handed to the date picker. Built once per change, not on every render: the picker
+  // fetches availability again whenever these lists change, and a new list on each render sent
+  // the same availability request over and over until the API's rate limit refused it (429).
+  const selfSchedulePreloadedDoctors = useMemo(() => {
+    if (bookableProvidersForScheduling.length === 0) return undefined;
+    return bookableProvidersForScheduling.map((p) =>
+      mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
+    );
+  }, [bookableProvidersForScheduling, rawVeterinarianList]);
+
+  const selfScheduleRequestOnlyDoctors = useMemo(() => {
+    if (visitAppointmentTypeIds.length === 0) return undefined;
+    const list = isLoggedIn
+      ? providers
+      : (publicProviders.length > 0 ? publicProviders : providers);
+    const reqOnly = list.filter((p) => {
+      const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
+      const bookable = isNewPatientRequest
+        ? canBookOnlineForNewPatientRequestForVisitTypes(raw, visitAppointmentTypeIds)
+        : canBookOnlineForVisitTypes(raw, visitAppointmentTypeIds);
+      if (bookable) return false;
+      if (isNewPatientRequest && !isVeterinarianAcceptingNewPatientsInClientZone(raw)) {
+        return false;
+      }
+      return true;
+    });
+    if (reqOnly.length === 0) return undefined;
+    return reqOnly.map((p) => mapDoctorForSelfScheduleModal(p, rawVeterinarianList));
+  }, [visitAppointmentTypeIds, isLoggedIn, providers, publicProviders, rawVeterinarianList, isNewPatientRequest]);
+
   const [resolvedServiceMinutes, setResolvedServiceMinutes] = useState<number | null>(null);
 
   const routingServiceMinutesDoctorId =
@@ -9067,36 +9097,8 @@ export default function AppointmentRequestForm() {
                     }
                     rawVeterinarians={rawVeterinarianList}
                     slotPickerError={selfScheduleSlotError}
-                    preloadedDoctors={(() => {
-                      if (bookableProvidersForScheduling.length === 0) return undefined;
-                      return bookableProvidersForScheduling.map((p) =>
-                        mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
-                      );
-                    })()}
-                    requestOnlyDoctors={(() => {
-                      if (visitAppointmentTypeIds.length === 0) return undefined;
-                      const list = isLoggedIn
-                        ? providers
-                        : (publicProviders.length > 0 ? publicProviders : providers);
-                      const reqOnly = list.filter((p) => {
-                        const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
-                        const bookable = isNewPatientRequest
-                          ? canBookOnlineForNewPatientRequestForVisitTypes(
-                              raw,
-                              visitAppointmentTypeIds,
-                            )
-                          : canBookOnlineForVisitTypes(raw, visitAppointmentTypeIds);
-                        if (bookable) return false;
-                        if (isNewPatientRequest && !isVeterinarianAcceptingNewPatientsInClientZone(raw)) {
-                          return false;
-                        }
-                        return true;
-                      });
-                      if (reqOnly.length === 0) return undefined;
-                      return reqOnly.map((p) =>
-                        mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
-                      );
-                    })()}
+                    preloadedDoctors={selfSchedulePreloadedDoctors}
+                    requestOnlyDoctors={selfScheduleRequestOnlyDoctors}
                     onRequestDoctor={({ doctorName, preferredTimes }) => {
                       const doctorField =
                         isLoggedIn || formData.haveUsedServicesBefore === 'Yes'

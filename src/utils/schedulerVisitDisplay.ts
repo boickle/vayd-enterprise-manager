@@ -340,6 +340,27 @@ export function patientAgeYearsMonthsDisplay(p: Patient, practiceTz: string): st
   return `${Math.max(1, w)}w`;
 }
 
+/**
+ * Final puppy/kitten boosters are due at 16 weeks or older. For a pet under 20 weeks old, the date it
+ * turns (or turned) 16 weeks: "16 weeks on 12/20/2026" / "turned 16 weeks on 12/20/2026". Null otherwise.
+ */
+export function sixteenWeekBoosterNote(
+  dobIso: string | null | undefined,
+  practiceTz: string,
+  now: DateTime = DateTime.now(),
+): string | null {
+  const raw = typeof dobIso === 'string' ? dobIso.trim() : '';
+  if (!raw) return null;
+  // Date-only part, so a midnight-UTC DOB is not shifted a day by the practice time zone.
+  const birth = DateTime.fromISO(raw.slice(0, 10), { zone: practiceTz });
+  if (!birth.isValid) return null;
+  const today = now.setZone(practiceTz).startOf('day');
+  if (today < birth || today >= birth.plus({ weeks: 20 })) return null;
+  const sixteen = birth.plus({ weeks: 16 });
+  const date = sixteen.toFormat('M/d/yyyy');
+  return today >= sixteen ? `turned 16 weeks on ${date}` : `16 weeks on ${date}`;
+}
+
 export function patientSpeciesIconKind(p: Patient): 'dog' | 'cat' | null {
   const spec = (pickStr(p.speciesEntity?.name) ?? pickStr(p.species) ?? '').toLowerCase();
   if (!spec) return null;

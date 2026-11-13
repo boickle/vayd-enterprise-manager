@@ -150,3 +150,29 @@ export function mergeValuesFromNames(opts: {
     ...pronounsFromSex(opts.sex),
   });
 }
+
+/**
+ * Merge values for a message about these pets (B9-1): their names ("Maple", or "Maple and Juniper") and, for one pet,
+ * he/she from its sex. One pet with no sex on record gets its name instead of "they", so "how is {{he_she}} doing"
+ * still reads right.
+ */
+export function mergeValuesForPets(
+  clientFullName: string | null | undefined,
+  pets: Array<{ name: string; sex?: string | null }>,
+): MergeValues {
+  const names = pets.map((p) => p.name);
+  const patientName =
+    names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const values = mergeValuesFromNames({
+    clientFullName,
+    patientName,
+    sex: pets.length === 1 ? pets[0].sex : null,
+  });
+  if (pets.length > 1) return { ...values, have_has: 'have' };
+  if (pets.length === 1 && values.he_she === 'they') {
+    const name = pets[0].name;
+    return { ...values, he_she: name, He_She: name, him_her: name, his_her: `${name}'s` };
+  }
+  return values;
+}
+

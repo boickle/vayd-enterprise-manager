@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { transferBatch } from '../api/inventoryOps';
 import { apiErrorMessage } from '../api/http';
 import {
+  getEmployeeBranches,
   getInventoryBranchStock,
   listInventoryBranchLocations,
   listPracticeBranches,
@@ -15,8 +16,11 @@ import {
 import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
 import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
 import StockLotPicker from '../components/inventory/StockLotPicker';
-import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
-import { useCan } from '../permissions/PermissionContext';
+import {
+  resolveEmployeeIdFromToken,
+  resolvePracticeIdFromToken,
+} from '../utils/practiceIdFromToken';
+import { useCan, useScope } from '../permissions/PermissionContext';
 import { PermissionDenied } from '../permissions/PermissionGate';
 import './Settings.css';
 import './MoveItemsPage.css';
@@ -52,10 +56,13 @@ function locationOptionLabel(
 export default function MoveItemsPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const myEmployeeId = useMemo(() => resolveEmployeeIdFromToken(token), [token]);
   const [searchParams] = useSearchParams();
   // Inventory and practice managers transfer across every office and location;
   // the page itself imposes no branch restriction, so the permission is the gate.
   const canTransfer = useCan('inventory.transfer');
+  // Technicians and doctors ("own") move within one office; managers move between offices (B3).
+  const sameOfficeOnly = useScope('inventory.transfer') === 'own';
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [fromBranchId, setFromBranchId] = useState<number | ''>('');
   const [toBranchId, setToBranchId] = useState<number | ''>('');
@@ -82,12 +89,26 @@ export default function MoveItemsPage() {
   >({});
 
   useEffect(() => {
-    void listPracticeBranches(practiceId).then((b) => {
+    if (sameOfficeOnly && fromBranchId !== '' && toBranchId !== fromBranchId) {
+      setToBranchId(fromBranchId);
+    }
+  }, [sameOfficeOnly, fromBranchId, toBranchId]);
+
+  useEffect(() => {
+    void Promise.all([
+      listPracticeBranches(practiceId),
+      myEmployeeId != null
+        ? getEmployeeBranches(practiceId, myEmployeeId).catch(() => [])
+        : Promise.resolve([]),
+    ]).then(([b, mine]) => {
       const active = b.filter((x) => x.isActive !== false);
       setBranches(active);
       const fromP = Number(searchParams.get('fromOffice'));
       const toP = Number(searchParams.get('toOffice'));
-      const def = active.find((x) => x.isDefault) ?? active[0];
+      // Start on your own office (your default office in Settings → Staff), not the first one (U5).
+      const primaryId = mine.find((row) => row.isPrimary)?.branchId;
+      const def =
+        active.find((x) => x.id === primaryId) ?? active.find((x) => x.isDefault) ?? active[0];
       setFromBranchId(
         Number.isFinite(fromP) && active.some((x) => x.id === fromP) ? fromP : (def?.id ?? '')
       );
@@ -116,7 +137,7 @@ export default function MoveItemsPage() {
         })
         .catch(() => undefined);
     }
-  }, [practiceId, searchParams]);
+  }, [practiceId, myEmployeeId, searchParams]);
 
   useEffect(() => {
     if (fromBranchId === '') {
@@ -351,7 +372,7 @@ export default function MoveItemsPage() {
   }
 
   if (!canTransfer) {
-    return <PermissionDenied what="Moving inventory" who="an inventory or practice manager" />;
+    return <PermissionDenied what="Moving inventory" />;
   }
 
   return (
@@ -551,6 +572,12 @@ export default function MoveItemsPage() {
             <select
               className="settings-input"
               value={toBranchId}
+              disabled={sameOfficeOnly}
+              title={
+                sameOfficeOnly
+                  ? 'To move stock to another office, ask the practice manager or an inventory manager.'
+                  : undefined
+              }
               onChange={(e) => setToBranchId(e.target.value ? Number(e.target.value) : '')}
             >
               {branches.map((b) => (

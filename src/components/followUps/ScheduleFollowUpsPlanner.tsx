@@ -503,6 +503,10 @@ export default function ScheduleFollowUpsPlanner({
       : 'Follow-up';
   };
 
+  /** "Nov 17 visit" for a household visit, "1 year visit" for a card. */
+  const visitLabel = (card: string) =>
+    card.startsWith('up:') ? cardLabel(card) : `${cardLabel(card)} visit`;
+
   // -------------------------------------------------------------------------
   // Moving pets
   // -------------------------------------------------------------------------
@@ -554,17 +558,25 @@ export default function ScheduleFollowUpsPlanner({
     const pet = petById.get(petId);
     if (!pet || pet.savedMode) return;
     let card = target;
-    if (target === '__new') card = addCard({ kind: 'preset', key: '1m' });
+    // A pet already booked on a visit stays on it. Taking it off is done on the
+    // calendar; putting it on another card books it for that visit as well.
+    let pinnedNote: string | null = null;
     if (from && mode === 'move' && lockedAt(petId, from)) {
-      setToast({
-        text: `${pet.name} is booked on that visit. Change it on the calendar (View appointment).`,
-      });
-      return;
+      if (target === '__tray' || target === NONE) {
+        setToast({
+          text: `${pet.name} is booked on that visit. Change it on the calendar (View appointment).`,
+        });
+        return;
+      }
+      mode = 'add';
+      pinnedNote = `${pet.name} stays on the ${visitLabel(from)} and is added here too.`;
     }
-    if (card !== '__tray') {
-      const blocked = canDropOn(card);
+    if (target !== '__tray' && target !== '__new') {
+      const blocked = canDropOn(target);
       if (blocked) return setToast({ text: blocked });
     }
+    if (target === '__new') card = addCard({ kind: 'preset', key: '1m' });
+    if (pinnedNote) setToast({ text: pinnedNote });
     setPlacements((prev) => {
       let list = [...(prev[petId] ?? [])];
       if (from && mode === 'move') list = list.filter((c) => c !== from);
@@ -1729,6 +1741,8 @@ export default function ScheduleFollowUpsPlanner({
   ) => {
     const k = noteKey(pet.patientId, card);
     const locked = opts?.fixed || lockedAt(pet.patientId, card);
+    // Locked pets can't leave this visit, but can still be added to another card.
+    const canAddElsewhere = !opts?.readOnly && !pet.savedMode;
     const others = (placements[pet.patientId] ?? [])
       .filter((c) => c !== card && c !== NONE)
       .map(cardLabel);
@@ -1736,11 +1750,11 @@ export default function ScheduleFollowUpsPlanner({
       <div
         key={k}
         className={`fup-inplan${locked ? ' is-locked' : ''}`}
-        draggable={!locked}
+        draggable={!locked || canAddElsewhere}
         onDragStart={() => (dragRef.current = { petId: pet.patientId, from: card })}
       >
         <div className="fup-inplan__top">
-          {locked ? (
+          {locked && !canAddElsewhere ? (
             <>
               {avatar(pet)}
               <div>
@@ -1750,6 +1764,22 @@ export default function ScheduleFollowUpsPlanner({
                 </div>
               </div>
             </>
+          ) : locked ? (
+            <button
+              type="button"
+              className="fup-who"
+              aria-label={`${pet.name}: add another visit`}
+              onClick={(e) => openMenu(pet.patientId, card, e.currentTarget)}
+            >
+              {avatar(pet)}
+              <span>
+                <span className="fup-pet-name">{pet.name}</span>
+                <span className="fup-pet-meta">
+                  {opts?.fixed ? 'Already booked' : 'Booked · change it on the calendar'}
+                  {others.length ? ` · Also: ${others.join(', ')}` : ' · Tap to add another visit'}
+                </span>
+              </span>
+            </button>
           ) : (
             <button
               type="button"
@@ -2005,7 +2035,9 @@ export default function ScheduleFollowUpsPlanner({
                 </>
               ) : (
                 <div className="fup-warnbox">
-                  {data.doNotSms
+                  {data.textsOffReason
+                    ? `${data.textsOffReason}.`
+                    : data.doNotSms
                     ? 'This client is marked do-not-text.'
                     : 'No mobile number on file.'}{' '}
                   {data.clientEmails.length
@@ -2826,6 +2858,8 @@ export default function ScheduleFollowUpsPlanner({
         <MoveMenu
           pet={petById.get(menu.petId)!}
           from={menu.from}
+          pinned={menu.from != null && lockedAt(menu.petId, menu.from)}
+          fromLabel={menu.from ? visitLabel(menu.from) : null}
           x={menu.x}
           y={menu.y}
           placements={placements[menu.petId] ?? []}
@@ -2957,6 +2991,7 @@ export default function ScheduleFollowUpsPlanner({
           emailFormat="forward_booking"
           canText={false}
           smsSource="follow_up_confirmation"
+          patientIds={data.pets.map((p) => p.patientId)}
           onClose={() => setEmailOpen(false)}
           onSent={() => {
             setEmailOpen(false);
@@ -3053,6 +3088,9 @@ function IntervalPicker({
 function MoveMenu(props: {
   pet: PlannerPet;
   from: string | null;
+  /** Booked on `from`: it can be added elsewhere but not moved off. */
+  pinned?: boolean;
+  fromLabel?: string | null;
   x: number;
   y: number;
   placements: string[];
@@ -3079,7 +3117,23 @@ function MoveMenu(props: {
   return (
     <div ref={ref} className="fup-menu" role="menu" style={{ left: Math.max(8, props.x), top }}>
       <div className="fup-menu__h">{props.pet.name}</div>
-      {props.from ? (
+      {props.from && props.pinned ? (
+        <>
+          <div className="fup-menu__h">
+            Stays on the {props.fromLabel ?? 'booked visit'}. Also book {props.pet.name} in…
+          </div>
+          {avail.map((o) => (
+            <button
+              key={`a${o.card}`}
+              type="button"
+              role="menuitem"
+              onClick={() => props.onPick(o.card, 'add')}
+            >
+              <CalendarPlus size={14} /> {o.label}
+            </button>
+          ))}
+        </>
+      ) : props.from ? (
         <>
           <div className="fup-menu__h">Also book {props.pet.name} in…</div>
           {avail.map((o) => (

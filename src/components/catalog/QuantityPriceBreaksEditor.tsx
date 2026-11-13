@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   createQuantityPriceBreak,
   updateQuantityPriceBreak,
@@ -47,6 +47,18 @@ export default function QuantityPriceBreaksEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Shown list. Updated as soon as a save succeeds, so the next break can be added right away;
+  // the parent's reload (onChanged) runs in the background and replaces it when it lands.
+  const [rows, setRows] = useState<QuantityPriceBreak[]>(priceBreaks);
+  useEffect(() => setRows(priceBreaks), [priceBreaks]);
+
+  function refreshInBackground() {
+    void Promise.resolve()
+      .then(() => onChanged())
+      .catch(() => {
+        /* the list already shows the saved change; a failed reload only means it isn't re-read yet */
+      });
+  }
 
   const cost = itemCost(item);
 
@@ -59,7 +71,7 @@ export default function QuantityPriceBreaksEditor({
   ): string | null {
     if (low > high) return 'Low Quantity must be <= High Quantity';
     if (!isActive) return null;
-    const clash = priceBreaks.find(
+    const clash = rows.find(
       (pb) =>
         pb.id !== excludeId &&
         pb.isActive &&
@@ -87,7 +99,7 @@ export default function QuantityPriceBreaksEditor({
     setError(null);
     setSuccess(null);
     try {
-      await updateQuantityPriceBreak(id, {
+      const updated = await updateQuantityPriceBreak(id, {
         price: editing.price,
         markup: editing.markup,
         lowQuantity: editing.lowQuantity,
@@ -97,7 +109,10 @@ export default function QuantityPriceBreaksEditor({
       setSuccess('Price break updated');
       setTimeout(() => setSuccess(null), 3000);
       setEditing(null);
-      await onChanged();
+      if (updated && typeof updated.id === 'number') {
+        setRows((prev) => prev.map((pb) => (pb.id === id ? { ...pb, ...updated } : pb)));
+      }
+      refreshInBackground();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { message?: string } }; message?: string };
       setError(e?.response?.data?.message || e?.message || 'Failed to update price break');
@@ -140,7 +155,7 @@ export default function QuantityPriceBreaksEditor({
     setError(null);
     setSuccess(null);
     try {
-      await createQuantityPriceBreak(
+      const created = await createQuantityPriceBreak(
         itemType,
         itemId,
         practiceId,
@@ -153,7 +168,10 @@ export default function QuantityPriceBreaksEditor({
       setSuccess('Price break created');
       setTimeout(() => setSuccess(null), 3000);
       setCreating(null);
-      await onChanged();
+      if (created && typeof created.id === 'number') {
+        setRows((prev) => [...prev.filter((pb) => pb.id !== created.id), created]);
+      }
+      refreshInBackground();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { message?: string } }; message?: string };
       setError(e?.response?.data?.message || e?.message || 'Failed to create price break');
@@ -177,7 +195,8 @@ export default function QuantityPriceBreaksEditor({
       await deleteQuantityPriceBreak(id);
       setSuccess('Price break deleted');
       setTimeout(() => setSuccess(null), 3000);
-      await onChanged();
+      setRows((prev) => prev.filter((pb) => pb.id !== id));
+      refreshInBackground();
     } catch (err: unknown) {
       const e = err as { response?: { data?: { message?: string } }; message?: string };
       setError(e?.response?.data?.message || e?.message || 'Failed to delete price break');
@@ -186,7 +205,7 @@ export default function QuantityPriceBreaksEditor({
     }
   }
 
-  const sorted = [...priceBreaks].sort((a, b) => a.lowQuantity - b.lowQuantity);
+  const sorted = [...rows].sort((a, b) => Number(a.lowQuantity) - Number(b.lowQuantity));
 
   return (
     <div>

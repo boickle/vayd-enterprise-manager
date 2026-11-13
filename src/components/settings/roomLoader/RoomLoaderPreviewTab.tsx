@@ -22,6 +22,7 @@ import { outdoorAccessKey } from '../../../pages/roomLoader/roomLoaderFormKeys';
 import { roomLoaderPriceLabel } from '../../../pages/roomLoader/RoomLoaderPrice';
 import {
   ageWindowMatches,
+  itemQuestionHistoryRefs,
   resolvePetPlan,
   speciesMatches,
   type EngineContext,
@@ -30,6 +31,7 @@ import {
 import { fetchCatalogListPrice } from '../../../utils/roomLoaderCatalogPrice';
 import type {
   RoomLoaderConfig,
+  RoomLoaderItemQuestion,
   RoomLoaderItemRef,
   RoomLoaderPanelOption,
   RoomLoaderPanelRule,
@@ -141,7 +143,7 @@ function PreviewBlock({
           </button>
         ) : null}
       </header>
-      {note ? <p className="rl-prev__note">{note}</p> : null}
+      {note ? <div className="rl-prev__note">{note}</div> : null}
       <div className="rl-prev__client">{children}</div>
       {open ? <WordingEditor fields={fields} /> : null}
     </section>
@@ -195,6 +197,58 @@ function usePrices(practiceId: number, refs: RoomLoaderItemRef[]) {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
+/* ------------------------------------------------------- the offered list */
+
+type OfferedRow = {
+  group: string;
+  name: string | undefined;
+  item: RoomLoaderItemRef | null;
+  /** Panels sharing this key are a choose-one question: the client accepts one at most. */
+  pickOne?: string;
+};
+
+type OfferedLine = { kind: 'pick-one' } | { kind: 'row'; row: OfferedRow & { name: string } };
+
+/** The rows of one group, with a "Client picks one" line before each choose-one set. */
+export function offeredLines(rows: Array<OfferedRow & { name: string }>): OfferedLine[] {
+  const out: OfferedLine[] = [];
+  let lastPick: string | undefined;
+  for (const row of rows) {
+    if (row.pickOne && row.pickOne !== lastPick) out.push({ kind: 'pick-one' });
+    lastPick = row.pickOne;
+    out.push({ kind: 'row', row });
+  }
+  return out;
+}
+
+/* --------------------------------------------- when an item question is asked */
+
+const itemNames = (refs: RoomLoaderItemRef[]) =>
+  Array.from(new Set(refs.map((r) => r.name || r.code || `item ${r.itemId}`)));
+
+function listOf(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+}
+
+/** Plain-English rule for when the client form asks this question. */
+export function itemQuestionWhen(question: RoomLoaderItemQuestion, petName: string): string {
+  const triggers = itemNames(question.triggerItems ?? []);
+  let text =
+    triggers.length > 0
+      ? `Asked when staff put ${listOf(triggers)} on the visit`
+      : 'Never asked: no visit item is chosen to trigger it';
+  if (triggers.length > 0 && question.askOnlyIfNeverHad) {
+    const history = itemNames(itemQuestionHistoryRefs(question));
+    text += `, and only if ${petName} has never had ${listOf(history)}`;
+  }
+  const within = question.history?.suppressIfDoneWithinMonths;
+  if (triggers.length > 0 && within) {
+    text += `. Skipped if ${petName} had it in the last ${within} months`;
+  }
+  return `${text}.`;
+}
+
 /* ---------------------------------------------------------------- the tab */
 
 export default function RoomLoaderPreviewTab({
@@ -235,11 +289,12 @@ export default function RoomLoaderPreviewTab({
   const onChange = (key: string, value: string) =>
     setFormData((prev) => ({ ...prev, [key]: value }));
 
-  // Questions asked when a matching item is on the visit: shown for this species and age.
-  const itemQuestions = (config.itemQuestions ?? []).filter(
-    (q) =>
-      q.enabled && speciesMatches(q.species, species) && ageWindowMatches(q.age, AGE_MONTHS[age])
+  // Questions asked when a matching item is on the visit, for this species and age. Turned-off
+  // ones stay listed (so they can be turned back on) but the client form leaves them out.
+  const questionsForPet = (config.itemQuestions ?? []).filter(
+    (q) => speciesMatches(q.species, species) && ageWindowMatches(q.age, AGE_MONTHS[age])
   );
+  const itemQuestions = questionsForPet.filter((q) => q.enabled);
   const sampleInstructions = (config.sampleInstructions ?? []).filter(
     (s) => s.enabled && speciesMatches(s.species, species)
   );
@@ -247,12 +302,14 @@ export default function RoomLoaderPreviewTab({
     speciesMatches(t.species, species)
   );
 
-  const allOffered: Array<{ group: string; name: string; item: RoomLoaderItemRef | null }> = [
+  // `pickOne` groups panels the client chooses between: only one of them can be accepted.
+  const allOffered: Array<OfferedRow & { name: string }> = [
     ...plan.panelRules.flatMap((rule) =>
       rule.options.map((o) => ({
         group: 'Lab work',
         name: o.displayName || o.item?.name,
         item: o.item,
+        pickOne: rule.options.length > 1 ? `rule:${rule.id}` : undefined,
       }))
     ),
     ...plan.medicalConcernOptions.map((o) => ({
@@ -704,10 +761,17 @@ export default function RoomLoaderPreviewTab({
     ]),
   ];
 
-  const offeredTotal = allOffered.reduce(
-    (sum, row) => sum + (row.item ? (amount(row.item) ?? 0) : 0),
-    0
-  );
+  // A client can accept only one panel of a pick-one group, so count its dearest panel once.
+  const offeredTotal = (() => {
+    let sum = 0;
+    const dearest = new Map<string, number>();
+    for (const row of allOffered) {
+      const price = row.item ? (amount(row.item) ?? 0) : 0;
+      if (row.pickOne) dearest.set(row.pickOne, Math.max(dearest.get(row.pickOne) ?? 0, price));
+      else sum += price;
+    }
+    return sum + Array.from(dearest.values()).reduce((a, b) => a + b, 0);
+  })();
   const groups = Array.from(new Set(allOffered.map((r) => r.group)));
   const blockProps = { editing, onEdit: setEditing };
 
@@ -770,17 +834,37 @@ export default function RoomLoaderPreviewTab({
               <div key={g} className="rl-prev__offered-group">
                 <h4>{g}</h4>
                 <ul>
-                  {allOffered
-                    .filter((r) => r.group === g)
-                    .map((r, i) => {
-                      const p = r.item ? amount(r.item) : null;
-                      return (
-                        <li key={`${g}-${i}`}>
-                          <span>{r.name}</span>
-                          <span className="rl-prev__price">{p == null ? '' : money(p)}</span>
-                        </li>
-                      );
-                    })}
+                  {offeredLines(allOffered.filter((r) => r.group === g)).map((line, i) =>
+                    line.kind === 'pick-one' ? (
+                      <li key={`${g}-${i}`} className="rl-prev__pick-one">
+                        Client picks one (or none):
+                      </li>
+                    ) : (
+                      <li
+                        key={`${g}-${i}`}
+                        className={line.row.pickOne ? 'rl-prev__in-pick-one' : undefined}
+                      >
+                        <span className="rl-prev__offered-name">
+                          {line.row.name}
+                          {line.row.item ? (
+                            <small className="rl-prev__item">
+                              adds: {line.row.item.name}
+                              {line.row.item.code ? ` (${line.row.item.code})` : ''}
+                            </small>
+                          ) : (
+                            <small className="rl-prev__item is-missing">
+                              no catalog item chosen
+                            </small>
+                          )}
+                        </span>
+                        <span className="rl-prev__price">
+                          {line.row.item && amount(line.row.item) != null
+                            ? money(amount(line.row.item) as number)
+                            : ''}
+                        </span>
+                      </li>
+                    )
+                  )}
                 </ul>
               </div>
             ))
@@ -788,6 +872,9 @@ export default function RoomLoaderPreviewTab({
           {offeredTotal > 0 ? (
             <p className="rl-prev__offered-total">
               If they said yes to everything: <strong>{money(offeredTotal)}</strong>
+              {allOffered.some((r) => r.pickOne) ? (
+                <small> (the dearest panel where they pick one)</small>
+              ) : null}
             </p>
           ) : null}
           {species === 'cat' && plan.askOutdoorAccess && outdoorAnswer !== 'yes' ? (
@@ -858,21 +945,55 @@ export default function RoomLoaderPreviewTab({
             </PreviewBlock>
           ) : null}
 
-          {itemQuestions.length > 0 ? (
+          {questionsForPet.length > 0 ? (
             <PreviewBlock
               id="questions"
               title="Questions about items on the visit"
-              note="Each is asked only when staff put the matching item on the visit."
+              note={
+                <>
+                  Shown here so you can read them; a client sees each one only when its rule below
+                  matches.
+                  <ul className="rl-prev__when">
+                    {questionsForPet.map((q) => (
+                      <li key={q.id}>
+                        <label className="rl-prev__when-toggle">
+                          <input
+                            type="checkbox"
+                            checked={q.enabled}
+                            onChange={(e) =>
+                              patch('itemQuestions', (l) =>
+                                l.map((x) =>
+                                  x.id === q.id ? { ...x, enabled: e.target.checked } : x
+                                )
+                              )
+                            }
+                          />
+                          Ask “{q.label}”
+                        </label>
+                        <span>
+                          {q.enabled
+                            ? itemQuestionWhen(q, petName)
+                            : 'Off: clients are not asked this.'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              }
               fields={questionFields}
               {...blockProps}
             >
-              <ItemQuestionsSection
-                petKey={PET_KEY}
-                petName={petName}
-                questions={itemQuestions}
-                formData={formData}
-                onChange={onChange}
-              />
+              {itemQuestions.length > 0 ? (
+                <ItemQuestionsSection
+                  petKey={PET_KEY}
+                  petName={petName}
+                  questions={itemQuestions}
+                  formData={formData}
+                  onChange={onChange}
+                />
+              ) : (
+                <p className="rl-prev__empty">All questions for this pet are turned off.</p>
+              )}
             </PreviewBlock>
           ) : null}
 

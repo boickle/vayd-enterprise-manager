@@ -38,6 +38,10 @@ function renderAt(path: string) {
         <Route path="/schedule/inventory" element={<InventoryLayout />}>
           <Route path="cost-reviews" element={<p>Cost Reviews page</p>} />
           <Route path="counts" element={<p>Counts page</p>} />
+          <Route path="order-list" element={<p>Order List page</p>} />
+        </Route>
+        <Route path="/schedule/mail-orders" element={<InventoryLayout />}>
+          <Route index element={<p>Mail Order Queue page</p>} />
         </Route>
       </Routes>
     </MemoryRouter>
@@ -63,6 +67,7 @@ describe('Pharmacy pages wait for permissions before redirecting', () => {
   it('still sends someone without it to Counts', () => {
     perms.effective = { permissions: {} };
     perms.canCost = false;
+    perms.keys = new Set(['inventory.count.enter']);
     renderAt('/schedule/inventory/cost-reviews');
     expect(screen.getByText('Counts page')).toBeInTheDocument();
   });
@@ -93,6 +98,20 @@ describe('Pharmacy menus by role', () => {
     as(['inventory_manager'], []);
     const t = tabs();
     expect([t.store, t.queue, t.autoships, t.manage, t.setup]).toEqual([null, null, null, null, null]);
+  });
+
+  it('a client liaison sees only the Order List, and is sent there from Counts (Q8)', () => {
+    as(['client_liaison'], ['inventory.po.request']);
+    expect(screen.getByText('Order List page')).toBeInTheDocument();
+    expect(screen.queryByText('Weekly Counts')).toBeNull();
+    expect(screen.queryByText('Unbox')).toBeNull();
+    expect(screen.queryByText('Waste / Adjust')).toBeNull();
+  });
+
+  it('someone with no Move / Order screens lands on the mail order queue', () => {
+    as(['mail_order_team'], ['mail_order.fulfill']);
+    expect(screen.getByText('Mail Order Queue page')).toBeInTheDocument();
+    expect(screen.queryByText('Move / Order')).toBeNull();
   });
 
   it('a mail order manager sees Store, the queue and auto-ships, but not Manage or Setup', () => {
@@ -126,7 +145,12 @@ describe('Pharmacy menus by role', () => {
   });
 
   it('a practice manager sees Manage and Setup', () => {
-    as(['practice_manager'], ['store.listing.manage', 'mail_order.fulfill', 'store.subscription.manage']);
+    as(['practice_manager'], [
+      'inventory.count.enter',
+      'store.listing.manage',
+      'mail_order.fulfill',
+      'store.subscription.manage',
+    ]);
     const t = tabs();
     expect(t.manage).not.toBeNull();
     expect(t.setup).not.toBeNull();

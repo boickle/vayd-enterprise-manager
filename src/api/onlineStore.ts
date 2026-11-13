@@ -307,6 +307,8 @@ export type MailOrderLine = {
   approvalTaskWatcherNames?: string[];
   approvalTaskOpen?: boolean;
   refillNote?: string | null;
+  /** Acute or chronic on the pet's Rx for this item (the label window starts from it). */
+  rxAcuity?: string | null;
   /** Refills the approving doctor wants the filler to put on this Rx. */
   authorizedRefills?: number | null;
   authorizedRefillExpiration?: string | null;
@@ -410,6 +412,8 @@ export type MailOrder = {
   clientContactedAt?: string | null;
   clientContactKind?: 'email' | 'sms' | 'none' | null;
   clientQuestionPendingAt?: string | null;
+  /** The client texted back while the order was Pending client (owner, Nov 11, 2026). */
+  clientRepliedAt?: string | null;
   cancelRequestedAt?: string | null;
   cancelRequestedByName?: string | null;
   cancelRequestReason?: MailCancelReason | null;
@@ -884,6 +888,8 @@ export async function createStaffMailOrder(
     shippingPaymentStatus?: MailOrder['shippingPaymentStatus'];
     sendWithoutPayment?: boolean;
     payAfterApproval?: boolean;
+    /** B10: the doctor approved this script at the visit. */
+    approvedByDoctor?: boolean;
     doctorEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
     shippingChargeName?: string | null;
@@ -1883,4 +1889,24 @@ export async function patchMyAutoship(
     params: { practiceId },
   });
   return data;
+}
+
+/** Red counts for the Pharmacy tabs (owner, Nov 11, 2026). */
+export type MailNavCounts = { clientReplies: number; autoshipPaymentProblems: number };
+
+export async function fetchMailNavCounts(practiceId: number): Promise<MailNavCounts> {
+  const { data } = await http.get<MailNavCounts>(`/practice/${practiceId}/mail-orders-nav-counts`);
+  return data;
+}
+
+/** True when the client texted back after the order was put on hold (Pending client). */
+export function mailClientReplied(order: Pick<MailOrder, 'clientQuestionPendingAt' | 'clientRepliedAt'>): boolean {
+  if (!order.clientQuestionPendingAt || !order.clientRepliedAt) return false;
+  return Date.parse(order.clientRepliedAt) >= Date.parse(order.clientQuestionPendingAt);
+}
+
+/** Ask the Pharmacy tabs to fetch their counts again (after a hold is cleared, a card fixed, …). */
+export const MAIL_NAV_COUNTS_REFRESH = 'vayd:mail-nav-counts';
+export function refreshMailNavCounts(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(MAIL_NAV_COUNTS_REFRESH));
 }

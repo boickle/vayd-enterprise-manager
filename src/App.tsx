@@ -1,6 +1,7 @@
 // src/App.tsx
 import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
 import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { keepNonProdTitlePrefix } from './utils/nonProdTitle';
 import { ChevronDown } from 'lucide-react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -34,6 +35,7 @@ import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
 import AppointmentSearchPage from './pages/AppointmentSearchPage';
+import AppointmentRequestCleanupPage from './pages/AppointmentRequestCleanupPage';
 import HoldsPage from './pages/HoldsPage';
 import {
   parseAppointmentRequestsHighlightFromSearch,
@@ -81,7 +83,6 @@ import StoreCartPage from './pages/store/StoreCartPage';
 import StoreThanks from './pages/store/StoreThanks';
 import StoreGiftCardBalance from './pages/store/StoreGiftCardBalance';
 import StoreGiftCardPrint from './pages/store/StoreGiftCardPrint';
-import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
@@ -94,8 +95,12 @@ import IdexxResultsPage from './pages/IdexxResultsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import EmailCampaignsPage from './pages/marketing/EmailCampaignsPage';
+import PromotionsLayout from './pages/marketing/PromotionsLayout';
 import EmailCampaignEditorPage from './pages/marketing/EmailCampaignEditorPage';
 import EmailCampaignReportPage from './pages/marketing/EmailCampaignReportPage';
+import MembershipPromotionsPage from './pages/MembershipPromotions';
+import { usePermissions } from './permissions/PermissionContext';
+import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -118,13 +123,16 @@ import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
 import { listMessageTemplates } from './api/messageTemplates';
 import { ensurePracticePremedsWindowLoaded } from './utils/premedsWindow';
 import { currentPracticeId } from './utils/practiceIdFromToken';
+import { useMayShow } from './permissions/PermissionContext';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
   const { abilities } = useAuth() as { abilities?: string[] };
   const location = useLocation();
   const navigate = useNavigate();
-  if (!location.pathname.startsWith('/schedule')) return null;
+  // Hidden for anyone who can't book (owner, Nov 9, 2026: read-only roles saw it).
+  const mayBook = useMayShow('routing.book', 'calendar.book_manual');
+  if (!location.pathname.startsWith('/schedule') || !mayBook) return null;
   const toRouting = !abilities || abilities.includes('canSeeRouting');
   return (
     <button
@@ -431,6 +439,12 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+/** The Holds board moved into Appointments (Hold tab). Keep old links working. */
+function LegacyHoldsRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: HOLDS_PATH, search, hash }} replace />;
+}
+
 function LegacyMailOrdersRedirect() {
   const { search, hash } = useLocation();
   return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
@@ -459,6 +473,13 @@ export default function App() {
     [abilities, roles, isClient]
   );
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  // RP-08 (owner decision D3): the Executive role sees no Settings. Admin logins keep it.
+  const { effective: effectivePermissions } = usePermissions();
+  const onlyExecutiveRole = useMemo(() => {
+    const held = effectivePermissions?.roles ?? [];
+    const adminLogin = roles.some((r) => r === 'admin' || r === 'superadmin');
+    return !adminLogin && held.length > 0 && held.every((r) => r === 'executive');
+  }, [effectivePermissions, roles]);
 
   const menuExtras = useMemo((): UserMenuExtra[] => {
     if (isClient) return [];
@@ -476,17 +497,17 @@ export default function App() {
       out.push({ label: 'Catalog', to: CATALOG_HOME });
       out.push({ label: 'Pharmacy', to: INVENTORY_HOME });
       out.push({ label: '🎉 Pet Snapshots', to: '/schedule/patient-snapshots' });
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/schedule/analytics' });
-      out.push({ label: 'Settings', to: '/schedule/settings' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/schedule/analytics' });
+      if (!onlyExecutiveRole) out.push({ label: 'Settings', to: '/schedule/settings' });
       if (roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()))) {
         out.push({ label: 'Admin', to: '/schedule/admin' });
       }
     } else {
-      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics & Reports', to: '/analytics' });
       if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     }
     return out;
-  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles]);
+  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles, onlyExecutiveRole]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -509,6 +530,9 @@ export default function App() {
 
   const isProd = isProduction();
 
+  // Outside production, the tab title starts with "TEST · " (see utils/nonProdTitle).
+  useEffect(() => (isProd ? undefined : keepNonProdTitlePrefix()), [isProd]);
+
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
     if (location.pathname === '/store' || location.pathname.startsWith('/store/')) return '';
@@ -523,9 +547,12 @@ export default function App() {
     <div className={isProd ? 'app-root' : 'app-root app-root--nonprod'}>
       {!isProd && (
         <div className="app-nonprod-banner" role="banner" aria-live="polite">
-          Not production — you are using a development or staging environment
+          <span className="app-nonprod-banner__label">
+            NOT PRODUCTION — YOU ARE USING A DEVELOPMENT OR STAGING ENVIRONMENT
+          </span>
         </div>
       )}
+      {!isProd && <div className="app-nonprod-frame" aria-hidden="true" />}
       {token && !isClient ? <OfflineBanner /> : null}
       {token && !isClient ? <SmsDeliveryFailureBanner /> : null}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
@@ -700,7 +727,8 @@ export default function App() {
           <Route path="/store" element={<StoreLayout />}>
             <Route index element={<StoreHome />} />
             <Route path="cart" element={<StoreCartPage />} />
-            <Route path="autoship" element={<StoreAutoshipPage />} />
+            {/* Owner (Nov 11, 2026): auto-ships are managed from each pet's Medications card in the portal. */}
+            <Route path="autoship" element={<Navigate to="/client-portal" replace />} />
             <Route path="gift-cards/balance" element={<StoreGiftCardBalance />} />
             <Route path="thanks/:id" element={<StoreThanks />} />
             <Route path=":id" element={<StoreProduct />} />
@@ -775,13 +803,15 @@ export default function App() {
                       />
                     </Route>
                     <Route path="appointments/search" element={<AppointmentSearchPage />} />
+                    <Route path="appointments/holds" element={<HoldsPage />} />
+                    <Route path="appointments/cleanup" element={<AppointmentRequestCleanupPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
                     <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
-                    <Route path="holds" element={<HoldsPage />} />
+                    <Route path="holds" element={<LegacyHoldsRedirect />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="membership-comparison" element={<MembershipComparisonPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
@@ -919,6 +949,17 @@ export default function App() {
                       element={<Navigate to="/schedule/deposits" replace />}
                     />
                     <Route path="marketing" element={<EmailCampaignsPage />} />
+                    {/* RP-08: promotions moved here from Admin; /schedule/admin/... redirects (admin-tabs.tsx). */}
+                    <Route element={<PromotionsLayout />}>
+                      <Route
+                        path="marketing/membership-promotions"
+                        element={<MembershipPromotionsPage />}
+                      />
+                      <Route
+                        path="marketing/appointment-request-promotions"
+                        element={<AppointmentRequestPromotionsPage />}
+                      />
+                    </Route>
                     <Route path="marketing/:id" element={<EmailCampaignEditorPage />} />
                     <Route path="marketing/:id/report" element={<EmailCampaignReportPage />} />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>

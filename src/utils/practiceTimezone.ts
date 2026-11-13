@@ -78,3 +78,38 @@ export function practiceDateKey(
   const dt = DateTime.fromISO(raw).setZone(practiceTimeZoneOrDefault(practiceTz));
   return dt.isValid ? dt.toISODate() : null;
 }
+
+/**
+ * Last instant of a calendar day (YYYY-MM-DD, as a date input gives it) in the practice zone, as an
+ * ISO string: 23:59:59.999 on that day, with the offset in force that day (daylight or standard time).
+ */
+export function endOfPracticeDayIso(
+  dateYmd: string | null | undefined,
+  practiceTz?: string | null
+): string | null {
+  const raw = typeof dateYmd === 'string' ? dateYmd.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const dt = DateTime.fromISO(raw, { zone: practiceTimeZoneOrDefault(practiceTz) });
+  return dt.isValid ? dt.endOf('day').toISO() : null;
+}
+
+/** Calendar date of an instant in the practice zone, formatted M/d/yyyy (e.g. 11/30/2026). */
+export function formatPracticeDate(
+  iso: string | null | undefined,
+  practiceTz?: string | null
+): string {
+  const raw = typeof iso === 'string' ? iso.trim() : '';
+  if (!raw) return '';
+  const dt = DateTime.fromISO(raw).setZone(practiceTimeZoneOrDefault(practiceTz));
+  return dt.isValid ? dt.toFormat('M/d/yyyy') : '';
+}
+
+/**
+ * The practice's calendar date (YYYY-MM-DD) for an instant, or for now. Not the UTC date: an evening call in New York
+ * is still that day, though UTC has already moved on to the next.
+ */
+export function ymdInPracticeZone(iso?: string | null, practiceTz?: string | null): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const at = iso ? DateTime.fromISO(iso) : null;
+  return (at?.isValid ? at : DateTime.now()).setZone(tz).toISODate()!;
+}

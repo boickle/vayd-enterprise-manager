@@ -1,5 +1,6 @@
 // Book appointment from scheduler (double-click slot) — POST /appointments
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { alertsWithDeposit } from '../utils/depositRequired';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { useSubmitOnce } from '../hooks/useSubmitOnce';
@@ -129,6 +130,7 @@ import {
   alignSiblingVisitScheduledTimes,
   findCoVisitHouseholdVisitsNeedingAlign,
 } from '../utils/householdVisitTimeAlign';
+import { expandPreFirstNeighborBumpToHousehold } from '../utils/preFirstNeighborBump';
 import { patientHasOverlappingActiveVisit } from '../utils/patientOverlappingVisit';
 import type { Appointment } from '../api/roomLoader';
 import {
@@ -337,6 +339,8 @@ export type SchedulerBookPrefill = {
   forwardBookingEntryId?: number;
   /** Appointment request list → routing book — POST …/request-submissions/:id/book after create. */
   appointmentRequestSubmissionId?: number;
+  /** Client asked on the request to join the waitlist for a sooner time — pre-tick the box. */
+  joinWaitlistIfSooner?: boolean;
   /** Per-pet type + notes when booking an appointment request from routing. */
   appointmentRequestVisitPatches?: AppointmentRequestBookVisitPatch[];
   /** Group forward booking — one row per pet to mark complete after routing book. */
@@ -471,7 +475,7 @@ export function extractPatientsFromClientPayload(payload: unknown): PetRow[] {
 export function extractClientAlertsFromPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const row = payload as Record<string, unknown>;
-  return pickStr(row.alerts) ?? pickStr(row.clientAlert);
+  return alertsWithDeposit(row, pickStr(row.alerts) ?? pickStr(row.clientAlert));
 }
 
 function BookClientAlerts({ alerts }: { alerts: string | null | undefined }) {
@@ -1045,8 +1049,9 @@ export function SchedulerBookModal({
   }, [startLocal, durationMin]);
 
   useEffect(() => {
-    if (!open) setJoinWaitlistIfSooner(false);
-  }, [open]);
+    // Booking a request where the client asked for the waitlist starts ticked.
+    setJoinWaitlistIfSooner(open && prefill?.joinWaitlistIfSooner === true);
+  }, [open, prefill?.joinWaitlistIfSooner]);
 
   useEffect(() => {
     if (!showBookScheduleOverride || !providerId.trim() || !bookOverrideAnchorDate) {
@@ -2768,15 +2773,22 @@ export function SchedulerBookModal({
         !isRescheduleBook
       ) {
         try {
-          await patchAppointment(
-            neighborBump.appointmentId,
-            {
-              appointmentStart: neighborBump.appointmentStart,
-              appointmentEnd: neighborBump.appointmentEnd,
-              bookedViaRouting: true,
-            },
-            { practiceId }
-          );
+          const householdBumpPatches = expandPreFirstNeighborBumpToHousehold({
+            bump: neighborBump,
+            appointments: practiceAppointments,
+            practiceTz,
+          });
+          for (const patch of householdBumpPatches) {
+            await patchAppointment(
+              patch.appointmentId,
+              {
+                appointmentStart: patch.appointmentStart,
+                appointmentEnd: patch.appointmentEnd,
+                bookedViaRouting: true,
+              },
+              { practiceId }
+            );
+          }
         } catch (bumpErr) {
           console.warn('Could not bump former-first visit after PRE-FIRST book', bumpErr);
           const bumpMsg =

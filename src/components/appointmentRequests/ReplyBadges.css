@@ -1,0 +1,19 @@
+/* Unread client replies: red = yours or unassigned, blue = someone else's. */
+.appt-reply-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  vertical-align: super;
+}
+
+.navbar-schedule-tab-badge.appt-reply-badge--mine,
+.schedule-app__tab--active .navbar-schedule-tab-badge.appt-reply-badge--mine {
+  background: #dc2626;
+}
+
+.navbar-schedule-tab-badge.appt-reply-badge--others,
+.schedule-app__tab--active .navbar-schedule-tab-badge.appt-reply-badge--others {
+  background: #2563eb;
+}
+

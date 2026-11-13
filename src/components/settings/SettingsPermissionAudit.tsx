@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import {
+  describeAccessChange,
   fetchPermissionAudit,
   fetchPermissionCatalog,
   type PermissionAuditEntry,
@@ -12,6 +13,7 @@ import {
 } from '../../api/permissions';
 import { PermissionDenied } from '../../permissions/PermissionGate';
 import { useCan } from '../../permissions/PermissionContext';
+import { formatYmd } from '../../utils/formatYmd';
 import './SettingsPermissionScreens.css';
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -59,12 +61,83 @@ function extractErr(err: unknown): string {
   return Array.isArray(msg) ? msg.join(', ') : String(msg);
 }
 
+/** An offboarding (last day, who takes over) as plain words. */
+function describeOffboard(
+  detail: Record<string, unknown>,
+  staffName: (id: unknown) => string
+): string[] {
+  const lines: string[] = [];
+  if (detail.lastDay) lines.push(`Last day: ${formatYmd(String(detail.lastDay))}`);
+  if (detail.taskToEmployeeId != null)
+    lines.push(`Tasks go to: ${staffName(detail.taskToEmployeeId)}`);
+  if (detail.primaryDoctorToId != null) {
+    lines.push(`Their pets and households go to: ${staffName(detail.primaryDoctorToId)}`);
+  }
+  if (Array.isArray(detail.worksWith) && detail.worksWith.length) {
+    const byDoctor = new Map<string, number>();
+    for (const w of detail.worksWith as Array<{ doctorId?: unknown }>) {
+      const to = w?.doctorId != null ? staffName(w.doctorId) : 'no doctor';
+      byDoctor.set(to, (byDoctor.get(to) ?? 0) + 1);
+    }
+    for (const [to, n] of byDoctor) {
+      lines.push(
+        `Now work with ${to}: ${n === 1 ? '1 person' : `${n} people`} who worked with them`
+      );
+    }
+  }
+  if (detail.householdClientId != null)
+    lines.push(`Their household: Client #${formatValue(detail.householdClientId)}`);
+  return lines;
+}
+
+const GRANT_SCOPE_WORDS: Record<string, string> = {
+  own: 'their own only',
+  team: 'their team',
+};
+
+/** One extra permission given or taken away (B5, Nov 11): what, how far, and until when. */
+function describeGrant(detail: Record<string, unknown>, labelOf: (key: string) => string): string[] {
+  const what = typeof detail.permissionKey === 'string' ? labelOf(detail.permissionKey) : 'a permission';
+  if (detail.action === 'revoke') return [`Extra permission removed: ${what}`];
+  const scope = GRANT_SCOPE_WORDS[String(detail.scope ?? '')];
+  const lines = [`Extra permission given: ${what}${scope ? ` (${scope})` : ''}`];
+  lines.push(detail.expiresAt ? `Ends: ${formatYmd(String(detail.expiresAt))}` : 'No end date');
+  return lines;
+}
+
+type LicenseState = { isLicensed?: unknown; licenseType?: unknown };
+
+function isLicenseChange(
+  detail: Record<string, unknown>
+): detail is { before: LicenseState; after: LicenseState } {
+  const has = (v: unknown) => !!v && typeof v === 'object' && 'isLicensed' in (v as object);
+  return has(detail.before) && has(detail.after);
+}
+
+function licenseWords(state: LicenseState): string {
+  if (state.isLicensed !== true) return 'Not licensed';
+  if (state.licenseType === 'veterinarian') return 'Licensed veterinarian';
+  if (state.licenseType === 'technician') return 'Licensed technician';
+  return 'Licensed';
+}
+
 /** Turns the stored detail blob into short "x: a → b" lines. */
-function describeDetail(
+export function describeDetail(
   detail: PermissionAuditEntry['detail'],
-  labelOf: (key: string) => string
+  labelOf: (key: string) => string,
+  staffName: (id: unknown) => string = (id) => `#${formatValue(id)}`
 ): string[] {
   if (!detail) return [];
+  if (detail.action === 'roles') {
+    return [
+      describeAccessChange({ permissionKey: 'staff.role.assign', detail } as PermissionAuditEntry),
+    ];
+  }
+  if ('offboardingId' in detail) return describeOffboard(detail, staffName);
+  if (detail.action === 'grant' || detail.action === 'revoke') return describeGrant(detail, labelOf);
+  if (isLicenseChange(detail)) {
+    return [`License: ${licenseWords(detail.before)} → ${licenseWords(detail.after)}`];
+  }
   const lines: string[] = [];
   const changes = detail.changes as Record<string, { from: unknown; to: unknown }> | undefined;
   if (changes && typeof changes === 'object') {
@@ -200,6 +273,11 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
     );
   }
 
+  const staffName = useCallback(
+    (id: unknown) => staffNameById.get(Number(id)) ?? `#${formatValue(id)}`,
+    [staffNameById]
+  );
+
   function recordOf(row: PermissionAuditEntry): string {
     if (!row.entityType) return '—';
     const label = ENTITY_LABELS[row.entityType] ?? row.entityType;
@@ -231,7 +309,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
         row.patientId != null ? String(row.patientId) : '',
         row.amount ?? '',
         row.reason ?? '',
-        describeDetail(row.detail, labelOf).join('; '),
+        describeDetail(row.detail, labelOf, staffName).join('; '),
       ]
         .map(csvCell)
         .join(',')
@@ -246,7 +324,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
   }
 
   if (!canView) {
-    return <PermissionDenied what="The permission audit log" who="a practice manager or admin" />;
+    return <PermissionDenied what="The permission audit log" />;
   }
 
   return (
@@ -342,7 +420,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const details = describeDetail(row.detail, labelOf);
+                  const details = describeDetail(row.detail, labelOf, staffName);
                   return (
                     <tr key={row.id}>
                       <td className="perm-audit-nowrap">{formatWhen(row.created)}</td>

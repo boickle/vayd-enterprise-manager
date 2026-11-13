@@ -33,6 +33,8 @@ const TRIGGER_DESCRIPTIONS: Record<TaskAutomationTrigger, string> = {
     'An in-house lab was charged and its results were never entered. The doctor on the visit is added as a watcher.',
   membership_signup_failed:
     'Someone tried to sign up for a membership and it failed. Two hours later they still are not a member.',
+  vetsnap_weekly_upload:
+    'Weekly reminder to download the Vet Snap patient file and upload it to Vet Snap. Closes itself once anyone downloads the file.',
 };
 
 const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
@@ -42,7 +44,10 @@ const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
   call_unfiled: 'Whoever made the call',
   lab_result_missing: 'Whoever put the lab on the bill',
   membership_signup_failed: 'The client liaison queue',
+  vetsnap_weekly_upload: 'The practice manager',
 };
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function employeeName(e: Employee): string {
   return [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || `#${e.id}`;
@@ -128,6 +133,18 @@ const BUILTIN_TASKS: { name: string; when: string; who: string }[] = [
     who: 'Whoever can change pars at that office. Turned off from par settings.',
   },
 ];
+
+function formatEastern(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
 
 export default function SettingsAutomaticTasks({ practiceId, readOnly = false, onMessage }: Props) {
   const [rules, setRules] = useState<TaskAutomationRule[]>([]);
@@ -270,9 +287,11 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                 <h3 className="auto-tasks__name">{rule.name}</h3>
                 <p className="auto-tasks__summary">
                   {TRIGGER_DESCRIPTIONS[rule.trigger]}{' '}
-                  {rule.timingMode === 'end_of_day'
-                    ? `Checked at ${hourLabel(rule.endOfDayHour)}.`
-                    : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
+                  {rule.timingMode === 'weekly'
+                    ? `Every ${WEEKDAYS[rule.weeklyDay] ?? 'week'} at ${hourLabel(rule.endOfDayHour)} (Eastern).`
+                    : rule.timingMode === 'end_of_day'
+                      ? `Checked at ${hourLabel(rule.endOfDayHour)} ET.`
+                      : `Waits ${thresholdLabel(rule.thresholdMinutes)}.`}{' '}
                   {rule.assigneeMode === 'owner'
                     ? `Goes to ${ASSIGNEE_OWNER_LABELS[rule.trigger].toLowerCase()}.`
                     : rule.assigneeMode === 'role'
@@ -297,6 +316,13 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
               )}
             </header>
 
+            {rule.lastError ? (
+              <p className="auto-tasks__warning" role="alert">
+                <strong>Last run hit a problem</strong>
+                {rule.lastErrorAt ? ` (${formatEastern(rule.lastErrorAt)})` : ''}: {rule.lastError}
+              </p>
+            ) : null}
+
             {readOnly && rule.bodyTemplate ? (
               <p className="auto-tasks__builtin-copy">{rule.bodyTemplate}</p>
             ) : null}
@@ -316,6 +342,37 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     />
                   </label>
 
+                  {rule.timingMode === 'weekly' ? (
+                    <>
+                      <label className="auto-tasks__field">
+                        <span>Day of the week</span>
+                        <select
+                          value={rule.weeklyDay}
+                          onChange={(e) => void save(rule, { weeklyDay: Number(e.target.value) })}
+                        >
+                          {WEEKDAYS.map((d, i) => (
+                            <option key={d} value={i}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="auto-tasks__field">
+                        <span>Time (Eastern)</span>
+                        <select
+                          value={rule.endOfDayHour}
+                          onChange={(e) => void save(rule, { endOfDayHour: Number(e.target.value) })}
+                        >
+                          {Array.from({ length: 24 }, (_, h) => (
+                            <option key={h} value={h}>
+                              {hourLabel(h)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : (
+                  <>
                   <label className="auto-tasks__field">
                     <span>When it fires</span>
                     <select
@@ -349,7 +406,7 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     </label>
                   ) : (
                     <label className="auto-tasks__field">
-                      <span>End of day is</span>
+                      <span>End of day is (ET)</span>
                       <select
                         value={rule.endOfDayHour}
                         onChange={(e) =>
@@ -363,6 +420,8 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                         ))}
                       </select>
                     </label>
+                  )}
+                  </>
                   )}
 
                   <label className="auto-tasks__field">
@@ -431,13 +490,17 @@ export default function SettingsAutomaticTasks({ practiceId, readOnly = false, o
                     <span>Queue it sits on when nobody is found</span>
                     <select
                       value={rule.queueRoleId ?? ''}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        // Queue mode needs a queue; the API refuses to save without one.
+                        if (!e.target.value && rule.assigneeMode === 'queue') return;
                         void save(rule, {
                           queueRoleId: e.target.value ? Number(e.target.value) : null,
-                        })
-                      }
+                        });
+                      }}
                     >
-                      <option value="">No queue</option>
+                      <option value="" disabled={rule.assigneeMode === 'queue'}>
+                        No queue
+                      </option>
                       {roles.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}

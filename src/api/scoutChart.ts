@@ -83,6 +83,23 @@ export async function finalizeScoutChartNote(id: string): Promise<ScoutChartNote
   return data;
 }
 
+/**
+ * Create a note on a pet's chart and sign it at once (call and callback notes). If signing fails,
+ * the draft is taken back off the chart before the error is shown, so a failed try never leaves
+ * a stray draft behind.
+ */
+export async function createAndSignScoutChartNote(
+  input: Parameters<typeof createScoutChartNote>[0],
+): Promise<ScoutChartNote> {
+  const note = await createScoutChartNote(input);
+  try {
+    return await finalizeScoutChartNote(note.id);
+  } catch (err) {
+    await removeScoutChartNoteFromChart(note.id, 'uploaded_in_error').catch(() => undefined);
+    throw err;
+  }
+}
+
 export type ScoutChartNoteAddendum = {
   id: string;
   noteId: string;

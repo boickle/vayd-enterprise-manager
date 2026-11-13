@@ -157,6 +157,8 @@ export function useIdexxInvoice(
     confirmRemove,
     configured: state?.configured ?? false,
     isIdexxLine: (lineId: string) => lineById.has(lineId),
+    /** Charged by Scout for a test the doctor added inside IDEXX. */
+    isAddedInIdexx: (lineId: string) => lineById.get(lineId)?.addedInIdexx === true,
     lineOrder,
     unsentFor,
     notes,

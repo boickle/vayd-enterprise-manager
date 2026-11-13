@@ -25,8 +25,13 @@ import {
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../../api/branchInventory';
-import { appConfirm } from '../../utils/appDialog';
-import { listTasks, reassignFromEmployee } from '../../api/tasks';
+import { appAlert, appConfirm } from '../../utils/appDialog';
+import {
+  cancelOffboarding,
+  fetchDeactivatedStaff,
+  type DeactivatedStaffRow,
+} from '../../api/offboarding';
+import OffboardDialog from './OffboardDialog';
 import {
   createStaffLogin,
   getStaffLogin,
@@ -40,6 +45,7 @@ import {
 } from '../../hooks/useOpenPhoneLineDirectory';
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import { formatYmd } from '../../utils/formatYmd';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
@@ -51,6 +57,17 @@ import SignaturePad from '../SignaturePad';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import {
+  fetchQuoUsers,
+  fetchUnlinkedQuoCallers,
+  dismissUnlinkedQuoCalls,
+  fetchActiveStaffWithLoginOff,
+  unlinkedCallerLabel,
+  quoUserMatchingEmail,
+  QUO_NONE,
+  type QuoUsersResponse,
+  type UnlinkedQuoCaller,
+} from '../../api/quoUsers';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
 const ALL_OFFICES = 'all';
@@ -76,6 +93,17 @@ function empActive(e: Employee): boolean {
   const r = e as Record<string, unknown>;
   if (r.isActive === false || r.isDeleted === true) return false;
   return true;
+}
+
+/**
+ * COM-CALL: the Quo choice on file — a Quo user id, QUO_NONE for "Doesn't use Quo", or '' when
+ * nobody has chosen yet.
+ */
+export function savedQuoChoice(e: Employee | Record<string, unknown> | null | undefined): string {
+  const r = (e ?? {}) as Record<string, unknown>;
+  const uid = typeof r.openPhoneUserId === 'string' ? r.openPhoneUserId.trim() : '';
+  if (uid) return uid;
+  return r.doesNotUseQuo === true ? QUO_NONE : '';
 }
 
 function str(v: unknown): string {
@@ -168,7 +196,7 @@ type Props = {
 
 export default function SettingsEmployeeDirectory({
   onMessage,
-  section = 'profile',
+  section: requestedSection = 'profile',
   onSectionChange,
   selectedEmployeeId,
   onSelectedEmployeeIdChange,
@@ -207,6 +235,16 @@ export default function SettingsEmployeeDirectory({
   const [quoLinePhone, setQuoLinePhone] = useState('');
   /** Typing a number that isn't one of the Quo lines. */
   const [quoCustom, setQuoCustom] = useState(false);
+  /** COM-CALL: practice Quo users and whether Quo is on (then a Quo choice is required). */
+  const [quoInfo, setQuoInfo] = useState<QuoUsersResponse | null>(null);
+  const [unlinkedCallers, setUnlinkedCallers] = useState<UnlinkedQuoCaller[]>([]);
+  const [dismissingQuoUser, setDismissingQuoUser] = useState<string | null>(null);
+  /** Active staff whose login is turned off in Admin → Users (offboard them). */
+  const [loginOffIds, setLoginOffIds] = useState<Set<number>>(new Set());
+  /** Quo choice on file for the person being edited ('' = none yet). */
+  const [quoSaved, setQuoSaved] = useState('');
+  /** What the user picked in the form; null while untouched. */
+  const [quoPicked, setQuoPicked] = useState<string | null>(null);
   const [worksWithDoctorId, setWorksWithDoctorId] = useState<number | null>(null);
   const [worksWithDefault, setWorksWithDefault] = useState(false);
   const [creatingLogin, setCreatingLogin] = useState(false);
@@ -234,15 +272,25 @@ export default function SettingsEmployeeDirectory({
   const [sigEditing, setSigEditing] = useState(false);
   const [sigDraft, setSigDraft] = useState<string | null>(null);
   const [sigSaving, setSigSaving] = useState(false);
-  const [deactivateEmp, setDeactivateEmp] = useState<Employee | null>(null);
-  const [deactivateToEmployeeId, setDeactivateToEmployeeId] = useState('');
-  const [deactivateOpenCount, setDeactivateOpenCount] = useState<number | null>(null);
+  /** RP-03: the Offboard dialog replaces Deactivate. */
+  const [offboardEmp, setOffboardEmp] = useState<Employee | null>(null);
+  /** Deactivated people and people with a last day set (GET /employee-offboarding/deactivated). */
+  const [departed, setDeparted] = useState<DeactivatedStaffRow[]>([]);
+  const [showDeactivated, setShowDeactivated] = useState(false);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
   const { can } = usePermissions();
   /** Practice manager and above add employees and edit their records (owner decision, Nov 2, 2026). */
   const canManageStaff = can('staff.employee.manage');
   const canManageLogins = can('staff.login.manage');
+  /**
+   * The Medical Director sets licenses but doesn't manage staff (D1; owner, Nov 9, 2026): they see the
+   * Access tab only. Anyone who manages staff, logins or roles sees every tab.
+   */
+  const accessOnly =
+    !canManageStaff && !canManageLogins && !can('staff.role.assign') && can('staff.license.manage');
+  const section: EmployeeHubSection = accessOnly ? 'access' : requestedSection;
+  const hubSections = accessOnly ? HUB_SECTIONS.filter((item) => item.id === 'access') : HUB_SECTIONS;
   const { lines: quoLines } = useOpenPhoneLineDirectory(isProvider);
   const quoMatch = quoLinePhone.trim()
     ? quoLines.find((line) => phonesMatchForQuo(line.phone, quoLinePhone))
@@ -250,6 +298,19 @@ export default function SettingsEmployeeDirectory({
   const quoSelectValue = quoCustom || (quoLinePhone.trim() && !quoMatch)
     ? '__custom__'
     : (quoMatch?.phone ?? '');
+  /**
+   * COM-CALL: email matching only suggests. With nothing on file, the Quo user whose email matches
+   * is pre-selected and marked "(matches email — confirm)"; nothing is saved until Save.
+   */
+  const quoSuggestion =
+    quoInfo?.quoEnabled && !quoSaved
+      ? quoUserMatchingEmail(quoInfo.users, loginUser?.email ?? email)
+      : undefined;
+  const quoChoice = quoPicked ?? (quoSaved || quoSuggestion?.id || '');
+  const quoSuggestedShown = quoPicked == null && !quoSaved && quoSuggestion != null;
+  const quoChoiceRequired =
+    quoInfo?.quoEnabled === true &&
+    (modalMode === 'add' || loadedEmployee == null || empActive(loadedEmployee));
 
   const applyStaffLogin = (login: StaffLogin | null) => {
     setLoginUser(login);
@@ -285,8 +346,12 @@ export default function SettingsEmployeeDirectory({
     setLoading(true);
     setLoadError(null);
     try {
-      const list = await fetchAllEmployees();
+      const [list, gone] = await Promise.all([
+        fetchAllEmployees(),
+        fetchDeactivatedStaff().catch(() => [] as DeactivatedStaffRow[]),
+      ]);
       setRows(Array.isArray(list) ? list : []);
+      setDeparted(gone);
     } catch (e) {
       setLoadError(extractErr(e));
       setRows([]);
@@ -298,6 +363,30 @@ export default function SettingsEmployeeDirectory({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // COM-CALL: who can edit staff profiles sees the Quo user field and the unlinked-caller notice.
+  useEffect(() => {
+    if (!canManageStaff) return;
+    let cancelled = false;
+    void fetchQuoUsers()
+      .then((info) => {
+        if (!cancelled) setQuoInfo(info);
+      })
+      .catch(() => undefined);
+    void fetchUnlinkedQuoCallers()
+      .then((list) => {
+        if (!cancelled) setUnlinkedCallers(list);
+      })
+      .catch(() => undefined);
+    void fetchActiveStaffWithLoginOff()
+      .then((ids) => {
+        if (!cancelled) setLoginOffIds(new Set(ids));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageStaff, rows]);
 
   const openAdd = () => {
     setEditingId(null);
@@ -315,6 +404,8 @@ export default function SettingsEmployeeDirectory({
     setIsProvider(false);
     applyStaffLogin(null);
     setQuoLinePhone('');
+    setQuoSaved('');
+    setQuoPicked(null);
     setLoadedEmployee(null);
     setAddress1('');
     setAddress2('');
@@ -377,6 +468,8 @@ export default function SettingsEmployeeDirectory({
     setPhone2(str(r.phone2));
     setQuoLinePhone(str(r.quoLinePhone));
     setQuoCustom(false);
+    setQuoSaved(savedQuoChoice(full));
+    setQuoPicked(null);
     setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
   };
 
@@ -583,6 +676,8 @@ export default function SettingsEmployeeDirectory({
       isActive: true,
       isDeleted: false,
     };
+    // COM-CALL: with Quo on, the profile always sends its Quo choice (the API refuses a blank one).
+    if (quoInfo?.quoEnabled) payload.quoUserChoice = quoChoice;
     return payload;
   };
 
@@ -620,6 +715,13 @@ export default function SettingsEmployeeDirectory({
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
+    if (quoChoiceRequired && !quoChoice) {
+      onMessage?.(
+        'Choose this person’s Quo user, or “Doesn’t use Quo”. Their calls reach their call dock through it.',
+        'error'
+      );
+      return;
+    }
     if (modalMode === 'add') {
       const fn = firstName.trim();
       const ln = lastName.trim();
@@ -729,54 +831,38 @@ export default function SettingsEmployeeDirectory({
     }
   };
 
-  const beginDeactivate = (emp: Employee) => {
-    setDeactivateEmp(emp);
-    setDeactivateToEmployeeId('');
-    setDeactivateOpenCount(null);
-    void listTasks({ assignedToEmployeeId: emp.id, includeDone: false, limit: 1 })
-      .then((res) => setDeactivateOpenCount(res.total))
-      .catch(() => setDeactivateOpenCount(null));
+  const offboardDone = async (result: {
+    completedAt: string | null;
+    lastDay: string;
+    rebookTaskId: number | null;
+  }) => {
+    setOffboardEmp(null);
+    const rebook =
+      result.rebookTaskId != null
+        ? ' A “Rebook” task lists the visits still booked with them.'
+        : '';
+    onMessage?.(
+      result.completedAt
+        ? `Offboarded. Their login has ended and their work has been handed over.${rebook}`
+        : `Offboarded. Their last day is ${formatYmd(result.lastDay)}; their login ends at midnight that night.${rebook}`,
+      'success'
+    );
+    await load();
   };
 
-  const confirmDeactivate = async () => {
-    const emp = deactivateEmp;
-    if (!emp) return;
-    const toId = Number(deactivateToEmployeeId);
-    if (!Number.isFinite(toId) || toId === emp.id) {
-      onMessage?.('Pick who should receive this person’s incomplete and future automatic tasks.', 'error');
-      return;
-    }
+  const cancelScheduledOffboard = async (employeeId: number) => {
+    const ok = await appConfirm({
+      title: 'Cancel offboarding?',
+      message: 'Their last day is removed and nothing will change for them.',
+      confirmLabel: 'Cancel offboarding',
+    });
+    if (!ok) return;
     try {
-      setSaving(true);
-      const moved = await reassignFromEmployee({
-        fromEmployeeId: emp.id,
-        toEmployeeId: toId,
-        persistAsTaskForwarder: true,
-      });
-      const full = await fetchEmployee(emp.id);
-      const merged = {
-        ...(full as unknown as Record<string, unknown>),
-        id: emp.id,
-        isActive: false,
-        isDeleted: false,
-        taskForwarderEmployeeId: toId,
-      } as EmployeeDto;
-      await saveEmployees(merged);
-      setDeactivateEmp(null);
-      setDeactivateToEmployeeId('');
-      onMessage?.(
-        moved.reassigned > 0
-          ? `Employee deactivated. Reassigned ${moved.reassigned} incomplete task${
-              moved.reassigned === 1 ? '' : 's'
-            } and set their task forwarder.`
-          : 'Employee deactivated. Future automatic tasks will go to the task forwarder.',
-        'success',
-      );
+      await cancelOffboarding(employeeId);
+      onMessage?.('Offboarding cancelled.', 'success');
       await load();
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -790,7 +876,10 @@ export default function SettingsEmployeeDirectory({
         isDeleted: false,
       } as EmployeeDto;
       await saveEmployees(merged);
-      onMessage?.('Employee reactivated.', 'success');
+      onMessage?.(
+        'Employee reactivated. Their login stays off until an admin turns it on in Admin → Users.',
+        'success'
+      );
       await load();
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
@@ -800,7 +889,7 @@ export default function SettingsEmployeeDirectory({
   const removeRow = async (emp: Employee) => {
     const ok = await appConfirm({
       title: 'Delete employee?',
-      message: `Permanently delete employee #${emp.id} from the database? This cannot be undone.`,
+      message: `Permanently delete employee #${emp.id}? Only for a duplicate added by mistake. For anyone who worked here, use Offboard.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -810,7 +899,8 @@ export default function SettingsEmployeeDirectory({
       onMessage?.('Employee deleted.', 'success');
       await load();
     } catch (err) {
-      onMessage?.(extractErr(err), 'error');
+      // RP-A6: a person with records on file is refused (409); say so in a dialog, not a passing banner.
+      await appAlert({ title: "Can't delete this person", message: extractErr(err) });
     }
   };
 
@@ -822,6 +912,35 @@ export default function SettingsEmployeeDirectory({
       return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
     });
   }, [rows]);
+
+  /** Deactivated (or past their last day): listed only with "Show deactivated". */
+  const deactivatedRows = useMemo(
+    () => departed.filter((d) => !d.isActive && !rows.some((r) => r.id === d.id && empActive(r))),
+    [departed, rows]
+  );
+  const lastDayById = useMemo(
+    () => new Map(departed.filter((d) => d.lastDay).map((d) => [d.id, d.lastDay as string])),
+    [departed]
+  );
+  /** The selected person, whether active or deactivated. */
+  const editingRow: Employee | null = useMemo(() => {
+    if (editingId == null) return null;
+    const active = rows.find((r) => r.id === editingId);
+    if (active) return active;
+    const gone = deactivatedRows.find((d) => d.id === editingId);
+    return gone ? ({ ...gone, isActive: false } as unknown as Employee) : null;
+  }, [editingId, rows, deactivatedRows]);
+  const offboardColleagues = useMemo(
+    () =>
+      sorted
+        .filter((r) => empActive(r))
+        .map((r) => ({
+          id: r.id,
+          name: formatEmployeeDisplayName(r),
+          isProvider: r.isProvider === true,
+        })),
+    [sorted]
+  );
 
   /** Active scheduling providers someone can work with. */
   const doctorOptions = useMemo(
@@ -943,6 +1062,48 @@ export default function SettingsEmployeeDirectory({
   );
   const emailLocked = loginUser != null;
 
+  /** COM-CALL: active staff with neither a Quo user nor "Doesn't use Quo". */
+  const quoNotLinked = (emp: Employee): boolean =>
+    quoInfo?.quoEnabled === true && empActive(emp) && !savedQuoChoice(emp);
+  const quoNotLinkedCount = sorted.filter(quoNotLinked).length;
+  const loginOff = (emp: Employee): boolean => empActive(emp) && loginOffIds.has(Number(emp.id));
+  const loginOffCount = sorted.filter(loginOff).length;
+
+  const quoKnownIds = new Set((quoInfo?.users ?? []).map((u) => u.id));
+  const quoUserField = quoInfo?.quoEnabled ? (
+    <label className="settings-employee-modal__full">
+      <span className="label">Quo user{quoChoiceRequired ? ' (required)' : ''}</span>
+      <select
+        className="input"
+        aria-label="Quo user"
+        value={quoChoice}
+        required={quoChoiceRequired}
+        onChange={(e) => setQuoPicked(e.target.value)}
+      >
+        <option value="">Choose…</option>
+        {(quoInfo.users ?? []).map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.name}
+            {u.email && u.email !== u.name ? ` · ${u.email}` : ''}
+            {quoSuggestedShown && quoSuggestion?.id === u.id ? ' (matches email — confirm)' : ''}
+          </option>
+        ))}
+        {quoChoice && quoChoice !== QUO_NONE && !quoKnownIds.has(quoChoice) ? (
+          <option value={quoChoice}>Quo user {quoChoice} (not in Quo’s list)</option>
+        ) : null}
+        <option value={QUO_NONE}>Doesn’t use Quo</option>
+      </select>
+      <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+        {quoSuggestedShown
+          ? 'Picked because the email matches. Check it’s the right person, then Save. '
+          : ''}
+        Calls this person answers or makes in Quo land in their call dock. Each Quo user belongs to
+        one person.
+        {quoInfo.error ? ` ${quoInfo.error}` : ''}
+      </p>
+    </label>
+  ) : null;
+
   return (
     <div className="settings-employee-directory">
       <p className="settings-section-description" style={{ marginTop: 0 }}>
@@ -968,10 +1129,35 @@ export default function SettingsEmployeeDirectory({
                 <option key={emp.id} value={emp.id}>
                   {employeeDisplayName(emp)}
                   {emp.isProvider ? ' · Provider' : ''}
-                  {empActive(emp) ? '' : ' · Inactive'}
+                  {empActive(emp) ? '' : ' (Deactivated)'}
+                  {empActive(emp) && lastDayById.get(emp.id)
+                    ? ` · Last day ${formatYmd(lastDayById.get(emp.id))}`
+                    : ''}
+                  {loginOff(emp) ? ' · Login off — offboard?' : ''}
+                  {quoNotLinked(emp) ? ' · Quo: not linked' : ''}
                 </option>
               ))}
+              {showDeactivated
+                ? deactivatedRows.map((emp) => (
+                    <option key={`gone-${emp.id}`} value={emp.id}>
+                      {employeeDisplayName(emp as unknown as Employee)}
+                      {emp.isProvider ? ' · Provider' : ''}
+                      {' (Deactivated)'}
+                    </option>
+                  ))
+                : null}
             </select>
+          </label>
+          <label
+            className="settings-employee-hub__show-deactivated"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <input
+              type="checkbox"
+              checked={showDeactivated}
+              onChange={(e) => setShowDeactivated(e.target.checked)}
+            />
+            Show deactivated ({deactivatedRows.length})
           </label>
           <div className="settings-employee-hub__toolbar-actions">
             {canManageStaff ? (
@@ -985,6 +1171,67 @@ export default function SettingsEmployeeDirectory({
           </div>
         </div>
         {loadError && <div className="settings-error-message">{loadError}</div>}
+        {canManageStaff && unlinkedCallers.length > 0 ? (
+          <div className="settings-message settings-warning-message" role="status" style={{ display: 'block' }}>
+            {unlinkedCallers.map((u) => {
+              const who = unlinkedCallerLabel(u);
+              const oldLogin = u.inQuo === false || !!u.formerStaffName;
+              return (
+                <div key={u.quoUserId} style={{ margin: '0 0 8px' }}>
+                  <p style={{ margin: '0 0 4px' }}>
+                    Calls taken in Quo by <strong>{who}</strong> don’t reach anyone’s call dock
+                    {u.waitingCalls > 0
+                      ? ` — ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'}`
+                      : ''}
+                    .{' '}
+                    {oldLogin
+                      ? 'If someone now uses this Quo login, choose it as their Quo user on their profile. Otherwise dismiss the calls.'
+                      : 'Choose this Quo user on their staff profile (Quo user).'}
+                  </p>
+                  {u.waitingCalls > 0 ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={dismissingQuoUser === u.quoUserId}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          `Dismiss ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'} from ${who}? ` +
+                            'They won’t be filed to any chart. Calls another staff member took are not affected.'
+                        );
+                        if (!ok) return;
+                        setDismissingQuoUser(u.quoUserId);
+                        try {
+                          await dismissUnlinkedQuoCalls(u.quoUserId);
+                          setUnlinkedCallers(await fetchUnlinkedQuoCallers());
+                        } catch (e) {
+                          setLoadError(extractErr(e));
+                        } finally {
+                          setDismissingQuoUser(null);
+                        }
+                      }}
+                    >
+                      {dismissingQuoUser === u.quoUserId ? 'Dismissing…' : 'Dismiss these calls'}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {loginOffCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Login off for {loginOffCount} active {loginOffCount === 1 ? 'person' : 'people'}{' '}
+            (marked “Login off” in the Staff list). They can’t sign in but still appear on
+            schedules and staff lists. Open their profile and offboard them.
+          </p>
+        ) : null}
+        {quoNotLinkedCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Quo: not linked for {quoNotLinkedCount} active{' '}
+            {quoNotLinkedCount === 1 ? 'person' : 'people'} (marked in the Staff list). Open their
+            Profile and choose their Quo user, or “Doesn’t use Quo”.
+          </p>
+        ) : null}
 
         {editingId == null ? (
           <div className="settings-card">
@@ -995,7 +1242,7 @@ export default function SettingsEmployeeDirectory({
         ) : (
           <>
               <div className="settings-employee-hub__sections" role="tablist" aria-label="Employee sections">
-                {HUB_SECTIONS.map((item) => (
+                {hubSections.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -1205,6 +1452,7 @@ export default function SettingsEmployeeDirectory({
                           </p>
                         </label>
                       ) : null}
+                      {quoUserField}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                         <input
                           type="checkbox"
@@ -1369,26 +1617,33 @@ export default function SettingsEmployeeDirectory({
                     </button>
                     {editingId != null ? (
                       <>
-                        {rows.find((r) => r.id === editingId) && empActive(rows.find((r) => r.id === editingId)!) ? (
+                        {editingRow && empActive(editingRow) && lastDayById.get(editingRow.id) ? (
                           <button
                             type="button"
                             className="btn secondary"
-                            onClick={() => beginDeactivate(rows.find((r) => r.id === editingId)!)}
+                            onClick={() => void cancelScheduledOffboard(editingRow.id)}
+                            title={`Last day ${formatYmd(lastDayById.get(editingRow.id))}`}
                           >
-                            Deactivate
+                            Cancel offboarding (last day {formatYmd(lastDayById.get(editingRow.id))})
                           </button>
-                        ) : (
+                        ) : editingRow && empActive(editingRow) ? (
                           <button
                             type="button"
                             className="btn secondary"
-                            onClick={() => {
-                              const emp = rows.find((r) => r.id === editingId);
-                              if (emp) void reactivate(emp);
-                            }}
+                            onClick={() => setOffboardEmp(editingRow)}
+                            disabled={!canManageStaff}
+                          >
+                            Offboard
+                          </button>
+                        ) : editingRow ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => void reactivate(editingRow)}
                           >
                             Reactivate
                           </button>
-                        )}
+                        ) : null}
                         {rows.find((r) => r.id === editingId) ? (
                           <ViewAsButton
                             employeeId={editingId}
@@ -1602,6 +1857,7 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">Email</span>
                     <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                   </label>
+                  {quoUserField}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                     <input type="checkbox" checked={isProvider} onChange={(e) => setIsProvider(e.target.checked)} />
                     <span>Scheduling provider</span>
@@ -1782,77 +2038,14 @@ export default function SettingsEmployeeDirectory({
         </div>
       ) : null}
 
-      {deactivateEmp ? (
-        <div className="settings-employee-modal-root" role="presentation">
-          <button
-            type="button"
-            className="settings-employee-modal-backdrop"
-            aria-label="Close"
-            onClick={() => {
-              if (!saving) setDeactivateEmp(null);
-            }}
-          />
-          <div
-            className="settings-employee-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="employee-deactivate-title"
-          >
-            <div className="settings-employee-modal__head">
-              <h3 id="employee-deactivate-title">
-                Deactivate {formatEmployeeDisplayName(deactivateEmp)}?
-              </h3>
-            </div>
-            <div className="settings-employee-modal__form">
-              <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
-                They will be hidden from active lists. Pick who should receive
-                their incomplete tasks and any automatic work that would later
-                have gone to them.
-              </p>
-              <label>
-                <span className="label">Task forwarder</span>
-                <select
-                  className="input"
-                  value={deactivateToEmployeeId}
-                  onChange={(e) => setDeactivateToEmployeeId(e.target.value)}
-                  required
-                  disabled={saving}
-                >
-                  <option value="">
-                    {deactivateOpenCount != null && deactivateOpenCount > 0
-                      ? `Select a person (${deactivateOpenCount} open)…`
-                      : 'Select a person…'}
-                  </option>
-                  {rows
-                    .filter((r) => r.id !== deactivateEmp.id && empActive(r))
-                    .map((r) => (
-                      <option key={r.id} value={String(r.id)}>
-                        {formatEmployeeDisplayName(r)}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => setDeactivateEmp(null)}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => void confirmDeactivate()}
-                  disabled={saving || !deactivateToEmployeeId}
-                >
-                  {saving ? 'Deactivating…' : 'Deactivate'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {offboardEmp ? (
+        <OffboardDialog
+          employeeId={offboardEmp.id}
+          employeeName={formatEmployeeDisplayName(offboardEmp)}
+          colleagues={offboardColleagues}
+          onClose={() => setOffboardEmp(null)}
+          onDone={(result) => void offboardDone(result)}
+        />
       ) : null}
     </div>
   );

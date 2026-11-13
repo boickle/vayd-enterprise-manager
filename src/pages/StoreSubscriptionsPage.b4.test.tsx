@@ -14,6 +14,7 @@ vi.mock('./store/AutoshipCardPanel', () => ({ default: () => null }));
 vi.mock('../api/autoshipCard', () => ({ listStaffAutoshipCards: vi.fn(), setStaffAutoshipCard: vi.fn() }));
 vi.mock('../api/onlineStore', () => ({
   listOnlineStoreItems: vi.fn().mockResolvedValue([]),
+  refreshMailNavCounts: vi.fn(),
   listStoreSubscriptions: vi.fn().mockResolvedValue([
     {
       id: 1, itemName: 'Joint support chews (60 ct)', inventoryItemId: 1, quantity: 1, unitPrice: 36, frequency: 'monthly',

@@ -407,7 +407,10 @@
   background: #fff;
 }
 
-.renewal-review__primary {
+/* Inside the actions row too: `.renewal-review__actions button` (white) otherwise wins, and the button
+   reads white on white (MEM-19 review, Nov 10, 2026). */
+.renewal-review__primary,
+.renewal-review__actions .renewal-review__primary {
   padding: 14px 20px;
   border: none;
   border-radius: 12px;
@@ -570,4 +573,48 @@
 }
 .renewal-review .renewal-plan-card:has(.cp-recommended-badge) {
   padding-top: 42px;
+}
+
+/* Why stay (Nov 11, 2026) */
+.renewal-review__why {
+  border: 1px solid #d5e4db;
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: #ffffff;
+  margin: 18px 0;
+}
+
+.renewal-review__covered {
+  margin: 0 0 10px;
+}
+
+.renewal-review__benefits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.renewal-review__benefits li {
+  position: relative;
+  padding-left: 24px;
+  line-height: 1.4;
+}
+
+.renewal-review__benefits li::before {
+  content: '✓';
+  position: absolute;
+  left: 2px;
+  color: #2f7d4f;
+  font-weight: 700;
+}
+
+.renewal-review__benefits--lose {
+  margin: 0 0 10px;
+}
+
+.renewal-review__benefits--lose li::before {
+  content: '–';
+  color: #8a5a3c;
 }

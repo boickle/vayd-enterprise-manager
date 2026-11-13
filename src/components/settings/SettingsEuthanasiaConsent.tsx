@@ -416,9 +416,9 @@ export default function SettingsEuthanasiaConsent() {
       <h3 className="settings-card-title">Euthanasia consent</h3>
       <p className="settings-muted" style={{ marginBottom: 16, fontSize: 13 }}>
         Clients complete this in Scout instead of Jotform. Link the catalog treatment items
-        below, then choose which doctors offer ink (free), clay (charged), or clay (free). Julie
-        Greenlaw defaults to free clay with no product photos; everyone else defaults to free ink
-        plus charged clay (with photos).
+        below, then choose which doctors offer ink (free), clay (charged), or clay (free). Doctors
+        default to free ink plus charged clay (with photos); a doctor set to free clay shows no
+        product photos.
       </p>
       {error ? <p className="settings-error-message">{error}</p> : null}
       {saved ? <p className="settings-success-message">Saved.</p> : null}
@@ -434,7 +434,7 @@ export default function SettingsEuthanasiaConsent() {
       />
       <CatalogItemPicker
         label="Clay paw print — charge"
-        hint="Search for Final Gift Clay Paw Print. Stripe charges this amount when the client selects it and submits the consent form (Nina and most doctors)."
+        hint="Search for Final Gift Clay Paw Print. Stripe charges this amount when the client selects it and submits the consent form (the default for doctors)."
         value={items.clayCharge}
         onChange={(clayCharge) => {
           setItems((cur) => ({ ...cur, clayCharge }));
@@ -443,7 +443,7 @@ export default function SettingsEuthanasiaConsent() {
       />
       <CatalogItemPicker
         label="Clay paw print — free"
-        hint="Used when a doctor (for example Dr. Greenlaw) offers clay at no charge."
+        hint="Used when a doctor offers clay at no charge."
         value={items.clayFree}
         onChange={(clayFree) => {
           setItems((cur) => ({ ...cur, clayFree }));

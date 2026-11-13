@@ -30,6 +30,7 @@ import {
   requestDataEmail,
 } from '../utils/appointmentRequestDisplay';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
+import { sanitizeEmailHtml } from '../utils/sanitizeEmailHtml';
 import '../pages/GmailInbox.css';
 import './AppointmentRequestEmailModal.css';
 
@@ -46,6 +47,8 @@ type Props = {
   practiceTz: string;
   onClose: () => void;
   onSent?: (context: AppointmentRequestEmailSentContext | null) => void;
+  /** What the user already typed in the conversation (replaces the suggested message). */
+  initialBodyText?: string;
   onGmailLinked?: (patch: {
     gmailThreadId: string;
     gmailMailbox: string;
@@ -74,7 +77,7 @@ const EMAIL_BODY_FONT =
   'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;';
 
 /** Rich HTML + plain-text fallback for the outgoing reply, with signature + Gmail-style quote. */
-function buildEmailBodies(
+export function buildEmailBodies(
   message: string,
   original: GmailThreadMessage | null,
   signatureHtml: string,
@@ -106,7 +109,7 @@ function buildEmailBodies(
   return { html, text };
 }
 
-function applySignatureForFrom(
+export function applySignatureForFrom(
   mailbox: string,
   aliases: GmailSendAsAlias[],
   fromFormatted: string,
@@ -139,6 +142,7 @@ export function AppointmentRequestEmailModal({
   practiceTz,
   onClose,
   onSent,
+  initialBodyText,
   onGmailLinked,
 }: Props) {
   const clientLabel = clientDisplayNameFromRequestData(item.requestData ?? {});
@@ -173,12 +177,15 @@ export function AppointmentRequestEmailModal({
       setSignatureHtml('');
       setSendAsAliases([]);
       try {
+        const typed = initialBodyText?.trim() ?? '';
         const [link, defaultMessage] = await Promise.all([
           fetchAppointmentRequestGmailLink(item.id),
-          resolveAppointmentRequestSmsMessage(item, practiceTz, {
-            practiceId,
-            greeting: 'email',
-          }),
+          typed
+            ? Promise.resolve(typed)
+            : resolveAppointmentRequestSmsMessage(item, practiceTz, {
+                practiceId,
+                greeting: 'email',
+              }),
         ]);
         if (cancelled) return;
 
@@ -392,7 +399,7 @@ export function AppointmentRequestEmailModal({
                         {msg.body.html ? (
                           <div
                             className="gmail-thread-message__body gmail-thread-message__body--html"
-                            dangerouslySetInnerHTML={{ __html: msg.body.html }}
+                            dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(msg.body.html) }}
                           />
                         ) : (
                           <div className="gmail-thread-message__body">
@@ -513,7 +520,7 @@ export function AppointmentRequestEmailModal({
                     {threadMessages[0].body.html ? (
                       <div
                         className="gmail-thread-message__body gmail-thread-message__body--html"
-                        dangerouslySetInnerHTML={{ __html: threadMessages[0].body.html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(threadMessages[0].body.html) }}
                       />
                     ) : (
                       <div className="gmail-thread-message__body">

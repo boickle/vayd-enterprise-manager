@@ -242,7 +242,7 @@ import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
 import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
-import { lotShelf } from '../../utils/lotShelf';
+import { lineDrawsStock, lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 // A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
 // invoice's office / shelf fields aren't shown on it (owner request, Oct 30, 2026).
@@ -257,7 +257,7 @@ import {
 } from '../../api/inHouseLabs';
 import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
 import LabResultChip, { labResultsState } from '../labs/LabResultChip';
-import IdexxChip from '../idexx/IdexxChip';
+import IdexxChip, { IdexxAddedTag } from '../idexx/IdexxChip';
 import IdexxRequisitionLink from '../idexx/IdexxRequisitionLink';
 import IdexxOrderPanel from '../idexx/IdexxOrderPanel';
 import IdexxSendModal from '../idexx/IdexxSendModal';
@@ -293,6 +293,8 @@ type LedgerRow = {
   paymentNote?: string | null;
   /** Online store, visit, or a direct invoice. */
   where?: string | null;
+  /** Direct invoices: what the bill is for (first line, "+N more"). */
+  lineSummary?: string | null;
   /** Card, cash, and the other tenders that settled it. */
   paidHow?: string | null;
   total: number;
@@ -1325,6 +1327,19 @@ function invoiceWhere(inv: VisitInvoice, orders: MailOrder[]): InvoiceWhere {
   }
   if (inv.appointmentId != null || (inv.lines ?? []).some((line) => line.orderId)) return 'Visit';
   return 'Direct invoice';
+}
+
+/**
+ * What a direct (counter) invoice is for, from its lines, so a ledger row says "Membership Multi-Pet — Juniper"
+ * instead of only "Direct invoice". Visit and store bills already say where they came from.
+ */
+function directInvoiceSummary(inv: VisitInvoice, orders: MailOrder[]): string | null {
+  if (invoiceWhere(inv, orders) !== 'Direct invoice') return null;
+  const lines = (inv.lines ?? []).filter((l) => !(l as { isDeleted?: boolean }).isDeleted && l.description);
+  if (!lines.length) return null;
+  const first = String(lines[0].description).trim();
+  const short = first.length > 60 ? `${first.slice(0, 57)}…` : first;
+  return lines.length > 1 ? `${short} +${lines.length - 1} more` : short;
 }
 
 function invoiceWhereKind(where: InvoiceWhere): 'store' | 'visit' | 'direct' {
@@ -2846,6 +2861,7 @@ export default function ClientFinancialWorkspace({
         }),
         actorNote,
         where: invoiceWhere(inv, mailOrders),
+        lineSummary: directInvoiceSummary(inv, mailOrders),
         paidHow: paidHowLabel(inv),
         paymentNote: voidedPaymentNote(
           (inv.tenders ?? [])
@@ -3540,7 +3556,7 @@ export default function ClientFinancialWorkspace({
       selected ? matchingMailOrderForLine(mailOrders, selected.id, line) : null,
     [selected, mailOrders]
   );
-  /** Only lines we hand over in person still need somewhere to decrement from. */
+  /** Something on the invoice is handed over in person (not everything ships). */
   const needsLocalFill = useMemo(
     () =>
       visibleLines.some(
@@ -3548,6 +3564,21 @@ export default function ClientFinancialWorkspace({
           !line.tagalongOfLineId &&
           !isInvoiceShippingLine(line, shippingIdSet) &&
           !mailOrderForLine(line)
+      ),
+    [visibleLines, shippingIdSet, mailOrderForLine]
+  );
+  /**
+   * Only in-person charges that take stock off a shelf need Branch/Location. A services-only
+   * invoice (exam, lab send-out) shows none and doesn't wait on it (owner decision, Nov 9, 2026).
+   */
+  const needsStockShelf = useMemo(
+    () =>
+      visibleLines.some(
+        (line) =>
+          !line.tagalongOfLineId &&
+          !isInvoiceShippingLine(line, shippingIdSet) &&
+          !mailOrderForLine(line) &&
+          lineDrawsStock(line)
       ),
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
@@ -3600,7 +3631,16 @@ export default function ClientFinancialWorkspace({
     .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
   const previewTax = displayLines.reduce((sum, l) => sum + (Number(l.taxAmount) || 0), 0);
   const previewTotal = Math.round((previewSubtotal + previewTax) * 100) / 100;
-  const remaining = selected
+  // Appointment deposit (Nov 12, 2026): what is still to collect on the deposit, not on charges.
+  const isDepositBill = selected?.depositForAppointmentId != null;
+  const depositPaid = isDepositBill
+    ? (selected?.tenders ?? [])
+        .filter((t) => !t.voidedAt && t.method !== 'account_credit' && (t as { isDeleted?: boolean }).isDeleted !== true)
+        .reduce((sum, t) => sum + (Number(t.amount) || 0) - (Number(t.refundedAmount) || 0), 0)
+    : 0;
+  const remaining = isDepositBill
+    ? Math.max(0, Math.round(((Number(selected?.depositAmount) || 0) - depositPaid) * 100) / 100)
+    : selected
     ? Math.max(
         0,
         (hasUnsavedDeletes ? previewTotal : Number(selected.total) || 0) -
@@ -3644,7 +3684,7 @@ export default function ClientFinancialWorkspace({
     !hasUnsavedDeletes &&
     !rxBlocksPay &&
     !lotBlocksPay &&
-    (!needsLocalFill ||
+    (!needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canPay =
     selected &&
@@ -3655,7 +3695,7 @@ export default function ClientFinancialWorkspace({
     !rxBlocksPay &&
     !lotBlocksPay &&
     (selected.status !== 'open' ||
-      !needsLocalFill ||
+      !needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canReturn =
     mayReturn &&
@@ -4113,6 +4153,25 @@ export default function ClientFinancialWorkspace({
   }
 
   /** Returns false when the edit was refused, so callers can put the field back. */
+  /**
+   * A lab charged to the wrong pet: the line moves to the other pet, and its in-house result
+   * (pending or entered) moves with it onto that pet's chart (LAB-07). An order already sent
+   * to IDEXX stays with the first pet, and the API says so.
+   */
+  async function moveLabLine(line: VisitInvoiceLine, toPatientId: number) {
+    const to = pets.find((p) => p.id === toPatientId);
+    if (!to) return;
+    const from = pets.find((p) => p.id === line.patientId)?.name ?? 'this pet';
+    const ok = await appConfirm({
+      title: `Move to ${to.name}?`,
+      message: `${line.description} moves from ${from} to ${to.name}, with its lab result. The result goes on ${to.name}'s chart.`,
+      confirmLabel: `Move to ${to.name}`,
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
+    await patchLine(line, { patientId: toPatientId });
+  }
+
   async function patchLine(
     line: VisitInvoiceLine,
     body: Parameters<typeof updateCounterInvoiceLine>[2],
@@ -5480,6 +5539,7 @@ export default function ClientFinancialWorkspace({
                             ) : null}
                             {row.where ? ' · ' : ''}
                             {row.source === 'scout' ? 'Scout' : 'eVet'}
+                            {row.lineSummary ? ` · ${row.lineSummary}` : ''}
                             {row.actorNote ? ` · ${row.actorNote}` : ''}
                           </div>
                         </td>
@@ -6238,7 +6298,15 @@ export default function ClientFinancialWorkspace({
                 </p>
               ) : null}
 
-              {visibleLines.length === 0 &&
+              {isDepositBill ? (
+                <p className="client-fin__deposit-note" data-testid="deposit-bill-note">
+                  <strong>Appointment deposit</strong>: {money(Number(selected.depositAmount) || 0)} asked
+                  for, {money(depositPaid)} paid
+                  {remaining > 0.009 ? `, ${money(remaining)} still to collect` : ''}. What is paid is held as
+                  credit for that visit: at its checkout <strong>Account credit</strong> uses it first; if
+                  the client cancels or doesn&apos;t show, pay the cancel fee with Account credit.
+                </p>
+              ) : visibleLines.length === 0 &&
               !(canEdit && displayPetSections.length) &&
               !selected.removedLines?.length ? (
                 <p className="client-fin__muted">No lines yet.</p>
@@ -6766,6 +6834,7 @@ export default function ClientFinancialWorkspace({
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                   {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
                                   {isIdexxLine ? <IdexxChip order={idexxOrder} /> : null}
+                                  {isIdexxLine && idexx.isAddedInIdexx(line.id) ? <IdexxAddedTag /> : null}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -7150,6 +7219,29 @@ export default function ClientFinancialWorkspace({
                                     )}
                                   />
                                 </div>
+                              ) : null}
+                              {canEdit && pets.some((p) => p.id !== line.patientId && isFinancialPetActive(p)) ? (
+                                <label className="client-fin__lab-move">
+                                  Charged to the wrong pet?
+                                  <select
+                                    aria-label="Move to another pet"
+                                    value=""
+                                    disabled={busy}
+                                    onChange={(e) => {
+                                      const to = Number(e.target.value);
+                                      if (to) void moveLabLine(line, to);
+                                    }}
+                                  >
+                                    <option value="">Move to another pet…</option>
+                                    {pets
+                                      .filter((p) => p.id !== line.patientId && isFinancialPetActive(p))
+                                      .map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </label>
                               ) : null}
                               <InvoiceLineLabResults
                                 results={lineLabResults ?? []}
@@ -8197,7 +8289,8 @@ export default function ClientFinancialWorkspace({
               !invoiceGone &&
               selected.status !== 'void' &&
               visibleLines.length > 0 &&
-              !someLineShowsBranch ? (
+              !someLineShowsBranch &&
+              (needsStockShelf || !needsLocalFill) ? (
                 <div className="client-fin__pay">
                   {!needsLocalFill ? (
                     <p className="client-fin__fulfill-note">
@@ -8503,7 +8596,7 @@ export default function ClientFinancialWorkspace({
                           ? 'Choose a lot before closing'
                           : rxBlocksPay
                             ? 'Approve each prescription before closing'
-                            : needsLocalFill &&
+                            : needsStockShelf &&
                                 (selected.inventoryBranchId == null ||
                                   selected.inventoryLocationId == null)
                               ? 'Select a branch and location before closing'

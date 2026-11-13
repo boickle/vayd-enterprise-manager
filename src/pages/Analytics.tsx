@@ -5,20 +5,18 @@ import { useAuth } from '../auth/useAuth';
 import {
   ANALYTICS_CATEGORIES,
   getAnalyticsTabPages,
+  visibleAnalyticsTabs,
   type AnalyticsTabPage,
 } from '../analytics-tabs';
 import { usePermissions } from '../permissions/PermissionContext';
 import { AttentionBadge, useInventoryAttention } from '../utils/useInventoryAttention';
-import { isAnalyticsAdmin, isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
+import {
+  canOpenAnalytics,
+  isAnalyticsAdmin,
+  isEmployeeAnalyticsRestricted,
+  normalizeAuthRoles,
+} from '../utils/analyticsAccess';
 import './Settings.css';
-
-function matchesRole(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
-  if (!userRoles.length) return false;
-  if (userRoles.includes('superadmin')) return true;
-  if (!required) return true;
-  const need = Array.isArray(required) ? required : [required];
-  return need.some((r) => userRoles.includes(String(r)));
-}
 
 type AnalyticsProps = {
   /** Default `/analytics`; use `/schedule/analytics` when nested under the schedule app. */
@@ -27,23 +25,23 @@ type AnalyticsProps = {
 
 export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   const { role } = useAuth() as { role?: string | string[] };
-  const { can, effective, loading: permissionsLoading } = usePermissions();
+  const { can, effective, error: permissionsError } = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
   const normalizedRoles = normalizeAuthRoles(role);
   const isAdmin = isAnalyticsAdmin(normalizedRoles);
-  const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
-  const canAccessAnalytics = isAdmin || isEmployeeAnalytics;
-  const permissionsReady = Boolean(effective) || !permissionsLoading;
+  // RP-08: analytics.view_all (Practice Admin, Executive) sees every doctor, as admin logins do.
+  const holdsViewAll = can('analytics.view_all');
+  const isEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles, holdsViewAll);
+  const canAccessAnalytics = canOpenAnalytics(normalizedRoles, holdsViewAll);
+  // Before the first permission load ends, `loading` can still be false and `effective` null; a
+  // deep link or refresh then bounced to the first tab (B2, Nov 9, 2026). Wait, as Pharmacy does.
+  const permissionsReady = isAdmin || effective != null || permissionsError != null;
 
   const base = useMemo(() => basePath.replace(/\/$/, ''), [basePath]);
 
   const allTabs = getAnalyticsTabPages();
-  const visibleTabs = allTabs.filter(
-    (tab) =>
-      matchesRole(tab.role, normalizedRoles) &&
-      (!tab.permissions || isAdmin || tab.permissions.some((key) => can(key)))
-  );
+  const visibleTabs = visibleAnalyticsTabs(normalizedRoles, isAdmin, can);
   const categories = ANALYTICS_CATEGORIES.map((cat) => ({
     ...cat,
     tabs: visibleTabs.filter((t) => t.category === cat.id),
@@ -116,11 +114,11 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
 
   useEffect(() => {
     if (!canAccessAnalytics) {
-      navigate('/schedule/routing', { replace: true });
+      if (permissionsReady) navigate('/schedule/routing', { replace: true });
       return;
     }
     if (blockedRedirect) navigate(`${base}/${blockedRedirect}`, { replace: true });
-  }, [base, blockedRedirect, canAccessAnalytics, navigate]);
+  }, [base, blockedRedirect, canAccessAnalytics, navigate, permissionsReady]);
 
   if (!canAccessAnalytics) {
     return null;
@@ -129,7 +127,7 @@ export default function Analytics({ basePath = '/analytics' }: AnalyticsProps) {
   return (
     <div className="container">
       <div className="settings-page">
-        <h1 className="settings-title">Analytics</h1>
+        <h1 className="settings-title">Analytics &amp; Reports</h1>
         {isEmployeeAnalytics ? (
           <p className="settings-section-description" style={{ marginBottom: 12 }}>
             Practice-wide totals and metrics for your role; doctor-level detail is limited to

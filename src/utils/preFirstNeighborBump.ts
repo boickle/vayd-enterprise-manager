@@ -5,6 +5,9 @@
  *
  * Only flexible client visits are bumpable — never meetings, personal/flex blocks,
  * notes, or other staff calendar items that are not part of the client route.
+ *
+ * Multi-pet households: bump every same-client sibling in the 1hr merge band to the same
+ * new start (each keeps its own duration) so inserting ahead cannot stagger household windows.
  */
 import { DateTime } from 'luxon';
 import {
@@ -13,8 +16,16 @@ import {
 } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { isFixedTimeTypeName } from './editVisitTimePreview';
+import { HOUSEHOLD_DRIVE_MERGE_GAP_MS } from './householdDriveMergeGap';
 
 export type PreFirstNeighborBumpTarget = {
+  appointmentId: number;
+  appointmentStart: string;
+  appointmentEnd: string;
+};
+
+/** One PATCH row per appointment moved by a PRE-FIRST neighbor bump. */
+export type PreFirstNeighborBumpPatch = {
   appointmentId: number;
   appointmentStart: string;
   appointmentEnd: string;
@@ -255,4 +266,104 @@ export function resolvePreFirstNeighborBumpTarget(opts: {
     appointmentStart: startIso,
     appointmentEnd: endIso,
   };
+}
+
+/**
+ * Former-first bump plus same-household siblings within the API 1hr merge gap.
+ * Siblings share the new start; each keeps its own scheduled duration.
+ */
+export function expandPreFirstNeighborBumpToHousehold(opts: {
+  bump: PreFirstNeighborBumpTarget;
+  appointments: readonly Appointment[];
+  practiceTz: string;
+  mergeGapMs?: number;
+}): PreFirstNeighborBumpPatch[] {
+  const mergeGapMs = opts.mergeGapMs ?? HOUSEHOLD_DRIVE_MERGE_GAP_MS;
+  const anchor = opts.appointments.find((a) => Number(a.id) === Number(opts.bump.appointmentId));
+  if (!anchor?.client?.id) {
+    return [
+      {
+        appointmentId: opts.bump.appointmentId,
+        appointmentStart: opts.bump.appointmentStart,
+        appointmentEnd: opts.bump.appointmentEnd,
+      },
+    ];
+  }
+
+  const clientId = String(anchor.client.id);
+  const anchorStart = DateTime.fromISO(anchor.appointmentStart, { zone: 'utc' }).setZone(
+    opts.practiceTz
+  );
+  const anchorEnd = DateTime.fromISO(anchor.appointmentEnd, { zone: 'utc' }).setZone(
+    opts.practiceTz
+  );
+  if (!anchorStart.isValid || !anchorEnd.isValid) {
+    return [
+      {
+        appointmentId: opts.bump.appointmentId,
+        appointmentStart: opts.bump.appointmentStart,
+        appointmentEnd: opts.bump.appointmentEnd,
+      },
+    ];
+  }
+
+  const newStart = DateTime.fromISO(opts.bump.appointmentStart, { zone: 'utc' }).setZone(
+    opts.practiceTz
+  );
+  if (!newStart.isValid) {
+    return [
+      {
+        appointmentId: opts.bump.appointmentId,
+        appointmentStart: opts.bump.appointmentStart,
+        appointmentEnd: opts.bump.appointmentEnd,
+      },
+    ];
+  }
+
+  const siblings = opts.appointments.filter((a) => {
+    if (!isPreFirstNeighborBumpEligibleAppointment(a)) return false;
+    if (a.client?.id == null || String(a.client.id) !== clientId) return false;
+    if (!samePracticeDay(a.appointmentStart, anchor.appointmentStart, opts.practiceTz)) {
+      return false;
+    }
+    const id = Number(a.id);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    if (id === Number(opts.bump.appointmentId)) return true;
+    const s = DateTime.fromISO(a.appointmentStart, { zone: 'utc' }).setZone(opts.practiceTz);
+    const e = DateTime.fromISO(a.appointmentEnd, { zone: 'utc' }).setZone(opts.practiceTz);
+    if (!s.isValid || !e.isValid) return false;
+    const earlierEnd = anchorStart <= s ? anchorEnd : e;
+    const laterStart = anchorStart <= s ? s : anchorStart;
+    const overlaps = anchorStart <= e && s <= anchorEnd;
+    const withinGap = laterStart.toMillis() <= earlierEnd.toMillis() + mergeGapMs;
+    return overlaps || withinGap;
+  });
+
+  const byId = new Map<number, PreFirstNeighborBumpPatch>();
+  byId.set(Number(opts.bump.appointmentId), {
+    appointmentId: opts.bump.appointmentId,
+    appointmentStart: opts.bump.appointmentStart,
+    appointmentEnd: opts.bump.appointmentEnd,
+  });
+
+  for (const sib of siblings) {
+    const id = Number(sib.id);
+    if (!Number.isFinite(id) || id <= 0 || byId.has(id)) continue;
+    const s = DateTime.fromISO(sib.appointmentStart, { zone: 'utc' }).setZone(opts.practiceTz);
+    const e = DateTime.fromISO(sib.appointmentEnd, { zone: 'utc' }).setZone(opts.practiceTz);
+    if (!s.isValid || !e.isValid) continue;
+    const durationMs = Math.max(60_000, e.toMillis() - s.toMillis());
+    const sibEnd = newStart.plus({ milliseconds: durationMs });
+    const startIso = newStart.toUTC().toISO();
+    const endIso = sibEnd.toUTC().toISO();
+    if (!startIso || !endIso) continue;
+    // Align every household sibling to the bumped start (same-slot multi-pet), keeping duration.
+    byId.set(id, {
+      appointmentId: id,
+      appointmentStart: startIso,
+      appointmentEnd: endIso,
+    });
+  }
+
+  return [...byId.values()];
 }

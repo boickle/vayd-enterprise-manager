@@ -9,6 +9,10 @@ export type AppointmentRequestReturnSessionV1 = {
   bookedAppointmentId: number;
   bookedAppointmentStart: string;
   bookedAppointmentEnd?: string | null;
+  /** True when the booked calendar type is a HOLD — return lands on Holds, not New. */
+  isHold?: boolean;
+  /** When true (default), open the post-book SMS compose on the return surface. */
+  openSms?: boolean;
 };
 
 export function readAppointmentRequestReturnSession(): AppointmentRequestReturnSessionV1 | null {
@@ -25,7 +29,11 @@ export function readAppointmentRequestReturnSession(): AppointmentRequestReturnS
     ) {
       return null;
     }
-    return o;
+    return {
+      ...o,
+      isHold: o.isHold === true,
+      openSms: o.openSms !== false,
+    };
   } catch {
     return null;
   }

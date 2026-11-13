@@ -78,6 +78,10 @@ export type Employee = {
   designation?: string;
   isProvider?: boolean;
   licenseNumber?: string | null;
+  /** Holds a current professional license (signing authority). */
+  isLicensed?: boolean;
+  /** `veterinarian` or `technician` when licensed. */
+  licenseType?: string | null;
   signatureImage?: string | null;
   /** Clinical / PIMS role ids from GET /employees/:id */
   roleIds?: number[];
@@ -87,6 +91,8 @@ export type Employee = {
   imageUrl?: string | null;
   /** VAYD-managed profile copy (not synced from PIMS). Max 2000 chars. */
   bio?: string | null;
+  /** The zone this doctor mainly works in; shown as Primary on the Work Zones map. */
+  primaryZoneId?: number | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;
   /** Synced from eVet employee contact; used as SMS send-from for On My Way when set. */
@@ -228,6 +234,18 @@ export async function updateEmployeeAppointmentTypes(
   const { data } = await http.put(`/employees/${employeeId}/appointment-types`, {
     appointmentTypes,
   });
+  return data;
+}
+
+/**
+ * Set or clear the doctor's primary zone (shown as Primary on the Work Zones map).
+ * PUT /employees/:id/primary-zone
+ */
+export async function updateEmployeePrimaryZone(
+  employeeId: number,
+  zoneId: number | null
+): Promise<Employee> {
+  const { data } = await http.put(`/employees/${employeeId}/primary-zone`, { zoneId });
   return data;
 }
 
@@ -446,6 +464,8 @@ export type ScoutRoleAssignment = {
   branchId: number | null;
   employeeName: string;
   branchName: string | null;
+  /** False for a deactivated employee. Older API builds omit it (treat as active). */
+  isActive?: boolean;
 };
 
 export type ScoutRoleAssignmentsResponse = {

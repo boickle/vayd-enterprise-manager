@@ -24,7 +24,7 @@ describe('LABS-03: email lab results', () => {
     cleanLabsWorld();
   });
 
-  it('LAB-03-5: vet approves a current summary; Email lab results sends it with the PDF, only to the test inbox, and the chart logs it', () => {
+  it('LAB-03-5: vet approves a current summary; Email lab summary & report sends it with the PDF, only to the test inbox, and the chart logs it', () => {
     const w = labsWorld();
     const hh = w.households.two;
     const max = hh.pets.find((p) => p.name === 'Max')!;
@@ -81,14 +81,14 @@ describe('LABS-03: email lab results', () => {
         .first()
         .find('button[aria-label^="Expand"]')
         .click();
-      cy.contains('button', 'Email lab results', { timeout: 30000 })
+      cy.contains('button', 'Email lab summary & report', { timeout: 30000 })
         .should('not.be.disabled')
         .click();
 
       cy.intercept('POST', '**/gmail/messages/send*').as('sendEmail');
       cy.intercept('POST', '**/scout-chart/communications*').as('chartLog');
       cy.get('[role="dialog"]', { timeout: 30000 }).within(() => {
-        cy.contains('Email lab results').should('exist');
+        cy.contains('Email lab summary & report').should('exist');
         cy.contains(/\.pdf/i).should('exist');
         cy.get('[contenteditable="true"], textarea')
           .invoke('text')

@@ -14,7 +14,7 @@ type Rules = {
 export type IdexxEmailState = { allowed: boolean; why: string | null };
 
 /**
- * LAB-03 (owner decision D2): "Email lab results" (with the AI summary) only when the summary is
+ * LAB-03 (owner decision D2): "Email lab summary & report" (with the AI summary) only when the summary is
  * approved, IDEXX has not changed the result since, and the result is complete. "Email lab report"
  * (PDF only) only after the result is marked reviewed. No override. `why` is the one line shown.
  */

@@ -43,8 +43,11 @@ export default function MembershipCardUpdate({
   nameOnCard,
   buttonClassName,
   onSaved,
+  subscriptionId,
 }: {
   membershipId: number;
+  /** The membership's Stripe subscription id. A change (e.g. after Link) reloads the card (P-25b). */
+  subscriptionId?: string | null;
   mine?: boolean;
   nameOnCard?: string | null;
   buttonClassName?: string;
@@ -70,7 +73,7 @@ export default function MembershipCardUpdate({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, subscriptionId]);
 
   const onReady = useCallback((create: () => Promise<string>) => {
     createRef.current = create;
@@ -94,7 +97,16 @@ export default function MembershipCardUpdate({
         onSaved?.(result.membership);
       } else {
         const membership = await updateMembershipCard(membershipId, paymentMethodId, { mine });
-        setSaved('Saved. Membership payments now go on this card.');
+        const retry = membership.cardRetry;
+        setSaved(
+          retry
+            ? retry.chargedNow && retry.benefitsResumed
+              ? `Saved. Stripe took the missed payment (${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(retry.amountPaid)}) on this card, and benefits are back on.`
+              : retry.benefitsResumed
+                ? 'Saved. Nothing was owed, and benefits are back on.'
+                : `Saved, but the missed payment didn't go through on this card${retry.error ? `: ${retry.error}` : '.'} Benefits stay paused until it's paid.`
+            : 'Saved. Membership payments now go on this card.',
+        );
         setEditing(false);
         await load();
         onSaved?.(membership);
@@ -117,7 +129,7 @@ export default function MembershipCardUpdate({
         <div>
           <div className="mcu-label">Billing card</div>
           <div className="mcu-value">
-            {info.card ? cardLabel(info.card) : moving ? 'Billed through Square' : info.canUpdate ? 'No card on file' : '—'}
+            {info.card ? cardLabel(info.card) : moving ? 'Not on Stripe yet' : info.canUpdate ? 'No card on file' : '—'}
           </div>
         </div>
         {canEdit && !editing ? (
@@ -165,7 +177,7 @@ export default function MembershipCardUpdate({
               {moving ? 'Cancel' : 'Keep current card'}
             </button>
             <button type="button" className={buttonClassName} disabled={saving} onClick={() => void save()}>
-              {saving ? 'Saving…' : moving ? 'Move billing to Stripe' : 'Use this card for the membership'}
+              {saving ? 'Saving…' : moving ? 'Start Stripe billing' : 'Use this card for the membership'}
             </button>
           </div>
         </div>

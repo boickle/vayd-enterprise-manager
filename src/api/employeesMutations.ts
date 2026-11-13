@@ -36,16 +36,34 @@ export type UpsertEmployeesResponse = { ok: boolean; upserted: number };
 
 export type DeleteEmployeesResponse = { ok: boolean; deleted: number };
 
+/**
+ * Roles never travel with an employee save (RP-02). Screens send back the GET body, whose roleIds
+ * include office roles, and saving them made every office role practice-wide. Roles change only
+ * through `updateEmployeeRoles` (PUT /employees/:id/roles), which keeps office assignments.
+ */
+function withoutRoles(body: EmployeeDto | EmployeeDto[]): EmployeeDto | EmployeeDto[] {
+  const strip = (dto: EmployeeDto): EmployeeDto => {
+    const copy: EmployeeDto = { ...dto };
+    delete copy.roleIds;
+    delete copy.roleAssignments;
+    return copy;
+  };
+  return Array.isArray(body) ? body.map(strip) : strip(body);
+}
+
 export async function upsertEmployees(
   body: EmployeeDto | EmployeeDto[]
 ): Promise<UpsertEmployeesResponse> {
-  const { data } = await http.post<UpsertEmployeesResponse>('/employees/upsert', body);
+  const { data } = await http.post<UpsertEmployeesResponse>(
+    '/employees/upsert',
+    withoutRoles(body)
+  );
   return data;
 }
 
-/** POST /employees — save; server passes through withImageUrls. */
+/** POST /employees — save; server passes through withImageUrls. Never sends roles. */
 export async function saveEmployees(body: EmployeeDto | EmployeeDto[]): Promise<unknown> {
-  const { data } = await http.post<unknown>('/employees', body);
+  const { data } = await http.post<unknown>('/employees', withoutRoles(body));
   return data;
 }
 
@@ -80,8 +98,11 @@ export async function clearEmployeeSignature(
   employeeId: number,
   practiceId: number
 ): Promise<EmployeeSignatureResponse> {
-  const { data } = await http.delete<EmployeeSignatureResponse>(`/employees/${employeeId}/signature`, {
-    params: { practiceId },
-  });
+  const { data } = await http.delete<EmployeeSignatureResponse>(
+    `/employees/${employeeId}/signature`,
+    {
+      params: { practiceId },
+    }
+  );
   return data;
 }

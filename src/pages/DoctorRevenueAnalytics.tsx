@@ -1,5 +1,5 @@
 // src/pages/DoctorRevenueAnalytics.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Card,
@@ -27,6 +27,7 @@ import utc from 'dayjs/plugin/utc';
 
 import { useAuth } from '../auth/useAuth';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { DEACTIVATED_SUFFIX, labelDeactivatedProviders } from '../utils/deactivatedProviderLabel';
 import {
   fetchRevenueForDay,
   fetchDoctorRevenueSeries,
@@ -161,6 +162,7 @@ export default function DoctorRevenueAnalyticsPage() {
   const [providers, setProviders] = useState<ProviderWithGoals[]>([]);
   const [providerIds, setProviderIds] = useState<string[]>([]); // selected (admins)
   const [providersLoading, setProvidersLoading] = useState(false);
+  const providersLoadedRef = useRef(false);
   const allProviderIds = useMemo(() => providers.map((p) => String(p.id)), [providers]);
   const isAllSelected =
     allProviderIds.length > 0 &&
@@ -190,7 +192,9 @@ export default function DoctorRevenueAnalyticsPage() {
     (async () => {
       try {
         setProvidersLoading(true);
-        const list = await fetchPrimaryProviders();
+        // RP-07: deactivated doctors with production on this day are listed too.
+        const dayStr = toISODate(date);
+        const list = await fetchPrimaryProviders({ from: dayStr, to: dayStr });
         if (!alive) return;
 
         const raw = Array.isArray(list)
@@ -201,11 +205,23 @@ export default function DoctorRevenueAnalyticsPage() {
               ? (list as any).items
               : [];
 
-        const normalized = (raw as any[]).map(normalizeProvider);
+        const normalized = labelDeactivatedProviders(
+          (raw as any[]).map((r) => ({
+            ...normalizeProvider(r),
+            isActive: r?.isActive === false ? false : undefined,
+          }))
+        );
 
         setProviders(normalized);
         if (isAdmin) {
-          setProviderIds(normalized.map((p) => String(p.id))); // default ALL
+          // default ALL; on a later date change keep a narrowed selection
+          setProviderIds((prev) => {
+            const all = normalized.map((p) => String(p.id));
+            if (!providersLoadedRef.current) return all;
+            const kept = prev.filter((id) => all.includes(id));
+            return kept.length ? kept : all;
+          });
+          providersLoadedRef.current = true;
         }
       } finally {
         if (alive) setProvidersLoading(false);
@@ -214,7 +230,7 @@ export default function DoctorRevenueAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [isAdmin]);
+  }, [isAdmin, date]);
 
   // ---------- fetch per-doctor rows for the selected day ----------
   useEffect(() => {
@@ -241,6 +257,9 @@ export default function DoctorRevenueAnalyticsPage() {
         const normalized = byDoc.map((r: any) => ({
           ...r,
           doctorName:
+            (nameById.get(String(r.doctorId ?? ''))?.endsWith(DEACTIVATED_SUFFIX)
+              ? nameById.get(String(r.doctorId ?? ''))
+              : undefined) ??
             r.doctorName ??
             nameById.get(String(r.doctorId ?? '')) ??
             r.doctorName ??
