@@ -25,7 +25,8 @@
 | 10 | **Book appointment** | Point at Maple, ticked, with **Medical Visit** and the family's note in the description | "The pet, the type and the family's note carry over." | — |
 | 11 | Book appointment | Click **Book appointment** | "Book appointment." | — |
 | 12 | Appointments | Point at **New (0)** | "The request moves to Booked by itself." | — |
-| 12b | Header | Point at **Scheduling** (the Holds board is under Scheduling → Holds) | "One exception: if you book a request as a HOLD type, for example to keep a time while the family decides, it doesn't go to Booked. It shows On hold, and you follow it up on the Holds board, under Scheduling, Holds." | — |
+| 12b | Appointments | — | "One exception: if you book a request as a HOLD type, for example to keep a time while the family decides, it doesn't go to Booked. It shows On hold." | — |
+| 12c | Header | Click **Scheduling**, point at **Holds**, click it and show the Holds board. Then go back to Appointments (off camera) | "You follow it up on the Holds board. Open Scheduling, then Holds." | — |
 | 13 | Voice-over, a request that can't be booked | Click **Not booked** | "If it can't be booked, click Not booked." | A second request |
 | 14 | **Mark as not booked** | Open **Reason**, choose **Out of Area**, click **Mark not booked** | "Pick the real reason. These feed our reports on why requests don't book." | — |
 | 15 | Voice-over | — | "Called and left a message? Mark contacted, and add a note, so the next person knows." | — |

@@ -65,7 +65,11 @@
  },
  {
   "id": "sr06-15b",
-  "text": "One exception: if you book a request as a HOLD type, for example to keep a time while the family decides, it doesn't go to Booked. It shows On hold, and you follow it up on the Holds board, under Scheduling, Holds."
+  "text": "One exception: if you book a request as a HOLD type, for example to keep a time while the family decides, it doesn't go to Booked. It shows On hold."
+ },
+ {
+  "id": "sr06-15c",
+  "text": "You follow it up on the Holds board. Open Scheduling, then Holds."
  },
  {
   "id": "sr06-16",

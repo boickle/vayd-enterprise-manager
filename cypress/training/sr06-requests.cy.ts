@@ -9,7 +9,7 @@ import '../support/e2e';
 import { includeSeededDoctorsInProviderList, schedulingWorld, signInAsScheduling } from '../support/schedulingWorld';
 import { resetDemo } from './probes-sr/srKit';
 import { hideNonProdBanner } from './srRecord';
-import { choose, finish, line, loadNarration, pointAt, startClock, tap, typeSlowly } from './trainingKit';
+import { choose, finish, line, loadNarration, offCamera, pointAt, startClock, tap, typeSlowly } from './trainingKit';
 
 /** Maria asks for a visit from the client portal (manual scheduling, Flexible), as in probes-sr/sr06-queue. */
 function portalRequest(pet: string, why: string, note: string) {
@@ -107,20 +107,21 @@ describe('Training: SR-06 online requests', () => {
         cy.contains('.appt-request-row', 'Juniper', { timeout: 60000 }).should('be.visible');
       });
       line('sr06-15', () => pointAt(() => cy.contains('button, [role="tab"]', /^New/).first(), 3000));
-      line('sr06-15b', () =>
-        pointAt(
-          () =>
-            cy
-              .get('body *')
-              .filter((_, el) => el.children.length === 0 && el.textContent?.trim() === 'Scheduling')
-              .filter((_, el) => {
-                const r = el.getBoundingClientRect();
-                return r.width > 0 && r.top >= 0 && r.top < 160;
-              })
-              .first(),
-          4000
-        )
-      );
+      line('sr06-15b');
+      // The Scheduling menu in the top nav (a <details> summary), then its Holds item.
+      const schedulingMenu = () => cy.contains('summary.schedule-app__settings-summary', /^Scheduling$/);
+      line('sr06-15c', () => {
+        tap(schedulingMenu);
+        pointAt(() => cy.contains('[role="menu"][aria-label="Scheduling"] [role="menuitem"]', /^Holds$/), 2500);
+        tap(() => cy.contains('[role="menu"][aria-label="Scheduling"] [role="menuitem"]', /^Holds$/));
+        cy.location('pathname', { timeout: 30000 }).should('eq', '/schedule/holds');
+        cy.wait(2500);
+      });
+      offCamera(() => {
+        tap(schedulingMenu);
+        tap(() => cy.contains('[role="menu"][aria-label="Scheduling"] [role="menuitem"]', /^Appointments$/));
+        cy.contains('.appt-request-row', 'Juniper', { timeout: 60000 }).should('be.visible');
+      });
       line('sr06-16', () => {
         tap(() => row('Juniper').contains('button', /^Not booked$/));
         cy.contains('Mark as not booked', { timeout: 20000 }).should('be.visible');
