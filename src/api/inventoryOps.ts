@@ -1,4 +1,5 @@
 import { http } from './http';
+import type { InvoiceDeaMark } from '../utils/invoiceRedact';
 
 export type InventorySupplier = {
   id: number;
@@ -162,6 +163,10 @@ export type ParsedInvoiceLine = {
 };
 
 export type ParsedInvoice = {
+  /** DEA numbers the reader saw, so the stored copy can black them out (see utils/invoiceRedact). */
+  deaMarks?: InvoiceDeaMark[];
+  /** The reader couldn't rule out a DEA number it couldn't read. */
+  deaUnclear?: boolean;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   supplierName: string | null;
