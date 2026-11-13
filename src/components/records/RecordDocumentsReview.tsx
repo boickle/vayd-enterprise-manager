@@ -635,14 +635,14 @@ export default function RecordDocumentsReview({
         <div>
           {hideHeading ? null : (
             <h3>
-              {existingMode ? 'Review received records' : 'Upload records'}
+              {existingMode ? 'Review received records' : 'Upload files'}
               {patientName ? ` · ${patientName}` : ''}
             </h3>
           )}
           <p>
             {existingMode
-              ? 'These documents are already on the chart. Rename them if needed, then save the names, or save and summarize them together for the medical record.'
-              : 'Add one or more documents and name each one. Save the names to file them on the chart, or save and summarize them together for the medical record.'}
+              ? 'These documents are already on the chart. Rename them if needed and click Save. For medical records from another hospital, Save & summarize records also drafts a summary and reminders for you to check.'
+              : 'Add photos or documents. Save files them on the chart. For medical records from another hospital, Save & summarize records also drafts a summary and reminders for you to check.'}
           </p>
         </div>
       </div>
@@ -819,7 +819,7 @@ export default function RecordDocumentsReview({
             onClick={() => void saveNamesOnly()}
           >
             <Save size={14} aria-hidden />
-            {busy === 'saving' && !summary ? 'Saving…' : 'Save names only'}
+            {busy === 'saving' && !summary ? 'Saving…' : 'Save'}
           </button>
           <button
             type="button"
@@ -832,15 +832,15 @@ export default function RecordDocumentsReview({
             {busy === 'summarizing'
               ? 'Summarizing…'
               : summary
-                ? 'Save names & summarize again'
-                : 'Save names & summarize records'}
+                ? 'Save & summarize again'
+                : 'Save & summarize records'}
           </button>
           <span className="rdr__muted">
             {namesMissing
               ? 'Give every document a name first.'
               : unsavedCount
                 ? `${unsavedCount} ${unsavedCount === 1 ? 'change' : 'changes'} not saved yet.`
-                : 'All names saved.'}
+                : 'All saved.'}
           </span>
         </div>
       ) : null}
