@@ -3,6 +3,8 @@ import { useLocation, useNavigate, Link, useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { completePasswordReset, requestPasswordReset } from '../api/users';
 
+const STALE_LINK_MESSAGE = 'This link has expired or a newer one was sent. Use the most recent email.';
+
 export default function ResetPass() {
   const [search] = useSearchParams();
   const location = useLocation() as any;
@@ -16,18 +18,15 @@ export default function ResetPass() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Optional: if you forwarded state like { email, token } when routing to this page
-  const forwardedEmail: string | undefined = location?.state?.email;
-  const forwardedToken: string | undefined = location?.state?.token;
+  // Forwarded by the temp-password sign-in ({ email, code }) or by a link (?email=…&token=…).
+  const forwardedEmail: string | undefined =
+    (location?.state?.email as string | undefined)?.trim() || search.get('email')?.trim() || undefined;
+  const forwardedToken: string | undefined = location?.state?.token || location?.state?.code;
+  // PA-02: a 6-digit code is only accepted together with the login's email.
+  const [email, setEmail] = useState(forwardedEmail ?? '');
+  const isCode = /^[0-9]{6}$/.test(token.trim());
 
   useEffect(() => {
-    // Debug: Log the full URL and all query parameters
-    console.log('ResetPass - Full URL:', window.location.href);
-    console.log('ResetPass - Pathname:', location.pathname);
-    console.log('ResetPass - Search:', location.search);
-    console.log('ResetPass - Hash:', location.hash);
-    console.log('ResetPass - All query params:', Object.fromEntries(search.entries()));
-    
     // Check for token in multiple possible query parameter names
     // Different endpoints might use different parameter names
     let t = (
@@ -48,7 +47,6 @@ export default function ResetPass() {
       // If the last part of the path looks like a token (not 'reset-password'), use it
       if (lastPart && lastPart !== 'reset-password' && lastPart.length > 10) {
         t = lastPart.trim();
-        console.log('ResetPass - Found token in path:', t);
       }
     }
     
@@ -63,7 +61,6 @@ export default function ResetPass() {
         hashParams.get('resetCode') ||
         ''
       ).trim();
-      if (t) console.log('ResetPass - Found token in hash:', t);
     }
     
     // If still no token, try to get ANY query parameter (in case it's named something unexpected)
@@ -75,12 +72,11 @@ export default function ResetPass() {
         const firstParamValue = allParams[paramKeys[0]];
         if (firstParamValue && firstParamValue.length > 10) {
           t = firstParamValue.trim();
-          console.log('ResetPass - Using first query param as token:', paramKeys[0], t);
         }
       }
     }
     
-    console.log('ResetPass - Final token value:', t || '(empty)');
+    console.log('ResetPass - Token found:', t ? 'yes' : 'no');
     if (t) setToken(t);
   }, [search, forwardedToken, location.pathname, location.hash]);
 
@@ -99,6 +95,9 @@ export default function ResetPass() {
         console.error('ResetPass - No token found. URL:', window.location.href, paramInfo);
         throw new Error(`Invalid or missing reset link. Please use the link from your email or request a new one.${paramInfo}`);
       }
+      if (isCode && !email.trim()) {
+        throw new Error('Enter your email address to use this reset code.');
+      }
       if (password.length < 8) {
         throw new Error('Password must be at least 8 characters.');
       }
@@ -106,11 +105,16 @@ export default function ResetPass() {
         throw new Error('Passwords do not match. Please try again.');
       }
 
-      await completePasswordReset(token.trim(), password);
+      await completePasswordReset(token.trim(), password, email.trim() || undefined);
       setMsg('Password updated. You can now sign in.');
       setTimeout(() => nav('/login', { replace: true }), 700);
     } catch (err: any) {
-      setError(err?.response?.data?.message || err.message || 'Reset failed');
+      // PA-A5: a rejected link (401) is usually one voided by a newer request.
+      if (err?.response?.status === 401) {
+        setError(STALE_LINK_MESSAGE);
+      } else {
+        setError(err?.response?.data?.message || err.message || 'Reset failed');
+      }
     } finally {
       setPending(false);
     }
@@ -209,6 +213,22 @@ export default function ResetPass() {
         )}
 
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+          {isCode && (
+            <Field label="Email">
+              <input
+                className="input"
+                type="email"
+                name="email"
+                data-testid="reset-email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                readOnly={!!forwardedEmail}
+                autoComplete="username"
+                required
+              />
+            </Field>
+          )}
+
           <Field label="New password">
             <input
               className="input"

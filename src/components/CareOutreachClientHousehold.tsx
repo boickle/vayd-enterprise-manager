@@ -14,7 +14,6 @@ import {
   loadRoutingPatientHoverSummary,
   type RoutingPatientHoverSummary,
 } from '../utils/routingPatientHoverData';
-import { evetPatientLink } from '../utils/evet';
 import { PatientChartSummaryPanel } from './PatientChartSummaryPanel';
 import { CareOutreachPetDetailsButton, PatientMembershipHeart } from './CareOutreachPetDetailsButton';
 import './CareOutreachHousehold.css';
@@ -278,20 +277,7 @@ function useCareOutreachHousehold(): HouseholdContextValue {
   return useContext(CareOutreachHouseholdContext);
 }
 
-function EvetPatientName({
-  name,
-  pimsId,
-}: {
-  name: string;
-  pimsId: string | null;
-}) {
-  if (pimsId) {
-    return (
-      <a href={evetPatientLink(pimsId)} target="_blank" rel="noreferrer" className="care-outreach-household-pet-name">
-        {name}
-      </a>
-    );
-  }
+function PatientName({ name }: { name: string }) {
   return <span className="care-outreach-household-pet-name">{name}</span>;
 }
 
@@ -353,7 +339,7 @@ export function CareOutreachOtherHouseholdPets({
                   <span className="care-outreach-household-pet-card__include-label">Include in route</span>
                 </label>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <EvetPatientName name={pet.name} pimsId={pet.pimsId} />
+                  <PatientName name={pet.name} />
                   {pet.isMember ? (
                     <PatientMembershipHeart membershipName={pet.membershipName} />
                   ) : null}

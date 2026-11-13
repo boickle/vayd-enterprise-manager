@@ -1,0 +1,12 @@
+{
+  "subjectiveHistory": "Itchy ears for two weeks. Eating and drinking normally.",
+  "vitals": { "tempF": "101.4", "weight": "48.2", "weightUnit": "lb", "weightNotTaken": false, "hr": "110", "rr": "24", "bcs": "5/9", "painScore": null },
+  "exam": {},
+  "assessmentReasoning": "- Otitis externa, both ears",
+  "problems": [{ "label": "Otitis externa" }],
+  "planItems": [{ "name": "Ear cleaner", "kind": "treatment", "note": null }],
+  "narrativeObjective": "Alert and responsive. Both ears red with brown debris. Weight 48.2 lb.",
+  "narrativePlan": "Clean ears today. Start ear drops twice daily for 10 days. Recheck in 2 weeks.",
+  "clientEmailSubject": "Visit summary",
+  "clientEmailBody": "<p>Thank you for bringing your pet in today.</p>"
+}

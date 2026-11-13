@@ -25,6 +25,8 @@ type Props = {
    * email the client (active pets only). Portal should leave this false.
    */
   notifyClientOnUpload?: boolean;
+  /** View only: no upload, primary or delete (Executive and Observer, Nov 12, 2026). */
+  readOnly?: boolean;
   patientActive?: boolean;
 };
 
@@ -38,6 +40,7 @@ export default function PatientPhotoGalleryModal({
   onPrimaryChange,
   notifyClientOnUpload = false,
   patientActive = false,
+  readOnly = false,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<PatientGalleryImage[]>([]);
@@ -208,10 +211,12 @@ export default function PatientPhotoGalleryModal({
             <h2 id="ppg-title" className="ppg-modal__title">
               {patientName}
             </h2>
-            <p className="ppg-modal__hint">
-              Pick a primary photo for charts and the client portal. Up to{' '}
-              {PATIENT_PHOTO_GALLERY_MAX} photos.
-            </p>
+            {readOnly ? null : (
+              <p className="ppg-modal__hint">
+                Pick a primary photo for charts and the client portal. Up to{' '}
+                {PATIENT_PHOTO_GALLERY_MAX} photos.
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -231,7 +236,7 @@ export default function PatientPhotoGalleryModal({
           ) : images.length === 0 ? (
             <div className="ppg-empty">
               <Camera size={28} aria-hidden />
-              <p>No photos yet. Upload one to get started.</p>
+              <p>{readOnly ? 'No photos yet.' : 'No photos yet. Upload one to get started.'}</p>
             </div>
           ) : (
             <ul className="ppg-grid">
@@ -246,6 +251,7 @@ export default function PatientPhotoGalleryModal({
                     {img.isPrimary ? (
                       <span className="ppg-card__badge">Primary</span>
                     ) : null}
+                    {readOnly ? null : (
                     <div className="ppg-card__actions">
                       {!img.isPrimary ? (
                         <button
@@ -270,6 +276,7 @@ export default function PatientPhotoGalleryModal({
                         Delete
                       </button>
                     </div>
+                    )}
                   </li>
                 );
               })}
@@ -278,6 +285,8 @@ export default function PatientPhotoGalleryModal({
         </div>
 
         <footer className="ppg-modal__foot">
+          {readOnly ? null : (
+          <>
           <input
             ref={fileRef}
             className="ppg-file"
@@ -299,6 +308,8 @@ export default function PatientPhotoGalleryModal({
             <Upload size={15} aria-hidden />
             {busyId === 'upload' ? 'Uploading…' : atCap ? 'Gallery full' : 'Upload photo'}
           </button>
+          </>
+          )}
           <button
             type="button"
             className="ppg-done"

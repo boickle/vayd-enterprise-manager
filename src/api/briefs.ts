@@ -83,15 +83,15 @@ export async function mergePatientsStaff(opts: {
 }): Promise<{ ok: boolean; message: string }> {
   try {
     await http.post(`/patients/${encodeURIComponent(String(opts.keepPatientId))}/merge`, {
-      sourcePatientId: opts.absorbPatientId,
+      sourcePatientId: Number(opts.absorbPatientId),
     });
-    return { ok: true, message: 'Patients merged.' };
+    return { ok: true, message: 'Charts merged. Visits, records and reminders are on this chart now.' };
   } catch (err) {
     if (isNotImplemented(err)) {
       return {
         ok: false,
         message:
-          'Merge is not available on the server yet. Nothing was changed on the chart — ask an admin if this pairing still needs to happen in eVet.',
+          'Merge is not available on the server yet. Nothing was changed on the chart — ask an admin to merge these charts.',
       };
     }
     const message =

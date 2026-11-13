@@ -50,7 +50,6 @@ import {
   clearWaitlistReturnSession,
   readWaitlistReturnSession,
 } from '../utils/waitlistReturnSession';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { careOutreachClientHasSmsPhone } from '../utils/careOutreachSmsMessage';
 import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
@@ -421,6 +420,7 @@ export default function WaitlistPage() {
         message,
         useRemindersFrom: true,
         source: 'waitlist',
+        ...(smsEntry.patientIds?.length ? { patientIds: smsEntry.patientIds } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
       });
       await patchWaitlistEntry(smsEntry.id, {
@@ -612,7 +612,6 @@ export default function WaitlistPage() {
               Number(entry.preferredProviderId) === selectedDoctorInternalId;
             const phone = entry.client?.phone1?.trim() || null;
             const canText = careOutreachClientHasSmsPhone(phone);
-            const clientPims = entry.client?.pimsId?.trim() || String(entry.clientId);
             return (
               <article
                 key={entry.id}
@@ -623,13 +622,7 @@ export default function WaitlistPage() {
                 <div className="waitlist-card__top">
                   <div>
                     <h3 className="waitlist-card__name">
-                      {entry.client?.pimsId ? (
-                        <a href={evetClientLink(clientPims)} target="_blank" rel="noreferrer">
-                          {waitlistClientDisplayName(entry)}
-                        </a>
-                      ) : (
-                        waitlistClientDisplayName(entry)
-                      )}
+                      {waitlistClientDisplayName(entry)}
                     </h3>
                     <div className="waitlist-card__meta">
                       <span className="waitlist-chip">{formatDaysWaiting(days)}</span>
@@ -669,13 +662,7 @@ export default function WaitlistPage() {
                     <div className="waitlist-card__meta">
                       {(entry.patients ?? []).map((p) => (
                         <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          {p.pimsId ? (
-                            <a href={evetPatientLink(p.pimsId)} target="_blank" rel="noreferrer">
-                              {p.name}
-                            </a>
-                          ) : (
-                            p.name
-                          )}
+                          {p.name}
                           <BookPatientChartButton
                             patientId={String(p.id)}
                             patientName={p.name || `Pet ${p.id}`}

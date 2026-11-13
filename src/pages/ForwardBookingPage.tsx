@@ -55,7 +55,6 @@ import {
   forwardBookingSameTargetBookablePeers,
   groupForwardBookingHouseholdEntriesByTargetDate,
 } from '../utils/forwardBookingHousehold';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildCareOutreachSmsMessage } from '../utils/careOutreachSmsMessage';
 import { fetchUnscheduledReminders } from '../api/careOutreach';
 import { careOutreachChipCountFetchRange } from '../utils/careOutreachPriorityFilters';
@@ -2111,13 +2110,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                   }}
                 >
                   <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                  {householdClient.pimsId ? (
-                    <a href={evetClientLink(householdClient.pimsId)} target="_blank" rel="noreferrer">
-                      {householdClient.name}
-                    </a>
-                  ) : (
-                    householdClient.name
-                  )}
+                  {householdClient.name}
                   {householdClient.phone ? (
                     <span className="settings-muted" style={{ fontWeight: 400, marginLeft: 8 }}>
                       {householdClient.phone}
@@ -2180,7 +2173,6 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               ? formatForwardBookingOnHoldElapsedSince(onHoldSinceIso)
               : null;
             const patientName = pickStr(entry.patient?.name) ?? `Patient #${entry.patientId}`;
-            const patientPimsId = pickStr(entry.patient?.pimsId);
             const resolvedTargetDueDate = resolveForwardBookingTargetDueDateIso(entry, practiceTz);
             const overdue =
               resolvedTargetDueDate &&
@@ -2401,13 +2393,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                       }}
                     >
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        {patientPimsId ? (
-                          <a href={evetPatientLink(patientPimsId)} target="_blank" rel="noreferrer">
-                            {patientName}
-                          </a>
-                        ) : (
-                          patientName
-                        )}
+                        {patientName}
                         {entry.patientId ? (
                           <BookPatientChartButton
                             patientId={String(entry.patientId)}
@@ -2870,6 +2856,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
           smsSource="forward_booking"
+          patientIds={contactEntry.patientId != null ? [contactEntry.patientId] : undefined}
         />
       ) : null}
 

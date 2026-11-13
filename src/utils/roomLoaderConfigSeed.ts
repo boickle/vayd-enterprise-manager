@@ -218,7 +218,7 @@ const SAMPLE_INSTRUCTIONS: RoomLoaderSampleInstruction[] = [
     triggerItems: [FECAL_COMP, FECAL_O_P, EARLY_DOG, SENIOR_DOG_EXT],
     heading: 'How to collect {petName}’s stool sample',
     bodyHtml:
-      '<p>Please set aside a stool sample for us before the visit. A piece about the size of a grape is plenty, and it should be from the last 12 hours or so.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can send a container home with you.</p>',
+      '<p>Please set aside a stool sample for us before the visit. A piece about the size of a grape is plenty, and it should be from the last 12 hours or so.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can give you a container.</p>',
     sortOrder: 0,
   },
   {
@@ -229,7 +229,7 @@ const SAMPLE_INSTRUCTIONS: RoomLoaderSampleInstruction[] = [
     triggerItems: [FECAL_COMP, FECAL_O_P, EARLY_CAT, SENIOR_CAT_EXT],
     heading: 'How to collect {petName}’s stool sample',
     bodyHtml:
-      '<p>Please scoop a stool sample out of the litter box before the visit. A piece about the size of a grape is plenty, it should be from the last 12 hours or so, and a little litter stuck to it is fine.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can send a container home with you.</p>',
+      '<p>Please scoop a stool sample out of the litter box before the visit. A piece about the size of a grape is plenty, it should be from the last 12 hours or so, and a little litter stuck to it is fine.</p><p>Seal it in a plastic bag or a clean container, label it with {petName}’s name, and keep it in the refrigerator until we arrive. If you cannot get one in time, we can give you a container.</p>',
     sortOrder: 1,
   },
   {

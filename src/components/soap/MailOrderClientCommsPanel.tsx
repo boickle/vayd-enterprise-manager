@@ -259,7 +259,15 @@ export default function MailOrderClientCommsPanel({
   const pendingAt = order.clientQuestionPendingAt
     ? Date.parse(order.clientQuestionPendingAt)
     : 0;
+  // Owner (Nov 11, 2026): the server records a text back on the order (clientRepliedAt), so the reply shows
+  // even before this client's texts load.
+  const serverSawReply =
+    pendingAt > 0 && Boolean(order.clientRepliedAt) && Date.parse(order.clientRepliedAt || '') >= pendingAt;
+  /** A client text that arrived after the order went on hold: marked New until the hold is cleared. */
+  const isNewReply = (message: { createdAt: string }) =>
+    pendingAt > 0 && Date.parse(message.createdAt) >= pendingAt;
   const clientReplied =
+    serverSawReply ||
     pendingAt > 0 &&
     Boolean(rxLinePhone) &&
     messages.some((message) => {
@@ -723,6 +731,11 @@ export default function MailOrderClientCommsPanel({
               <strong>
                 {isIncoming(message) ? 'Client' : 'Clinic'} · {formatWhen(message.createdAt)}
               </strong>
+              {isIncoming(message) && isNewReply(message) ? (
+                <span className="mail-queue__new-tag" data-testid="mail-text-new">
+                  New
+                </span>
+              ) : null}
               <div>{message.content}</div>
             </div>
           ))}

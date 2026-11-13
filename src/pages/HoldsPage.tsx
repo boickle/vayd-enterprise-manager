@@ -12,12 +12,14 @@ import {
   fetchClientLiaisons,
   fetchHolds,
   HOLD_SOURCE_LABELS,
+  markHoldRepliesRead,
   type ClientLiaisonOption,
   type HoldListItem,
   type HoldOwnerFilter,
 } from '../api/holds';
-import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import { fetchSchedulingOutreachSmsFrom, sendClientSms } from '../api/clientSms';
+import { notifyAppointmentRepliesChanged } from '../hooks/useAppointmentReplyCounts';
+import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import { fetchPracticeMainPhone } from '../api/clientPortal';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
@@ -27,9 +29,18 @@ import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
 import { ClientEmailHistoryModal } from '../components/ClientEmailHistoryModal';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientContactLogEditor } from '../components/ClientContactLogEditor';
-import { AppointmentRequestGmailThreadLabels } from '../components/AppointmentRequestGmailThreadLabels';
 import { HoldPatientSummaryList } from '../components/HoldPatientSummaryList';
+import { AppointmentsTabStrip } from '../components/appointmentRequests/AppointmentsTabStrip';
+import { RouteButton } from '../components/appointmentRequests/RouteButton';
+import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
+import { HoldConversationPanel } from '../components/appointmentRequests/HoldConversationPanel';
+import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
+import { ReadOnlyConversationNote } from '../components/appointmentRequests/ReadOnlyConversationNote';
+import '../components/appointmentRequests/requestPanels.css';
+import { receivedDateLabel, visitDateShortLabel } from '../utils/appointmentRequestTableRow';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { useMayWorkAppointments } from '../permissions/useMayWorkAppointments';
+import { holdLiaison } from '../utils/holdLiaison';
 import { useHoldsAppointmentRequestGmailLabels } from '../hooks/useHoldsAppointmentRequestGmailLabels';
 import {
   buildHoldGroupContactLogMeta,
@@ -53,25 +64,18 @@ import {
   beginHoldReschedule,
   resolveHoldSubmissionId,
 } from '../utils/holdsOpenInScheduler';
-import { beginAppointmentRequestNotBookedFlow } from '../utils/appointmentRequestNotBookedFlow';
-import { beginAppointmentRequestOnHoldReleaseFlow } from '../utils/appointmentRequestOnHoldReleaseFlow';
-import {
-  APPOINTMENT_REQUEST_MAILBOX,
-  isApptRequestOnHoldLabelId,
-  resolveApptRequestLabelIds,
-} from '../utils/gmailAppointmentRequestLabels';
 import {
   buildHoldExitSnapshotGroup,
   filterHoldHouseholdGroupsByOwner,
   groupHoldsByClientHousehold,
   holdHouseholdAnyStale,
   holdHouseholdEarliestPlacedAt,
-  holdHouseholdOwnerIsCurrentUser,
   holdHouseholdPatientNames,
   holdHouseholdSharedOwnerLabel,
   holdHouseholdSharedSource,
   holdHouseholdWithin3BusinessDays,
   holdIsWithin3BusinessDays,
+  holdGroupUnreadReplies,
   sortHoldHouseholdGroupsByAppointmentStart,
   type HoldHouseholdGroup,
   type HoldVisitSlotGroup,
@@ -98,6 +102,11 @@ import {
   readHoldsBoardReturnSession,
   type HoldsBoardReturnExitKind,
 } from '../utils/holdsBoardReturnSession';
+import {
+  clearAppointmentRequestReturnSession,
+  readAppointmentRequestReturnSession,
+  type AppointmentRequestReturnSessionV1,
+} from '../utils/appointmentRequestReturnSession';
 import './Settings.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 
@@ -207,6 +216,8 @@ function noteForPatch(value: string): string | null {
 }
 
 export default function HoldsPage() {
+  /** Techs and doctors see the Hold tab read-only (owner, Nov 13, 2026). */
+  const mayWork = useMayWorkAppointments();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const owner = useMemo(
@@ -231,13 +242,21 @@ export default function HoldsPage() {
     [setSearchParams]
   );
   const [holds, setHolds] = useState<HoldListItem[]>([]);
-  const [currentUserEmployeeId, setCurrentUserEmployeeId] = useState<number | null>(
-    null
-  );
+  const [, setCurrentUserEmployeeId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [clOptions, setClOptions] = useState<ClientLiaisonOption[]>([]);
+  /** Hold tab rows whose card and conversation are open under the summary line. */
+  const [openGroupKeys, setOpenGroupKeys] = useState<Set<string>>(() => new Set());
+  const toggleGroupOpen = useCallback((key: string) => {
+    setOpenGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const [busyGroupKey, setBusyGroupKey] = useState<string | null>(null);
 
   const [assignMenu, setAssignMenu] = useState<{
@@ -276,12 +295,15 @@ export default function HoldsPage() {
   const loadGenRef = useRef(0);
   const holdOutreachGenRef = useRef(0);
   const pendingHoldsReturnRef = useRef<ReturnType<typeof readHoldsBoardReturnSession>>(null);
+  const pendingApptRequestReturnRef = useRef<AppointmentRequestReturnSessionV1 | null>(null);
   const pendingDepartGroupKeyRef = useRef<string | null>(null);
   const restoredDepartScrollRef = useRef(false);
   const [pendingHoldsBoardExit, setPendingHoldsBoardExit] = useState<{
     group: HoldHouseholdGroup;
     exitKind: HoldsBoardReturnExitKind;
   } | null>(null);
+  const [pendingApptRequestSmsGroup, setPendingApptRequestSmsGroup] =
+    useState<HoldHouseholdGroup | null>(null);
   const [highlightGroupKey, setHighlightGroupKey] = useState<string | null>(null);
   const [ownerHighlightGroupKey, setOwnerHighlightGroupKey] = useState<string | null>(null);
   const pendingAssignAnchorRef = useRef<{ groupKey: string; scrollY: number } | null>(null);
@@ -292,21 +314,11 @@ export default function HoldsPage() {
   const [exitSnapshots, setExitSnapshots] = useState<Map<string, HoldHouseholdGroup>>(
     () => new Map()
   );
-  const notBookedGmailLabelFlowRef = useRef(new Set<number>());
-  const onHoldGmailLabelFlowRef = useRef(new Set<number>());
 
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
-  const holdsReturnPath = holdsPathForOwner(owner);
   const {
-    bySubmissionId: gmailThreadLabelsBySubmission,
-    userLabels: gmailUserLabels,
-    labelById: gmailLabelById,
-    patchSubmission: patchGmailThreadLabels,
     submissionById,
-    gmailLabelsLoadingIds,
     groupSubmissionIds,
-    typeCatalog,
-    bookedApptMeta,
   } = useHoldsAppointmentRequestGmailLabels({
     holds,
     enabled: canAccessGmailInbox,
@@ -351,6 +363,12 @@ export default function HoldsPage() {
       if (pendingReturn) {
         clearHoldsBoardReturnSession();
         pendingHoldsReturnRef.current = pendingReturn;
+      }
+
+      const pendingApptRequestReturn = readAppointmentRequestReturnSession();
+      if (pendingApptRequestReturn?.isHold) {
+        clearAppointmentRequestReturnSession();
+        pendingApptRequestReturnRef.current = pendingApptRequestReturn;
       }
 
       const pendingDepart = readHoldsBoardDepartSession();
@@ -406,6 +424,35 @@ export default function HoldsPage() {
               },
             );
             setPendingHoldsBoardExit({ group: match, exitKind: pending.exitKind });
+          }
+        }
+
+        const pendingApptRequest = pendingApptRequestReturnRef.current;
+        if (pendingApptRequest) {
+          pendingApptRequestReturnRef.current = null;
+          const freshGrouped = sortHoldHouseholdGroupsByAppointmentStart(
+            filterHoldHouseholdGroupsByOwner(
+              groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
+              owner,
+            ),
+          );
+          const match =
+            freshGrouped.find((g) =>
+              g.holds.some((h) => Number(h.id) === Number(pendingApptRequest.bookedAppointmentId)),
+            ) ??
+            freshGrouped.find((g) =>
+              g.holds.some(
+                (h) =>
+                  h.appointmentRequestSubmissionId != null &&
+                  Number(h.appointmentRequestSubmissionId) ===
+                    Number(pendingApptRequest.appointmentRequestSubmissionId),
+              ),
+            );
+          if (match) {
+            setHighlightGroupKey(match.key);
+            if (pendingApptRequest.openSms !== false && holdGroupHasSmsPhone(match)) {
+              setPendingApptRequestSmsGroup(match);
+            }
           }
         }
       }
@@ -522,6 +569,13 @@ export default function HoldsPage() {
     if (remindersFromLine) setSmsFromLine(remindersFromLine);
   }, [remindersFromLine]);
 
+  useEffect(() => {
+    if (!pendingApptRequestSmsGroup || loading) return;
+    const group = pendingApptRequestSmsGroup;
+    setPendingApptRequestSmsGroup(null);
+    openSmsModal(group);
+  }, [pendingApptRequestSmsGroup, loading, openSmsModal]);
+
   const openEmailModal = useCallback((group: HoldHouseholdGroup) => {
     const clientId = group.anchor.client?.id;
     if (clientId == null || !clientHasEffectiveEmail(group.anchor.client?.email)) return;
@@ -619,15 +673,21 @@ export default function HoldsPage() {
     [load]
   );
 
-  const assignGroupToMe = useCallback(
+  /** Open or close a row; opening reads its unread client replies (SCH-R10). */
+  const toggleGroupRow = useCallback(
     (group: HoldHouseholdGroup) => {
-      if (currentUserEmployeeId == null) {
-        setError('Could not resolve your employee record to assign.');
-        return;
+      const unread = holdGroupUnreadReplies(group);
+      if (mayWork && unread && !openGroupKeys.has(group.key)) {
+        void markHoldRepliesRead(unread.holdId)
+          .then(() => {
+            notifyAppointmentRepliesChanged();
+            return load({ silent: true });
+          })
+          .catch(() => undefined);
       }
-      void doAssignGroup(group, currentUserEmployeeId);
+      toggleGroupOpen(group.key);
     },
-    [currentUserEmployeeId, doAssignGroup]
+    [openGroupKeys, toggleGroupOpen, load, mayWork],
   );
 
   const openInScheduler = useCallback(
@@ -653,7 +713,7 @@ export default function HoldsPage() {
   );
 
   const openReschedule = useCallback(
-    (hold: HoldListItem, group: HoldHouseholdGroup) => {
+    (hold: HoldListItem, group: HoldHouseholdGroup, opts?: { exploreAlternatives?: boolean }) => {
       setError(null);
       setNotice(null);
       setBusyGroupKey(group.key);
@@ -664,6 +724,7 @@ export default function HoldsPage() {
         practiceTz: PRACTICE_TZ,
         practiceId: PRACTICE_ID,
         returnPath: holdsPathForOwner(owner),
+        exploreAlternatives: opts?.exploreAlternatives === true,
       })
         .then((result) => {
           if (!result.ok) setNotice(result.reason);
@@ -676,112 +737,6 @@ export default function HoldsPage() {
         });
     },
     [navigate, owner]
-  );
-
-  const handleGmailThreadLabelsUpdated = useCallback(
-    (submissionId: number, entry: Parameters<typeof patchGmailThreadLabels>[1]) => {
-      patchGmailThreadLabels(submissionId, entry);
-    },
-    [patchGmailThreadLabels]
-  );
-
-  const handleGmailLabelsAdded = useCallback(
-    (item: AppointmentRequestSubmissionItem, addedLabelIds: string[]) => {
-      const notBookedLabelId = resolveApptRequestLabelIds(gmailUserLabels).notBooked;
-      if (!notBookedLabelId || !addedLabelIds.includes(notBookedLabelId)) return;
-      if ((item.status ?? 'new') === 'dismissed') return;
-      if (notBookedGmailLabelFlowRef.current.has(item.id)) return;
-
-      const thread = gmailThreadLabelsBySubmission.get(item.id);
-      const bookedSummary =
-        item.bookedAppointmentId != null
-          ? bookedApptMeta.get(Number(item.bookedAppointmentId))
-          : undefined;
-
-      notBookedGmailLabelFlowRef.current.add(item.id);
-      void beginAppointmentRequestNotBookedFlow({
-        submission: item,
-        returnPath: holdsReturnPath,
-        practiceTz: PRACTICE_TZ,
-        navigate,
-        mailbox: thread?.mailbox ?? APPOINTMENT_REQUEST_MAILBOX,
-        threadId: thread?.threadId,
-        bookedApptSummary: bookedSummary ?? null,
-      })
-        .then((result) => {
-          if (result.kind === 'scheduler_remove') {
-            setNotice(
-              'Remove this visit from the calendar, then mark the request as not booked.',
-            );
-            return;
-          }
-          if (result.kind === 'needs_reason') {
-            navigate(holdsPathWithHighlight(item.id, { owner }));
-          }
-        })
-        .catch(() => {
-          setError('Could not start the not booked flow for this appointment request.');
-        })
-        .finally(() => {
-          notBookedGmailLabelFlowRef.current.delete(item.id);
-        });
-    },
-    [
-      gmailUserLabels,
-      gmailThreadLabelsBySubmission,
-      bookedApptMeta,
-      holdsReturnPath,
-      navigate,
-      owner,
-    ]
-  );
-
-  const makeOnHoldGmailLabelRemoveGuard = useCallback(
-    (item: AppointmentRequestSubmissionItem) =>
-      async (labelId: string): Promise<boolean> => {
-        if (!isApptRequestOnHoldLabelId(labelId, gmailUserLabels)) return true;
-        if (onHoldGmailLabelFlowRef.current.has(item.id)) return false;
-
-        onHoldGmailLabelFlowRef.current.add(item.id);
-        try {
-          const thread = gmailThreadLabelsBySubmission.get(item.id);
-          const bookedSummary =
-            item.bookedAppointmentId != null
-              ? bookedApptMeta.get(Number(item.bookedAppointmentId))
-              : undefined;
-          const result = await beginAppointmentRequestOnHoldReleaseFlow({
-            submission: item,
-            returnPath: holdsReturnPath,
-            practiceTz: PRACTICE_TZ,
-            navigate,
-            mailbox: thread?.mailbox ?? APPOINTMENT_REQUEST_MAILBOX,
-            threadId: thread?.threadId,
-            bookedApptSummary: bookedSummary ?? null,
-            bookedApptMeta,
-            typeCatalog,
-          });
-          if (result.kind === 'scheduler_edit') {
-            setNotice(
-              'Remove or convert this hold on the calendar before removing the On hold label.',
-            );
-            return false;
-          }
-          return true;
-        } catch {
-          setError('Could not verify the linked calendar hold. Try again.');
-          return false;
-        } finally {
-          onHoldGmailLabelFlowRef.current.delete(item.id);
-        }
-      },
-    [
-      gmailUserLabels,
-      gmailThreadLabelsBySubmission,
-      bookedApptMeta,
-      holdsReturnPath,
-      navigate,
-      typeCatalog,
-    ]
   );
 
   const saveGroupContactLog = useCallback(
@@ -996,8 +951,8 @@ export default function HoldsPage() {
   }, [highlightGroupKey, loading, displayGroups.length]);
 
   return (
-    <div className="container">
-      <div className="settings-page" style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div className="container appt-requests-container">
+      <div className="settings-page appt-requests-page">
         <div
           style={{
             display: 'flex',
@@ -1010,17 +965,19 @@ export default function HoldsPage() {
         >
           <div>
             <h1 className="settings-title" style={{ marginBottom: 6 }}>
-              Holds
+              Appointments
             </h1>
             <p className="settings-muted" style={{ margin: 0, maxWidth: 720 }}>
-              Calendar holds scheduled today (Eastern time) and later — appointment
-              requests, care outreach, schedule loader, forward booking, and manual
-              holds.
+              Every hold on the calendar from today on: appointment requests, forward
+              bookings, care outreach, schedule loader, waitlist, texted offers, and
+              holds placed by hand. A hold stays here until it becomes a real visit.
             </p>
           </div>
         </div>
 
-        <div className="appt-request-status-tabs">
+        <AppointmentsTabStrip />
+
+        <div className="appt-request-status-tabs holds-owner-filters" aria-label="Whose holds">
           {OWNER_FILTERS.map((f) => (
             <button
               key={String(f.value)}
@@ -1080,7 +1037,19 @@ export default function HoldsPage() {
               : 'No holds scheduled for today or later match this filter.'}
           </p>
         ) : (
-          <ul className="appt-request-list" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+          <>
+          <div className="appt-table-head" role="presentation">
+            <span>Hold placed</span>
+            <span>Source</span>
+            <span>Client / Patient</span>
+            <span>Hold</span>
+            <span>Location</span>
+            <span>Liaison</span>
+            <span>Route visit</span>
+            <span>Booking status</span>
+            <span>Doctor</span>
+          </div>
+          <ul className="appt-request-list appt-request-list--table" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
             {displayGroups.map((group) => {
               const hold = group.anchor;
               const holdsInGroup = group.holds;
@@ -1096,8 +1065,19 @@ export default function HoldsPage() {
               const hasEmail = clientHasEffectiveEmail(hold.client?.email);
               const clientId = hold.client?.id ?? null;
               const canSms = holdGroupHasSmsPhone(group);
-              const ownerIsMine = holdHouseholdOwnerIsCurrentUser(holdsInGroup);
               const busy = busyGroupKey === group.key;
+              const groupOpen = openGroupKeys.has(group.key) || highlightGroupKey === group.key;
+              const placedIso = holdHouseholdEarliestPlacedAt(holdsInGroup);
+              const petNames = holdHouseholdPatientNames(holdsInGroup);
+              // Assigned owner, or the CL who placed the hold (B6).
+              const ownerIds = [...new Set(holdsInGroup.map((h) => holdLiaison(h)?.id ?? null))];
+              const sharedOwner =
+                ownerIds.length === 1 && ownerIds[0] != null
+                  ? (holdsInGroup.map(holdLiaison).find((o) => o != null) ?? null)
+                  : null;
+              const groupSubmissionId = groupSubmissionIds(holdsInGroup)[0];
+              const groupSubmission =
+                groupSubmissionId != null ? (submissionById.get(groupSubmissionId) ?? null) : null;
               const createdByNames = [
                 ...new Set(
                   holdsInGroup
@@ -1132,6 +1112,105 @@ export default function HoldsPage() {
                       {exitKind === 'removed' ? 'Hold removed' : 'Booked'}
                     </div>
                   ) : null}
+                  <div
+                    className={`appt-table-row${urgent ? ' appt-table-row--urgent' : ''}${groupOpen ? ' appt-table-row--open' : ''}`}
+                  >
+                    <div className="appt-table-cell appt-table-received">
+                      <button
+                        type="button"
+                        className="appt-table-chevron"
+                        aria-expanded={groupOpen}
+                        aria-label={groupOpen ? 'Close hold' : 'Open hold'}
+                        onClick={() => toggleGroupRow(group)}
+                      >
+                        {groupOpen ? '▾' : '▸'}
+                      </button>
+                      <span>
+                        {placedIso ? receivedDateLabel(placedIso, PRACTICE_TZ) : '—'}
+                        {urgent ? (
+                          <span className="appt-table-urgent" title="The hold is in the next 3 business days">
+                            Within 3 days
+                          </span>
+                        ) : null}
+                        {stale ? (
+                          <span className="appt-table-quiet" title="Placed over 24 hours ago">
+                            Over 24 h
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <div className="appt-table-cell appt-table-client-type">{sourceLabel(holdsInGroup)}</div>
+                    <div className="appt-table-cell">
+                      <button
+                        type="button"
+                        className="appt-table-client"
+                        aria-expanded={groupOpen}
+                        title={groupOpen ? 'Close hold' : 'Open hold'}
+                        onClick={() => toggleGroupRow(group)}
+                      >
+                        <span className="appt-table-client-name">{resolveHoldClientLabel(hold)}</span>
+                        {(() => {
+                          const unread = holdGroupUnreadReplies(group);
+                          return unread ? (
+                            <ReplyBadges
+                              mine={unread.mine ? unread.count : 0}
+                              others={unread.mine ? 0 : unread.count}
+                            />
+                          ) : null;
+                        })()}
+                        {petNames.length > 0 ? (
+                          <span className="appt-table-pets">
+                            {petNames.map((p) => (
+                              <span key={p} className="appt-table-pet">
+                                {p}
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
+                      </button>
+                    </div>
+                    <div className="appt-table-cell appt-table-strong">
+                      {[...new Set(holdsInGroup.map((h) => appointmentTypeLabel(h)))].join(', ')}
+                      {multiVisit ? (
+                        <div className="appt-table-primary">{visitSlots.length} visits</div>
+                      ) : null}
+                    </div>
+                    <div className="appt-table-cell appt-table-location">
+                      <span className="appt-table-strong">{hold.client?.city?.trim() || '—'}</span>
+                    </div>
+                    <div className="appt-table-cell">
+                      <LiaisonSelect
+                        value={sharedOwner}
+                        liaisons={clOptions}
+                        saving={busy}
+                        onChange={(employeeId) => void doAssignGroup(group, employeeId)}
+                        ariaLabel={`Liaison for ${resolveHoldClientLabel(hold)}`}
+                        disabled={!mayWork}
+                      />
+                    </div>
+                    <div className="appt-table-cell">
+                      {mayWork ? (
+                        <RouteButton
+                          hasVisit
+                          disabled={busy || rowExiting}
+                          onReschedule={() => openReschedule(hold, group)}
+                          onExploreAlternatives={() => openReschedule(hold, group, { exploreAlternatives: true })}
+                        />
+                      ) : null}
+                    </div>
+                    <div className="appt-table-cell">
+                      <span className="appt-table-pill appt-table-pill--hold">
+                        <span>On Hold</span>
+                        <span className="appt-table-pill-detail">
+                          {visitDateShortLabel(hold.appointmentStart, PRACTICE_TZ) ?? '—'}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="appt-table-cell appt-table-client-type">{providerLabel(hold)}</div>
+                  </div>
+                  {groupOpen ? (
+                  <div className="appt-table-open">
+                  <div className="hold-open-card">
                   <div className="appt-request-row-main">
                     <div className="appt-request-row-body">
                       <div className="holds-client-panel">
@@ -1174,28 +1253,8 @@ export default function HoldsPage() {
                             </div>
                           ) : null}
                         </div>
-                        {rowExiting ? null : (
+                        {rowExiting || !mayWork ? null : (
                           <div className="holds-client-panel__contact">
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              disabled={!phone}
-                              title={phone || 'No phone on file'}
-                              onClick={() => {
-                                if (!phone) return;
-                                window.location.href = `tel:${phone}`;
-                              }}
-                            >
-                              Call
-                            </button>
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              disabled={!canSms}
-                              onClick={() => openSmsModal(group)}
-                            >
-                              Text client
-                            </button>
                             <button
                               type="button"
                               className="btn secondary"
@@ -1207,29 +1266,6 @@ export default function HoldsPage() {
                           </div>
                         )}
                       </div>
-                      {canAccessGmailInbox
-                        ? groupSubmissionIds(holdsInGroup).map((submissionId) => {
-                            const submission = submissionById.get(submissionId);
-                            if (!submission) return null;
-                            return (
-                              <AppointmentRequestGmailThreadLabels
-                                key={submissionId}
-                                thread={gmailThreadLabelsBySubmission.get(submissionId)}
-                                userLabels={gmailUserLabels}
-                                labelById={gmailLabelById}
-                                loading={gmailLabelsLoadingIds.has(submissionId)}
-                                onLabelsUpdated={(entry) =>
-                                  handleGmailThreadLabelsUpdated(submissionId, entry)
-                                }
-                                onLabelsAdded={(added) =>
-                                  handleGmailLabelsAdded(submission, added)
-                                }
-                                beforeRemoveLabel={makeOnHoldGmailLabelRemoveGuard(submission)}
-                                onError={(message) => setError(message)}
-                              />
-                            );
-                          })
-                        : null}
                       {(() => {
                         const contactMeta = contactLogMetaForGroup(group);
                         if (!contactMeta?.writeTarget) return null;
@@ -1424,41 +1460,6 @@ export default function HoldsPage() {
                     <div className="appt-request-row-actions">
                       {rowExiting ? null : (
                         <>
-                      {ownerIsMine ? (
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={busy}
-                          onClick={() => void doAssignGroup(group, null)}
-                        >
-                          Unassign me
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn primary"
-                          disabled={busy}
-                          onClick={() => assignGroupToMe(group)}
-                        >
-                          Assign to me
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        disabled={busy}
-                        onClick={(e) => setAssignMenu({ anchor: e.currentTarget, group })}
-                      >
-                        Assign to…
-                      </button>
-                      <div
-                        style={{
-                          width: '100%',
-                          borderTop: '1px solid #e2e8f0',
-                          marginTop: 4,
-                          marginBottom: 4,
-                        }}
-                      />
                       {visitSlots.map((slot, slotIdx) => {
                         const slotHold = slot.anchor;
                         const slotMulti = slot.holds.length > 1;
@@ -1500,14 +1501,17 @@ export default function HoldsPage() {
                             >
                               Open / convert
                             </button>
-                            <button
-                              type="button"
-                              className="btn secondary"
+                            {mayWork ? (
+                            <RouteButton
+                              hasVisit
+                              inline
                               disabled={busy}
-                              onClick={() => openReschedule(slotHold, group)}
-                            >
-                              Reschedule
-                            </button>
+                              onReschedule={() => openReschedule(slotHold, group)}
+                              onExploreAlternatives={() =>
+                                openReschedule(slotHold, group, { exploreAlternatives: true })
+                              }
+                            />
+                            ) : null}
                             {slot.holds.some((h) => resolveHoldSubmissionId(h) != null) ? (
                               <button
                                 type="button"
@@ -1522,14 +1526,16 @@ export default function HoldsPage() {
                                 View request
                               </button>
                             ) : null}
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ color: '#b91c1c', borderColor: '#fecaca' }}
-                              onClick={() => openRemoveSlot(slot, group.key)}
-                            >
-                              Remove hold{slotMulti ? 's' : ''}
-                            </button>
+                            {mayWork ? (
+                              <button
+                                type="button"
+                                className="btn secondary"
+                                style={{ color: '#b91c1c', borderColor: '#fecaca' }}
+                                onClick={() => openRemoveSlot(slot, group.key)}
+                              >
+                                Remove hold{slotMulti ? 's' : ''}
+                              </button>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1537,10 +1543,32 @@ export default function HoldsPage() {
                       )}
                     </div>
                   </div>
+                  </div>
+                  {!mayWork ? (
+                    <ReadOnlyConversationNote />
+                  ) : groupSubmission ? (
+                    <RequestConversationPanel
+                      item={groupSubmission}
+                      practiceId={PRACTICE_ID}
+                      practiceTz={PRACTICE_TZ}
+                      onContacted={() => void load({ silent: true })}
+                      onSubmissionUpdated={() => void load({ silent: true })}
+                    />
+                  ) : (
+                    <HoldConversationPanel
+                      hold={hold}
+                      canText={canSms}
+                      practiceTz={PRACTICE_TZ}
+                      onChanged={() => void load({ silent: true })}
+                    />
+                  )}
+                  </div>
+                  ) : null}
                 </li>
               );
             })}
           </ul>
+          </>
         )}
 
       <Menu

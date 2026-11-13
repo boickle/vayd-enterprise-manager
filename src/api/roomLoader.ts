@@ -584,6 +584,8 @@ export async function upsertRoomLoaders(
 // Search items for room loader
 export type SearchableItem = {
   itemType: 'inventory' | 'lab' | 'procedure' | string;
+  /** Staff Room Loader: stable id for an added item (invoice order survives removals). */
+  rowKey?: string;
   inventoryItem?: any;
   lab?: any;
   procedure?: any;

@@ -52,6 +52,11 @@ type Props = {
   onLaunchConsumed?: () => void;
   /** Other household pets the call can be filed to, besides the open chart. */
   householdPatients?: { id: number; name: string }[];
+  /**
+   * Executive and Observer (Nov 12, 2026): no Write or Visit buttons. The live-call status above
+   * the toolbar still shows.
+   */
+  readOnly?: boolean;
 };
 
 export default function PimsChartWorkBar({
@@ -76,6 +81,7 @@ export default function PimsChartWorkBar({
   launchCommunicate = false,
   onLaunchConsumed,
   householdPatients = [],
+  readOnly = false,
 }: Props) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
@@ -91,8 +97,8 @@ export default function PimsChartWorkBar({
 
   useEffect(() => {
     if (!launchNote && !launchCommunicate) return;
-    if (launchNote) setNoteOpen(true);
-    if (launchCommunicate) setMessagePick(true);
+    if (launchNote && !readOnly) setNoteOpen(true);
+    if (launchCommunicate && !readOnly) setMessagePick(true);
     onLaunchConsumed?.();
     // Only react to the launch flags from the schedule menu, not a new callback each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,6 +133,7 @@ export default function PimsChartWorkBar({
         }}
       />
 
+      {readOnly ? null : (
       <div className="pims-chart-work" role="toolbar" aria-label="Chart actions">
         <div className="pims-chart-work__group">
           <span className="pims-chart-work__label">Write</span>
@@ -195,6 +202,7 @@ export default function PimsChartWorkBar({
           </button>
         </div>
       </div>
+      )}
 
       <PimsStartSoapModal
         open={soapPickOpen}
@@ -512,9 +520,12 @@ function PimsChartCommunicationLogModal({
 export function PimsPatientMergeButton({
   patientId,
   patientName,
+  onMerged,
 }: {
   patientId: string;
   patientName: string;
+  /** Reload the chart after a merge, so the moved records show. */
+  onMerged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // A merge cannot be undone, so the control is absent rather than greyed out
@@ -548,7 +559,7 @@ export function PimsPatientMergeButton({
                     ×
                   </button>
                 </div>
-                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} />
+                <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} onMerged={onMerged} />
               </div>
             </div>,
             document.body,

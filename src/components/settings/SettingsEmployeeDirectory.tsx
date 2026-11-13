@@ -45,6 +45,7 @@ import {
 } from '../../hooks/useOpenPhoneLineDirectory';
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import { formatYmd } from '../../utils/formatYmd';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
@@ -56,6 +57,21 @@ import SignaturePad from '../SignaturePad';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import {
+  loadPracticeLicenses,
+  saveEmployeeLicenses,
+} from '../../api/employeeLicenses';
+import {
+  fetchQuoUsers,
+  fetchUnlinkedQuoCallers,
+  dismissUnlinkedQuoCalls,
+  fetchActiveStaffWithLoginOff,
+  unlinkedCallerLabel,
+  quoUserMatchingEmail,
+  QUO_NONE,
+  type QuoUsersResponse,
+  type UnlinkedQuoCaller,
+} from '../../api/quoUsers';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
 const ALL_OFFICES = 'all';
@@ -81,6 +97,17 @@ function empActive(e: Employee): boolean {
   const r = e as Record<string, unknown>;
   if (r.isActive === false || r.isDeleted === true) return false;
   return true;
+}
+
+/**
+ * COM-CALL: the Quo choice on file — a Quo user id, QUO_NONE for "Doesn't use Quo", or '' when
+ * nobody has chosen yet.
+ */
+export function savedQuoChoice(e: Employee | Record<string, unknown> | null | undefined): string {
+  const r = (e ?? {}) as Record<string, unknown>;
+  const uid = typeof r.openPhoneUserId === 'string' ? r.openPhoneUserId.trim() : '';
+  if (uid) return uid;
+  return r.doesNotUseQuo === true ? QUO_NONE : '';
 }
 
 function str(v: unknown): string {
@@ -173,7 +200,7 @@ type Props = {
 
 export default function SettingsEmployeeDirectory({
   onMessage,
-  section = 'profile',
+  section: requestedSection = 'profile',
   onSectionChange,
   selectedEmployeeId,
   onSelectedEmployeeIdChange,
@@ -198,6 +225,12 @@ export default function SettingsEmployeeDirectory({
   const [isProvider, setIsProvider] = useState(false);
   const [middleName, setMiddleName] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
+  /**
+   * Licenses per state (owner, Nov 12, 2026; DEA numbers stay in Vet Snap). The practice-state license
+   * is also kept in licenseNumber, which certificates and Rx labels print.
+   */
+  const [licenseRows, setLicenseRows] = useState<LicenseRow[]>([]);
+  const [practiceState, setPracticeState] = useState('ME');
   const [signatureImage, setSignatureImage] = useState<string | null>(null);
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
@@ -212,6 +245,16 @@ export default function SettingsEmployeeDirectory({
   const [quoLinePhone, setQuoLinePhone] = useState('');
   /** Typing a number that isn't one of the Quo lines. */
   const [quoCustom, setQuoCustom] = useState(false);
+  /** COM-CALL: practice Quo users and whether Quo is on (then a Quo choice is required). */
+  const [quoInfo, setQuoInfo] = useState<QuoUsersResponse | null>(null);
+  const [unlinkedCallers, setUnlinkedCallers] = useState<UnlinkedQuoCaller[]>([]);
+  const [dismissingQuoUser, setDismissingQuoUser] = useState<string | null>(null);
+  /** Active staff whose login is turned off in Admin → Users (offboard them). */
+  const [loginOffIds, setLoginOffIds] = useState<Set<number>>(new Set());
+  /** Quo choice on file for the person being edited ('' = none yet). */
+  const [quoSaved, setQuoSaved] = useState('');
+  /** What the user picked in the form; null while untouched. */
+  const [quoPicked, setQuoPicked] = useState<string | null>(null);
   const [worksWithDoctorId, setWorksWithDoctorId] = useState<number | null>(null);
   const [worksWithDefault, setWorksWithDefault] = useState(false);
   const [creatingLogin, setCreatingLogin] = useState(false);
@@ -250,6 +293,14 @@ export default function SettingsEmployeeDirectory({
   /** Practice manager and above add employees and edit their records (owner decision, Nov 2, 2026). */
   const canManageStaff = can('staff.employee.manage');
   const canManageLogins = can('staff.login.manage');
+  /**
+   * The Medical Director sets licenses but doesn't manage staff (D1; owner, Nov 9, 2026): they see the
+   * Access tab only. Anyone who manages staff, logins or roles sees every tab.
+   */
+  const accessOnly =
+    !canManageStaff && !canManageLogins && !can('staff.role.assign') && can('staff.license.manage');
+  const section: EmployeeHubSection = accessOnly ? 'access' : requestedSection;
+  const hubSections = accessOnly ? HUB_SECTIONS.filter((item) => item.id === 'access') : HUB_SECTIONS;
   const { lines: quoLines } = useOpenPhoneLineDirectory(isProvider);
   const quoMatch = quoLinePhone.trim()
     ? quoLines.find((line) => phonesMatchForQuo(line.phone, quoLinePhone))
@@ -257,6 +308,19 @@ export default function SettingsEmployeeDirectory({
   const quoSelectValue = quoCustom || (quoLinePhone.trim() && !quoMatch)
     ? '__custom__'
     : (quoMatch?.phone ?? '');
+  /**
+   * COM-CALL: email matching only suggests. With nothing on file, the Quo user whose email matches
+   * is pre-selected and marked "(matches email — confirm)"; nothing is saved until Save.
+   */
+  const quoSuggestion =
+    quoInfo?.quoEnabled && !quoSaved
+      ? quoUserMatchingEmail(quoInfo.users, loginUser?.email ?? email)
+      : undefined;
+  const quoChoice = quoPicked ?? (quoSaved || quoSuggestion?.id || '');
+  const quoSuggestedShown = quoPicked == null && !quoSaved && quoSuggestion != null;
+  const quoChoiceRequired =
+    quoInfo?.quoEnabled === true &&
+    (modalMode === 'add' || loadedEmployee == null || empActive(loadedEmployee));
 
   const applyStaffLogin = (login: StaffLogin | null) => {
     setLoginUser(login);
@@ -310,6 +374,30 @@ export default function SettingsEmployeeDirectory({
     void load();
   }, [load]);
 
+  // COM-CALL: who can edit staff profiles sees the Quo user field and the unlinked-caller notice.
+  useEffect(() => {
+    if (!canManageStaff) return;
+    let cancelled = false;
+    void fetchQuoUsers()
+      .then((info) => {
+        if (!cancelled) setQuoInfo(info);
+      })
+      .catch(() => undefined);
+    void fetchUnlinkedQuoCallers()
+      .then((list) => {
+        if (!cancelled) setUnlinkedCallers(list);
+      })
+      .catch(() => undefined);
+    void fetchActiveStaffWithLoginOff()
+      .then((ids) => {
+        if (!cancelled) setLoginOffIds(new Set(ids));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageStaff, rows]);
+
   const openAdd = () => {
     setEditingId(null);
     setFirstName('');
@@ -319,6 +407,7 @@ export default function SettingsEmployeeDirectory({
     setTitle('');
     setDesignation('');
     setLicenseNumber('');
+    setLicenseRows([]);
     setSignatureImage(null);
     setPimsId('');
     setPimsUserId('');
@@ -326,6 +415,8 @@ export default function SettingsEmployeeDirectory({
     setIsProvider(false);
     applyStaffLogin(null);
     setQuoLinePhone('');
+    setQuoSaved('');
+    setQuoPicked(null);
     setLoadedEmployee(null);
     setAddress1('');
     setAddress2('');
@@ -357,6 +448,22 @@ export default function SettingsEmployeeDirectory({
     setTitle(str(full.title));
     setDesignation(str(full.designation));
     setLicenseNumber(str(r.licenseNumber));
+    setLicenseRows(
+      str(r.licenseNumber) ? [{ state: practiceState, number: str(r.licenseNumber) }] : [],
+    );
+    if (full.id != null) {
+      const empId = Number(full.id);
+      void loadPracticeLicenses(true)
+        .then((all) => {
+          setPracticeState(all.practiceState);
+          setLicenseRows(
+            all.licenses
+              .filter((l) => l.employeeId === empId && l.kind === 'veterinary')
+              .map((l) => ({ state: l.state, number: l.number })),
+          );
+        })
+        .catch(() => undefined);
+    }
     const storedSig =
       typeof r.signatureImage === 'string' && r.signatureImage.startsWith('data:image/')
         ? r.signatureImage
@@ -388,6 +495,8 @@ export default function SettingsEmployeeDirectory({
     setPhone2(str(r.phone2));
     setQuoLinePhone(str(r.quoLinePhone));
     setQuoCustom(false);
+    setQuoSaved(savedQuoChoice(full));
+    setQuoPicked(null);
     setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
   };
 
@@ -573,7 +682,7 @@ export default function SettingsEmployeeDirectory({
       email: blankToNull(email),
       title: blankToNull(title),
       designation: blankToNull(designation),
-      licenseNumber: blankToNull(licenseNumber),
+      licenseNumber: primaryLicenseFromRows(licenseRows, practiceState) ?? blankToNull(licenseNumber),
       signatureImage,
       pimsId: blankToNull(pimsId),
       pimsUserId: blankToNull(pimsUserId),
@@ -594,6 +703,8 @@ export default function SettingsEmployeeDirectory({
       isActive: true,
       isDeleted: false,
     };
+    // COM-CALL: with Quo on, the profile always sends its Quo choice (the API refuses a blank one).
+    if (quoInfo?.quoEnabled) payload.quoUserChoice = quoChoice;
     return payload;
   };
 
@@ -631,6 +742,13 @@ export default function SettingsEmployeeDirectory({
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
+    if (quoChoiceRequired && !quoChoice) {
+      onMessage?.(
+        'Choose this person’s Quo user, or “Doesn’t use Quo”. Their calls reach their call dock through it.',
+        'error'
+      );
+      return;
+    }
     if (modalMode === 'add') {
       const fn = firstName.trim();
       const ln = lastName.trim();
@@ -697,6 +815,11 @@ export default function SettingsEmployeeDirectory({
         isDeleted: prev.isDeleted === true,
       } as EmployeeDto;
       await saveEmployees(merged);
+      await saveEmployeeLicenses(
+        editingId,
+        Number.isFinite(practiceId) && practiceId > 0 ? practiceId : DEFAULT_PRACTICE_ID,
+        licenseRows.filter((l) => l.number.trim()),
+      );
       await saveProviderSignature(editingId, signatureImage);
       await saveOfficeAndRoles(editingId);
       if (
@@ -753,7 +876,7 @@ export default function SettingsEmployeeDirectory({
     onMessage?.(
       result.completedAt
         ? `Offboarded. Their login has ended and their work has been handed over.${rebook}`
-        : `Offboarded. Their last day is ${result.lastDay}; their login ends at midnight that night.${rebook}`,
+        : `Offboarded. Their last day is ${formatYmd(result.lastDay)}; their login ends at midnight that night.${rebook}`,
       'success'
     );
     await load();
@@ -971,6 +1094,48 @@ export default function SettingsEmployeeDirectory({
   );
   const emailLocked = loginUser != null;
 
+  /** COM-CALL: active staff with neither a Quo user nor "Doesn't use Quo". */
+  const quoNotLinked = (emp: Employee): boolean =>
+    quoInfo?.quoEnabled === true && empActive(emp) && !savedQuoChoice(emp);
+  const quoNotLinkedCount = sorted.filter(quoNotLinked).length;
+  const loginOff = (emp: Employee): boolean => empActive(emp) && loginOffIds.has(Number(emp.id));
+  const loginOffCount = sorted.filter(loginOff).length;
+
+  const quoKnownIds = new Set((quoInfo?.users ?? []).map((u) => u.id));
+  const quoUserField = quoInfo?.quoEnabled ? (
+    <label className="settings-employee-modal__full">
+      <span className="label">Quo user{quoChoiceRequired ? ' (required)' : ''}</span>
+      <select
+        className="input"
+        aria-label="Quo user"
+        value={quoChoice}
+        required={quoChoiceRequired}
+        onChange={(e) => setQuoPicked(e.target.value)}
+      >
+        <option value="">Choose…</option>
+        {(quoInfo.users ?? []).map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.name}
+            {u.email && u.email !== u.name ? ` · ${u.email}` : ''}
+            {quoSuggestedShown && quoSuggestion?.id === u.id ? ' (matches email — confirm)' : ''}
+          </option>
+        ))}
+        {quoChoice && quoChoice !== QUO_NONE && !quoKnownIds.has(quoChoice) ? (
+          <option value={quoChoice}>Quo user {quoChoice} (not in Quo’s list)</option>
+        ) : null}
+        <option value={QUO_NONE}>Doesn’t use Quo</option>
+      </select>
+      <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+        {quoSuggestedShown
+          ? 'Picked because the email matches. Check it’s the right person, then Save. '
+          : ''}
+        Calls this person answers or makes in Quo land in their call dock. Each Quo user belongs to
+        one person.
+        {quoInfo.error ? ` ${quoInfo.error}` : ''}
+      </p>
+    </label>
+  ) : null;
+
   return (
     <div className="settings-employee-directory">
       <p className="settings-section-description" style={{ marginTop: 0 }}>
@@ -998,8 +1163,10 @@ export default function SettingsEmployeeDirectory({
                   {emp.isProvider ? ' · Provider' : ''}
                   {empActive(emp) ? '' : ' (Deactivated)'}
                   {empActive(emp) && lastDayById.get(emp.id)
-                    ? ` · Last day ${lastDayById.get(emp.id)}`
+                    ? ` · Last day ${formatYmd(lastDayById.get(emp.id))}`
                     : ''}
+                  {loginOff(emp) ? ' · Login off — offboard?' : ''}
+                  {quoNotLinked(emp) ? ' · Quo: not linked' : ''}
                 </option>
               ))}
               {showDeactivated
@@ -1036,6 +1203,67 @@ export default function SettingsEmployeeDirectory({
           </div>
         </div>
         {loadError && <div className="settings-error-message">{loadError}</div>}
+        {canManageStaff && unlinkedCallers.length > 0 ? (
+          <div className="settings-message settings-warning-message" role="status" style={{ display: 'block' }}>
+            {unlinkedCallers.map((u) => {
+              const who = unlinkedCallerLabel(u);
+              const oldLogin = u.inQuo === false || !!u.formerStaffName;
+              return (
+                <div key={u.quoUserId} style={{ margin: '0 0 8px' }}>
+                  <p style={{ margin: '0 0 4px' }}>
+                    Calls taken in Quo by <strong>{who}</strong> don’t reach anyone’s call dock
+                    {u.waitingCalls > 0
+                      ? ` — ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'}`
+                      : ''}
+                    .{' '}
+                    {oldLogin
+                      ? 'If someone now uses this Quo login, choose it as their Quo user on their profile. Otherwise dismiss the calls.'
+                      : 'Choose this Quo user on their staff profile (Quo user).'}
+                  </p>
+                  {u.waitingCalls > 0 ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={dismissingQuoUser === u.quoUserId}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          `Dismiss ${u.waitingCalls} waiting ${u.waitingCalls === 1 ? 'call' : 'calls'} from ${who}? ` +
+                            'They won’t be filed to any chart. Calls another staff member took are not affected.'
+                        );
+                        if (!ok) return;
+                        setDismissingQuoUser(u.quoUserId);
+                        try {
+                          await dismissUnlinkedQuoCalls(u.quoUserId);
+                          setUnlinkedCallers(await fetchUnlinkedQuoCallers());
+                        } catch (e) {
+                          setLoadError(extractErr(e));
+                        } finally {
+                          setDismissingQuoUser(null);
+                        }
+                      }}
+                    >
+                      {dismissingQuoUser === u.quoUserId ? 'Dismissing…' : 'Dismiss these calls'}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {loginOffCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Login off for {loginOffCount} active {loginOffCount === 1 ? 'person' : 'people'}{' '}
+            (marked “Login off” in the Staff list). They can’t sign in but still appear on
+            schedules and staff lists. Open their profile and offboard them.
+          </p>
+        ) : null}
+        {quoNotLinkedCount > 0 ? (
+          <p className="settings-muted" style={{ margin: '4px 0 8px' }}>
+            Quo: not linked for {quoNotLinkedCount} active{' '}
+            {quoNotLinkedCount === 1 ? 'person' : 'people'} (marked in the Staff list). Open their
+            Profile and choose their Quo user, or “Doesn’t use Quo”.
+          </p>
+        ) : null}
 
         {editingId == null ? (
           <div className="settings-card">
@@ -1046,7 +1274,7 @@ export default function SettingsEmployeeDirectory({
         ) : (
           <>
               <div className="settings-employee-hub__sections" role="tablist" aria-label="Employee sections">
-                {HUB_SECTIONS.map((item) => (
+                {hubSections.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -1256,6 +1484,7 @@ export default function SettingsEmployeeDirectory({
                           </p>
                         </label>
                       ) : null}
+                      {quoUserField}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                         <input
                           type="checkbox"
@@ -1265,6 +1494,11 @@ export default function SettingsEmployeeDirectory({
                         <span>Scheduling provider</span>
                       </label>
                     </div>
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">State licenses</legend>
+                    <LicenseRowsEditor rows={licenseRows} practiceState={practiceState} onChange={setLicenseRows} />
                   </fieldset>
 
                   <fieldset className="settings-employee-modal__fieldset">
@@ -1425,9 +1659,9 @@ export default function SettingsEmployeeDirectory({
                             type="button"
                             className="btn secondary"
                             onClick={() => void cancelScheduledOffboard(editingRow.id)}
-                            title={`Last day ${lastDayById.get(editingRow.id)}`}
+                            title={`Last day ${formatYmd(lastDayById.get(editingRow.id))}`}
                           >
-                            Cancel offboarding (last day {lastDayById.get(editingRow.id)})
+                            Cancel offboarding (last day {formatYmd(lastDayById.get(editingRow.id))})
                           </button>
                         ) : editingRow && empActive(editingRow) ? (
                           <button
@@ -1621,7 +1855,7 @@ export default function SettingsEmployeeDirectory({
                     <input className="input" value={designation} onChange={(e) => setDesignation(e.target.value)} />
                   </label>
                   <label>
-                    <span className="label">License number</span>
+                    <span className="label">{practiceState} license number</span>
                     <input className="input" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
                   </label>
                   {isProvider ? (
@@ -1660,6 +1894,7 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">Email</span>
                     <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                   </label>
+                  {quoUserField}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
                     <input type="checkbox" checked={isProvider} onChange={(e) => setIsProvider(e.target.checked)} />
                     <span>Scheduling provider</span>
@@ -1849,6 +2084,71 @@ export default function SettingsEmployeeDirectory({
           onDone={(result) => void offboardDone(result)}
         />
       ) : null}
+    </div>
+  );
+}
+
+type LicenseRow = { state: string; number: string };
+
+/** The license certificates and Rx labels print: the practice-state one, else the first. */
+function primaryLicenseFromRows(rows: LicenseRow[], practiceState: string): string | null {
+  const filled = rows.filter((r) => r.number.trim());
+  const home = filled.find((r) => r.state.trim().toUpperCase() === practiceState);
+  return (home ?? filled[0])?.number.trim() || null;
+}
+
+function LicenseRowsEditor({
+  rows,
+  practiceState,
+  onChange,
+}: {
+  rows: LicenseRow[];
+  practiceState: string;
+  onChange: (rows: LicenseRow[]) => void;
+}) {
+  const update = (i: number, patch: Partial<LicenseRow>) =>
+    onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="settings-employee-modal__full settings-licenses">
+      {rows.length === 0 ? <p className="settings-licenses__empty">None on file.</p> : null}
+      {rows.map((r, i) => (
+        <div key={i} className="settings-licenses__row">
+          <input
+            className="input settings-licenses__state"
+            aria-label="State"
+            placeholder="ME"
+            maxLength={2}
+            value={r.state}
+            onChange={(e) => update(i, { state: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })}
+          />
+          <input
+            className="input"
+            aria-label="License number"
+            placeholder="License number"
+            value={r.number}
+            onChange={(e) => update(i, { number: e.target.value })}
+          />
+          <button
+            type="button"
+            className="btn secondary btn-sm"
+            aria-label="Remove this license"
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn secondary btn-sm"
+        onClick={() => onChange([...rows, { state: practiceState, number: '' }])}
+      >
+        + Add state license
+      </button>
+      <p className="settings-licenses__hint">
+        The {practiceState} license prints on certificates and Rx labels. One license per state. DEA numbers
+        are kept in Vet Snap.
+      </p>
     </div>
   );
 }

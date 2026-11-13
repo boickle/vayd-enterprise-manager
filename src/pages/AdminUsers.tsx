@@ -18,6 +18,7 @@ import OffboardDialog from '../components/settings/OffboardDialog';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Settings.css';
 import { appConfirm } from '../utils/appDialog';
+import { formatYmd } from '../utils/formatYmd';
 
 function extractErr(err: unknown): string {
   const e = err as {
@@ -594,7 +595,7 @@ export default function AdminUsers() {
             setMessage({
               text: result.completedAt
                 ? `Offboarded ${who}. The login is off and every session has ended.`
-                : `Offboarded ${who}. Their last day is ${result.lastDay}; the login ends at midnight that night.`,
+                : `Offboarded ${who}. Their last day is ${formatYmd(result.lastDay)}; the login ends at midnight that night.`,
               kind: 'success',
             });
             void loadUsers();

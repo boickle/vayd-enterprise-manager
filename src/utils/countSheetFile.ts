@@ -25,11 +25,12 @@ export const COUNT_SHEET_DIRECTIONS: string[] = [
   'Count what is physically on the shelf, in the unit shown in the Unit column (tablets, not bottles; mL, not vials).',
   'Controlled drugs are counted in mL: add up full bottles plus your best reading of any open bottle. Example: two full 10 mL vials and one with about 4 mL left = 24.',
   'Write 0 if there is none. Leave Count blank only if you did not count that item.',
+  "Each lot Scout has on the shelf has its own row, with Lot # and Expiration filled in. Write 0 for a lot that is gone. A blank lot row keeps Scout's amount, except for controlled drugs, where every lot needs a count.",
   '',
   'Lot # and Expiration are required on every row where "Lot # required" says Yes (vaccines, injectables and controlled drugs). Copy them from the bottle, vial or box. For other items, fill them in if they are on the package.',
   'Expiration can be month/year, e.g. 3/2027 (it means the end of that month).',
   '',
-  "More than one lot of the same item? Use one row per lot. Copy the item's row, insert it right below, keep the same Code, and enter that lot's Count, Lot # and Expiration. Do not add lots together on one row.",
+  "A lot that is not listed? Use one row per lot. Copy the item's row, insert it right below, keep the same Code, and enter that lot's Count, Lot # and Expiration. Do not add lots together on one row.",
   'Count every lot of an item at the same time.',
   '',
   "Something on the shelf that is not on the list? Add a row at the bottom with the item's name (or its code if you know it), plus its Count, Lot # and Expiration.",
@@ -47,6 +48,12 @@ export function sortForSheet(items: FirstCountSheetItem[]): FirstCountSheetItem[
   });
 }
 
+/** 2027-03-31 → 3/31/2027, as staff write it. */
+function sheetExp(iso: string | null): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : String(iso ?? '');
+}
+
 export function countSheetFileName(sheet: FirstCountSheet): string {
   const slug = `${sheet.branchName}-${sheet.locationName}`
     .replace(/[^a-z0-9]+/gi, '-')
@@ -59,7 +66,7 @@ export async function downloadCountSheetXlsx(
   sheet: FirstCountSheet,
   items: FirstCountSheetItem[]
 ): Promise<void> {
-  const { default: writeXlsxFile } = await import('write-excel-file');
+  const { default: writeXlsxFile } = await import('write-excel-file/browser');
   const header = COUNT_SHEET_HEADER.map((h) => ({
     value: h,
     fontWeight: 'bold' as const,
@@ -72,9 +79,11 @@ export async function downloadCountSheetXlsx(
     format: '@',
     ...extra,
   });
-  const rows = sortForSheet(items).map((i) => {
+  // One row per lot already on the shelf (lot # and expiration filled in), or one blank row.
+  const rows = sortForSheet(items).flatMap((i) => {
     const need = i.requireLotNumber ? { backgroundColor: '#FFF7D6' } : {};
-    return [
+    const lots = i.lots?.length ? i.lots : [null];
+    return lots.map((lot) => [
       text(i.code),
       text(i.name),
       text(i.unit),
@@ -82,27 +91,24 @@ export async function downloadCountSheetXlsx(
       text(i.isControlled ? 'Yes' : ''),
       text(i.requireLotNumber ? 'Yes' : ''),
       text(''),
-      text('', need),
-      text('', need),
+      text(lot?.lotNumber ?? '', lot ? {} : need),
+      text(lot ? sheetExp(lot.expirationDate) : '', lot ? {} : need),
       text(''),
-    ];
+    ]);
   });
   const directions = COUNT_SHEET_DIRECTIONS.map((line, n) => [
     { value: line, fontWeight: n === 0 ? ('bold' as const) : undefined, wrap: true },
   ]);
-  await writeXlsxFile(
-    // Directions first so Excel opens on it; the upload still reads only the Count sheet tab.
-    [directions, [header, ...rows]] as never,
+  // Directions first so Excel opens on it; the upload still reads only the Count sheet tab.
+  await writeXlsxFile([
+    { data: directions as never, sheet: DIRECTIONS_TAB, columns: [{ width: 110 }], stickyRowsCount: 1 },
     {
-      sheets: [DIRECTIONS_TAB, COUNT_TAB],
-      columns: [
-        [{ width: 110 }],
-        [18, 36, 8, 26, 11, 15, 10, 16, 13, 30].map((width) => ({ width })),
-      ],
+      data: [header, ...rows] as never,
+      sheet: COUNT_TAB,
+      columns: [18, 36, 8, 26, 11, 15, 10, 16, 13, 30].map((width) => ({ width })),
       stickyRowsCount: 1,
-      fileName: countSheetFileName(sheet),
-    } as never
-  );
+    },
+  ]).toFile(countSheetFileName(sheet));
 }
 
 /** Minimal RFC 4180 parser: quoted fields, doubled quotes, CRLF. */

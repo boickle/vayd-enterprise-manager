@@ -52,7 +52,66 @@ import {
   type EmailNotSentReason,
   type SendRecipients,
 } from './roomLoader/roomLoaderSendNotices';
+import { getRoomLoaderConfig } from '../api/roomLoaderConfig';
+import {
+  DEFAULT_INVOICE_CATEGORY_ORDER,
+  INVOICE_CATEGORY_LABELS,
+  invoiceCategoryFor,
+  isStandardInvoiceOrder,
+  moveInvoiceOrderKey,
+  reconcileInvoiceOrder,
+  sortByKeyOrder,
+  type InvoiceCategoryKey,
+  type InvoiceOrderLine,
+} from '../utils/roomLoaderInvoiceOrder';
+import InvoiceOrderList, {
+  type InvoiceOrderListRow,
+  type InvoiceOrderWaitingRow,
+} from './roomLoader/InvoiceOrderList';
+import { itemAlreadyOnPetList } from './roomLoader/roomLoaderDuplicates';
 import './RoomLoader.css';
+
+/** Invoice-order key for a staff reminder line. */
+function reminderOrderKey(reminderId: number): string {
+  return `r:${reminderId}`;
+}
+
+/** Invoice-order key for an added item; `rowKey` keeps it stable when items are removed. */
+function addedItemOrderKey(item: SearchableItem, index: number): string {
+  return `a:${item.rowKey ?? `i${index}`}`;
+}
+
+function newAddedRowKey(): string {
+  return `rk${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Give every added item a stable `rowKey` (items saved before invoice order have none). */
+function withAddedRowKeys(byPet: Record<number, SearchableItem[]>): Record<number, SearchableItem[]> {
+  const out: Record<number, SearchableItem[]> = {};
+  Object.keys(byPet).forEach((petIdStr) => {
+    const petId = Number(petIdStr);
+    const list = Array.isArray(byPet[petId]) ? byPet[petId] : [];
+    out[petId] = list.map((item) => (item.rowKey ? item : { ...item, rowKey: newAddedRowKey() }));
+  });
+  return out;
+}
+
+/** Saved staff arrangement from what was sent (`sortOrder` on each line); null when none was sent. */
+function itemOrderFromSentPatient(sp: any): string[] | null {
+  const entries: Array<{ key: string; pos: number }> = [];
+  (sp?.reminders || []).forEach((r: any) => {
+    if (r?.reminderId != null && Number.isFinite(Number(r?.sortOrder))) {
+      entries.push({ key: reminderOrderKey(Number(r.reminderId)), pos: Number(r.sortOrder) });
+    }
+  });
+  (sp?.addedItems || []).forEach((a: any) => {
+    if (a?.rowKey && Number.isFinite(Number(a?.sortOrder))) {
+      entries.push({ key: `a:${a.rowKey}`, pos: Number(a.sortOrder) });
+    }
+  });
+  if (entries.length === 0) return null;
+  return entries.sort((x, y) => x.pos - y.pos).map((e) => e.key);
+}
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
 
@@ -514,6 +573,25 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
   const [confirmRecipients, setConfirmRecipients] = useState<SendRecipients>('primary');
 
+  /** Settings → Room Loader → Invoice order (category order, top of the invoice first). */
+  const [invoiceCategoryOrder, setInvoiceCategoryOrder] = useState<InvoiceCategoryKey[]>(DEFAULT_INVOICE_CATEGORY_ORDER);
+  /** Staff arrangement per pet (invoice-order keys); null or missing = the standard order. */
+  const [itemOrderByPet, setItemOrderByPet] = useState<Record<number, string[] | null>>({});
+  /** Keys staff moved this session, per pet (the "Moved" tag). */
+  const [movedOrderKeys, setMovedOrderKeys] = useState<Record<number, string[]>>({});
+
+  useEffect(() => {
+    let alive = true;
+    getRoomLoaderConfig()
+      .then((config) => {
+        if (alive) setInvoiceCategoryOrder(config.invoiceOrder.categories);
+      })
+      .catch((err) => console.error('Could not load the Room Loader invoice order:', err));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
   const getAddedItemsForPatient = (patientId: number): SearchableItem[] => {
     const raw = addedItems[patientId];
@@ -731,6 +809,25 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     try {
       const data = await getRoomLoader(id);
       setSelectedRoomLoader(data);
+      setMovedOrderKeys({});
+      {
+        // Invoice order: once sent, the order the client was sent (Send does not update the saved
+        // form, so a save from before the send may be stale); before that, the saved arrangement.
+        const savedOrder = (data?.savedForm as { itemOrderByPet?: Record<string, unknown> } | null | undefined)
+          ?.itemOrderByPet;
+        const alreadySent = data?.sentStatus !== 'not_sent' || (data?.timesSentToClient ?? 0) > 0;
+        const nextOrder: Record<number, string[] | null> = {};
+        (data?.sentToClient?.patients || []).forEach((sp: any) => {
+          if (sp?.patientId != null) nextOrder[Number(sp.patientId)] = itemOrderFromSentPatient(sp);
+        });
+        if (!alreadySent && savedOrder && typeof savedOrder === 'object') {
+          Object.keys(savedOrder).forEach((petIdStr) => {
+            const keys = (savedOrder as Record<string, unknown>)[petIdStr];
+            nextOrder[Number(petIdStr)] = Array.isArray(keys) ? keys.map(String) : null;
+          });
+        }
+        setItemOrderByPet(nextOrder);
+      }
       
       // Check if saved form data exists and restore it
       if (data?.savedForm) {
@@ -744,7 +841,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
             const raw = savedForm.addedItems[petId];
             restoredAddedItems[petId] = Array.isArray(raw) ? raw : [];
           });
-          setAddedItems(restoredAddedItems);
+          setAddedItems(withAddedRowKeys(restoredAddedItems));
         }
         
         // Restore quantities
@@ -895,6 +992,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   name: item.name,
                   code: item.code,
                   price: typeof item.price === 'number' ? item.price : Number(item.price) || 0,
+                  ...(item.rowKey ? { rowKey: String(item.rowKey) } : {}),
                 };
                 if (itemType === 'inventory') si.inventoryItem = base;
                 else if (itemType === 'lab') si.lab = base;
@@ -926,7 +1024,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           setVaccineCheckboxes(vaccines);
           setAppointmentReasons(reasons);
           setArrivalWindows(windows);
-          setAddedItems(added);
+          setAddedItems(withAddedRowKeys(added));
           setPetAnswers(answers);
           // When already sent, prefer savedForm quantities so re-sends respect employee edits (e.g. quantity changes)
           const mergedAddedQty = hasBeenSent && savedForm.addedItemQuantities
@@ -1003,6 +1101,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                 name: item.name,
                 code: item.code,
                 price: typeof item.price === 'number' ? item.price : Number(item.price) || 0,
+                ...((item as { rowKey?: string }).rowKey ? { rowKey: String((item as { rowKey?: string }).rowKey) } : {}),
               };
               if (itemType === 'inventory') si.inventoryItem = base;
               else if (itemType === 'lab') si.lab = base;
@@ -1023,7 +1122,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           setVaccineCheckboxes(vaccinesFromSent);
           setNotesToClient(notesFromSent);
           setReminderQuantities(reminderQtyFromSent);
-          setAddedItems(addedFromSent);
+          setAddedItems(withAddedRowKeys(addedFromSent));
           setAddedItemQuantities(addedQtyFromSent);
           setConfirmedMatchReminders(confirmedFromSent);
         } else {
@@ -1390,6 +1489,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     setSelectedRoomLoader(null);
     setPetAnswers({});
     setAddedItems({});
+    setItemOrderByPet({});
+    setMovedOrderKeys({});
     setSearchQuery({});
     setSearchResults({});
     setSearchLoading({});
@@ -1667,8 +1768,24 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       return;
     }
 
+    // RL-17: refuse an item already on this pet's list now, not only at Send.
+    if (
+      itemAlreadyOnPetList(
+        item,
+        getAddedItemsForPatient(petId),
+        patientData.reminders || [],
+        removedReminders,
+        (reminderId) => reminderCorrections[`reminder-${reminderId}`]?.selectedItem
+      )
+    ) {
+      void appAlert(`${item.name} is already on ${patientData.patient.name || 'this pet'}'s list.`);
+      setSearchQuery((prev) => ({ ...prev, [petId]: '' }));
+      setSearchResults((prev) => ({ ...prev, [petId]: [] }));
+      return;
+    }
+
     // First, add the item with the original price
-    const itemWithOriginalPrice = { ...item };
+    const itemWithOriginalPrice = { ...item, rowKey: newAddedRowKey() };
     setAddedItems((prev) => ({
       ...prev,
       [petId]: [...(prev[petId] || []), itemWithOriginalPrice],
@@ -2100,6 +2217,96 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     });
   }
 
+  /**
+   * One pet's lines in invoice order. Reminders are placed once their match is confirmed
+   * (visit/consult reminders need no match); the rest wait under "Needs a match".
+   */
+  function invoiceOrderForPet(patientId: number, reminders: ReminderWithPrice[]) {
+    const placed: Array<InvoiceOrderLine & { row: InvoiceOrderListRow }> = [];
+    const waiting: InvoiceOrderWaitingRow[] = [];
+    (reminders || []).forEach((r) => {
+      const reminderId = r.reminder?.id;
+      if (reminderId == null || removedReminders.has(reminderId)) return;
+      const key = reminderOrderKey(reminderId);
+      const correction = reminderCorrections[`reminder-${reminderId}`];
+      const hasMatch = reminderHasCatalogMatch(r, correction);
+      const isVisitOrConsult = reminderContains(r, 'visit', 'consult');
+      const description = (r.reminder?.description ?? '').trim() || 'Reminder';
+      if (!isVisitOrConsult && !(hasMatch && confirmedMatchReminders.has(reminderId))) {
+        waiting.push({
+          key,
+          label: hasMatch ? `${description} (confirm the match)` : `${description} (pick a catalog item)`,
+        });
+        return;
+      }
+      const selected = correction?.selectedItem ?? null;
+      const name = selected?.name ?? r.matchedItem?.name ?? description;
+      const category = invoiceCategoryFor({
+        name,
+        code: selected?.code ?? r.matchedItem?.code ?? null,
+        itemType: selected?.itemType ?? r.itemType ?? (isVisitOrConsult ? 'procedure' : null),
+        categoryName: selected
+          ? (selected.inventoryItem as { categoryName?: string } | undefined)?.categoryName
+          : (r.matchedItem as { categoryName?: string } | undefined)?.categoryName,
+      });
+      const qty = resolveQty(reminderQuantities[reminderId]);
+      const { totalFinal } = getAddedItemFinalPrice(reminderToPricingItem(r, correction), qty);
+      placed.push({
+        key,
+        category,
+        row: { key, name, categoryLabel: INVOICE_CATEGORY_LABELS[category], source: 'Reminder', qty, total: totalFinal },
+      });
+    });
+    getAddedItemsForPatient(patientId).forEach((added, index) => {
+      const key = addedItemOrderKey(added, index);
+      const category = invoiceCategoryFor({
+        name: added.name,
+        code: added.code,
+        itemType: added.itemType,
+        categoryName: (added.inventoryItem as { categoryName?: string } | undefined)?.categoryName,
+      });
+      const qty = resolveQty(addedItemQuantities[`${patientId}-${index}`]);
+      const { totalFinal } = getAddedItemFinalPrice(added, qty);
+      placed.push({
+        key,
+        category,
+        row: { key, name: added.name, categoryLabel: INVOICE_CATEGORY_LABELS[category], source: 'Added', qty, total: totalFinal },
+      });
+    });
+    const lines: InvoiceOrderLine[] = placed.map(({ key, category }) => ({ key, category }));
+    const keys = reconcileInvoiceOrder(itemOrderByPet[patientId], lines, invoiceCategoryOrder);
+    return {
+      keys,
+      lines,
+      rows: sortByKeyOrder(
+        placed.map((p) => p.row),
+        (row) => row.key,
+        keys
+      ),
+      waiting,
+      isCustom: !isStandardInvoiceOrder(keys, lines, invoiceCategoryOrder),
+    };
+  }
+
+  function handleInvoiceOrderMove(patientId: number, reminders: ReminderWithPrice[], key: string, toIndex: number) {
+    const { keys, lines } = invoiceOrderForPet(patientId, reminders);
+    const next = moveInvoiceOrderKey(keys, key, toIndex);
+    if (next === keys) return;
+    setItemOrderByPet((prev) => ({
+      ...prev,
+      [patientId]: isStandardInvoiceOrder(next, lines, invoiceCategoryOrder) ? null : next,
+    }));
+    setMovedOrderKeys((prev) => ({
+      ...prev,
+      [patientId]: Array.from(new Set([...(prev[patientId] ?? []), key])),
+    }));
+  }
+
+  function handleInvoiceOrderReset(patientId: number) {
+    setItemOrderByPet((prev) => ({ ...prev, [patientId]: null }));
+    setMovedOrderKeys((prev) => ({ ...prev, [patientId]: [] }));
+  }
+
   // Package all data for sending to client
   function packageDataForClient(): any {
     if (!selectedRoomLoader) return null;
@@ -2137,6 +2344,13 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           }
         }
       }
+
+      // Invoice order: each line carries its place (`sortOrder`) for the client form, PDF and invoice.
+      const orderKeys = invoiceOrderForPet(patient.id, reminders || []).keys;
+      const sortOrderOf = (key: string): number | null => {
+        const index = orderKeys.indexOf(key);
+        return index >= 0 ? index : null;
+      };
 
       // Get reminders with quantities and corrections (exclude reminders that were removed by staff)
       const reminderItems = (reminders || [])
@@ -2203,6 +2417,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
         const reminderPayload: any = {
           reminderId: reminderId,
+          sortOrder: sortOrderOf(reminderOrderKey(reminderId)),
           reminderText: reminderWithPrice.reminder.description,
           reminderType: reminderWithPrice.reminder.reminderType,
           dueDate: reminderWithPrice.reminder.dueDate,
@@ -2236,6 +2451,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           code: item.code,
           price: effectivePrice,
           quantity,
+          rowKey: item.rowKey ?? null,
+          sortOrder: sortOrderOf(addedItemOrderKey(item, itemIdx)),
         };
         if (String(item.itemType).toLowerCase() === 'inventory') {
           const cat = (item.inventoryItem as { categoryName?: string } | undefined)?.categoryName;
@@ -2699,6 +2916,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         reminderCorrections: reminderCorrections,
         removedReminders: Array.from(removedReminders),
         confirmedMatchReminders: Array.from(confirmedMatchReminders),
+        itemOrderByPet,
       };
       await saveRoomLoaderForm({
         roomLoaderId: selectedRoomLoader.id,
@@ -5243,6 +5461,22 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                       )}
                   </div>
                 </div>
+
+                {(() => {
+                  const order = invoiceOrderForPet(patient.id, item.reminders || []);
+                  return (
+                    <InvoiceOrderList
+                      petName={patient.name || 'this pet'}
+                      rows={order.rows}
+                      waiting={order.waiting}
+                      isCustom={order.isCustom}
+                      readOnly={formSubmittedByClient}
+                      movedKeys={new Set(movedOrderKeys[patient.id] ?? [])}
+                      onMove={(key, toIndex) => handleInvoiceOrderMove(patient.id, item.reminders || [], key, toIndex)}
+                      onReset={() => handleInvoiceOrderReset(patient.id)}
+                    />
+                  );
+                })()}
 
                 {/* Notes to send to client (per pet) */}
                 <div style={{ marginTop: '20px', marginBottom: '0' }}>

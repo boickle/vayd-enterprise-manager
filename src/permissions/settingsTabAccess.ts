@@ -34,6 +34,7 @@ export const SETTINGS_TAB_IDS = [
   'cl-seat-assignment',
   'gmail-mailboxes',
   'chat-hours',
+  'call-dock',
   'reminders',
   'payment-types',
   'client-statuses',
@@ -53,6 +54,8 @@ const STAFF_HUB: TabRequirement[] = [
   { key: 'staff.employee.manage' },
   { key: 'staff.login.manage' },
   { key: 'staff.role.assign' },
+  // The Medical Director sets licenses on the Access tab (D1; owner, Nov 9, 2026).
+  { key: 'staff.license.manage' },
 ];
 
 /** Any one of these opens the tab. Empty: admin and superadmin logins only. */
@@ -96,6 +99,8 @@ export const SETTINGS_TAB_PERMISSIONS: Record<SettingsTabId, readonly TabRequire
   // Communication
   'gmail-mailboxes': [],
   'chat-hours': [{ key: 'message_template.manage' }],
+  // Go-live call-dock start date: admin and superadmin only (API key calls.* has no staff rule).
+  'call-dock': [],
   reminders: [{ key: 'message_template.manage' }],
   'message-templates': [{ key: 'message_template.manage' }],
   forms: [],

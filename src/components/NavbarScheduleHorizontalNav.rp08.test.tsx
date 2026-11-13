@@ -5,8 +5,9 @@
  *   RP-08-2  Menus by role: Executive sees Marketing and Analytics, no Settings, no Admin. Practice
  *            Manager (employee login) sees Marketing, no Admin. Admin login: unchanged.
  *   RP-08-3  An executive with an individual marketing.manage grant still has no Admin.
- *   RP-08-4  Marketing menu: Promotions ▸ Membership Promotions, Appointment Request Promotions;
- *            Email campaigns.
+ *   RP-08-4  Marketing menu: Promotions and Email campaigns only (Nov 11). Promotions opens a page
+ *            whose tabs are Membership Promotions and Appointment Request Promotions
+ *            (src/pages/marketing/PromotionsLayout.test.tsx).
  */
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -20,6 +21,7 @@ vi.mock('../auth/useAuth', () => ({
 }));
 vi.mock('../permissions/PermissionContext', () => ({
   useCan: (key: string) => state.keys.has(key),
+  useMayShow: (...keys: string[]) => keys.some((key) => state.keys.has(key)),
   usePermissions: () => ({ effective: {}, can: (key: string) => state.keys.has(key) }),
 }));
 vi.mock('../scout-tabs', () => ({
@@ -142,28 +144,21 @@ describe('RP-08-3: edit rights for one exec', () => {
 });
 
 describe('RP-08-4: Marketing menu', () => {
-  it('admin login opens Marketing: Promotions ▸ Membership Promotions, Appointment Request Promotions; Email campaigns', () => {
+  it('admin login opens Marketing: just Promotions and Email campaigns', () => {
     renderNav('admin', []);
     fireEvent.click(screen.getByText('Marketing', { selector: 'summary' }));
     const menu = screen.getByRole('menu', { name: 'Marketing' });
 
-    const emailCampaigns = within(menu).getByRole('menuitem', { name: 'Email campaigns' });
-    expect(emailCampaigns.getAttribute('href')).toBe('/schedule/marketing');
-
-    const promotions = within(menu).getByRole('button', { name: /Promotions/ });
-    expect(promotions.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(promotions);
-    expect(promotions.getAttribute('aria-expanded')).toBe('true');
-
-    const submenu = within(menu).getByRole('menu', { name: 'Promotions' });
-    const links = within(submenu).getAllByRole('menuitem');
+    const links = within(menu).getAllByRole('menuitem');
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-      ['Membership Promotions', '/schedule/marketing/membership-promotions'],
-      ['Appointment Request Promotions', '/schedule/marketing/appointment-request-promotions'],
+      ['Promotions', '/schedule/marketing/membership-promotions'],
+      ['Email campaigns', '/schedule/marketing'],
     ]);
+    expect(within(menu).queryByText('Appointment Request Promotions')).toBeNull();
+    expect(within(menu).queryByRole('button')).toBeNull();
   });
 
-  it('the Promotions submenu starts open on a promotions page, and Marketing is the active tab', () => {
+  it('on a promotions page, Marketing is the active tab and Promotions is the active link', () => {
     renderNav(
       'employee',
       PRACTICE_MANAGER_KEYS,
@@ -173,9 +168,10 @@ describe('RP-08-4: Marketing menu', () => {
     expect(summary.className).toContain('schedule-app__tab--active');
     const menu = screen.getByRole('menu', { name: 'Marketing', hidden: true });
     expect(
-      within(menu)
-        .getByRole('button', { name: /Promotions/, hidden: true })
-        .getAttribute('aria-expanded')
-    ).toBe('true');
+      within(menu).getByRole('menuitem', { name: 'Promotions', hidden: true }).className
+    ).toContain('schedule-app__settings-link--active');
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Email campaigns', hidden: true }).className
+    ).not.toContain('schedule-app__settings-link--active');
   });
 });

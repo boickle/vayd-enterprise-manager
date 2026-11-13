@@ -25,9 +25,11 @@ import {
 } from '../api/inventoryOps';
 import {
   listInventoryBranchLocations,
+  listPracticeBranches,
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../api/branchInventory';
+import { fetchMyOffices } from '../api/permissions';
 import { searchItems, type InventoryItem, type SearchResultItem } from '../api/quantityPriceBreaks';
 import {
   loadInventoryItem,
@@ -41,7 +43,10 @@ import {
   receivedShipmentSummary,
 } from '../components/inventory/receivedShipmentSummary';
 import { appConfirm } from '../utils/appDialog';
-import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import {
+  resolveEmployeeIdFromToken,
+  resolvePracticeIdFromToken,
+} from '../utils/practiceIdFromToken';
 import {
   clearReceiveShipmentDraft,
   loadReceiveShipmentDraft,
@@ -54,7 +59,7 @@ import NewItemFromReceiveModal, {
 } from '../components/inventory/NewItemFromReceiveModal';
 
 const EMPTY_NEW_ITEM: NewItemDefaults = { name: '' };
-import { imagesToInvoicePdf } from '../utils/invoicePagesPdf';
+import { redactInvoiceDea, type RedactedInvoice } from '../utils/invoiceRedact';
 import './Settings.css';
 
 type InvoicePageDraft = {
@@ -180,6 +185,34 @@ function normalizeInvoiceNo(value: string | null | undefined): string {
 export default function ReceiveShipmentPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const myEmployeeId = useMemo(() => resolveEmployeeIdFromToken(token), [token]);
+  // Every office's name, so Shipments received names offices you can't receive at (U12).
+  const [officeNames, setOfficeNames] = useState<Map<number, string>>(new Map());
+  // Offices where you're the practice manager or inventory manager: you may delete any receive (Q5).
+  const [managerOffices, setManagerOffices] = useState<number[] | 'all'>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void listPracticeBranches(practiceId, { includeInactive: true })
+      .then((rows) => {
+        if (!cancelled) setOfficeNames(new Map(rows.map((b) => [b.id, b.name])));
+      })
+      .catch(() => {});
+    void fetchMyOffices(practiceId, 'inventory.po.manage')
+      .then((offices) => {
+        if (!cancelled) setManagerOffices(offices);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
+  /** Q5 (owner, Nov 9, 2026): managers of that office, or whoever received it, the same day. */
+  const canDeleteReceived = (row: InventoryShipment): boolean => {
+    if (managerOffices === 'all' || managerOffices.includes(row.branchId)) return true;
+    if (myEmployeeId == null || row.receivedByEmployeeId !== myEmployeeId) return false;
+    if (!row.finalizedAt) return false;
+    return new Date(row.finalizedAt).toDateString() === new Date().toDateString();
+  };
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
@@ -218,9 +251,17 @@ export default function ReceiveShipmentPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // The finalize result sits beside Shipments received (where the page scrolls to) and stays until the next message.
+  const [finalizedNote, setFinalizedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (toast || error) setFinalizedNote(null);
+  }, [toast, error]);
   const [parsing, setParsing] = useState(false);
   const [invoiceFileName, setInvoiceFileName] = useState<string | null>(null);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  /** DEA numbers are blacked out before the invoice is stored; when Scout isn't sure, staff check first. */
+  const [deaCheck, setDeaCheck] = useState<RedactedInvoice | null>(null);
+  const [invoiceDeaCovered, setInvoiceDeaCovered] = useState(0);
   const [invoicePages, setInvoicePages] = useState<InvoicePageDraft[]>([]);
   const [photoSourceOpen, setPhotoSourceOpen] = useState(false);
   const invoicePagesRef = useRef<InvoicePageDraft[]>([]);
@@ -590,6 +631,8 @@ export default function ReceiveShipmentPage() {
     setInvoiceNumber('');
     setInvoiceFileName(null);
     setInvoiceFile(null);
+    setDeaCheck(null);
+    setInvoiceDeaCovered(0);
     setInvoicePages((prev) => {
       revokeInvoicePagePreviews(prev);
       return [];
@@ -626,6 +669,8 @@ export default function ReceiveShipmentPage() {
     setParsedLines([]);
     setInvoiceFileName(null);
     setInvoiceFile(null);
+    setDeaCheck(null);
+    setInvoiceDeaCovered(0);
     setInvoicePages((prev) => {
       revokeInvoicePagePreviews(prev);
       return [];
@@ -826,23 +871,13 @@ export default function ReceiveShipmentPage() {
     if (!invoicePages.length || parsing || busy) return;
     setError(null);
     setParsing(true);
-    const pageFiles = invoicePages.map((page) => page.file);
-    // Read every page as its own image; store one combined PDF on the shipment.
-    let storeFile: File;
-    try {
-      storeFile = pageFiles.length === 1 ? pageFiles[0] : await imagesToInvoicePdf(pageFiles);
-    } catch (err: unknown) {
-      setParsing(false);
-      setError(apiErrorMessage(err));
-      return;
-    }
-    await onInvoiceFile(pageFiles, storeFile);
+    // Read every page as its own image; store one copy (DEA numbers blacked out) on the shipment.
+    await onInvoiceFile(invoicePages.map((page) => page.file));
   }
 
-  async function onInvoiceFile(parseInput: File | File[] | undefined, storeFile?: File) {
+  async function onInvoiceFile(parseInput: File | File[] | undefined) {
     const parseFiles = parseInput == null ? [] : Array.isArray(parseInput) ? parseInput : [parseInput];
     if (!parseFiles.length) return;
-    const file = storeFile ?? parseFiles[0];
     setParsing(true);
     setError(null);
     try {
@@ -851,11 +886,26 @@ export default function ReceiveShipmentPage() {
         parseFiles,
         supplierId === '' ? null : Number(supplierId)
       );
-      setInvoiceFile(file);
+      // Black out DEA numbers before anything is stored. If that fails, keep the lines but not the file.
+      let redacted: RedactedInvoice | null = null;
+      try {
+        redacted = await redactInvoiceDea(parseFiles, parsed.deaMarks ?? [], parsed.deaUnclear ?? false);
+      } catch {
+        redacted = null;
+      }
+      const keepNow = redacted && !redacted.unsure ? redacted.file : null;
+      setInvoiceFile(keepNow);
+      setInvoiceDeaCovered(redacted?.covered ?? 0);
+      setDeaCheck(redacted?.unsure ? redacted : null);
       setInvoiceFileName(
-        parseFiles.length > 1 ? `${parseFiles.length} pages (${file.name})` : file.name
+        parseFiles.length > 1 ? `${parseFiles.length} pages` : parseFiles[0].name
       );
       setInvoiceStoredOnShipmentId(null);
+      if (!redacted) {
+        setError(
+          "The invoice lines were read, but Scout couldn't black out DEA numbers on this file, so the file won't be stored with the shipment."
+        );
+      }
       setParseMeta({
         supplierName: parsed.supplierName,
         shipToName: parsed.shipToName,
@@ -903,8 +953,8 @@ export default function ReceiveShipmentPage() {
         }
       }
       if (parsed.suggestedBranchId != null) setBranchId(parsed.suggestedBranchId);
-      if (shipment) {
-        await persistInvoiceOnShipment(shipment, file);
+      if (shipment && keepNow) {
+        await persistInvoiceOnShipment(shipment, keepNow);
       }
       setToast(
         parsed.lines.length
@@ -1120,8 +1170,7 @@ export default function ReceiveShipmentPage() {
       await finalizeShipment(practiceId, shipment.id);
       resetReceiveForm();
       await reloadReceived();
-      setToast(toastMessage);
-      window.setTimeout(() => setToast(null), 5000);
+      setFinalizedNote(toastMessage);
       window.requestAnimationFrame(() => {
         receivedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
@@ -1590,10 +1639,81 @@ export default function ReceiveShipmentPage() {
             {invoiceFileName}
             {parseMeta?.supplierName ? ` · ${parseMeta.supplierName}` : ''}
             {parseMeta?.shipToName ? ` · Ship to ${parseMeta.shipToName}` : ''}
+            {invoiceDeaCovered > 0 && !deaCheck
+              ? ` · ${invoiceDeaCovered} DEA number${invoiceDeaCovered === 1 ? '' : 's'} blacked out`
+              : ''}
             {shipment?.invoicePdfKey || invoiceStoredOnShipmentId === shipment?.id
               ? ' · Stored with this shipment'
-              : ' · Stored when you add lines or finalize'}
+              : deaCheck
+                ? ' · Check the DEA numbers below before it is stored'
+                : invoiceFile
+                  ? ' · Stored when you add lines or finalize'
+                  : ' · Invoice file not kept'}
           </p>
+        )}
+        {deaCheck && !parsing && (
+          <div
+            className="settings-message"
+            role="alert"
+            style={{
+              display: 'block',
+              marginTop: 10,
+              backgroundColor: '#fffbeb',
+              border: '1px solid #fcd34d',
+              color: '#78350f',
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: 4 }}>
+              Check that every DEA number is blacked out before Scout keeps this invoice.
+            </strong>
+            {deaCheck.reasons.length > 0 && (
+              <ul style={{ margin: '0 0 8px 18px', padding: 0, fontSize: 13 }}>
+                {deaCheck.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            )}
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 8 }}>
+              {deaCheck.previews.map((src, i) => (
+                <img
+                  key={src.slice(-32) + i}
+                  src={src}
+                  alt={`Invoice page ${i + 1} with DEA numbers blacked out`}
+                  style={{ maxHeight: 360, border: '1px solid #e5e7eb', background: '#fff' }}
+                />
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const kept = deaCheck.file;
+                  setInvoiceFile(kept);
+                  setDeaCheck(null);
+                  if (shipment) {
+                    void persistInvoiceOnShipment(shipment, kept).catch((err: unknown) =>
+                      setError(apiErrorMessage(err))
+                    );
+                  }
+                }}
+              >
+                All covered, keep it
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  setDeaCheck(null);
+                  setInvoiceFile(null);
+                  setInvoiceDeaCovered(0);
+                }}
+              >
+                Don't keep the invoice file
+              </button>
+              <span style={{ fontSize: 13 }}>Receiving the items doesn't wait on this.</span>
+            </div>
+          </div>
         )}
       </div>
 
@@ -1847,6 +1967,7 @@ export default function ReceiveShipmentPage() {
                           branchId={branchId === '' ? null : Number(branchId)}
                           locationId={defaultLocId === '' ? null : Number(defaultLocId)}
                           allowNew
+                          fromInvoiceRead
                           requireExpiration
                           requireLotNumber={line.requireLotNumber === true}
                           required
@@ -2210,6 +2331,8 @@ export default function ReceiveShipmentPage() {
                 min={0.01}
                 step="any"
                 value={qty}
+                // Select the starting 1 so typing 30 gives 30, not 130 (U3, Nov 9, 2026).
+                onFocus={(e) => e.currentTarget.select()}
                 onChange={(e) => setQty(e.target.value)}
                 required
               />
@@ -2616,12 +2739,30 @@ export default function ReceiveShipmentPage() {
 
       <div ref={receivedSectionRef} style={{ marginTop: 32 }}>
         <h3 style={{ marginBottom: 8 }}>Shipments received</h3>
+        {finalizedNote ? (
+          <div
+            className="settings-message"
+            role="status"
+            style={{ marginBottom: 10, display: 'flex', gap: 8, alignItems: 'flex-start' }}
+          >
+            <span style={{ flex: 1 }}>{finalizedNote}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+              onClick={() => setFinalizedNote(null)}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         {received.length === 0 ? (
           <p className="settings-muted">No finalized shipments yet.</p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {receivedPageRows.map((row) => {
-              const office = branches.find((b) => b.id === row.branchId)?.name;
+              const office =
+                branches.find((b) => b.id === row.branchId)?.name ?? officeNames.get(row.branchId);
               const supplier = suppliers.find((s) => s.id === row.supplierId)?.name;
               const deleted = row.status === 'deleted';
               const open = receivedOpenId === row.id;
@@ -2693,7 +2834,7 @@ export default function ReceiveShipmentPage() {
                         View invoice
                       </button>
                     ) : null}
-                    {!deleted ? (
+                    {!deleted && canDeleteReceived(row) ? (
                       <button
                         type="button"
                         className="btn secondary"

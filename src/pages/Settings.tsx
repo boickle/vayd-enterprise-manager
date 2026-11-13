@@ -11,6 +11,7 @@ import {
   fetchAllZones,
   fetchEmployee,
   updateEmployeeAppointmentTypes,
+  updateEmployeePrimaryZone,
   updateEmployeeScheduleZones,
   updateWeeklySchedule,
   uploadEmployeeImage,
@@ -67,6 +68,7 @@ import {
 import { DepotLocationField } from '../components/DepotLocationField';
 import SettingsEmployeeSchedulePanel from '../components/settings/SettingsEmployeeSchedulePanel';
 import './Settings.css';
+import SettingsCallDock from '../components/settings/SettingsCallDock';
 import SettingsEmployeeDirectory, {
   type EmployeeHubSection,
 } from '../components/settings/SettingsEmployeeDirectory';
@@ -163,6 +165,7 @@ const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
 const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'gmail-mailboxes', label: 'Gmail Mailboxes' },
   { id: 'chat-hours', label: 'Live Chat Hours' },
+  { id: 'call-dock', label: 'Calls' },
   { id: 'reminders', label: 'Reminders' },
   { id: 'message-templates', label: 'Email & Text Templates' },
   { id: 'forms', label: 'Forms' },
@@ -403,6 +406,16 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const onCallDockMessage = useCallback((msg: string, kind: 'success' | 'error') => {
+    if (kind === 'success') {
+      setSuccess(msg);
+      setError(null);
+      window.setTimeout(() => setSuccess(null), 4000);
+    } else {
+      setError(msg);
+      setSuccess(null);
+    }
+  }, []);
 
   // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
@@ -425,6 +438,7 @@ export default function Settings() {
   const [selectedEmployeeForZones, setSelectedEmployeeForZones] = useState<Employee | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<EmployeeWeeklySchedule | null>(null);
   const [zoneUpdates, setZoneUpdates] = useState<EmployeeZoneEditorRow[]>([]);
+  const [savingPrimaryZone, setSavingPrimaryZone] = useState(false);
 
   // Employee Schedule state
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
@@ -521,6 +535,50 @@ export default function Settings() {
     allowedTabs.has('appointment-types') ||
     allowedTabs.has('roles') ||
     allowedTabs.has('employee-directory');
+
+  // Primary zone choices: zones the selected employee is assigned on any day.
+  const primaryZoneOptions = useMemo(() => {
+    if (!selectedEmployeeForZones) return [];
+    const assignedIds = new Set<number>();
+    for (const schedule of selectedEmployeeForZones.weeklySchedules ?? []) {
+      for (const z of schedule.zones ?? []) {
+        const id = Number(z.zoneId ?? z.zone?.id);
+        if (Number.isFinite(id) && id > 0) assignedIds.add(id);
+      }
+    }
+    return allZones
+      .filter((z) => assignedIds.has(z.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedEmployeeForZones, allZones]);
+
+  // A saved primary zone the employee is no longer assigned to, so it can still show.
+  const unassignedPrimaryZoneName = useMemo(() => {
+    const id = selectedEmployeeForZones?.primaryZoneId;
+    if (id == null || primaryZoneOptions.some((z) => z.id === id)) return null;
+    return allZones.find((z) => z.id === id)?.name ?? 'Unknown zone';
+  }, [selectedEmployeeForZones, primaryZoneOptions, allZones]);
+
+  const handleSetPrimaryZone = async (zoneId: number | null) => {
+    if (!selectedEmployeeForZones) return;
+    const employeeId = selectedEmployeeForZones.id;
+    setSavingPrimaryZone(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await updateEmployeePrimaryZone(employeeId, zoneId);
+      const primaryZoneId = updated?.primaryZoneId ?? zoneId;
+      setSelectedEmployeeForZones((prev) =>
+        prev && prev.id === employeeId ? { ...prev, primaryZoneId } : prev
+      );
+      setSuccess(zoneId == null ? 'Primary zone cleared' : 'Primary zone saved');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to save primary zone');
+    } finally {
+      setSavingPrimaryZone(false);
+    }
+  };
+
   useEffect(() => {
     if (!needsCoreData) return;
     loadData();
@@ -1718,6 +1776,45 @@ export default function Settings() {
 
             {selectedEmployeeForZones && (
               <>
+                <div className="settings-form-group">
+                  <label className="settings-label" htmlFor="employee-primary-zone">
+                    Primary Zone
+                  </label>
+                  <select
+                    id="employee-primary-zone"
+                    className="settings-select"
+                    value={selectedEmployeeForZones.primaryZoneId ?? ''}
+                    disabled={
+                      savingPrimaryZone ||
+                      (primaryZoneOptions.length === 0 &&
+                        selectedEmployeeForZones.primaryZoneId == null)
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void handleSetPrimaryZone(v === '' ? null : Number(v));
+                    }}
+                  >
+                    <option value="">-- No primary zone --</option>
+                    {primaryZoneOptions.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.name}
+                      </option>
+                    ))}
+                    {unassignedPrimaryZoneName != null && (
+                      <option value={selectedEmployeeForZones.primaryZoneId ?? ''}>
+                        {unassignedPrimaryZoneName} (not assigned)
+                      </option>
+                    )}
+                  </select>
+                  <p className="settings-muted" style={{ marginTop: '6px' }}>
+                    {primaryZoneOptions.length === 0
+                      ? 'Assign this employee to a zone below first. '
+                      : ''}
+                    Shown as Primary on the Work Zones Map; their other zones show as Backup. Saves
+                    as soon as you pick one.
+                  </p>
+                </div>
+
                 {selectedEmployeeForZones.weeklySchedules && selectedEmployeeForZones.weeklySchedules.length > 0 && (
                   <div className="settings-form-group">
                     <label className="settings-label">Select Schedule</label>
@@ -3178,6 +3275,19 @@ export default function Settings() {
                   setSuccess(null);
                 }
               }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'call-dock' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Calls</h2>
+            <p className="settings-section-description">
+              Where Quo calls start appearing in staff call docks.
+            </p>
+            <SettingsCallDock
+              practiceId={REMINDERS_PRACTICE_ID}
+              onMessage={onCallDockMessage}
             />
           </div>
         )}

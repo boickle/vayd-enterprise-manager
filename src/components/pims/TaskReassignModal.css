@@ -134,3 +134,55 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.task-reassign-modal__muted {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.task-reassign-modal__chips {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-reassign-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e3a8a;
+  font-size: 13px;
+}
+
+.task-reassign-modal__chip button {
+  border: none;
+  background: transparent;
+  color: #1e3a8a;
+  font-size: 16px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.task-reassign-modal__chip button:hover:not(:disabled) {
+  background: #dbeafe;
+}
+
+.task-reassign-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 14px;
+  color: #0f172a;
+}

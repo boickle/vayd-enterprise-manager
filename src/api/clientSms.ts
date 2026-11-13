@@ -32,6 +32,10 @@ export type StaffSmsDeliveryFailure = {
   errorMessage: string | null;
   source: string | null;
   created: string;
+  /** B13-1: true when the signed-in person sent it; managers also see other people's. */
+  sentByMe?: boolean;
+  /** Who sent it; null when Scout sent it on its own. */
+  senderName?: string | null;
 };
 
 export async function sendClientSms(
@@ -52,7 +56,7 @@ export async function fetchSchedulingOutreachSmsFrom(): Promise<string | null> {
   }
 }
 
-/** Undelivered staff SMS that Quo reported failed and staff have not dismissed. */
+/** Undelivered texts this person sent (and, for managers, everyone's) that they haven't dismissed. */
 export async function fetchStaffSmsDeliveryFailures(
   limit = 25,
 ): Promise<StaffSmsDeliveryFailure[]> {
@@ -65,4 +69,31 @@ export async function fetchStaffSmsDeliveryFailures(
 
 export async function acknowledgeStaffSmsDeliveryFailure(id: number): Promise<void> {
   await http.post(`/sms/delivery-failures/${encodeURIComponent(String(id))}/acknowledge`);
+}
+
+export type PreferredSmsFrom = {
+  /** The provider's own Quo line, or null when they have none. */
+  phone: string | null;
+  providerName: string | null;
+  source: 'appointment' | 'patient' | 'client' | null;
+};
+
+/**
+ * The line a text to this family starts on: the visit's provider (a visit named, else the family's
+ * visit today or in the next 7 days), else the pet's primary provider, else the client's.
+ */
+export async function fetchPreferredSmsFrom(args: {
+  clientId: number;
+  patientId?: number | null;
+  appointmentId?: number | null;
+}): Promise<PreferredSmsFrom> {
+  const params: Record<string, number> = { clientId: args.clientId };
+  if (args.patientId) params.patientId = args.patientId;
+  if (args.appointmentId) params.appointmentId = args.appointmentId;
+  const { data } = await http.get<PreferredSmsFrom>('/sms/preferred-from', { params });
+  return {
+    phone: data?.phone ?? null,
+    providerName: data?.providerName ?? null,
+    source: data?.source ?? null,
+  };
 }

@@ -5,6 +5,7 @@ import {
   buildComposeDraft,
   buildComposeSendBodiesFromEditorHtml,
   composeDraftSaveReady,
+  composeDraftThreadingReady,
   discardAllThreadDrafts,
   draftListSnippet,
   extractEmail,
@@ -13,6 +14,7 @@ import {
   loadComposeFromThreadDraft,
   loadSendAsAliases,
   replaceSignatureHtmlInCompose,
+  resolveComposeThreading,
   resolveReplyFromAlias,
   saveComposeDraft,
   signatureHtmlForFromAlias,
@@ -93,9 +95,12 @@ export default function GmailComposePanel({
   const [subject, setSubject] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
   const [quotedSuffix, setQuotedSuffix] = useState('');
-  const [threadId, setThreadId] = useState<string | undefined>();
-  const [inReplyTo, setInReplyTo] = useState<string | undefined>();
-  const [references, setReferences] = useState<string | undefined>();
+  // Seed threading immediately so the 1.5s autosave cannot race ahead of alias load
+  // and rewrite a reply draft without Gmail threadId (orphan in Drafts).
+  const initialThreading = resolveComposeThreading(context, threadMessages);
+  const [threadId, setThreadId] = useState<string | undefined>(initialThreading.threadId);
+  const [inReplyTo, setInReplyTo] = useState<string | undefined>(initialThreading.inReplyTo);
+  const [references, setReferences] = useState<string | undefined>(initialThreading.references);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCc, setShowCc] = useState(false);
@@ -164,6 +169,12 @@ export default function GmailComposePanel({
     lastSavedKeyRef.current = '';
     discardRequestedRef.current = false;
 
+    // Apply threading before the async alias fetch so autosave cannot omit threadId.
+    const threading = resolveComposeThreading(context, threadMessages);
+    setThreadId(threading.threadId);
+    setInReplyTo(threading.inReplyTo);
+    setReferences(threading.references);
+
     loadSendAsAliases(mailbox)
       .then((list) => {
         if (cancelled) return;
@@ -179,6 +190,7 @@ export default function GmailComposePanel({
 
         const draft = buildComposeDraft({ ...context, mailboxEmail: mailbox });
         const existing = loadComposeFromThreadDraft(threadMessages);
+        const readyThreading = resolveComposeThreading(context, threadMessages);
 
         if (existing) {
           hydratedDraftRef.current = true;
@@ -204,9 +216,9 @@ export default function GmailComposePanel({
           setCc(existing.cc);
           setSubject(existing.subject);
           setQuotedSuffix(draft.quotedSuffix);
-          setThreadId(draft.threadId ?? context.threadId);
-          setInReplyTo(draft.inReplyTo);
-          setReferences(draft.references);
+          setThreadId(readyThreading.threadId);
+          setInReplyTo(readyThreading.inReplyTo);
+          setReferences(readyThreading.references);
           setShowCc(Boolean(existing.cc.trim()));
           if (existing.from.trim()) setFrom(existing.from);
           applyEditorHtml(existing.bodyHtml);
@@ -215,9 +227,9 @@ export default function GmailComposePanel({
           setCc(draft.cc);
           setSubject(draft.subject);
           setQuotedSuffix(draft.quotedSuffix);
-          setThreadId(draft.threadId);
-          setInReplyTo(draft.inReplyTo);
-          setReferences(draft.references);
+          setThreadId(readyThreading.threadId);
+          setInReplyTo(readyThreading.inReplyTo);
+          setReferences(readyThreading.references);
           setShowCc(Boolean(draft.cc.trim()));
           applyEditorHtml(
             joinComposeBodyHtml('', sigHtml, draft.quotedSuffix, context.replyTo ?? null),
@@ -244,8 +256,14 @@ export default function GmailComposePanel({
     setSubject(existing.subject);
     setShowCc(Boolean(existing.cc.trim()));
     if (existing.from.trim()) setFrom(existing.from);
+    // Must set threading here too — this effect can beat the alias-load path and
+    // would otherwise leave autosave with a draftId but no threadId.
+    const threading = resolveComposeThreading(context, threadMessages);
+    setThreadId(threading.threadId ?? existing.threadId);
+    setInReplyTo(threading.inReplyTo ?? existing.inReplyTo);
+    setReferences(threading.references ?? existing.references);
     applyEditorHtml(existing.bodyHtml);
-  }, [threadMessages, applyEditorHtml]);
+  }, [threadMessages, applyEditorHtml, context.mode, context.threadId, context.replyTo?.id]);
 
   useEffect(() => {
     if (skipEditorSyncRef.current) {
@@ -267,6 +285,8 @@ export default function GmailComposePanel({
 
     const fields = composeFieldsRef.current;
     if (!composeDraftSaveReady(fields)) return;
+    // Block reply autosave until threadId is known — otherwise Gmail detaches the draft.
+    if (!composeDraftThreadingReady(context.mode, fields)) return;
 
     const sigHtml = signatureHtmlForFromAlias(aliases, fields.from);
     const userText = userTextFromComposeHtml(fields.bodyHtml, sigHtml, fields.quotedSuffix);
@@ -275,7 +295,8 @@ export default function GmailComposePanel({
       (fields.to.trim().length > 0 || fields.subject.trim().length > 0);
     if (!userText.trim() && !hasNewMessageFields) {
       const existingDraftId = draftIdRef.current;
-      if (existingDraftId || fields.threadId) {
+      // Only discard when we know the thread — never wipe drafts with a missing threadId.
+      if (existingDraftId && fields.threadId?.trim()) {
         try {
           await discardAllThreadDrafts(mailbox, fields.threadId, threadMessages);
           if (discardRequestedRef.current) return;
@@ -324,6 +345,9 @@ export default function GmailComposePanel({
       if (discardRequestedRef.current || generation !== saveGenerationRef.current) return;
       setDraftId(result.id);
       draftIdRef.current = result.id;
+      if (result.threadId?.trim()) {
+        setThreadId(result.threadId);
+      }
       lastSavedKeyRef.current = saveKey;
       onDraftSaved?.({
         draftId: result.id,
@@ -521,6 +545,8 @@ export default function GmailComposePanel({
         inReplyTo,
         references,
         trackOpens,
+        // COM-07d: an email to a client's address lands in their Communications (client-level).
+        chartLog: {},
       });
       draftIdRef.current = undefined;
       setDraftId(undefined);

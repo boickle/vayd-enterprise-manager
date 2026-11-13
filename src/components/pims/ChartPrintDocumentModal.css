@@ -176,6 +176,44 @@
   color: #b91c1c;
 }
 
+.chart-print-doc__warn {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 12.5px;
+  color: #92400e;
+}
+
+.chart-print-doc__sign {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chart-print-doc__sign .consent-signature-pad {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: 120px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.chart-print-doc__sign .consent-btn {
+  margin-top: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
 .chart-print-doc__ok {
   margin: 0;
   font-size: 12.5px;
@@ -322,4 +360,44 @@
   .chart-print-doc__facts {
     grid-template-columns: 1fr;
   }
+}
+
+.chart-print-doc__note-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chart-print-doc__small-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.chart-print-doc__hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #6b7280;
+}
+
+.chart-print-doc__preview-pdf .room-loader-pdf-canvas-pages {
+  max-height: min(68vh, 760px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.chart-print-doc__preview-pdf .room-loader-pdf-canvas-page {
+  display: block;
+  width: 100%;
+  max-width: 680px;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
 }

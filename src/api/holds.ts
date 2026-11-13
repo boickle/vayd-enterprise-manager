@@ -38,6 +38,8 @@ export type HoldClientRef = {
   lastName: string | null;
   phone1: string | null;
   email: string | null;
+  /** Second email on the client record; searched in the hold's email history too. */
+  secondEmail?: string | null;
   address1: string | null;
   city: string | null;
   state: string | null;
@@ -69,6 +71,13 @@ export type HoldListItem = {
   instructions: string | null;
   pimsId: string | null;
   appointmentRequestSubmissionId: number | null;
+  /** Unread client texts on this hold (a hold with no request); null when none. */
+  unreadReplies?: {
+    count: number;
+    lastAt: string;
+    lastChannel: 'email' | 'text';
+    lastPreview: string | null;
+  } | null;
   forwardBooking: {
     id: number;
     createdVia: string | null;
@@ -153,3 +162,50 @@ export const HOLD_SOURCE_LABELS: Record<HoldSource, string> = {
   texted_offer: 'Texted offer',
   manual: 'Manual',
 };
+
+/** GET /holds/:id/conversation — texts, Quo calls and call notes for a hold's client. */
+export type HoldConversationResponse = {
+  appointmentId: number;
+  placedAt: string;
+  phone: string | null;
+  texts: Array<{ id: string; direction: 'in' | 'out'; body: string; at: string; beforeRequest: boolean }>;
+  textsError: string | null;
+  quoCalls: Array<{
+    id: number;
+    direction: 'in' | 'out';
+    status: string | null;
+    at: string;
+    durationSeconds: number | null;
+    staff: { id: number; firstName: string | null; lastName: string | null } | null;
+    transcript: string | null;
+    summary: string | null;
+    beforeRequest: boolean;
+  }>;
+  calls: Array<{
+    id: number;
+    at: string;
+    outcome: 'reached' | 'voicemail' | 'no_answer';
+    note: string | null;
+    employee: { id: number; firstName: string | null; lastName: string | null } | null;
+  }>;
+};
+
+export async function fetchHoldConversation(appointmentId: number): Promise<HoldConversationResponse> {
+  const { data } = await http.get<HoldConversationResponse>(
+    `/holds/${encodeURIComponent(String(appointmentId))}/conversation`
+  );
+  return data;
+}
+
+/** POST /holds/:id/calls — log a phone call on a hold (claims an unowned hold). */
+export async function logHoldCall(
+  appointmentId: number,
+  body: { outcome: 'reached' | 'voicemail' | 'no_answer'; note?: string | null }
+): Promise<void> {
+  await http.post(`/holds/${encodeURIComponent(String(appointmentId))}/calls`, body);
+}
+
+/** POST /holds/:id/replies — opening a hold reads its unread client replies. */
+export async function markHoldRepliesRead(appointmentId: number): Promise<void> {
+  await http.post(`/holds/${encodeURIComponent(String(appointmentId))}/replies`);
+}

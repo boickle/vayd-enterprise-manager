@@ -6,11 +6,18 @@ import {
   type VisitInvoice,
 } from '../../api/visitWorkflow';
 import { useCan } from '../../permissions/PermissionContext';
+import { appConfirm } from '../../utils/appDialog';
+
+const money = (n: number) => `$${n.toFixed(2)}`;
 
 /**
  * PAY-06: pay part or all of a bill with the client's account credit (Scout credits and eVet
  * credit, one shared total). Shows what is available, defaults to the smaller of that and what is
  * due, and won't take more. eVet credit is held while the practice's eVet sync is on.
+ *
+ * Appointment deposits (D7 option 3, Nov 12, 2026): a deposit for this bill's visit is included and
+ * named. A deposit held for another visit isn't, but staff can tick it in (for a cancel or no-show
+ * fee) after a warning.
  */
 export default function AccountCreditTenderForm({
   invoiceId,
@@ -34,12 +41,14 @@ export default function AccountCreditTenderForm({
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [useHeld, setUseHeld] = useState(false);
 
   useEffect(() => {
     if (!allowed || !clientId) return;
     let live = true;
     setErr(null);
-    fetchAvailableAccountCredit(clientId)
+    setUseHeld(false);
+    fetchAvailableAccountCredit(clientId, invoiceId)
       .then((found) => {
         if (!live) return;
         setCredit(found);
@@ -51,12 +60,18 @@ export default function AccountCreditTenderForm({
     return () => {
       live = false;
     };
-  }, [allowed, clientId, due]);
+  }, [allowed, clientId, due, invoiceId]);
 
   if (!allowed) return null;
 
-  const available = credit?.total ?? 0;
+  const deposits = credit?.deposits ?? [];
+  const ownDeposits = deposits.filter((d) => d.held && d.forThisBill && d.amount > 0.009);
+  const otherDeposits = deposits.filter((d) => d.held && !d.forThisBill && d.amount > 0.009);
+  const heldElsewhere = Math.round((credit?.depositHeld ?? 0) * 100) / 100;
+  const available = Math.round(((credit?.total ?? 0) + (useHeld ? heldElsewhere : 0)) * 100) / 100;
   const max = Math.round(Math.max(0, Math.min(available, due)) * 100) / 100;
+  const depositName = (d: { label: string | null; amount: number }) =>
+    `${d.label ? d.label.replace(/^Deposit/, 'the deposit') : 'an appointment deposit'} (${money(d.amount)})`;
 
   const apply = async () => {
     const value = Math.round(Number(amount) * 100) / 100;
@@ -72,6 +87,16 @@ export default function AccountCreditTenderForm({
       );
       return;
     }
+    // Spending a deposit held for another visit: say so first (D7 option 3).
+    const freeCredit = credit?.total ?? 0;
+    if (useHeld && value > freeCredit + 0.001) {
+      const ok = await appConfirm({
+        title: 'Use a deposit for another visit?',
+        message: `This is ${otherDeposits.map(depositName).join(' and ')}. Use it on this bill? Do this only for that visit's cancel or no-show fee.`,
+        confirmLabel: 'Use the deposit',
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -79,6 +104,7 @@ export default function AccountCreditTenderForm({
         method: 'account_credit',
         amount: value,
         cashierEmployeeId,
+        ...(useHeld ? { useHeldDeposits: true } : {}),
       });
       onApplied(invoice, value, Math.round((available - value) * 100) / 100);
     } catch (e) {
@@ -127,6 +153,31 @@ export default function AccountCreditTenderForm({
         </div>
       ) : !err ? (
         <span>Loading account credit…</span>
+      ) : null}
+      {ownDeposits.length ? (
+        <p role="note" style={{ margin: 0, fontSize: 12, color: '#64748b' }} data-testid="credit-own-deposit">
+          Includes {ownDeposits.map(depositName).join(' and ')}, used first.
+        </p>
+      ) : null}
+      {otherDeposits.length ? (
+        <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: '#64748b' }}>
+          <input
+            type="checkbox"
+            checked={useHeld}
+            disabled={busy}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setUseHeld(next);
+              const total = (credit?.total ?? 0) + (next ? heldElsewhere : 0);
+              setAmount(Math.max(0, Math.min(total, due)).toFixed(2));
+            }}
+            data-testid="credit-use-held-deposit"
+          />
+          <span>
+            Not included: {otherDeposits.map(depositName).join(' and ')}, held for that visit. Tick to use it here,
+            for example for that visit&apos;s cancel or no-show fee.
+          </span>
+        </label>
       ) : null}
       {credit?.evetHeld ? (
         <p role="note" style={{ margin: 0, fontSize: 12, color: '#64748b' }}>

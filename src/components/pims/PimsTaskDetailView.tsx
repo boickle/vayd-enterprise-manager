@@ -266,7 +266,6 @@ export default function PimsTaskDetailView({
     return (task.watchers ?? []).some((w) => w.employeeId === myEmployeeId);
   }, [task, myEmployeeId, canMutate]);
 
-  const latestEscalation = task?.events?.[0]?.eventType === 'escalation_sent';
   const linkLabels = useTaskLinkLabels(task?.links);
   const patientLinks = useMemo(
     () => (task?.links ?? []).filter((l) => l.entityType === 'patient'),
@@ -437,11 +436,6 @@ export default function PimsTaskDetailView({
           Back to list
         </button>
         <div className="pims-task-detail__actions">
-          {latestEscalation && task.status !== 'done' && !editing && (
-            <span className="pims-task-detail__badge" title="Latest history event is an escalation reminder">
-              Escalation
-            </span>
-          )}
           {editing ? (
             <button
               type="button"
@@ -909,26 +903,6 @@ export default function PimsTaskDetailView({
         </dl>
       </section>
 
-      {task.escalation && task.status !== 'done' && (
-        <section className="pims-task-detail__section">
-          <h2 className="pims-task-detail__h2">Escalation</h2>
-          <dl className="pims-task-detail__dl">
-            <div>
-              <dt>Next reminder</dt>
-              <dd>{formatIso(task.escalation.nextEscalationAt)}</dd>
-            </div>
-            <div>
-              <dt>Interval</dt>
-              <dd>{Math.round(task.escalation.intervalSeconds / 60)} min</dd>
-            </div>
-            <div>
-              <dt>Count</dt>
-              <dd>{task.escalation.escalationCount}</dd>
-            </div>
-          </dl>
-        </section>
-      )}
-
       <section className="pims-task-detail__section">
         <h2 className="pims-task-detail__h2">Watchers</h2>
         {task.watchers?.length ? (
@@ -1011,6 +985,7 @@ export default function PimsTaskDetailView({
         <TaskReassignModal
           task={task}
           employees={employees}
+          myEmployeeId={myEmployeeId}
           onClose={() => setReassignOpen(false)}
           onSaved={(updated) => {
             if (updated) setTask(updated);
@@ -1104,7 +1079,6 @@ function TaskEditForm({
   const [linkRows, setLinkRows] = useState<{ entityType: string; entityId: string }[]>(() =>
     task.links.map((l) => ({ entityType: l.entityType, entityId: String(l.entityId) }))
   );
-  const [escalationMinutes, setEscalationMinutes] = useState('');
 
   const activeBranches = useMemo(() => branches.filter((b) => b.isActive !== false), [branches]);
 
@@ -1129,20 +1103,6 @@ function TaskEditForm({
       return;
     }
 
-    let escalationIntervalSeconds: number | undefined;
-    if (escalationMinutes.trim()) {
-      const mins = Number(escalationMinutes);
-      if (!Number.isFinite(mins) || mins < 1) {
-        setActionError('Escalation interval must be at least 1 minute (server requires ≥ 60 seconds)');
-        return;
-      }
-      escalationIntervalSeconds = Math.round(mins * 60);
-      if (escalationIntervalSeconds < 60) {
-        setActionError('Escalation interval must be at least 60 seconds');
-        return;
-      }
-    }
-
     const startAt = fromDatetimeLocalValue(startLocal);
     const dueAt = fromDatetimeLocalValue(dueLocal);
     const scheduleErr = validateTaskScheduleOrder(startAt, dueAt);
@@ -1165,9 +1125,6 @@ function TaskEditForm({
         watcherEmployeeIds: [...new Set(watchers)],
         links: linksPayload,
       };
-      if (escalationIntervalSeconds != null) {
-        patch.escalationIntervalSeconds = escalationIntervalSeconds;
-      }
       const d = await patchTask(task.id, patch);
       onSaved(d);
     } catch (e: unknown) {
@@ -1320,18 +1277,6 @@ function TaskEditForm({
             Add link
           </button>
         </div>
-
-        <label className="pims-task-detail__field">
-          <span>Escalation interval (minutes, optional)</span>
-          <input
-            type="number"
-            min={1}
-            placeholder="e.g. 60 — starts from now when saved"
-            value={escalationMinutes}
-            onChange={(e) => setEscalationMinutes(e.target.value)}
-            disabled={busy}
-          />
-        </label>
 
         <div className="pims-task-detail__form-actions">
           <button type="button" className="pims-task-detail__btn pims-task-detail__btn--secondary" disabled={busy} onClick={onCancel}>

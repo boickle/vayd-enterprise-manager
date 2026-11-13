@@ -30,6 +30,8 @@ const LOC_STORAGE_PREFIX = 'vayd_inventory_first_count_location:';
 const WRITE_IN_LINES = 20;
 
 type Draft = {
+  /** A lot already on this shelf (lot # and exp come from Scout, not typed). */
+  lotId?: number;
   quantity: string;
   weight: string;
   bottles: string;
@@ -58,6 +60,36 @@ function formatWhen(iso: string | null): string {
         hour: 'numeric',
         minute: '2-digit',
       });
+}
+
+/** One row per lot already on the shelf, with its lot # and expiration filled in. */
+function draftsForSheet(items: FirstCountSheetItem[]): Record<number, Draft[]> {
+  const out: Record<number, Draft[]> = {};
+  for (const item of items) {
+    if (!item.lots?.length) continue;
+    out[item.inventoryItemId] = item.lots.map((lot) => ({
+      ...EMPTY_DRAFT,
+      lotId: lot.id,
+      lotNumber: lot.lotNumber ?? '',
+      expirationDate: lot.expirationDate ?? '',
+    }));
+  }
+  return out;
+}
+
+function isTyped(d: Draft): boolean {
+  return d.quantity.trim() !== '' || d.weight.trim() !== '';
+}
+
+/** 2027-03-31 → 3/31/2027 for the sheet. */
+function showExp(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ''));
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : String(iso ?? '');
+}
+
+/** The sheet's rows for an item: one per lot on the shelf, or one blank row. */
+function sheetLots(item: FirstCountSheetItem) {
+  return item.lots?.length ? item.lots : [null];
 }
 
 /** Items set up for this shelf (par, min / max, controlled, or already here). */
@@ -102,9 +134,12 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
       <h2>${escapeHtml(g.title)}</h2>
       <table><thead>${head}</thead><tbody>
       ${g.items
-        .map(
-          (i) =>
-            `<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="box"></td>${lotCell(i)}${expCell(i)}<td class="notes"></td></tr>`
+        .flatMap((i) =>
+          sheetLots(i).map((lot) =>
+            lot
+              ? `<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="box"></td><td class="lot">${escapeHtml(lot.lotNumber ?? '')}</td><td class="exp">${escapeHtml(showExp(lot.expirationDate))}</td><td class="notes"></td></tr>`
+              : `<tr><td class="code">${escapeHtml(i.code)}</td><td>${escapeHtml(i.name)}</td><td class="unit">${escapeHtml(i.unit)}</td><td class="box"></td>${lotCell(i)}${expCell(i)}<td class="notes"></td></tr>`
+          )
         )
         .join('')}
       </tbody></table>`
@@ -138,7 +173,8 @@ function printSheet(sheet: FirstCountSheet, items: FirstCountSheetItem[], mode: 
   <h1>${heading} — ${escapeHtml(sheet.branchName)} · ${escapeHtml(sheet.locationName)}</h1>
   <div class="meta"><span>Counted by:</span><span>Date &amp; time counted:</span></div>
   <p class="hint">Count what is physically on this shelf, in the unit shown (e.g. capsules, not bottles). Leave Count blank if you didn't count it; write 0 if there is none.
-  Controlled drugs are counted in mL. One lot per line — use a write-in line (same code) for each extra lot, and count every lot of an item at the same time.
+  Each lot Scout has on this shelf has its own line with its Lot # and Exp filled in: write 0 for a lot that's gone. A blank lot line keeps Scout's amount, except for controlled drugs, where every lot needs a count.
+  Controlled drugs are counted in mL. One lot per line — use a write-in line (same code) for each new lot, and count every lot of an item at the same time.
   Lot # and Exp are required on shaded lines (vaccines, injectables, controlled drugs). Exp can be 3/2027. Items not on the list go in Write-ins at the end.</p>
   ${body}
   <h2>Write-ins (not on the list, or extra lots)</h2>
@@ -196,6 +232,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
   const [preview, setPreview] = useState<{
     result: FirstCountResult;
     rows: FirstCountRow[];
+    keepLotIds: number[];
     source: string;
   } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -266,7 +303,11 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
     setLoading(true);
     setError(null);
     try {
-      setSheet(await getFirstCountSheet(practiceId, Number(branchId), Number(locationId)));
+      const next = await getFirstCountSheet(practiceId, Number(branchId), Number(locationId));
+      setSheet(next);
+      // Lots on the shelf get their own rows; keep anything already typed.
+      const fresh = draftsForSheet(next.items);
+      setDrafts((prev) => ({ ...fresh, ...prev }));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not load the count sheet');
       setSheet(null);
@@ -309,22 +350,30 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
     () =>
       Object.entries(drafts).flatMap(([id, lots]) => {
         const item = items.find((i) => i.inventoryItemId === Number(id));
-        return lots
-          .filter((d) => d.quantity.trim() !== '' || d.weight.trim() !== '')
-          .map((d) => ({
-            inventoryItemId: Number(id),
-            code: item?.code ?? null,
-            name: item?.name ?? null,
-            quantity: d.quantity.trim(),
-            weight: d.weight.trim() || null,
-            bottles: d.bottles.trim() || null,
-            lotNumber: d.lotNumber.trim() || null,
-            expirationDate: d.expirationDate.trim() || null,
-          }));
+        return lots.filter(isTyped).map((d) => ({
+          inventoryItemId: Number(id),
+          code: item?.code ?? null,
+          name: item?.name ?? null,
+          quantity: d.quantity.trim(),
+          weight: d.weight.trim() || null,
+          bottles: d.bottles.trim() || null,
+          lotNumber: d.lotNumber.trim() || null,
+          expirationDate: d.expirationDate.trim() || null,
+        }));
       }),
     [drafts, items]
   );
   const typedItemCount = new Set(typedRows.map((r) => r.inventoryItemId)).size;
+  // Lots listed on the sheet whose row is blank, for items that were counted: they keep their amount.
+  const keepLotIds = useMemo(
+    () =>
+      Object.values(drafts).flatMap((lots) =>
+        lots.some(isTyped)
+          ? lots.filter((d) => d.lotId != null && !isTyped(d)).map((d) => d.lotId!)
+          : []
+      ),
+    [drafts]
+  );
 
   function setDraft(itemId: number, index: number, patch: Partial<Draft>) {
     setDrafts((prev) => {
@@ -359,7 +408,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
 
-  async function runPreview(rows: FirstCountRow[], source: string) {
+  async function runPreview(rows: FirstCountRow[], source: string, keep: number[] = []) {
     if (branchId === '' || locationId === '') return;
     setBusy(true);
     setError(null);
@@ -369,8 +418,9 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
         countedAt: countedAtIso(),
         dryRun: true,
         mode,
+        keepLotIds: keep,
       });
-      setPreview({ result, rows, source });
+      setPreview({ result, rows, keepLotIds: keep, source });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not check the counts');
     } finally {
@@ -396,6 +446,24 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
       });
       if (!ok) return;
     }
+    // Saving an item's count sets any of its lots that aren't on the count to 0 (Q11, Nov 9, 2026).
+    const zeroing = preview.result.items.filter((row) => (row.zeroedLots ?? []).length > 0);
+    if (zeroing.length) {
+      const ok = await appConfirm({
+        title: 'Set lots to 0?',
+        message: `These lots have stock in Scout but aren't on this count, so saving sets them to 0: ${zeroing
+          .map(
+            (row) =>
+              `${row.name} ${(row.zeroedLots ?? [])
+                .map((l) => `${l.label} (${l.quantity})`)
+                .join(', ')}`
+          )
+          .join('; ')}. Cancel to count them first.`,
+        confirmLabel: 'Set them to 0',
+        cancelLabel: 'Count them first',
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -405,6 +473,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
         dryRun: false,
         mode,
         confirmWeighMismatch: disputed.length > 0,
+        keepLotIds: preview.keepLotIds,
       });
       setPreview(null);
       if (preview.source === 'typed') setDrafts({});
@@ -558,12 +627,17 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
                       <td>
                         {loc.countedItems} of {loc.listItems ?? progress.totalItems}
                       </td>
-                      <td
-                        style={{ color: controlledDone ? '#166534' : '#b91c1c', fontWeight: 600 }}
-                      >
-                        {loc.countedControlled} of {controlledTotal}
-                        {controlledDone ? ' ✓' : ''}
-                      </td>
+                      {controlledTotal === 0 ? (
+                        // No controlled drugs belong on this shelf (a car, say): nothing to count (U9).
+                        <td className="settings-muted">—</td>
+                      ) : (
+                        <td
+                          style={{ color: controlledDone ? '#166534' : '#b91c1c', fontWeight: 600 }}
+                        >
+                          {loc.countedControlled} of {controlledTotal}
+                          {controlledDone ? ' ✓' : ''}
+                        </td>
+                      )}
                       <td>{formatWhen(loc.lastCountedAt)}</td>
                     </tr>
                   );
@@ -699,10 +773,11 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
             }}
           />
           <span className="settings-muted" style={{ fontSize: 12, flex: '1 1 220px' }}>
-            Paper sheets have no current quantities on them (blind count). The Excel sheet has a
-            Directions tab; staff fill in the Count sheet tab and save as .xlsx. For a second lot,
-            copy the item’s row and change the count, lot and exp — list every lot of an item in the
-            same upload.
+            Paper sheets have no current quantities on them (blind count). Each lot already on the
+            shelf has its own row: write 0 for a lot that’s gone; a blank lot row keeps its amount
+            (not for controlled drugs). The Excel sheet has a Directions tab; staff fill in the
+            Count sheet tab and save as .xlsx. For a lot that isn’t listed, copy the item’s row and
+            change the count, lot and exp.
           </span>
         </div>
       ) : null}
@@ -763,7 +838,7 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
           type="button"
           className="btn"
           disabled={busy || typedRows.length === 0}
-          onClick={() => void runPreview(typedRows, 'typed')}
+          onClick={() => void runPreview(typedRows, 'typed', keepLotIds)}
         >
           Review {typedItemCount || ''} typed count{typedItemCount === 1 ? '' : 's'}
         </button>
@@ -880,53 +955,66 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
                         </div>
                       ) : null}
                     </td>
-                    <td>
-                      <input
-                        className="settings-input"
-                        value={d.lotNumber}
-                        onChange={(e) =>
-                          setDraft(item.inventoryItemId, index, { lotNumber: e.target.value })
-                        }
-                        placeholder={item.requireLotNumber ? 'Lot #' : 'Optional'}
-                        aria-label={`${item.name} lot number${index ? ` (lot ${index + 1})` : ''}`}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="settings-input"
-                        value={d.expirationDate}
-                        onChange={(e) =>
-                          setDraft(item.inventoryItemId, index, {
-                            expirationDate: e.target.value,
-                          })
-                        }
-                        placeholder="3/2027"
-                        aria-label={`${item.name} expiration${index ? ` (lot ${index + 1})` : ''}`}
-                      />
-                    </td>
+                    {d.lotId != null ? (
+                      <>
+                        <td style={{ fontSize: 13 }}>
+                          {d.lotNumber || <span className="settings-muted">No lot #</span>}
+                        </td>
+                        <td style={{ fontSize: 13 }}>{showExp(d.expirationDate) || '—'}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td>
+                          <input
+                            className="settings-input"
+                            value={d.lotNumber}
+                            onChange={(e) =>
+                              setDraft(item.inventoryItemId, index, { lotNumber: e.target.value })
+                            }
+                            placeholder={item.requireLotNumber ? 'Lot #' : 'Optional'}
+                            aria-label={`${item.name} lot number${index ? ` (lot ${index + 1})` : ''}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="settings-input"
+                            value={d.expirationDate}
+                            onChange={(e) =>
+                              setDraft(item.inventoryItemId, index, {
+                                expirationDate: e.target.value,
+                              })
+                            }
+                            placeholder="3/2027"
+                            aria-label={`${item.name} expiration${index ? ` (lot ${index + 1})` : ''}`}
+                          />
+                        </td>
+                      </>
+                    )}
                   </>
                 );
                 const extraRows = lots.slice(1).map((d, i) => (
                   <tr key={`${item.inventoryItemId}-lot-${i + 1}`}>
                     <td colSpan={3} style={{ paddingLeft: 32, fontSize: 12 }}>
                       <span className="settings-muted">
-                        ↳ {item.name} · lot {i + 2}
+                        ↳ {item.name} · {d.lotId != null ? 'lot on this shelf' : `lot ${i + 2}`}
                       </span>{' '}
-                      <button
-                        type="button"
-                        className="mail-queue__pet-link"
-                        style={{
-                          background: 'none',
-                          border: 0,
-                          padding: 0,
-                          cursor: 'pointer',
-                          font: 'inherit',
-                          color: '#b91c1c',
-                        }}
-                        onClick={() => removeLot(item.inventoryItemId, i + 1)}
-                      >
-                        Remove
-                      </button>
+                      {d.lotId != null ? null : (
+                        <button
+                          type="button"
+                          className="mail-queue__pet-link"
+                          style={{
+                            background: 'none',
+                            border: 0,
+                            padding: 0,
+                            cursor: 'pointer',
+                            font: 'inherit',
+                            color: '#b91c1c',
+                          }}
+                          onClick={() => removeLot(item.inventoryItemId, i + 1)}
+                        >
+                          Remove
+                        </button>
+                      )}
                     </td>
                     {lotInputs(d, i + 1)}
                   </tr>
@@ -1009,8 +1097,9 @@ function FirstCountsWorkspace({ token }: { token: string | null }) {
       )}
       {sheet && !loading ? (
         <p className="settings-muted" style={{ fontSize: 12, marginTop: 8 }}>
-          Use <strong>+ Add lot</strong> for each extra lot of an item. Saving an item’s count
-          replaces all of its lots at this location, so enter every lot you found.
+          Each lot Scout has on this shelf has its own row: write 0 for a lot that’s gone. A blank
+          lot row keeps Scout’s amount, except for controlled drugs, where every lot needs a count.
+          Use <strong>+ Add lot</strong> for a lot that isn’t listed.
         </p>
       ) : null}
     </div>
@@ -1173,6 +1262,18 @@ function PreviewPanel({
                     ) : null}
                     {!annual && row.alreadyCounted ? (
                       <div style={{ color: '#b45309' }}>Resets an earlier first count</div>
+                    ) : null}
+                    {(row.keptLots ?? []).length ? (
+                      <div className="settings-muted">
+                        Left blank, kept:{' '}
+                        {row.keptLots!.map((l) => `${l.label} (${l.quantity})`).join(', ')}
+                      </div>
+                    ) : null}
+                    {(row.zeroedLots ?? []).length ? (
+                      <div style={{ color: '#b91c1c', fontWeight: 600 }}>
+                        Not on the count, set to 0:{' '}
+                        {row.zeroedLots!.map((l) => `${l.label} (was ${l.quantity})`).join(', ')}
+                      </div>
                     ) : null}
                     {row.warnings.map((w) => (
                       <div key={w} className="settings-muted">

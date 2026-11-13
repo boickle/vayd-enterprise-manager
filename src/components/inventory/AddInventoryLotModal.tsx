@@ -16,7 +16,7 @@ type Props = {
   itemName?: string | null;
   defaultBranchId?: number | null;
   defaultLocationId?: number | null;
-  /** Prefill QOH so the new lot shows up in pickers that hide zero balances. */
+  /** Prefill QOH. Unset starts the box blank, so typing 30 gives 30 (U3, Nov 11, 2026). */
   defaultQuantity?: number;
   requireLotNumber?: boolean;
   onClose: () => void;
@@ -34,7 +34,7 @@ export default function AddInventoryLotModal({
   itemName,
   defaultBranchId,
   defaultLocationId,
-  defaultQuantity = 1,
+  defaultQuantity,
   requireLotNumber = false,
   onClose,
   onCreated,
@@ -45,7 +45,8 @@ export default function AddInventoryLotModal({
   const [locationId, setLocationId] = useState<number | ''>('');
   const [lotNumber, setLotNumber] = useState('');
   const [expirationDate, setExpirationDate] = useState('');
-  const [quantity, setQuantity] = useState(String(Math.max(0, defaultQuantity)));
+  const startQuantity = defaultQuantity == null ? '' : String(Math.max(0, defaultQuantity));
+  const [quantity, setQuantity] = useState(startQuantity);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingBranches, setLoadingBranches] = useState(false);
@@ -55,7 +56,7 @@ export default function AddInventoryLotModal({
     setError(null);
     setLotNumber('');
     setExpirationDate('');
-    setQuantity(String(Math.max(0, defaultQuantity)));
+    setQuantity(startQuantity);
     setBranchId(defaultBranchId != null ? defaultBranchId : '');
     setLocationId(defaultLocationId != null ? defaultLocationId : '');
     setLoadingBranches(true);
@@ -63,7 +64,7 @@ export default function AddInventoryLotModal({
       .then((rows) => setBranches(rows.filter((b) => b.isActive !== false)))
       .catch(() => setBranches([]))
       .finally(() => setLoadingBranches(false));
-  }, [open, practiceId, defaultBranchId, defaultLocationId, defaultQuantity]);
+  }, [open, practiceId, defaultBranchId, defaultLocationId, startQuantity]);
 
   useEffect(() => {
     if (!open || branchId === '') {
@@ -113,8 +114,8 @@ export default function AddInventoryLotModal({
       return;
     }
     const qty = Number(quantity);
-    if (!Number.isFinite(qty) || qty < 0) {
-      setError('Enter a valid quantity on hand');
+    if (!quantity.trim() || !Number.isFinite(qty) || qty < 0) {
+      setError('Enter the quantity on hand');
       return;
     }
     setSaving(true);
@@ -209,6 +210,9 @@ export default function AddInventoryLotModal({
               inputMode="decimal"
               value={quantity}
               disabled={saving}
+              placeholder="How many on hand"
+              // Select any prefilled number so typing replaces it (U3).
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setQuantity(e.target.value)}
             />
           </label>

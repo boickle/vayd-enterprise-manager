@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   createScoutEmployeeRole,
   fetchAllEmployees,
@@ -25,6 +26,7 @@ import {
   type PermissionAuditEntry,
 } from '../../api/permissions';
 import RolePermissionsEditor from './RolePermissionsEditor';
+import { useCan } from '../../permissions/PermissionContext';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -52,6 +54,10 @@ export default function SettingsScoutRoles({
   allAppointmentTypes,
   onMessage,
 }: Props) {
+  // Adding roles and editing a role's name, slug and office setting need role.definition.manage
+  // (Practice Admin). Others see the role and its people only (Nov 9, 2026: the screen let a Practice
+  // Manager try, and the API refused).
+  const canDefineRoles = useCan('role.definition.manage');
   const [roles, setRoles] = useState<EmployeeRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
@@ -405,16 +411,18 @@ export default function SettingsScoutRoles({
             <h3 className="settings-card-title" style={{ margin: 0 }}>
               Roles
             </h3>
-            <button
-              type="button"
-              className="btn secondary"
-              style={{ padding: '4px 10px', fontSize: 13 }}
-              onClick={() => setAdding((v) => !v)}
-            >
-              {adding ? 'Cancel' : 'Add'}
-            </button>
+            {canDefineRoles ? (
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ padding: '4px 10px', fontSize: 13 }}
+                onClick={() => setAdding((v) => !v)}
+              >
+                {adding ? 'Cancel' : 'Add'}
+              </button>
+            ) : null}
           </div>
-          {adding && (
+          {adding && canDefineRoles && (
             <form onSubmit={(e) => void handleAddRole(e)} style={{ marginBottom: 12 }}>
               <input
                 className="settings-input"
@@ -476,65 +484,75 @@ export default function SettingsScoutRoles({
             <p className="settings-muted">Select a role.</p>
           ) : (
             <>
-              <form className="settings-card" style={{ marginTop: 0 }} onSubmit={(e) => void handleSaveRoleDetails(e)}>
-                <h3 className="settings-card-title">{selectedRole.name}</h3>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 12,
-                    marginBottom: 12,
-                  }}
-                >
-                  <label className="settings-label">
-                    Name
-                    <input
+              {canDefineRoles ? (
+                <form className="settings-card" style={{ marginTop: 0 }} onSubmit={(e) => void handleSaveRoleDetails(e)}>
+                  <h3 className="settings-card-title">{selectedRole.name}</h3>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <label className="settings-label">
+                      Name
+                      <input
+                        className="settings-input"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        required
+                      />
+                    </label>
+                    <label className="settings-label">
+                      Slug
+                      <input
+                        className="settings-input"
+                        value={editSlug}
+                        onChange={(e) => setEditSlug(e.target.value)}
+                        placeholder="auto from name"
+                        readOnly={isBuiltInRole}
+                        title={
+                          isBuiltInRole
+                            ? 'Built-in roles keep their slug — permissions are attached to it.'
+                            : undefined
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
+                    Description
+                    <textarea
                       className="settings-input"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      required
+                      rows={2}
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
                     />
                   </label>
-                  <label className="settings-label">
-                    Slug
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                     <input
-                      className="settings-input"
-                      value={editSlug}
-                      onChange={(e) => setEditSlug(e.target.value)}
-                      placeholder="auto from name"
-                      readOnly={isBuiltInRole}
-                      title={
-                        isBuiltInRole
-                          ? 'Built-in roles keep their slug — permissions are attached to it.'
-                          : undefined
-                      }
+                      type="checkbox"
+                      checked={editBranchSpecific}
+                      onChange={(e) => setEditBranchSpecific(e.target.checked)}
                     />
+                    <span>Is branch-specific</span>
                   </label>
+                  <p className="settings-muted" style={{ fontSize: 12, marginTop: 0 }}>
+                    Changing this clears assignees that no longer match (practice-wide vs per office).
+                  </p>
+                  <button type="submit" className="btn primary" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save role'}
+                  </button>
+                </form>
+              ) : (
+                <div className="settings-card" style={{ marginTop: 0 }}>
+                  <h3 className="settings-card-title">{selectedRole.name}</h3>
+                  <p className="settings-muted" style={{ margin: 0 }}>
+                    {selectedRole.isBranchSpecific ? 'Per office' : 'Practice-wide'}
+                    {selectedRole.description ? ` · ${selectedRole.description}` : ''}
+                  </p>
                 </div>
-                <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
-                  Description
-                  <textarea
-                    className="settings-input"
-                    rows={2}
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                  />
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={editBranchSpecific}
-                    onChange={(e) => setEditBranchSpecific(e.target.checked)}
-                  />
-                  <span>Is branch-specific</span>
-                </label>
-                <p className="settings-muted" style={{ fontSize: 12, marginTop: 0 }}>
-                  Changing this clears assignees that no longer match (practice-wide vs per office).
-                </p>
-                <button type="submit" className="btn primary" disabled={saving}>
-                  {saving ? 'Saving…' : 'Save role'}
-                </button>
-              </form>
+              )}
 
               <div className="settings-card">
                 <h3 className="settings-card-title">
@@ -681,7 +699,9 @@ export default function SettingsScoutRoles({
                       </li>
                     ))}
                   </ul>
-                  <a href="/schedule/settings?tab=permission-audit">See the full Permission Audit Log</a>
+                  <Link to="/schedule/settings?tab=permission-audit">
+                    See the full Permission Audit Log
+                  </Link>
                 </div>
               )}
 

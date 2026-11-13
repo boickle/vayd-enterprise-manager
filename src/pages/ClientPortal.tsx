@@ -379,6 +379,15 @@ export default function ClientPortal() {
     [petsWithProvider, selectedKey],
   );
 
+  // "Order <pet>'s medications" links from email (…?pet=<id>&meds=1): once that pet's meds have
+  // loaded, scroll to the Medications card one time.
+  const [jumpToMeds, setJumpToMeds] = useState(searchParams.get('meds') === '1');
+  useEffect(() => {
+    if (!jumpToMeds || !selectedPet || chronicByPet[selectedPet.id] === undefined) return;
+    setJumpToMeds(false);
+    window.setTimeout(() => medsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }, [jumpToMeds, selectedPet, chronicByPet]);
+
   const membership = useMemo(() => (selectedPet ? computeMembershipView(selectedPet) : null), [selectedPet]);
 
   const selectedProvider = useMemo<PortalProvider | null>(() => {
@@ -1065,7 +1074,11 @@ export default function ClientPortal() {
                                   {rx.strength ? <span className="pp-muted"> · {rx.strength}</span> : null}
                                 </div>
                                 <div className="pp-row-sub">
-                                  {rx.refill != null ? `${rx.refill} refill${rx.refill === 1 ? '' : 's'} left` : 'Chronic medication'}
+                                  {rx.prn
+                                    ? 'PRN (as needed)'
+                                    : rx.refill != null
+                                      ? `${rx.refill} refill${rx.refill === 1 ? '' : 's'} left`
+                                      : 'Chronic medication'}
                                   {rx.autoshipStartedAt ? (
                                     <>
                                       {' · '}

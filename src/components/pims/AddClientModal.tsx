@@ -15,6 +15,7 @@ import { EMPTY_ADDRESS_FIELDS } from '../../utils/verifiedAddress';
 import { clientSearchRowHomeAddress } from '../../utils/visitAddressMatch';
 import AddPatientModal from './AddPatientModal';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { useMayShow } from '../../permissions/PermissionContext';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
 
@@ -244,6 +245,9 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
   const [doNotEmail, setDoNotEmail] = useState(false);
   const [doNotSms, setDoNotSms] = useState(false);
   const [doNotSendReminders, setDoNotSendReminders] = useState(false);
+  const [doNotMarket, setDoNotMarket] = useState(false);
+  /** Owner, Nov 13, 2026: only managers, billing and lead CLs set a standing discount. */
+  const maySetDiscount = useMayShow('client.discount.set');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailHit, setEmailHit] = useState<ClientSearchRow | null>(null);
@@ -572,6 +576,7 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
       doNotSms,
       smsOptOut: doNotSms,
       doNotSendReminders,
+      doNotMarket,
     };
 
     try {
@@ -974,6 +979,8 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
                 className="input"
                 value={clientStatusId}
                 onChange={(e) => setClientStatusId(e.target.value)}
+                disabled={!maySetDiscount}
+                title={maySetDiscount ? undefined : 'Ask a manager, billing or a lead CL to set a discount.'}
               >
                 <option value="">None</option>
                 {statuses.map((s) => (
@@ -1097,6 +1104,10 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
                   onChange={(e) => setDoNotSendReminders(e.target.checked)}
                 />
                 Do not send reminders
+              </label>
+              <label className="pims-add-client-modal__check">
+                <input type="checkbox" checked={doNotMarket} onChange={(e) => setDoNotMarket(e.target.checked)} />
+                Do not market
               </label>
             </div>
             <label className="pims-add-client-modal__full">

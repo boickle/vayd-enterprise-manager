@@ -3,7 +3,7 @@
 // main once carried an older 12k-line hardcoded version; merge 6895bcd took it wholesale and
 // silently undid the rebuild. Never resolve a conflict here by taking one side.
 // roomLoaderFormGuard.test.ts fails if that happens again.
-import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router';
 import { apiBaseUrl, http } from '../api/http';
 import { publicStoreProducts, type StoreListing, type StoreVariant } from '../api/onlineStore';
@@ -109,6 +109,13 @@ import {
   carePlanUncheckRecommendationBody,
   configuredUncheckRecommendationHtml,
 } from './roomLoader/carePlanRecommendationBlurbs';
+import {
+  invoiceCategoryFor,
+  mergeClientLinesIntoStaffOrder,
+  sortByKeyOrder,
+  type InvoiceCategory,
+  type InvoiceCategoryKey,
+} from '../utils/roomLoaderInvoiceOrder';
 import './roomLoader/RoomLoaderSections.css';
 import './roomLoader/MembershipPitch.css';
 import './PublicRoomLoaderForm.css';
@@ -902,6 +909,45 @@ function dedupeSharpsRowsInPetLineItems(petItems: any[]): any[] {
 }
 
 /** Line items from API patient payload (reminders + added), excluding sharps/trip — used for pricing + sharps rules. */
+/** Staff place (`sortOrder`) sent with a reminder or added item; null on forms sent before invoice order. */
+function staffSortOrderOf(line: any): number | null {
+  const n = Number(line?.sortOrder);
+  return line?.sortOrder != null && Number.isFinite(n) ? n : null;
+}
+
+/** Invoice category of a care-plan / summary row (reminder, added item, trip fee, sharps). */
+function publicRowInvoiceCategory(row: any): InvoiceCategory {
+  return invoiceCategoryFor({
+    name: row?.name,
+    code: row?.code,
+    itemType: row?.itemType ?? row?.type,
+    categoryName: row?.categoryName,
+  });
+}
+
+/** Invoice category of an offer the client accepted on the form (panel, sub-ask, add-on). */
+function configEntryInvoiceCategory(entry: { displayName: string; item: RoomLoaderItemRef }): InvoiceCategory {
+  return invoiceCategoryFor({
+    name: entry.item?.name || entry.displayName,
+    code: entry.item?.code,
+    itemType: entry.item?.itemType,
+  });
+}
+
+type InvoiceOrderEntry = { key: string; category: InvoiceCategory; staffPosition: number | null };
+
+/**
+ * Put rows in invoice order: staff lines in the order staff sent, client-added lines slotted
+ * in by category (Settings → Room Loader → Invoice order). Rows keep their own objects, so
+ * callers that key checkboxes by original index stay stable.
+ */
+function inInvoiceOrder<T>(rows: T[], entryOf: (row: T) => InvoiceOrderEntry, order: InvoiceCategoryKey[]): T[] {
+  const entries = rows.map(entryOf);
+  const keys = mergeClientLinesIntoStaffOrder(entries, order);
+  const keyByRow = new Map<T, string>(rows.map((row, i) => [row, entries[i].key]));
+  return sortByKeyOrder(rows, (row) => keyByRow.get(row) ?? '', keys);
+}
+
 function buildPublicPetLineItems(patient: any): any[] {
   const petItems: any[] = [];
   if (patient.reminders && Array.isArray(patient.reminders)) {
@@ -937,6 +983,7 @@ function buildPublicPetLineItems(patient: any): any[] {
         });
         const rid = reminder.reminderId;
         if (rid != null && String(rid) !== '') row._publicRecKeySuffix = `r${rid}`;
+        row._staffSortOrder = staffSortOrderOf(reminder);
         petItems.push(row);
       } else {
         const text = (reminder.reminderText ?? reminder.description ?? '').toLowerCase();
@@ -951,6 +998,7 @@ function buildPublicPetLineItems(patient: any): any[] {
           if (reminder.discountPricing) row.discountPricing = reminder.discountPricing;
           const rid = reminder.reminderId;
           if (rid != null && String(rid) !== '') row._publicRecKeySuffix = `r${rid}`;
+          row._staffSortOrder = staffSortOrderOf(reminder);
           petItems.push(row);
         }
       }
@@ -984,6 +1032,7 @@ function buildPublicPetLineItems(patient: any): any[] {
       });
       const aid = item.id;
       if (aid != null && String(aid) !== '') row._publicRecKeySuffix = `a${aid}`;
+      row._staffSortOrder = staffSortOrderOf(item);
       petItems.push(row);
     });
   }
@@ -2641,6 +2690,8 @@ export default function PublicRoomLoaderForm() {
       remindersByPet.push({ patientId, patientName: petName, displayItems, checked, tripFeeItems });
 
       const rows: PdfRow[] = [];
+      /** Invoice-order place of each estimate row (the membership credit has none and stays last). */
+      const rowEntry = new Map<PdfRow, InvoiceOrderEntry>();
       let petSubtotal = 0;
 
       displayItems.forEach((item: any, idx: number) => {
@@ -2677,6 +2728,11 @@ export default function PublicRoomLoaderForm() {
           code: getCodeFromDisplayItem(item),
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
         });
+        rowEntry.set(rows[rows.length - 1], {
+          key: `d:${idx}`,
+          category: publicRowInvoiceCategory(item),
+          staffPosition: item._staffSortOrder ?? null,
+        });
         const line: LineItem = {
           name: item.name,
           quantity: qty,
@@ -2691,7 +2747,7 @@ export default function PublicRoomLoaderForm() {
         else membershipComparisonDeclinedLines.push({ ...line, membershipComparisonDeclinedOnly: true });
       });
 
-      tripFeeItems.forEach((item: any) => {
+      tripFeeItems.forEach((item: any, tripIdx: number) => {
         const pricing =
           item.wellnessPlanPricing != null
             ? { wellnessPlanPricing: item.wellnessPlanPricing }
@@ -2717,6 +2773,11 @@ export default function PublicRoomLoaderForm() {
           crossedOut: false,
           code: getCodeFromDisplayItem(item),
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+        });
+        rowEntry.set(rows[rows.length - 1], {
+          key: `t:${tripIdx}`,
+          category: publicRowInvoiceCategory(item),
+          staffPosition: item._staffSortOrder ?? null,
         });
         summaryLineItems.push({
           name: item.name,
@@ -2751,6 +2812,11 @@ export default function PublicRoomLoaderForm() {
           crossedOut: excluded,
           ...(entry.item.code ? { code: entry.item.code } : {}),
           wellnessPlanPricing: getMembershipInfoForPdf(pricing),
+        });
+        rowEntry.set(rows[rows.length - 1], {
+          key: `c:${entry.item.itemType}:${entry.item.itemId}`,
+          category: configEntryInvoiceCategory(entry),
+          staffPosition: null,
         });
         const line: LineItem = {
           name: entry.displayName,
@@ -2795,6 +2861,15 @@ export default function PublicRoomLoaderForm() {
           lineTotal: -credit,
         });
       }
+
+      // Invoice order: the summary rows (and so the PDF and the pre-visit accepts) follow the
+      // Room Loader's order; lines the client added slot in by category.
+      const orderedRows = inInvoiceOrder(
+        rows.filter((row) => rowEntry.has(row)),
+        (row) => rowEntry.get(row)!,
+        roomLoaderConfig.invoiceOrder.categories
+      );
+      rows.splice(0, rows.length, ...orderedRows, ...rows.filter((row) => !rowEntry.has(row)));
 
       petSubtotals.push(petSubtotal);
       grandTotal += petSubtotal;
@@ -4373,17 +4448,16 @@ export default function PublicRoomLoaderForm() {
               );
               const acceptedPanelsCp = effectiveAcceptedPanelOptions(planCp, petKeyCp, formData);
               const panelReplacedLabelsCp = panelReplacementLabels(acceptedPanelsCp, ctxCp.estimateLines);
-              const itemCategory = (item: any) => {
-                const t = (item.type ?? item.itemType ?? 'procedure').toString().toLowerCase();
-                if (t === 'lab' || t === 'laboratory') return 'lab';
-                if (t === 'inventory') return 'inventory';
-                return 'procedure';
-              };
-              // `originalIdx` is preserved so checkbox keys stay stable when rows are grouped by type.
-              const sortedWithOriginalIdx = displayItems.map((item, originalIdx) => ({ item, originalIdx }));
-              const procedureItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'procedure');
-              const labItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'lab');
-              const inventoryItems = sortedWithOriginalIdx.filter(({ item }) => itemCategory(item) === 'inventory');
+              // Invoice order; `originalIdx` is preserved so checkbox keys stay stable when rows move.
+              const sortedWithOriginalIdx = inInvoiceOrder(
+                displayItems.map((item, originalIdx) => ({ item, originalIdx })),
+                ({ item, originalIdx }) => ({
+                  key: `d:${originalIdx}`,
+                  category: publicRowInvoiceCategory(item),
+                  staffPosition: item._staffSortOrder ?? null,
+                }),
+                roomLoaderConfig.invoiceOrder.categories
+              );
               const CarePlanSeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '6px 0' }} />;
               const renderRow = ({ item, originalIdx }: { item: any; originalIdx: number }, displayIdx: number, groupLength: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
@@ -4467,11 +4541,22 @@ export default function PublicRoomLoaderForm() {
               };
               return (
                 <div style={{ padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #ddd' }}>
-                  {procedureItems.map((entry, i) => renderRow(entry, i, procedureItems.length))}
-                  {procedureItems.length > 0 && (labItems.length > 0 || inventoryItems.length > 0) && <CarePlanSeparator />}
-                  {labItems.map((entry, i) => renderRow(entry, i, labItems.length))}
-                  {labItems.length > 0 && inventoryItems.length > 0 && <CarePlanSeparator />}
-                  {inventoryItems.map((entry, i) => renderRow(entry, i, inventoryItems.length))}
+                  {sortedWithOriginalIdx.map((entry, i) => {
+                    const category = publicRowInvoiceCategory(entry.item);
+                    const isNewGroup = i > 0 && publicRowInvoiceCategory(sortedWithOriginalIdx[i - 1].item) !== category;
+                    const groupLength = sortedWithOriginalIdx.filter(
+                      (other) => publicRowInvoiceCategory(other.item) === category
+                    ).length;
+                    const groupIndex = sortedWithOriginalIdx
+                      .slice(0, i)
+                      .filter((other) => publicRowInvoiceCategory(other.item) === category).length;
+                    return (
+                      <Fragment key={`cp-${entry.originalIdx}`}>
+                        {isNewGroup ? <CarePlanSeparator /> : null}
+                        {renderRow(entry, groupIndex, groupLength)}
+                      </Fragment>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -4887,15 +4972,6 @@ export default function PublicRoomLoaderForm() {
               const displayItems = allItems.filter((item: any) => !hasPhrase(item, 'trip fee') && !hasPhrase(item, 'sharps'));
               const tripFeeItems = allItems.filter((item: any) => hasPhrase(item, 'trip fee') || hasPhrase(item, 'sharps'));
               const displayWithIdx = displayItems.map((item: any, idx: number) => ({ item, idx }));
-              const itemCategory = (item: any) => {
-                const t = (item.type ?? item.itemType ?? 'procedure').toString().toLowerCase();
-                if (t === 'lab' || t === 'laboratory') return 'lab';
-                if (t === 'inventory') return 'inventory';
-                return 'procedure';
-              };
-              const procedureDisplay = displayWithIdx.filter(({ item }) => itemCategory(item) === 'procedure');
-              const labDisplayForSummary = displayWithIdx.filter(({ item }) => itemCategory(item) === 'lab');
-              const inventoryDisplay = displayWithIdx.filter(({ item }) => itemCategory(item) === 'inventory');
               const SummarySeparator = () => <div style={{ height: '1px', backgroundColor: '#e0e0e0', margin: '6px 0' }} />;
 
               const petKeySummary = `pet${petIdx}`;
@@ -5132,6 +5208,79 @@ export default function PublicRoomLoaderForm() {
                 );
               };
 
+              const renderTripRow = (item: any, idx: number) => {
+                const { unitPrice, displayPricing: tripPricing } = resolveSummaryLinePrice(
+                  patientId,
+                  item,
+                  getClientPricing,
+                  getClientAdjustedPrice
+                );
+                const qty = Number(item.quantity) || 1;
+                const lineTotal = rowLinePrice(patientId, item, unitPrice, qty).total;
+                petSubtotal += lineTotal;
+                const hasTripDiscount = hasDiscountPricingNote(tripPricing);
+                const tripQuantityUsedNote = tripPricing?.wellnessPlanPricing?.hasCoverage && tripPricing.wellnessPlanPricing.isWithinLimit === false;
+                const hasTripPricingNote = hasTripDiscount || tripQuantityUsedNote;
+                const tripDiscountNote = getDiscountNote(tripPricing) ?? 'Membership or discount applied';
+                const tripDisplayNote = tripQuantityUsedNote && !hasTripDiscount
+                  ? MEMBERSHIP_ALLOTMENT_USED_LABEL
+                  : tripDiscountNote;
+                return (
+                  <div key={`t-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', color: '#666' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', flex: 1, margin: 0, cursor: 'default' }}>
+                        <input
+                          type="checkbox"
+                          checked
+                          disabled
+                          readOnly
+                          style={{ marginRight: '12px', width: '18px', height: '18px', flexShrink: 0, opacity: 0.6, accentColor: '#999' }}
+                        />
+                        <span style={{ flex: 1, color: '#666' }}>
+                          {item.name}
+                          {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
+                        </span>
+                      </label>
+                      <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(lineTotal)}</span>
+                    </div>
+                    {hasTripPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{tripDisplayNote}</div>}
+                  </div>
+                );
+              };
+
+              type SummaryEntry =
+                | { kind: 'display' | 'trip'; key: string; category: InvoiceCategory; staffPosition: number | null; item: any; idx: number }
+                | { kind: 'config'; key: string; category: InvoiceCategory; staffPosition: null; config: { displayName: string; item: RoomLoaderItemRef } };
+              const summaryEntries = inInvoiceOrder<SummaryEntry>(
+                [
+                  ...displayWithIdx.map(({ item, idx }) => ({
+                    kind: 'display' as const,
+                    key: `d:${idx}`,
+                    category: publicRowInvoiceCategory(item),
+                    staffPosition: item._staffSortOrder ?? null,
+                    item,
+                    idx,
+                  })),
+                  ...tripFeeItems.map((item: any, idx: number) => ({
+                    kind: 'trip' as const,
+                    key: `t:${idx}`,
+                    category: publicRowInvoiceCategory(item),
+                    staffPosition: item._staffSortOrder ?? null,
+                    item,
+                    idx,
+                  })),
+                  ...[...configLabRows, ...configAddOnRows].map((config) => ({
+                    kind: 'config' as const,
+                    key: `c:${config.item.itemType}:${config.item.itemId}`,
+                    category: configEntryInvoiceCategory(config),
+                    staffPosition: null,
+                    config,
+                  })),
+                ],
+                (entry) => entry,
+                roomLoaderConfig.invoiceOrder.categories
+              );
+
               return (
                 <div key={petIdx} style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd', borderRadius: '8px' }}>
                   <div style={{ marginBottom: '14px' }}>
@@ -5155,56 +5304,18 @@ export default function PublicRoomLoaderForm() {
                     <RoomLoaderPatientMemberBadge patient={patient} appointments={appointments} />
                   </div>
                   <div style={{ borderBottom: '1px solid #e0e0e0', paddingBottom: '12px', marginBottom: '8px' }}>
-                    {/* Procedures: uncheckable (visit/consult), trip fee/sharps, then checkable procedure items */}
-                    {procedureDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {tripFeeItems.map((item: any, idx: number) => {
-                      const { unitPrice, displayPricing: tripPricing } = resolveSummaryLinePrice(
-                        patientId,
-                        item,
-                        getClientPricing,
-                        getClientAdjustedPrice
-                      );
-                      const qty = Number(item.quantity) || 1;
-                      const lineTotal = rowLinePrice(patientId, item, unitPrice, qty).total;
-                      petSubtotal += lineTotal;
-                      const hasTripDiscount = hasDiscountPricingNote(tripPricing);
-                      const tripQuantityUsedNote = tripPricing?.wellnessPlanPricing?.hasCoverage && tripPricing.wellnessPlanPricing.isWithinLimit === false;
-                      const hasTripPricingNote = hasTripDiscount || tripQuantityUsedNote;
-                      const tripDiscountNote = getDiscountNote(tripPricing) ?? 'Membership or discount applied';
-                      const tripDisplayNote = tripQuantityUsedNote && !hasTripDiscount
-                        ? MEMBERSHIP_ALLOTMENT_USED_LABEL
-                        : tripDiscountNote;
-                      return (
-                        <div key={`t-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '8px 0', fontSize: '15px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', color: '#666' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', flex: 1, margin: 0, cursor: 'default' }}>
-                              <input
-                                type="checkbox"
-                                checked
-                                disabled
-                                readOnly
-                                style={{ marginRight: '12px', width: '18px', height: '18px', flexShrink: 0, opacity: 0.6, accentColor: '#999' }}
-                              />
-                              <span style={{ flex: 1, color: '#666' }}>
-                                {item.name}
-                                {qty > 1 && <span style={{ color: '#666', marginLeft: '6px', fontSize: '14px' }}>(Qty: {qty})</span>}
-                              </span>
-                            </label>
-                            <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatPrice(lineTotal)}</span>
-                          </div>
-                          {hasTripPricingNote && <div style={{ fontSize: '12px', color: '#1976d2', marginTop: '2px', textAlign: 'right' }}>{tripDisplayNote}</div>}
-                        </div>
-                      );
-                    })}
-                    {(procedureDisplay.length > 0 || tripFeeItems.length > 0) ? <SummarySeparator /> : null}
-                    {/* Labs: Labs-page panels first (stable position), then visit reminder/added lab lines */}
-                    {/* Lab panels — always keep rows visible when the client chose Yes on Labs; price can be 0 while items load */}
-                    {configLabRows.map(renderConfigRow)}
-                    {labDisplayForSummary.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {labDisplayForSummary.length > 0 || configLabRows.length > 0 ? <SummarySeparator /> : null}
-                    {inventoryDisplay.map(({ item, idx }) => renderDisplayRow(item, idx))}
-                    {configAddOnRows.length > 0 ? <SummarySeparator /> : null}
-                    {configAddOnRows.map(renderConfigRow)}
+                    {/* Invoice order (Settings → Room Loader → Invoice order): staff lines in the order staff sent,
+                        lab panels and add-ons the client accepted slotted in by category. */}
+                    {summaryEntries.map((entry, i) => (
+                      <Fragment key={entry.key}>
+                        {i > 0 && summaryEntries[i - 1].category !== entry.category ? <SummarySeparator /> : null}
+                        {entry.kind === 'config'
+                          ? renderConfigRow(entry.config)
+                          : entry.kind === 'trip'
+                            ? renderTripRow(entry.item, entry.idx)
+                            : renderDisplayRow(entry.item, entry.idx)}
+                      </Fragment>
+                    ))}
                     {summaryUniversalOffers.length > 0 ? (
                       <OfferSection
                         petKey={petKeySummary}

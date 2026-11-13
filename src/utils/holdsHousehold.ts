@@ -477,11 +477,36 @@ export function holdHouseholdEarliestAppointmentStart(
   return best;
 }
 
-/** Earliest scheduled appointment first (household anchor / earliest hold in the group). */
+/**
+ * Unread client replies on a Hold tab row (SCH-R10): how many, which hold carries them, and
+ * whether they are red (mine, or nobody owns the hold) or blue (someone else's).
+ */
+export function holdGroupUnreadReplies(
+  group: Pick<HoldHouseholdGroup, 'holds'>,
+): { count: number; holdId: number; mine: boolean } | null {
+  let count = 0;
+  let holdId = 0;
+  let mine = true;
+  for (const h of group.holds) {
+    const n = h.unreadReplies?.count ?? 0;
+    if (n <= 0) continue;
+    if (count === 0) {
+      holdId = h.id;
+      mine = h.effectiveOwnerEmployeeId == null || h.ownerIsCurrentUser;
+    }
+    count += n;
+  }
+  return count > 0 ? { count, holdId, mine } : null;
+}
+
+/** Rows with unread replies first (until opened), then earliest scheduled appointment first (household anchor / earliest hold in the group). */
 export function sortHoldHouseholdGroupsByAppointmentStart(
   groups: HoldHouseholdGroup[],
 ): HoldHouseholdGroup[] {
   return [...groups].sort((a, b) => {
+    const unreadDiff =
+      Number(holdGroupUnreadReplies(b) != null) - Number(holdGroupUnreadReplies(a) != null);
+    if (unreadDiff !== 0) return unreadDiff;
     const aStart =
       holdHouseholdEarliestAppointmentStart(a.holds) ?? a.anchor.appointmentStart ?? '';
     const bStart =

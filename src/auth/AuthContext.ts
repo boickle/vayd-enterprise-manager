@@ -9,10 +9,10 @@ export type LoginResult = {
     id?: number;
     email?: string;
     requiresPasswordReset?: boolean;
-    resetPasswordCode?: string | null;
     [k: string]: any;
   } | null;
   resetRequired: boolean;
+  /** One-time code for the reset screen; the API sends it (top level) only after a temporary-password sign-in. */
   resetCode?: string | null;
   redirecting?: boolean;
 };

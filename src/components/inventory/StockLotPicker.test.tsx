@@ -41,6 +41,7 @@ const lots: InventoryLotBalance[] = [
 vi.mock('../../api/branchInventory', () => ({
   listInventoryLots: vi.fn(async () => lots),
   getUncountedShelfLot: vi.fn(),
+  getShelfCountStatus: vi.fn(async () => ({ counted: true })),
 }));
 vi.mock('./AddInventoryLotModal', () => ({ default: () => null }));
 
@@ -170,5 +171,29 @@ describe('CAT-10: first-expired-first-out suggestion', () => {
       <StockLotPicker forUse practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={5} onChange={onChange} />
     );
     expect(screen.queryByText(/Older lot/)).toBeNull();
+  });
+
+  it('leaves the older-lot note off on Waste / Adjust (U7)', async () => {
+    const { listInventoryLots } = await import('../../api/branchInventory');
+    vi.mocked(listInventoryLots).mockResolvedValueOnce([lot(5, 'SOON', '2027-02-01'), lot(3, 'LATE', '2028-01-01')]);
+    render(
+      <StockLotPicker olderLotHint={false} practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={3} onChange={vi.fn()} />
+    );
+    await screen.findByRole('option', { name: /Lot SOON/ });
+    expect(screen.queryByText(/Older lot/)).toBeNull();
+  });
+
+  it('says lot fields came from the invoice only when they did (U4)', async () => {
+    const { listInventoryLots } = await import('../../api/branchInventory');
+    vi.mocked(listInventoryLots).mockResolvedValue([]);
+    const { rerender } = render(
+      <StockLotPicker allowNew practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={null} lotNumber="A1" onChange={vi.fn()} />
+    );
+    await screen.findByDisplayValue('A1');
+    expect(screen.queryByText(/read was wrong/)).toBeNull();
+    rerender(
+      <StockLotPicker allowNew fromInvoiceRead practiceId={1} inventoryItemId={9} branchId={1} locationId={5} selectedLotId={null} lotNumber="A1" onChange={vi.fn()} />
+    );
+    expect(screen.getByText(/read was wrong/)).toBeInTheDocument();
   });
 });

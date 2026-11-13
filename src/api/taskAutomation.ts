@@ -38,6 +38,9 @@ export type TaskAutomationRule = {
   dueInHours: number | null;
   recreateIfIncomplete: boolean;
   lastRunAt: string | null;
+  /** Most recent row error from the last run (includes the source key); null after a clean run. */
+  lastError?: string | null;
+  lastErrorAt?: string | null;
 };
 
 export type TaskAutomationRulesResponse = {
@@ -47,7 +50,7 @@ export type TaskAutomationRulesResponse = {
 };
 
 export type PatchTaskAutomationRuleBody = Partial<
-  Omit<TaskAutomationRule, 'id' | 'practiceId' | 'trigger' | 'lastRunAt'>
+  Omit<TaskAutomationRule, 'id' | 'practiceId' | 'trigger' | 'lastRunAt' | 'lastError' | 'lastErrorAt'>
 >;
 
 export async function listTaskAutomationRules(

@@ -6,6 +6,7 @@ import {
   type OffboardResult,
 } from '../../api/offboarding';
 import { searchClientsStaff, type ClientSearchRow } from '../../api/clientsStaff';
+import { formatYmd } from '../../utils/formatYmd';
 
 /** Someone who can take over tasks, pets or a tech's "works with". */
 export type OffboardColleague = { id: number; name: string; isProvider?: boolean };
@@ -184,7 +185,7 @@ export default function OffboardDialog({
           ) : null}
           {already ? (
             <p className="settings-warning" role="status">
-              Already offboarded with last day {already.lastDay}
+              Already offboarded with last day {formatYmd(already.lastDay)}
               {already.completedAt ? ' (done)' : ''}.
             </p>
           ) : null}

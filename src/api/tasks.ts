@@ -372,7 +372,8 @@ export type ReassignFromEmployeeBody = {
   toEmployeeId: number;
   upcomingOnly?: boolean;
   taskIds?: number[];
-  persistAsTaskForwarder?: boolean;
+  /** Also add these people as watchers on every moved task. */
+  addWatcherEmployeeIds?: number[];
 };
 
 export type ReassignFromEmployeeResult = {

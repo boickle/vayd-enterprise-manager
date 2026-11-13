@@ -12,6 +12,8 @@ import { MEMBERSHIP_COMPARISON_PATH } from '../membership-comparison-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
+import { useAppointmentReplyCounts } from '../hooks/useAppointmentReplyCounts';
+import { ReplyBadges } from './appointmentRequests/ReplyBadges';
 import {
   CATALOG_HOME,
   INVENTORY_HOME,
@@ -19,12 +21,11 @@ import {
   isInventoryOpsNavPath,
 } from '../utils/catalogInventoryNav';
 import { LABS_HOME, isLabsNavPath } from '../utils/labsNav';
-import { useCan, usePermissions } from '../permissions/PermissionContext';
+import { useCan, useMayShow, usePermissions } from '../permissions/PermissionContext';
 import { canOpenSettings } from '../permissions/settingsTabAccess';
 import {
-  APPOINTMENT_REQUEST_PROMOTIONS_PATH,
   EMAIL_CAMPAIGNS_PATH,
-  MEMBERSHIP_PROMOTIONS_PATH,
+  PROMOTIONS_PATH,
   isEmailCampaignsNavPath,
   isMarketingNavPath,
   isPromotionsNavPath,
@@ -75,9 +76,12 @@ function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
 function SchedulingSubmenuLinks({
   onNavigate,
   showRouting = false,
+  replyCounts,
 }: {
   onNavigate: () => void;
   showRouting?: boolean;
+  /** Unread client replies on appointment requests (red mine / blue others). */
+  replyCounts?: { mine: number; others: number };
 }) {
   const location = useLocation();
   const routingActive =
@@ -87,7 +91,6 @@ function SchedulingSubmenuLinks({
     location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
     !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
   const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
-  const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   const membershipComparisonActive = location.pathname.startsWith(MEMBERSHIP_COMPARISON_PATH);
   return (
@@ -146,19 +149,7 @@ function SchedulingSubmenuLinks({
         }}
       >
         Appointments
-      </Link>
-      <Link
-        to={HOLDS_PATH}
-        className={`schedule-app__settings-link${
-          holdsActive ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={(e) => {
-          if (blockScheduleNavLeave(e)) return;
-          onNavigate();
-        }}
-      >
-        Holds
+        {replyCounts ? <ReplyBadges mine={replyCounts.mine} others={replyCounts.others} /> : null}
       </Link>
       <Link
         to={EXIT_SURVEY_PATH}
@@ -191,13 +182,12 @@ function SchedulingSubmenuLinks({
 }
 
 /**
- * Marketing menu (RP-08, owner decision D3 menus): Promotions opens a submenu with Membership
- * Promotions and Appointment Request Promotions; Email campaigns is the campaigns list.
+ * Marketing menu (RP-08, owner decision D3 menus; Nov 11: two links only): Promotions opens the
+ * Promotions page, whose tabs are Membership Promotions and Appointment Request Promotions (like
+ * Labs). Email campaigns is the campaigns list.
  */
 function MarketingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
-  const onPromotions = isPromotionsNavPath(location.pathname);
-  const [promotionsOpen, setPromotionsOpen] = useState(onPromotions);
   const linkClass = (active: boolean) =>
     `schedule-app__settings-link${active ? ' schedule-app__settings-link--active' : ''}`;
   const onClick = (e: { preventDefault: () => void }) => {
@@ -206,46 +196,14 @@ function MarketingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   };
   return (
     <>
-      <button
-        type="button"
-        className={`${linkClass(onPromotions)} schedule-app__settings-submenu-trigger`}
-        aria-haspopup="menu"
-        aria-expanded={promotionsOpen}
-        onClick={() => setPromotionsOpen((open) => !open)}
+      <Link
+        to={PROMOTIONS_PATH}
+        className={linkClass(isPromotionsNavPath(location.pathname))}
+        role="menuitem"
+        onClick={onClick}
       >
         Promotions
-        <ChevronDown
-          size={14}
-          aria-hidden
-          className={`schedule-app__settings-submenu-chevron${
-            promotionsOpen ? ' schedule-app__settings-submenu-chevron--open' : ''
-          }`}
-        />
-      </button>
-      {promotionsOpen ? (
-        <div
-          className="schedule-app__settings-submenu-children"
-          role="menu"
-          aria-label="Promotions"
-        >
-          <Link
-            to={MEMBERSHIP_PROMOTIONS_PATH}
-            className={linkClass(location.pathname.startsWith(MEMBERSHIP_PROMOTIONS_PATH))}
-            role="menuitem"
-            onClick={onClick}
-          >
-            Membership Promotions
-          </Link>
-          <Link
-            to={APPOINTMENT_REQUEST_PROMOTIONS_PATH}
-            className={linkClass(location.pathname.startsWith(APPOINTMENT_REQUEST_PROMOTIONS_PATH))}
-            role="menuitem"
-            onClick={onClick}
-          >
-            Appointment Request Promotions
-          </Link>
-        </div>
-      ) : null}
+      </Link>
       <Link
         to={EMAIL_CAMPAIGNS_PATH}
         className={linkClass(isEmailCampaignsNavPath(location.pathname))}
@@ -264,6 +222,7 @@ export default function NavbarScheduleHorizontalNav() {
   const { abilities, role } = auth as { abilities?: string[]; role?: string | string[] };
   const scheduleNavEnabled = location.pathname.startsWith('/schedule');
   const { assignedCount, watchingCount } = useTaskNavBadges(scheduleNavEnabled);
+  const replyCounts = useAppointmentReplyCounts(scheduleNavEnabled);
 
   const roles = useMemo(() => {
     const arr = Array.isArray(role) ? role : role ? [role] : [];
@@ -272,7 +231,8 @@ export default function NavbarScheduleHorizontalNav() {
 
   const tabs = useMemo(() => getVisibleScoutTabs(abilities, roles), [abilities, roles]);
   const homeTab = useMemo(() => tabs.find((t) => t.path === 'home'), [tabs]);
-  const showRouting = scoutTabPermissionOk('canSeeRouting', abilities);
+  const mayBook = useMayShow('routing.book', 'calendar.book_manual');
+  const showRouting = scoutTabPermissionOk('canSeeRouting', abilities) && mayBook;
 
   const showAdminTab = useMemo(
     () => roles.includes('admin') || roles.includes('superadmin'),
@@ -583,9 +543,14 @@ export default function NavbarScheduleHorizontalNav() {
               onClick={(e) => toggleDetailsMenu(schedulingToolsMenuRef.current, e)}
             >
               Scheduling
+              <ReplyBadges mine={replyCounts.mine} others={replyCounts.others} />
             </summary>
             <div className="schedule-app__settings-dropdown" role="menu" aria-label="Scheduling">
-              <SchedulingSubmenuLinks onNavigate={closeSchedulingMenu} showRouting={showRouting} />
+              <SchedulingSubmenuLinks
+                onNavigate={closeSchedulingMenu}
+                showRouting={showRouting}
+                replyCounts={replyCounts}
+              />
             </div>
           </details>
         );
@@ -798,7 +763,11 @@ export default function NavbarScheduleHorizontalNav() {
                     return (
                       <div key="more-scheduling" className="navbar-schedule-more-section">
                         <p className="navbar-schedule-more-section-title">Scheduling</p>
-                        <SchedulingSubmenuLinks onNavigate={closeMoreMenu} showRouting={showRouting} />
+                        <SchedulingSubmenuLinks
+                          onNavigate={closeMoreMenu}
+                          showRouting={showRouting}
+                          replyCounts={replyCounts}
+                        />
                       </div>
                     );
                   case 'settings':

@@ -119,6 +119,10 @@ export type VisitTenderMethod =
   | 'account_credit';
 
 export type VisitInvoiceLine = {
+  /** Where staff dragged this line among the pet's lines (invoice order); null = standard order. */
+  sortOrder?: number | null;
+  /** Place on the Room Loader check-in this line came from (pre-visit accept). */
+  roomLoaderPosition?: number | null;
   id: string;
   invoiceId: string;
   orderId: string | null;
@@ -301,6 +305,10 @@ export type VisitInvoice = {
   total: number;
   amountPaid: number;
   isEuthanasiaPrepay: boolean;
+  /** Appointment deposit bill (Nov 12, 2026): the appointment it holds a deposit for. */
+  depositForAppointmentId?: number | null;
+  /** The deposit asked for. */
+  depositAmount?: number | string | null;
   stripeCustomerId: string | null;
   stripeSetupIntentId: string | null;
   savedPaymentMethodId: string | null;
@@ -452,6 +460,8 @@ export type HouseholdRosterEntry = {
   appointmentId: number;
   soapEncounterId: string;
   isCurrent: boolean;
+  /** 'completed' = signed and locked; the scribe cannot write into it. */
+  status?: SoapEncounterStatus;
 };
 
 /**
@@ -869,6 +879,8 @@ export type PatientPrescription = {
   rxNumber: number | null;
   quantity?: number | null;
   autoshipStartedAt?: string | null;
+  /** The catalog item needs no prescription: show PRN, refills don't apply (owner, Nov 11, 2026). */
+  prn?: boolean;
 };
 
 /** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */
@@ -1163,11 +1175,14 @@ export async function listPatientPrescriptions(
   return data;
 }
 
-/** Mark a prescription as no longer taking (or clear that mark). */
+/**
+ * Mark a prescription as no longer taking (or clear that mark), change its refills, or link a chronic med
+ * to a catalog item (inventoryItemId) so the client can reorder it in the portal.
+ */
 export async function updatePatientPrescription(
   id: number,
   /** refill: refills left. Fewer or 0: doctors and techs; more: a licensed vet only. */
-  body: { discontinued?: boolean; refill?: number; patientId?: number }
+  body: { discontinued?: boolean; refill?: number; patientId?: number; inventoryItemId?: number }
 ): Promise<PatientPrescription> {
   const { data } = await http.patch<PatientPrescription>(
     `/patient-prescriptions/${encodeURIComponent(String(id))}`,
@@ -1341,6 +1356,21 @@ export async function postAccountAdjustment(opts: {
   return data;
 }
 
+/**
+ * Invoice order: save one pet's lines in the order staff dragged them (top first), or reset that
+ * pet to the practice's standard order. Returns the invoice with lines in the new order.
+ */
+export async function reorderInvoiceLines(
+  invoiceId: string,
+  body: { patientId: number | null; lineIds?: string[]; reset?: boolean }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/line-order`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
 export async function patchVisitInvoice(
   invoiceId: string,
   body: {
@@ -1371,6 +1401,8 @@ export async function addVisitTender(
     /** Required when method is gift_card. */
     giftCardCode?: string | null;
     giftCardChannel?: 'visit' | 'staff_ledger';
+    /** Account credit: also use deposits held for other visits (a cancel or no-show fee). */
+    useHeldDeposits?: boolean;
   }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
@@ -1386,14 +1418,43 @@ export type AvailableAccountCredit = {
   evet: number;
   evetHeld: boolean;
   evetHeldAmount: number;
+  /** D7 option 3: deposit credit held for other visits (not in `total`). */
+  depositHeld?: number;
+  /** Every appointment deposit with credit left. */
+  deposits?: AccountCreditDeposit[];
+  /** With `forPayLink`: held deposits the client's unpaid bills' own visits use on a pay link. */
+  payLinkDeposit?: number;
   total: number;
   heldNote: string | null;
 };
 
-export async function fetchAvailableAccountCredit(clientId: number): Promise<AvailableAccountCredit> {
+export type AccountCreditDeposit = {
+  invoiceId: string;
+  appointmentId: number;
+  amount: number;
+  /** Still held for its visit (not checked out, not cancelled). */
+  held: boolean;
+  /** Its visit is on this bill, so it is used first. */
+  forThisBill: boolean;
+  /** "Deposit for Biscuit's visit on Nov 20". */
+  label: string | null;
+};
+
+/** With `invoiceId`, the total includes the deposits held for that bill's own visits. */
+export async function fetchAvailableAccountCredit(
+  clientId: number,
+  invoiceId?: string,
+  opts?: { forPayLink?: boolean }
+): Promise<AvailableAccountCredit> {
   const { data } = await http.get<AvailableAccountCredit>(
     `/visit-invoices/client/${encodeURIComponent(String(clientId))}/account-credit`,
-    { params: { practiceId: pid() } }
+    {
+      params: {
+        practiceId: pid(),
+        ...(invoiceId ? { invoiceId } : {}),
+        ...(opts?.forPayLink ? { forPayLink: 1 } : {}),
+      },
+    }
   );
   return data;
 }
@@ -1812,6 +1873,8 @@ export type InvoiceCardOnFile = {
   brand: string | null;
   expMonth: number | null;
   expYear: number | null;
+  /** PAY-C5: the card has expired. It is shown, never charged. */
+  expired?: boolean;
 };
 
 export type InvoiceCardOnFileLookup = {
@@ -2030,7 +2093,7 @@ export function formatInvoiceLineEntered(created: string | null | undefined): st
   });
 }
 
-/** Virtual terminal: charge a card keyed in while the owner reads it out. */
+/** Type card manually (virtual terminal): charge a card number keyed in by staff. */
 export async function chargeKeyedCard(
   invoiceId: string,
   body: { paymentMethodId: string; saveCard?: boolean },
@@ -2236,6 +2299,10 @@ export type ClientCardOnFile = {
   agreementVersion: string | null;
   currentAgreementVersion: string;
   declinedAt: string | null;
+  /** Memberships and auto-ships billed on this card; Remove card keeps it for them only (PAY-C2). */
+  stillUsedBy?: string[];
+  /** Only on the Remove card reply: what was removed, and who still uses it. */
+  removed?: { last4: string | null; brand: string | null; detached: boolean; stillUsedBy: string[] };
 };
 
 export async function getClientCardOnFile(clientId: number): Promise<ClientCardOnFile> {

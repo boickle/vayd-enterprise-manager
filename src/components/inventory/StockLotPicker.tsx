@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   getUncountedShelfLot,
+  getShelfCountStatus,
   listInventoryLots,
   type InventoryLotBalance,
 } from '../../api/branchInventory';
@@ -53,6 +54,13 @@ type Props = {
    * it (owner decision, Oct 30, 2026).
    */
   otherShelvesFrom?: string | null;
+  /** Unbox: these lot fields were filled in by reading the supplier invoice (U4). */
+  fromInvoiceRead?: boolean;
+  /**
+   * "Older lot … has stock": a nudge to use the oldest bottle first. Waste / Adjust turns it off,
+   * since you waste the bottle that's broken or expired, not the oldest (U7).
+   */
+  olderLotHint?: boolean;
 };
 
 /** "Oct 1" from "2026-10-01". */
@@ -143,6 +151,8 @@ export default function StockLotPicker({
   className,
   refreshKey = 0,
   forUse = false,
+  fromInvoiceRead = false,
+  olderLotHint = true,
   otherShelvesFrom = null,
 }: Props) {
   /** Showing lots from every shelf instead of the doctor's controlled drug location. */
@@ -157,6 +167,8 @@ export default function StockLotPicker({
   const [reloadTick, setReloadTick] = useState(0);
   const [shelfLot, setShelfLot] = useState<{ id: number; lotNumber: string } | null>(null);
   const [shelfLotError, setShelfLotError] = useState<string | null>(null);
+  /** False until this shelf's first count, even after Add lot: its other bottles are still unknown. */
+  const [shelfCounted, setShelfCounted] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (inventoryItemId == null) {
@@ -187,6 +199,24 @@ export default function StockLotPicker({
       canceled = true;
     };
   }, [practiceId, inventoryItemId, branchFilter, locationFilter, allowNew, refreshKey, reloadTick]);
+
+  const askShelfCounted =
+    inventoryItemId != null && !allowNew && !requireLotNumber && locationId != null && lots.length > 0;
+  useEffect(() => {
+    setShelfCounted(null);
+    if (!askShelfCounted || inventoryItemId == null || locationId == null) return;
+    let canceled = false;
+    void getShelfCountStatus(practiceId, inventoryItemId, locationId)
+      .then((r) => {
+        if (!canceled) setShelfCounted(r.counted);
+      })
+      .catch(() => {
+        if (!canceled) setShelfCounted(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [askShelfCounted, practiceId, inventoryItemId, locationId, refreshKey, reloadTick]);
 
   /** Lots staff may pick: in use mode, expired ones are left out. */
   const pickable = useMemo(
@@ -275,7 +305,11 @@ export default function StockLotPicker({
     allowNew && (newLot || (selectedLotId == null && lotNumber.trim() !== ''));
   const canAddLot = allowAddLot && !allowNew && !disabled;
   const offerShelfStock =
-    !allowNew && !requireLotNumber && locationId != null && !loading && lots.length === 0;
+    !allowNew &&
+    !requireLotNumber &&
+    locationId != null &&
+    !loading &&
+    (lots.length === 0 || shelfCounted === false);
   // The no-lot bucket sits at 0 or below, so the lot list (on-hand only) leaves it out.
   const shelfLotId =
     shelfLot?.id ?? (selectedLotId != null && lotNumber === 'UNASSIGNED' ? selectedLotId : null);
@@ -433,7 +467,7 @@ export default function StockLotPicker({
           </label>
         </div>
       ) : null}
-      {showEditableLotFields ? (
+      {showEditableLotFields && fromInvoiceRead ? (
         <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
           From the invoice — change these if the read was wrong.
         </p>
@@ -451,7 +485,7 @@ export default function StockLotPicker({
           Soonest expiration is listed first — use that bottle unless you know otherwise.
         </p>
       ) : null}
-      {olderLotNote ? (
+      {olderLotNote && olderLotHint ? (
         <p
           className="settings-muted stock-lot-picker__older-note"
           role="note"

@@ -65,9 +65,6 @@ export default function StoreLayout() {
             <>
               <div className="vayd-store__account-overlay" onClick={() => setMenuOpen(false)} />
               <div className="vayd-store__account-menu">
-                <Link to="/store/autoship" onClick={() => setMenuOpen(false)}>
-                  Edit auto-ship items
-                </Link>
                 <Link to="/client-portal?preferences=1" onClick={() => setMenuOpen(false)}>
                   Preferences
                 </Link>
@@ -94,7 +91,6 @@ export default function StoreLayout() {
           <Link to="/store">Shop</Link>
           {auth.token ? (
             <>
-              <Link to="/store/autoship">Auto-ship</Link>
               <Link to="/client-portal">Client portal</Link>
             </>
           ) : (

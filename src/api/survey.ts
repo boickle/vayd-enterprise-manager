@@ -284,7 +284,9 @@ export async function listSurveyResponses(params: {
   }
   const { data } = await http.get('/survey/responses', { params: query, headers: authHeaders() });
   return {
-    items: Array.isArray(data) ? data : data?.items ?? data?.responses ?? [],
+    // The API answers { data, total } (SurveyService.listResponses). B14-2: reading only items/responses left the
+    // Survey Results list empty.
+    items: Array.isArray(data) ? data : data?.data ?? data?.items ?? data?.responses ?? [],
     total: data?.total,
   };
 }

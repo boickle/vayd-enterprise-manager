@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Paperclip, X } from 'lucide-react';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { recordScoutChartCommunication } from '../api/scoutChart';
 import EmailRecipientInput, { type EmailRecipientChoice } from './EmailRecipientInput';
 import {
   fetchGmailMailboxes,
@@ -14,6 +15,7 @@ import {
 } from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
+import { clientHasDoNotEmail, doNotEmailMessage, toLineHitsClient } from '../utils/doNotEmail';
 import {
   defaultSharedMailbox,
   NO_SHARED_GMAIL_MESSAGE,
@@ -215,23 +217,30 @@ export function ClientEmailComposeModal({
 
     void (async () => {
       try {
+        // "Do not email" first: it's the real reason, whatever the Gmail set-up (owner, Nov 13, 2026).
+        const clientRaw = clientId != null ? await fetchClientByIdStaff(clientId) : null;
+        if (cancelled) return;
+        if (clientRaw && clientHasDoNotEmail(clientRaw) && (initialTo == null || toLineHitsClient(initialTo, clientRaw))) {
+          const c = clientRaw as Record<string, unknown>;
+          const name = [c.firstName, c.lastName].filter((v) => typeof v === 'string' && v.trim()).join(' ');
+          throw new Error(doNotEmailMessage(name || null));
+        }
         if (!gmailAllowed) {
           throw new Error('Gmail access is not available for your account.');
         }
         const mailboxesRes = await fetchGmailMailboxes();
         if (cancelled) return;
 
-        if (clientId != null) {
-          const clientRaw = await fetchClientByIdStaff(clientId);
-          if (cancelled) return;
+        if (clientRaw) {
+          const firstTo =
+            initialTo != null ? initialTo : clientEmailsFromStaffPayload(clientRaw).join(', ');
           if (initialTo != null) {
             setTo(initialTo);
           } else {
-            const emails = clientEmailsFromStaffPayload(clientRaw);
-            if (emails.length === 0) {
+            if (!firstTo) {
               throw new Error('No client email address on file.');
             }
-            setTo(emails.join(', '));
+            setTo(firstTo);
           }
         } else {
           setTo(initialTo!.trim());
@@ -345,6 +354,28 @@ export function ClientEmailComposeModal({
         to,
         from,
       });
+      // COM-07: every email Scout sends to a client shows in their Communications. Screens that pass
+      // onAfterSend write their own entry (with their own label); the rest are logged here.
+      if (!onAfterSend && clientId != null) {
+        const patientIds = [
+          ...(regardingPatientIds ?? []),
+          ...(regardingPatientId != null ? [regardingPatientId] : []),
+        ];
+        try {
+          await recordScoutChartCommunication({
+            clientId,
+            patientIds: [...new Set(patientIds)],
+            channel: 'email',
+            subject: subject.trim(),
+            body: text,
+            destination: to,
+            sentFrom: from,
+            typeLabel: 'Email sent',
+          });
+        } catch {
+          // The email already went out; a missing chart entry must not show as a send failure.
+        }
+      }
       onClose();
     } catch (e: unknown) {
       setSendError(gmailErrorMessage(e));

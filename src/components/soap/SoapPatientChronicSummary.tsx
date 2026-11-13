@@ -4,6 +4,7 @@ import type { PatientPrescription, PatientProblem, PatientProblemAcuity } from '
 import { deleteProblem, updateProblem } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import ProblemAddControl from './ProblemAddControl';
+import ChronicMedRefillsModal, { chronicRefillLabel } from '../pims/ChronicMedRefillsModal';
 import { appConfirm } from '../../utils/appDialog';
 import {
   newSoapChronicDraftId,
@@ -73,8 +74,17 @@ export default function SoapPatientChronicSummary({
     ];
   }, [problems, draft.addProblems, draft.resolveProblemIds, encounterId]);
 
+  // Refills and catalog links changed from the refills window, until the chart reloads.
+  const [medPatches, setMedPatches] = useState<Record<number, Partial<PatientPrescription>>>({});
+  const [refillsRxId, setRefillsRxId] = useState<number | null>(null);
+  const recordedMeds = useMemo(
+    () => chronicMedications.map((rx) => ({ ...rx, ...(medPatches[rx.id] ?? {}) })),
+    [chronicMedications, medPatches],
+  );
+  const refillsRx = refillsRxId != null ? recordedMeds.find((rx) => rx.id === refillsRxId) ?? null : null;
+
   const visibleMeds = useMemo(() => {
-    const recorded = chronicMedications.filter((rx) => !draft.discontinueRxIds.includes(rx.id));
+    const recorded = recordedMeds.filter((rx) => !draft.discontinueRxIds.includes(rx.id));
     return [
       ...recorded.map((rx) => ({
         id: String(rx.id),
@@ -82,6 +92,9 @@ export default function SoapPatientChronicSummary({
         name: rx.name,
         autoshipStartedAt: rx.autoshipStartedAt,
         inventoryItemId: rx.inventoryItemId,
+        refill: rx.refill,
+        refillExpiration: rx.refillExpiration,
+        prn: rx.prn ?? false,
         pending: false as const,
       })),
       ...draft.addMedications.map((row) => ({
@@ -90,10 +103,13 @@ export default function SoapPatientChronicSummary({
         name: row.name,
         autoshipStartedAt: null as string | null,
         inventoryItemId: row.inventoryItemId,
+        refill: null as number | null,
+        refillExpiration: null as string | null,
+        prn: false,
         pending: true as const,
       })),
     ];
-  }, [chronicMedications, draft.addMedications, draft.discontinueRxIds]);
+  }, [recordedMeds, draft.addMedications, draft.discontinueRxIds]);
 
   const [editingProblemId, setEditingProblemId] = useState<string | null>(null);
   const [editingProblemLabel, setEditingProblemLabel] = useState('');
@@ -446,6 +462,19 @@ export default function SoapPatientChronicSummary({
                       · catalog
                     </span>
                   ) : null}
+                  {variant !== 'wrapup' && !rx.pending && rx.numericId != null ? (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        className={`chronic-rx-refills-btn${!rx.prn && (Number(rx.refill) || 0) === 0 ? ' is-none' : ''}`}
+                        title="Refills and online reorder"
+                        onClick={() => setRefillsRxId(rx.numericId)}
+                      >
+                        {chronicRefillLabel(rx)}
+                      </button>
+                    </>
+                  ) : null}
                 </span>
                 <button
                   type="button"
@@ -535,6 +564,17 @@ export default function SoapPatientChronicSummary({
           )}
         </div>
       </div>
+      {refillsRx ? (
+        <ChronicMedRefillsModal
+          rx={refillsRx}
+          practiceId={practiceId}
+          patientId={patientId}
+          onClose={() => setRefillsRxId(null)}
+          onChanged={(patch) =>
+            setMedPatches((prev) => ({ ...prev, [refillsRx.id]: { ...(prev[refillsRx.id] ?? {}), ...patch } }))
+          }
+        />
+      ) : null}
     </div>
   );
 }

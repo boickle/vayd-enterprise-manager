@@ -1,4 +1,9 @@
 import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
+import {
+  InvoiceLineGripIcon,
+  InvoiceSectionOrderReset,
+  useInvoiceLineDrag,
+} from '../soap/invoiceLineDrag';
 import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefundSplit';
 import { clampReturnQty, returnQtyProblem, returnableQty } from '../../utils/returnLimits';
 import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
@@ -122,6 +127,7 @@ import {
   type OrderPrescription,
   type OrderVaccination,
   type StockDraw,
+  reorderInvoiceLines,
 } from '../../api/visitWorkflow';
 import {
   buildCheckItemPayload,
@@ -242,7 +248,7 @@ import RepriceInvoiceModal from '../invoice/RepriceInvoiceModal';
 import { estimatePetChoices, isFinancialPetActive, petsForChargeSelect } from '../../utils/financialPets';
 import { showPaymentSuccess } from '../soap/checkoutSuccessNote';
 import { apiErrorMessage, paymentErrorMessage } from '../../api/http';
-import { lotShelf } from '../../utils/lotShelf';
+import { lineDrawsStock, lotShelf } from '../../utils/lotShelf';
 import { changeLineShelf } from '../../utils/lineShelfChange';
 // A controlled line's shelf is its lot, from the doctor's controlled drug location, so the
 // invoice's office / shelf fields aren't shown on it (owner request, Oct 30, 2026).
@@ -1765,7 +1771,7 @@ export default function ClientFinancialWorkspace({
   const [paymentTypes, setPaymentTypes] = useState<PracticePaymentType[]>([]);
   const [tenderPaymentType, setTenderPaymentType] = useState('');
   const [useSavedCard, setUseSavedCard] = useState(false);
-  /** Virtual terminal: key in a card the owner reads out over the phone. */
+  /** Type card manually (virtual terminal): key in a card number. */
   const [payByPhone, setPayByPhone] = useState(false);
   const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   /** Shown after this invoice's payment makes a pet inactive. */
@@ -3405,6 +3411,29 @@ export default function ClientFinancialWorkspace({
     }
     return out;
   }, [invoicePetSections, addedSectionPetIds, linePatientId, allPets, selected?.status, selected?.isDeleted]);
+
+  /** Invoice order: staff drag a pet's charges on a direct invoice; the API keeps the order. */
+  const saveLineOrder = async (patientIdForOrder: number | null, lineIds?: string[]) => {
+    if (!selected || isUnsavedInvoice(selected)) return;
+    setError(null);
+    try {
+      await reorderInvoiceLines(
+        selected.id,
+        lineIds ? { patientId: patientIdForOrder, lineIds } : { patientId: patientIdForOrder, reset: true }
+      );
+      await refreshList(selected.id);
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    }
+  };
+  const blockLinesOf = (block: InvoiceLineDisplayBlock) => (block.kind === 'bundle' ? block.lines : [block.line]);
+  const lineDrag = useInvoiceLineDrag((groupKey, leadIds) => {
+    const section = displayPetSections.find((row) => row.key === groupKey);
+    if (!section) return;
+    const linesOf = new Map(section.blocks.map((block) => [blockPrimaryLine(block).id, blockLinesOf(block)]));
+    const ids = leadIds.flatMap((id) => (linesOf.get(id) ?? []).map((line) => line.id));
+    return saveLineOrder(section.patientId ?? null, ids);
+  });
   const petsWithoutSection = chargePets.filter(
     (p) => !displayPetSections.some((s) => s.patientId === p.id),
   );
@@ -3556,7 +3585,7 @@ export default function ClientFinancialWorkspace({
       selected ? matchingMailOrderForLine(mailOrders, selected.id, line) : null,
     [selected, mailOrders]
   );
-  /** Only lines we hand over in person still need somewhere to decrement from. */
+  /** Something on the invoice is handed over in person (not everything ships). */
   const needsLocalFill = useMemo(
     () =>
       visibleLines.some(
@@ -3564,6 +3593,21 @@ export default function ClientFinancialWorkspace({
           !line.tagalongOfLineId &&
           !isInvoiceShippingLine(line, shippingIdSet) &&
           !mailOrderForLine(line)
+      ),
+    [visibleLines, shippingIdSet, mailOrderForLine]
+  );
+  /**
+   * Only in-person charges that take stock off a shelf need Branch/Location. A services-only
+   * invoice (exam, lab send-out) shows none and doesn't wait on it (owner decision, Nov 9, 2026).
+   */
+  const needsStockShelf = useMemo(
+    () =>
+      visibleLines.some(
+        (line) =>
+          !line.tagalongOfLineId &&
+          !isInvoiceShippingLine(line, shippingIdSet) &&
+          !mailOrderForLine(line) &&
+          lineDrawsStock(line)
       ),
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
@@ -3616,7 +3660,16 @@ export default function ClientFinancialWorkspace({
     .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
   const previewTax = displayLines.reduce((sum, l) => sum + (Number(l.taxAmount) || 0), 0);
   const previewTotal = Math.round((previewSubtotal + previewTax) * 100) / 100;
-  const remaining = selected
+  // Appointment deposit (Nov 12, 2026): what is still to collect on the deposit, not on charges.
+  const isDepositBill = selected?.depositForAppointmentId != null;
+  const depositPaid = isDepositBill
+    ? (selected?.tenders ?? [])
+        .filter((t) => !t.voidedAt && t.method !== 'account_credit' && (t as { isDeleted?: boolean }).isDeleted !== true)
+        .reduce((sum, t) => sum + (Number(t.amount) || 0) - (Number(t.refundedAmount) || 0), 0)
+    : 0;
+  const remaining = isDepositBill
+    ? Math.max(0, Math.round(((Number(selected?.depositAmount) || 0) - depositPaid) * 100) / 100)
+    : selected
     ? Math.max(
         0,
         (hasUnsavedDeletes ? previewTotal : Number(selected.total) || 0) -
@@ -3660,7 +3713,7 @@ export default function ClientFinancialWorkspace({
     !hasUnsavedDeletes &&
     !rxBlocksPay &&
     !lotBlocksPay &&
-    (!needsLocalFill ||
+    (!needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canPay =
     selected &&
@@ -3671,7 +3724,7 @@ export default function ClientFinancialWorkspace({
     !rxBlocksPay &&
     !lotBlocksPay &&
     (selected.status !== 'open' ||
-      !needsLocalFill ||
+      !needsStockShelf ||
       (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canReturn =
     mayReturn &&
@@ -5340,7 +5393,7 @@ export default function ClientFinancialWorkspace({
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
 
-      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} clientName={clientName} /> : null}
 
       <div
         ref={splitRef}
@@ -6274,7 +6327,15 @@ export default function ClientFinancialWorkspace({
                 </p>
               ) : null}
 
-              {visibleLines.length === 0 &&
+              {isDepositBill ? (
+                <p className="client-fin__deposit-note" data-testid="deposit-bill-note">
+                  <strong>Appointment deposit</strong>: {money(Number(selected.depositAmount) || 0)} asked
+                  for, {money(depositPaid)} paid
+                  {remaining > 0.009 ? `, ${money(remaining)} still to collect` : ''}. What is paid is held as
+                  credit for that visit: at its checkout <strong>Account credit</strong> uses it first; if
+                  the client cancels or doesn&apos;t show, pay the cancel fee with Account credit.
+                </p>
+              ) : visibleLines.length === 0 &&
               !(canEdit && displayPetSections.length) &&
               !selected.removedLines?.length ? (
                 <p className="client-fin__muted">No lines yet.</p>
@@ -6379,7 +6440,41 @@ export default function ClientFinancialWorkspace({
                             </td>
                           </tr>
                         ) : null}
+                        {canEdit &&
+                        section.blocks.some((block) => blockLinesOf(block).some((line) => line.sortOrder != null)) ? (
+                          <tr className="client-fin__pet-order-row">
+                            <td colSpan={invoiceMetaCols + (canRemoveLines ? 1 : 0)}>
+                              <div className="invoice-order-bar">
+                                <InvoiceSectionOrderReset
+                                  onReset={() => void saveLineOrder(section.patientId ?? null)}
+                                  disabled={busy}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
                       {section.blocks.map((block) => {
+                        const canDragBlock = canEdit && section.blocks.length > 1;
+                        const dragLeadId = blockPrimaryLine(block).id;
+                        const dragRowProps = canDragBlock
+                          ? lineDrag.rowDropProps(
+                              section.key,
+                              dragLeadId,
+                              section.blocks.map((other) => blockPrimaryLine(other).id)
+                            )
+                          : {};
+                        const dragGrip = canDragBlock ? (
+                          <span
+                            {...lineDrag.gripProps(
+                              section.key,
+                              dragLeadId,
+                              block.kind === 'bundle' ? block.name : block.line.description
+                            )}
+                            className="invoice-line-grip invoice-line-grip--inline"
+                          >
+                            <InvoiceLineGripIcon />
+                          </span>
+                        ) : null;
                         const blockLines = block.kind === 'bundle' ? block.lines : [block.line];
                         const bundleAmount =
                           block.kind === 'bundle'
@@ -6399,8 +6494,12 @@ export default function ClientFinancialWorkspace({
                             }
                           >
                             {block.kind === 'bundle' ? (
-                              <tr className="client-fin__bundle-head">
+                              <tr
+                                className={`client-fin__bundle-head${canDragBlock ? lineDrag.rowDragClass(dragLeadId) : ''}`}
+                                {...dragRowProps}
+                              >
                                 <td className="client-fin__col-item" colSpan={2}>
+                                  {dragGrip}
                                   <div className="client-fin__bundle-label">
                                     <span className="client-fin__bundle-name">{block.name}</span>
                                     <span className="client-fin__bundle-meta">
@@ -6784,9 +6883,11 @@ export default function ClientFinancialWorkspace({
                             nestedUnderBundle ? ' client-fin__bundle-child' : ''
                           }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}${
                             isClinicSplitParent ? ' client-fin__line--clinic-split' : ''
-                          }`}
+                          }${!nestedUnderBundle && !isMailSplitChild && canDragBlock ? lineDrag.rowDragClass(dragLeadId) : ''}`}
+                          {...(!nestedUnderBundle && !isMailSplitChild ? dragRowProps : {})}
                         >
                           <td className="client-fin__col-item">
+                            {!nestedUnderBundle && !isMailSplitChild ? dragGrip : null}
                             {showMeta ? (
                               <button
                                 type="button"
@@ -8257,7 +8358,8 @@ export default function ClientFinancialWorkspace({
               !invoiceGone &&
               selected.status !== 'void' &&
               visibleLines.length > 0 &&
-              !someLineShowsBranch ? (
+              !someLineShowsBranch &&
+              (needsStockShelf || !needsLocalFill) ? (
                 <div className="client-fin__pay">
                   {!needsLocalFill ? (
                     <p className="client-fin__fulfill-note">
@@ -8347,7 +8449,7 @@ export default function ClientFinancialWorkspace({
                         {cardOnFile ? (
                           <option value="saved">Card on file · {formatCardOnFile(cardOnFile)}</option>
                         ) : null}
-                        <option value="phone">Card over the phone (virtual terminal)</option>
+                        <option value="phone">Type card manually</option>
                         {tenderPaymentTypes.map((r) => (
                           <option key={r.id} value={`type:${r.name}`}>
                             {r.name}
@@ -8563,7 +8665,7 @@ export default function ClientFinancialWorkspace({
                           ? 'Choose a lot before closing'
                           : rxBlocksPay
                             ? 'Approve each prescription before closing'
-                            : needsLocalFill &&
+                            : needsStockShelf &&
                                 (selected.inventoryBranchId == null ||
                                   selected.inventoryLocationId == null)
                               ? 'Select a branch and location before closing'
@@ -8948,7 +9050,7 @@ export default function ClientFinancialWorkspace({
             setPhoneCardOpen(false);
             setSelected(next);
             void refreshList(next.id);
-            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged.');
           }}
         />
       ) : null}

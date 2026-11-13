@@ -352,7 +352,9 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     label: 'Survey Results',
     category: 'nps',
     element: <SurveyResultsPage />,
-    role: ADMIN,
+    // Owner, Nov 11, 2026: practice managers see Survey Results too (API: survey.results.view).
+    role: STAFF,
+    permissions: ['survey.results.view'],
   },
 ];
 
@@ -366,3 +368,29 @@ export const ANALYTICS_LEGACY_REDIRECTS: Record<string, string> = {
   'inventory-totals': 'inventory/totals',
   inventory: 'inventory/shrink',
 };
+
+/** Whether a tab's role rule lets these login roles in (superadmin always). */
+export function analyticsTabRoleMatches(required: AnalyticsTabPage['role'], userRoles: string[]): boolean {
+  if (!userRoles.length) return false;
+  if (userRoles.includes('superadmin')) return true;
+  if (!required) return true;
+  const need = Array.isArray(required) ? required : [required];
+  return need.some((r) => userRoles.includes(String(r)));
+}
+
+/**
+ * The Analytics tabs this person may open: the role rule, then any one of the tab's permissions
+ * (admin logins skip the permission check). Shared by the Analytics page and the Analytics link.
+ */
+export function visibleAnalyticsTabs(
+  userRoles: string[],
+  isAdmin: boolean,
+  can: (key: string) => boolean
+): AnalyticsTabPage[] {
+  return getAnalyticsTabPages().filter(
+    (tab) =>
+      analyticsTabRoleMatches(tab.role, userRoles) &&
+      (!tab.permissions || isAdmin || tab.permissions.some((key) => can(key)))
+  );
+}
+

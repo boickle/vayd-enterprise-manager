@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, FileText, Phone, Trash2, UserPlus, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
-import { createScoutChartNote, finalizeScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
+import { createAndSignScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
 import { completeTask, patchTask, removeTask, type TaskDetail } from '../../api/tasks';
 import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
@@ -214,12 +214,11 @@ export default function CallbackJotPanel({
     const body = `${chartHeading} — ${task.title}\n\n${text}`;
     let lastNoteId: string | null = null;
     for (const pet of selectedPets) {
-      const note = await createScoutChartNote({
+      const note = await createAndSignScoutChartNote({
         patientId: pet.id,
         clientId,
         body,
       });
-      await finalizeScoutChartNote(note.id);
       lastNoteId = note.id;
     }
     if (chartToClient && clientId != null) {

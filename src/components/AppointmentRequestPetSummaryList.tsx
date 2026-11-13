@@ -1,19 +1,20 @@
 import { BookPatientChartButton } from './BookPatientChartButton';
-import { EvetNameLink } from './EvetNameLink';
 import { requestDataPetRowSummaries } from '../utils/appointmentRequestDetailDisplay';
 import {
   enrichPetRowSummariesFromLinkedAppointment,
   type LinkedAppointmentEvetIds,
 } from '../utils/appointmentRequestLinkedEvet';
-import { evetPatientLink } from '../utils/evet';
 
 export function AppointmentRequestPetSummaryList({
   requestData,
   practiceId,
   practiceTz,
   linkedAppointment,
+  onOpenPatient,
 }: {
   requestData: Record<string, unknown>;
+  /** When given, a pet in Scout opens its medical record in a pop-up from its name. */
+  onOpenPatient?: (patientId: string, name: string) => void;
   practiceId: number;
   practiceTz: string;
   /** Client/patient ids from the linked booked appointment when not on the form payload. */
@@ -30,14 +31,16 @@ export function AppointmentRequestPetSummaryList({
       {pets.map((pet) => (
         <li key={pet.key} className="appt-request-pet-summary-item">
           <div className="appt-request-pet-summary-head">
-            {pet.patientPimsId ? (
-              <EvetNameLink
-                href={evetPatientLink(pet.patientPimsId)}
-                className="appt-request-pet-summary-name appt-request-evet-link"
-                title="Open patient in eVet"
+            {pet.patientId && onOpenPatient ? (
+              <button
+                type="button"
+                className="appt-request-pet-summary-name req-record-link"
+                aria-haspopup="dialog"
+                title="Open the medical record"
+                onClick={() => onOpenPatient(String(pet.patientId), pet.name)}
               >
                 {pet.name}
-              </EvetNameLink>
+              </button>
             ) : (
               <span className="appt-request-pet-summary-name">{pet.name}</span>
             )}
@@ -57,10 +60,17 @@ export function AppointmentRequestPetSummaryList({
                 label="View details"
                 className="appt-request-pet-summary-link"
               />
+            ) : pet.isNew && onOpenPatient ? (
+              <span className="appt-request-pet-summary-nochart">No chart yet (made when booked)</span>
             ) : null}
           </div>
-          {pet.appointmentType ? (
-            <div className="appt-request-pet-summary-type">{pet.appointmentType}</div>
+          {pet.typeName || pet.appointmentType ? (
+            <div className="appt-request-pet-summary-type">
+              {pet.typeName ?? pet.appointmentType}
+              {pet.typeName && pet.reason && pet.reason !== pet.typeName ? (
+                <span className="appt-request-pet-summary-reason"> · {pet.reason}</span>
+              ) : null}
+            </div>
           ) : null}
           {pet.primaryProvider ? (
             <div className="appt-request-pet-summary-provider">
