@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LiaisonSelect } from './LiaisonSelect';
 import { RouteButton } from './RouteButton';
 import { AppointmentsTabStrip } from './AppointmentsTabStrip';
+import { rememberAppointmentTabCounts } from './appointmentTabCounts';
 
 const liaisons = [
   { id: 1, firstName: 'Morgan', lastName: 'Lee' },
@@ -25,6 +26,11 @@ describe('LiaisonSelect', () => {
     expect(onChange).toHaveBeenLastCalledWith(2);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('is locked for read-only users (techs, doctors; Nov 13, 2026)', () => {
+    render(<LiaisonSelect value={liaisons[0]} liaisons={liaisons} onChange={() => {}} disabled />);
+    expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true);
   });
 
   it('keeps an owner who is not on the CL list selectable', () => {
@@ -69,5 +75,24 @@ describe('AppointmentsTabStrip (Hold tab)', () => {
     expect(screen.getByRole('tab', { name: 'Hold' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByRole('tab', { name: 'Booked' }));
     expect(screen.getByText('Requests list')).toBeTruthy();
+  });
+
+  it('says In progress, with the counts the Appointments list last worked out (B2)', () => {
+    rememberAppointmentTabCounts({
+      new: { count: 3, mine: 1, others: 0 },
+      contacted: { count: 5, mine: 0, others: 2 },
+      booked: { mine: 0, others: 0 },
+    });
+    render(
+      <MemoryRouter>
+        <AppointmentsTabStrip />
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('tab', { name: /Contacted/ })).toBeNull();
+    const inProgress = screen.getByRole('tab', { name: /In progress/ });
+    expect(inProgress.textContent).toContain('(5)');
+    expect(screen.getByRole('tab', { name: /^New/ }).textContent).toContain('(3)');
+    expect(screen.getByRole('tab', { name: /^Booked/ }).textContent).not.toContain('(');
+    sessionStorage.clear();
   });
 });

@@ -97,7 +97,6 @@ export default function PimsPatientsPage() {
   const patientIdParam = searchParams.get('patientId') ?? '';
   const addParam = searchParams.get('add') === '1';
 
-  const [searchBy, setSearchBy] = useState('all');
   const [query, setQuery] = useState(() => initialPatientsSearchFromUrlAndSession().q);
   const [includeInactive, setIncludeInactive] = useState(() => initialPatientsSearchFromUrlAndSession().includeInactive);
   const [rows, setRows] = useState<PatientSearchRow[]>([]);
@@ -205,20 +204,6 @@ export default function PimsPatientsPage() {
       </div>
 
       <div className="pims-clients__toolbar">
-        <label className="pims-clients__searchby">
-          <span className="pims-clients__searchby-label">Search by</span>
-          <select
-            className="pims-clients__select"
-            value={searchBy}
-            onChange={(e) => setSearchBy(e.target.value)}
-            aria-label="Search by"
-          >
-            <option value="all">All Results</option>
-            <option value="name" disabled>
-              Name (API: all)
-            </option>
-          </select>
-        </label>
         <div className="pims-clients__search-wrap">
           <span className="pims-clients__search-icon" aria-hidden>
             🔍

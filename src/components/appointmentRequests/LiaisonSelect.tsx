@@ -11,10 +11,12 @@ type Props = {
   /** Anyone can hand the request to anyone (themselves, someone else, or nobody). */
   onChange: (employeeId: number | null) => void;
   ariaLabel?: string;
+  /** Read-only users see the liaison but can't change it. */
+  disabled?: boolean;
 };
 
 /** Liaison column: one owner per request or hold. */
-export function LiaisonSelect({ value, liaisons, saving, onChange, ariaLabel }: Props) {
+export function LiaisonSelect({ value, liaisons, saving, onChange, ariaLabel, disabled }: Props) {
   // The owner may not be a CL (e.g. a doctor placed the hold); keep them selectable.
   const options: Person[] =
     value && !liaisons.some((l) => l.id === value.id) ? [value, ...liaisons] : [...liaisons];
@@ -22,7 +24,7 @@ export function LiaisonSelect({ value, liaisons, saving, onChange, ariaLabel }: 
     <select
       className={`appt-table-liaison${value ? ' appt-table-liaison--set' : ''}`}
       value={value?.id != null ? String(value.id) : ''}
-      disabled={saving}
+      disabled={saving || disabled}
       aria-label={ariaLabel ?? 'Liaison'}
       onChange={(e) => {
         const raw = e.target.value;

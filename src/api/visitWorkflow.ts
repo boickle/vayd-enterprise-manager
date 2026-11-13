@@ -119,6 +119,10 @@ export type VisitTenderMethod =
   | 'account_credit';
 
 export type VisitInvoiceLine = {
+  /** Where staff dragged this line among the pet's lines (invoice order); null = standard order. */
+  sortOrder?: number | null;
+  /** Place on the Room Loader check-in this line came from (pre-visit accept). */
+  roomLoaderPosition?: number | null;
   id: string;
   invoiceId: string;
   orderId: string | null;
@@ -1349,6 +1353,21 @@ export async function postAccountAdjustment(opts: {
     stripePaymentIntentId: opts.stripePaymentIntentId ?? undefined,
     cashierEmployeeId: opts.cashierEmployeeId ?? undefined,
   });
+  return data;
+}
+
+/**
+ * Invoice order: save one pet's lines in the order staff dragged them (top first), or reset that
+ * pet to the practice's standard order. Returns the invoice with lines in the new order.
+ */
+export async function reorderInvoiceLines(
+  invoiceId: string,
+  body: { patientId: number | null; lineIds?: string[]; reset?: boolean }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/line-order`,
+    { practiceId: pid(), ...body }
+  );
   return data;
 }
 

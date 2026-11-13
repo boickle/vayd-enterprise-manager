@@ -1,4 +1,9 @@
 import ReturnLineStockFields from '../inventory/ReturnLineStockFields';
+import {
+  InvoiceLineGripIcon,
+  InvoiceSectionOrderReset,
+  useInvoiceLineDrag,
+} from '../soap/invoiceLineDrag';
 import { describeReturnRefund, splitReturnRefund } from '../../utils/returnRefundSplit';
 import { clampReturnQty, returnQtyProblem, returnableQty } from '../../utils/returnLimits';
 import { useCanOrAdminLogin } from '../../permissions/useCanOrAdminLogin';
@@ -122,6 +127,7 @@ import {
   type OrderPrescription,
   type OrderVaccination,
   type StockDraw,
+  reorderInvoiceLines,
 } from '../../api/visitWorkflow';
 import {
   buildCheckItemPayload,
@@ -3405,6 +3411,29 @@ export default function ClientFinancialWorkspace({
     }
     return out;
   }, [invoicePetSections, addedSectionPetIds, linePatientId, allPets, selected?.status, selected?.isDeleted]);
+
+  /** Invoice order: staff drag a pet's charges on a direct invoice; the API keeps the order. */
+  const saveLineOrder = async (patientIdForOrder: number | null, lineIds?: string[]) => {
+    if (!selected || isUnsavedInvoice(selected)) return;
+    setError(null);
+    try {
+      await reorderInvoiceLines(
+        selected.id,
+        lineIds ? { patientId: patientIdForOrder, lineIds } : { patientId: patientIdForOrder, reset: true }
+      );
+      await refreshList(selected.id);
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    }
+  };
+  const blockLinesOf = (block: InvoiceLineDisplayBlock) => (block.kind === 'bundle' ? block.lines : [block.line]);
+  const lineDrag = useInvoiceLineDrag((groupKey, leadIds) => {
+    const section = displayPetSections.find((row) => row.key === groupKey);
+    if (!section) return;
+    const linesOf = new Map(section.blocks.map((block) => [blockPrimaryLine(block).id, blockLinesOf(block)]));
+    const ids = leadIds.flatMap((id) => (linesOf.get(id) ?? []).map((line) => line.id));
+    return saveLineOrder(section.patientId ?? null, ids);
+  });
   const petsWithoutSection = chargePets.filter(
     (p) => !displayPetSections.some((s) => s.patientId === p.id),
   );
@@ -5364,7 +5393,7 @@ export default function ClientFinancialWorkspace({
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
 
-      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} clientName={clientName} /> : null}
 
       <div
         ref={splitRef}
@@ -6411,7 +6440,41 @@ export default function ClientFinancialWorkspace({
                             </td>
                           </tr>
                         ) : null}
+                        {canEdit &&
+                        section.blocks.some((block) => blockLinesOf(block).some((line) => line.sortOrder != null)) ? (
+                          <tr className="client-fin__pet-order-row">
+                            <td colSpan={invoiceMetaCols + (canRemoveLines ? 1 : 0)}>
+                              <div className="invoice-order-bar">
+                                <InvoiceSectionOrderReset
+                                  onReset={() => void saveLineOrder(section.patientId ?? null)}
+                                  disabled={busy}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
                       {section.blocks.map((block) => {
+                        const canDragBlock = canEdit && section.blocks.length > 1;
+                        const dragLeadId = blockPrimaryLine(block).id;
+                        const dragRowProps = canDragBlock
+                          ? lineDrag.rowDropProps(
+                              section.key,
+                              dragLeadId,
+                              section.blocks.map((other) => blockPrimaryLine(other).id)
+                            )
+                          : {};
+                        const dragGrip = canDragBlock ? (
+                          <span
+                            {...lineDrag.gripProps(
+                              section.key,
+                              dragLeadId,
+                              block.kind === 'bundle' ? block.name : block.line.description
+                            )}
+                            className="invoice-line-grip invoice-line-grip--inline"
+                          >
+                            <InvoiceLineGripIcon />
+                          </span>
+                        ) : null;
                         const blockLines = block.kind === 'bundle' ? block.lines : [block.line];
                         const bundleAmount =
                           block.kind === 'bundle'
@@ -6431,8 +6494,12 @@ export default function ClientFinancialWorkspace({
                             }
                           >
                             {block.kind === 'bundle' ? (
-                              <tr className="client-fin__bundle-head">
+                              <tr
+                                className={`client-fin__bundle-head${canDragBlock ? lineDrag.rowDragClass(dragLeadId) : ''}`}
+                                {...dragRowProps}
+                              >
                                 <td className="client-fin__col-item" colSpan={2}>
+                                  {dragGrip}
                                   <div className="client-fin__bundle-label">
                                     <span className="client-fin__bundle-name">{block.name}</span>
                                     <span className="client-fin__bundle-meta">
@@ -6816,9 +6883,11 @@ export default function ClientFinancialWorkspace({
                             nestedUnderBundle ? ' client-fin__bundle-child' : ''
                           }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}${
                             isClinicSplitParent ? ' client-fin__line--clinic-split' : ''
-                          }`}
+                          }${!nestedUnderBundle && !isMailSplitChild && canDragBlock ? lineDrag.rowDragClass(dragLeadId) : ''}`}
+                          {...(!nestedUnderBundle && !isMailSplitChild ? dragRowProps : {})}
                         >
                           <td className="client-fin__col-item">
+                            {!nestedUnderBundle && !isMailSplitChild ? dragGrip : null}
                             {showMeta ? (
                               <button
                                 type="button"

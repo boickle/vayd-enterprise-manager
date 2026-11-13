@@ -2824,7 +2824,11 @@ export default function PimsPatientDetailView({
                 Appointment
               </button>
             ) : null}
-            <PimsPatientMergeButton patientId={patientId} patientName={pname} />
+            <PimsPatientMergeButton
+              patientId={patientId}
+              patientName={pname}
+              onMerged={() => void reloadChartData()}
+            />
             {mayEditPatient ? (
               <button
                 type="button"
