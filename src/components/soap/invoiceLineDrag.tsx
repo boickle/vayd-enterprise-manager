@@ -38,10 +38,10 @@ export function useInvoiceLineDrag(
     className: 'invoice-line-grip',
     'data-testid': 'invoice-line-grip',
     onDragStart: (event: DragEvent<HTMLElement>) => {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', id);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer?.setData('text/plain', id);
       const row = (event.currentTarget as HTMLElement).closest('[data-invoice-line-row]');
-      if (row instanceof HTMLElement && typeof event.dataTransfer.setDragImage === 'function') {
+      if (row instanceof HTMLElement && typeof event.dataTransfer?.setDragImage === 'function') {
         event.dataTransfer.setDragImage(row, 12, 12);
       }
       setDrag({ groupKey, id });
@@ -55,7 +55,7 @@ export function useInvoiceLineDrag(
     onDragOver: (event: DragEvent<HTMLElement>) => {
       if (!drag || drag.groupKey !== groupKey) return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
       if (overId !== id) setOverId(id);
     },
     onDrop: (event: DragEvent<HTMLElement>) => {

@@ -42,8 +42,8 @@ export default function InvoiceOrderEditor({
               draggable
               data-key={key}
               onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('text/plain', key);
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer?.setData('text/plain', key);
                 setDragKey(key);
               }}
               onDragOver={(event) => {

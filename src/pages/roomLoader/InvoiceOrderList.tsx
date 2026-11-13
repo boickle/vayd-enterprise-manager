@@ -56,7 +56,7 @@ export default function InvoiceOrderList({
 
   const onDrop = (event: DragEvent<HTMLLIElement>, targetKey: string) => {
     event.preventDefault();
-    const from = dragKey ?? event.dataTransfer.getData('text/plain');
+    const from = dragKey ?? event.dataTransfer?.getData('text/plain');
     if (from && from !== targetKey) {
       const toIndex = rows.findIndex((r) => r.key === targetKey);
       if (toIndex >= 0) onMove(from, toIndex);
@@ -112,8 +112,8 @@ export default function InvoiceOrderList({
               data-key={row.key}
               onDragStart={(event) => {
                 if (readOnly) return;
-                event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('text/plain', row.key);
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer?.setData('text/plain', row.key);
                 setDragKey(row.key);
               }}
               onDragOver={(event) => {

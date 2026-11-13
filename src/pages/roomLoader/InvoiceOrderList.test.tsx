@@ -85,6 +85,15 @@ describe('RLO-06 staff Invoice order list', () => {
     expect(onMove).toHaveBeenCalledWith('r:1', 0);
   });
 
+  it('a drag without a dataTransfer object (synthetic events) still moves the row', () => {
+    const { onMove } = renderList();
+    const [trip, exam] = screen.getAllByTestId('rl-invoice-order-row');
+    fireEvent.dragStart(exam);
+    fireEvent.dragOver(trip);
+    fireEvent.drop(trip);
+    expect(onMove).toHaveBeenCalledWith('a:exam', 0);
+  });
+
   it('custom order shows the badge, Moved tags and a working reset', () => {
     const { onReset } = renderList({ isCustom: true, movedKeys: new Set(['r:1']) });
     expect(screen.getByText('Custom order')).toBeTruthy();
