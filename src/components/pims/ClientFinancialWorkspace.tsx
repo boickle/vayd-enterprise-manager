@@ -5393,7 +5393,7 @@ export default function ClientFinancialWorkspace({
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
 
-      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} /> : null}
+      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} clientName={clientName} /> : null}
 
       <div
         ref={splitRef}
