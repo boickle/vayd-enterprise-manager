@@ -198,6 +198,11 @@ export type TaskSummaryResponse = {
   unassigned?: TaskSummaryBucket;
   /** Branch ids the current employee belongs to (auto-healed to practice default when empty). */
   myBranchIds?: number[];
+  /**
+   * T-Q5: people a practice manager may pick in the Person box (active staff who share a
+   * branch with them). Empty for other staff; admins pick from everyone.
+   */
+  personEmployeeIds?: number[];
 };
 
 export async function listTasks(params?: ListTasksParams): Promise<TaskListResponse> {
@@ -240,6 +245,9 @@ export async function fetchTasksSummary(params?: {
     },
     myBranchIds: Array.isArray(data?.myBranchIds)
       ? data.myBranchIds.filter((id): id is number => Number.isFinite(Number(id))).map(Number)
+      : [],
+    personEmployeeIds: Array.isArray(data?.personEmployeeIds)
+      ? data.personEmployeeIds.filter((id) => Number.isFinite(Number(id))).map(Number)
       : [],
   };
 }

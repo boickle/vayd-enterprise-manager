@@ -415,15 +415,29 @@ export default function PimsTasksPage() {
     return filtered.length ? filtered : roles;
   }, [isPracticeAdmin, roles, employees, myEmployeeIds]);
   const [branchFilter, setBranchFilter] = useState<string>('');
-  /** Admin-only: empty means the signed-in person. */
+  /**
+   * T-Q5: who a practice manager may pick in the Person box (from the API: active staff who
+   * share a branch with them). Kept apart from the counts so a failed refresh doesn't hide it.
+   */
+  const [personEmployeeIds, setPersonEmployeeIds] = useState<number[]>([]);
+  /** Admins pick anyone; practice managers pick people at their branch(es); others see only their own. */
+  const personChoices = useMemo(() => {
+    const active = employees.filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id));
+    if (isPracticeAdmin) return active;
+    const allowed = new Set(personEmployeeIds);
+    return active.filter((e) => allowed.has(Number(e.id)));
+  }, [employees, myEmployeeIds, isPracticeAdmin, personEmployeeIds]);
+  const canPickPerson = isPracticeAdmin || personChoices.length > 0;
+  /** Empty means the signed-in person. */
   const [viewEmployeeId, setViewEmployeeId] = useState('');
   const viewedEmployeeId = useMemo(() => {
-    if (!isPracticeAdmin || viewEmployeeId === '') return undefined;
+    if (!canPickPerson || viewEmployeeId === '') return undefined;
     const id = Number(viewEmployeeId);
     if (!Number.isFinite(id) || id <= 0) return undefined;
     if (myEmployeeIds.includes(id)) return undefined;
+    if (!isPracticeAdmin && !personEmployeeIds.includes(id)) return undefined;
     return id;
-  }, [isPracticeAdmin, viewEmployeeId, myEmployeeIds]);
+  }, [canPickPerson, isPracticeAdmin, personEmployeeIds, viewEmployeeId, myEmployeeIds]);
   /** Whose tasks the bulk Re-assign buttons move: the person picked in the Person box, else me. */
   const bulkFromEmployeeId = viewedEmployeeId ?? myEmployeeId;
   const [tab, setTab] = useState<TabId>('active');
@@ -570,6 +584,10 @@ export default function PimsTasksPage() {
         ...(viewedEmployeeId != null ? { forEmployeeId: viewedEmployeeId } : {}),
       });
       setTaskSummary(summary);
+      const people = summary.personEmployeeIds ?? [];
+      setPersonEmployeeIds((prev) =>
+        prev.length === people.length && prev.every((id, i) => id === people[i]) ? prev : people,
+      );
       return summary;
     } catch {
       setTaskSummary(EMPTY_SUMMARY);
@@ -1214,7 +1232,7 @@ export default function PimsTasksPage() {
       </div>
 
       <div className="pims-tasks__toolbar">
-        {isPracticeAdmin ? (
+        {canPickPerson ? (
           <label className="pims-tasks__filter">
             <span>Person</span>
             <select
@@ -1224,8 +1242,7 @@ export default function PimsTasksPage() {
               aria-label="View tasks for"
             >
               <option value="">Me</option>
-              {employees
-                .filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id))
+              {personChoices
                 .slice()
                 .sort((a, b) =>
                   (formatEmployeeDisplayName(a) || a.email).localeCompare(
