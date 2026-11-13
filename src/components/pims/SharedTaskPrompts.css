@@ -7,7 +7,8 @@
   align-items: flex-start;
   justify-content: center;
   padding: 60px 16px;
-  z-index: 90;
+  /* Above the top bar (navbar z-index 10; schedule shell 100) so the window's title is not hidden. Same layer as TaskReassignModal. */
+  z-index: 12000;
   overflow-y: auto;
 }
 

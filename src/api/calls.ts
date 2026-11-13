@@ -110,3 +110,16 @@ export async function listClientCalls(
     phoneKeys: Array.isArray(data?.phoneKeys) ? data.phoneKeys : [],
   };
 }
+
+/**
+ * One call by Scout's row id (`openphone_call_events.id`), as a "Call not filed" task links to it
+ * (T-B2). Null when the call is gone or belongs to another practice.
+ */
+export async function fetchCallByRowId(rowId: number): Promise<ClientCall | null> {
+  try {
+    const { data } = await http.get<ClientCall>(`/openphone/calls/row/${encodeURIComponent(String(rowId))}`);
+    return data && typeof data === 'object' && data.callId ? data : null;
+  } catch {
+    return null;
+  }
+}

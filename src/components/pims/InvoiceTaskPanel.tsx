@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { Check, Mail, MessageSquare, Receipt } from 'lucide-react';
 import { patchTask, type TaskDetail } from '../../api/tasks';
 import type { Employee } from '../../api/appointmentSettings';
+import { fetchClientByIdStaff } from '../../api/clientsStaff';
+import { clientDisplayNameFromPayload, isPlaceholderClientName } from '../../utils/taskLinkDisplay';
 import { createClientPayLink } from '../../api/visitWorkflow';
 import { sendClientSms } from '../../api/clientSms';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
@@ -94,7 +96,26 @@ export default function InvoiceTaskPanel({
 }: Props) {
   const clientId = linkedId(task, 'client');
   const invoiceId = invoiceIdFromTask(task);
-  const clientName = clientNameProp?.trim() || 'the owner';
+  // The label can still be a stand-in ("client #12") when the pay window opens; never greet with it.
+  const propName = isPlaceholderClientName(clientNameProp) ? '' : (clientNameProp ?? '').trim();
+  const [fetchedName, setFetchedName] = useState('');
+  useEffect(() => {
+    if (propName || clientId == null) return;
+    let cancelled = false;
+    void fetchClientByIdStaff(clientId)
+      .then((data) => {
+        const name = clientDisplayNameFromPayload(data);
+        if (!cancelled && !isPlaceholderClientName(name)) setFetchedName(name);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [propName, clientId]);
+  const titleName = /\bfor\s+(.+?)\s*$/i.exec(task.title ?? '')?.[1] ?? '';
+  const clientName =
+    propName || fetchedName || (isPlaceholderClientName(titleName) ? '' : titleName) || 'the owner';
+  const greetName = isPlaceholderClientName(clientName) ? '' : clientName;
   const invoiceHref =
     clientId != null
       ? `/schedule/clients?clientId=${encodeURIComponent(String(clientId))}&tab=financial${
@@ -162,8 +183,8 @@ export default function InvoiceTaskPanel({
       setPaySms(
         applySystemTemplate(
           'payment_link_sms',
-          payLinkMerge(clientName, link.amount, labels, link.url),
-          `Hi ${firstNameFromDisplayName(clientName) || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}\n\nIf you want to see an itemized invoice, go to the portal.`,
+          payLinkMerge(greetName, link.amount, labels, link.url),
+          `Hi ${firstNameFromDisplayName(greetName) || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}\n\nIf you want to see an itemized invoice, go to the portal.`,
         ),
       );
       setCopiedLink(false);
@@ -187,7 +208,7 @@ export default function InvoiceTaskPanel({
         successUrl: clientPayReturnUrl(),
         cancelUrl: clientPayReturnUrl(),
       });
-      const first = firstNameFromDisplayName(clientName) || 'there';
+      const first = firstNameFromDisplayName(greetName) || 'there';
       const href = link.url.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
       const portal = clientPayReturnUrl().replace(/&/g, '&amp;').replace(/"/g, '&quot;');
       setEmailBody(
@@ -209,7 +230,7 @@ export default function InvoiceTaskPanel({
     }
     setSendError(null);
     setTextBody(
-      `Hi ${firstNameFromDisplayName(clientName) || 'there'}, just following up about the open invoice.`,
+      `Hi ${firstNameFromDisplayName(greetName) || 'there'}, just following up about the open invoice.`,
     );
     setTextOpen(true);
   };
@@ -383,7 +404,7 @@ export default function InvoiceTaskPanel({
                 window.setTimeout(() => setCopiedLink(false), 2000);
               });
             }}
-            mergeValues={mergeValuesFromNames({ clientFullName: clientName })}
+            mergeValues={mergeValuesFromNames({ clientFullName: greetName })}
             onSend={({ overrideNonProd }) => {
               void (async () => {
                 const message = paySms.trim();
@@ -420,7 +441,7 @@ export default function InvoiceTaskPanel({
             sending={sending}
             sendError={sendError}
             title="Text owner"
-            mergeValues={mergeValuesFromNames({ clientFullName: clientName })}
+            mergeValues={mergeValuesFromNames({ clientFullName: greetName })}
             onSend={({ overrideNonProd }) => {
               void (async () => {
                 const message = textBody.trim();
@@ -454,7 +475,7 @@ export default function InvoiceTaskPanel({
             title="Email owner"
             initialSubject="Following up on your services with Vet At Your Door"
             initialBodyText={emailBody}
-            mergeValues={mergeValuesFromNames({ clientFullName: clientName })}
+            mergeValues={mergeValuesFromNames({ clientFullName: greetName })}
             saveToClientCommunications={emailLogToClient}
             onSaveToClientCommunicationsChange={setEmailLogToClient}
             onAfterSend={async ({ subject, bodyText, bodyHtml, to, from }) => {

@@ -57,6 +57,8 @@ export const TASK_LINK_ENTITY_TYPES = [
   'reminder',
   'mail_order',
   'idexx_result',
+  /** A Quo call (Scout row id); "Call not filed" tasks link to theirs (T-B2). */
+  'openphone_call',
 ] as const;
 
 export type TaskLinkEntityType = (typeof TASK_LINK_ENTITY_TYPES)[number];
@@ -198,6 +200,11 @@ export type TaskSummaryResponse = {
   unassigned?: TaskSummaryBucket;
   /** Branch ids the current employee belongs to (auto-healed to practice default when empty). */
   myBranchIds?: number[];
+  /**
+   * T-Q5: people a practice manager may pick in the Person box (active staff who share a
+   * branch with them). Empty for other staff; admins pick from everyone.
+   */
+  personEmployeeIds?: number[];
 };
 
 export async function listTasks(params?: ListTasksParams): Promise<TaskListResponse> {
@@ -240,6 +247,9 @@ export async function fetchTasksSummary(params?: {
     },
     myBranchIds: Array.isArray(data?.myBranchIds)
       ? data.myBranchIds.filter((id): id is number => Number.isFinite(Number(id))).map(Number)
+      : [],
+    personEmployeeIds: Array.isArray(data?.personEmployeeIds)
+      ? data.personEmployeeIds.filter((id) => Number.isFinite(Number(id))).map(Number)
       : [],
   };
 }

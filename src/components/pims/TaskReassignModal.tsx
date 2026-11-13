@@ -153,13 +153,17 @@ export default function TaskReassignModal({
           setErr('Pick who should receive these tasks');
           return;
         }
-        await reassignFromEmployee({
+        const result = await reassignFromEmployee({
           fromEmployeeId: bulk.fromEmployeeId,
           toEmployeeId: id,
           upcomingOnly: bulk.upcomingOnly,
           taskIds: bulk.taskIds,
           ...(bulkWatchers.length ? { addWatcherEmployeeIds: bulkWatchers } : {}),
         });
+        if (result.reassigned + (result.closedAsDuplicate?.length ?? 0) === 0) {
+          setErr('Nothing was moved. These tasks may have changed since this page loaded. Close this window and try again.');
+          return;
+        }
         onSaved();
         return;
       }

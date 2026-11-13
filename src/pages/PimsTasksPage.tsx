@@ -15,11 +15,11 @@ import {
 } from '../utils/taskDateTime';
 import {
   type TaskPriorityChoice,
-  isTaskPriorityUrgent,
   priorityToApi,
 } from '../utils/taskPriority';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { extractActivePatientsFromClientStaffRecord } from '../utils/routingPatientHoverData';
+import { isUrgentTask } from '../utils/taskUrgency';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDisplay';
 import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
 import {
@@ -140,16 +140,6 @@ function humanDueLine(iso: string | null): string {
   if (d < startToday) return `Overdue · ${when}`;
   if (d < endToday) return `Due today · ${when}`;
   return `Due ${when}`;
-}
-
-function isUrgentTask(t: TaskListItem): boolean {
-  if (t.status === 'done') return false;
-  if (isTaskPriorityUrgent(t.priority)) return true;
-  if (t.status === 'open' && t.assignedToEmployeeId == null) return true;
-  if (!t.dueAt) return false;
-  const due = new Date(t.dueAt).getTime();
-  const day = 24 * 60 * 60 * 1000;
-  return due <= Date.now() + day;
 }
 
 function canActOnTask(t: TaskListItem, myEmployeeIds: number[], isPracticeAdmin: boolean): boolean {
@@ -417,15 +407,31 @@ export default function PimsTasksPage() {
     return filtered.length ? filtered : roles;
   }, [isPracticeAdmin, roles, employees, myEmployeeIds]);
   const [branchFilter, setBranchFilter] = useState<string>('');
-  /** Admin-only: empty means the signed-in person. */
+  /**
+   * T-Q5: who a practice manager may pick in the Person box (from the API: active staff who
+   * share a branch with them). Kept apart from the counts so a failed refresh doesn't hide it.
+   */
+  const [personEmployeeIds, setPersonEmployeeIds] = useState<number[]>([]);
+  /** Admins pick anyone; practice managers pick people at their branch(es); others see only their own. */
+  const personChoices = useMemo(() => {
+    const active = employees.filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id));
+    if (isPracticeAdmin) return active;
+    const allowed = new Set(personEmployeeIds);
+    return active.filter((e) => allowed.has(Number(e.id)));
+  }, [employees, myEmployeeIds, isPracticeAdmin, personEmployeeIds]);
+  const canPickPerson = isPracticeAdmin || personChoices.length > 0;
+  /** Empty means the signed-in person. */
   const [viewEmployeeId, setViewEmployeeId] = useState('');
   const viewedEmployeeId = useMemo(() => {
-    if (!isPracticeAdmin || viewEmployeeId === '') return undefined;
+    if (!canPickPerson || viewEmployeeId === '') return undefined;
     const id = Number(viewEmployeeId);
     if (!Number.isFinite(id) || id <= 0) return undefined;
     if (myEmployeeIds.includes(id)) return undefined;
+    if (!isPracticeAdmin && !personEmployeeIds.includes(id)) return undefined;
     return id;
-  }, [isPracticeAdmin, viewEmployeeId, myEmployeeIds]);
+  }, [canPickPerson, isPracticeAdmin, personEmployeeIds, viewEmployeeId, myEmployeeIds]);
+  /** Whose tasks the bulk Re-assign buttons move: the person picked in the Person box, else me. */
+  const bulkFromEmployeeId = viewedEmployeeId ?? myEmployeeId;
   const [tab, setTab] = useState<TabId>('active');
   const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
@@ -570,6 +576,10 @@ export default function PimsTasksPage() {
         ...(viewedEmployeeId != null ? { forEmployeeId: viewedEmployeeId } : {}),
       });
       setTaskSummary(summary);
+      const people = summary.personEmployeeIds ?? [];
+      setPersonEmployeeIds((prev) =>
+        prev.length === people.length && prev.every((id, i) => id === people[i]) ? prev : people,
+      );
       return summary;
     } catch {
       setTaskSummary(EMPTY_SUMMARY);
@@ -1009,7 +1019,7 @@ export default function PimsTasksPage() {
         key={row.id}
         className={`pims-task-card${callClientLink ? ' pims-task-card--with-note' : ''}`}
       >
-        {tab === 'upcoming' && (
+        {isBucketTab(tab) && bulkFromEmployeeId != null && (
           <label className="pims-task-card__pick">
             <input
               type="checkbox"
@@ -1235,7 +1245,7 @@ export default function PimsTasksPage() {
       </div>
 
       <div className="pims-tasks__toolbar">
-        {isPracticeAdmin ? (
+        {canPickPerson ? (
           <label className="pims-tasks__filter">
             <span>Person</span>
             <select
@@ -1245,8 +1255,7 @@ export default function PimsTasksPage() {
               aria-label="View tasks for"
             >
               <option value="">Me</option>
-              {employees
-                .filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id))
+              {personChoices
                 .slice()
                 .sort((a, b) =>
                   (formatEmployeeDisplayName(a) || a.email).localeCompare(
@@ -1352,7 +1361,7 @@ export default function PimsTasksPage() {
         )}
       </p>
 
-      {tab === 'upcoming' && items.length > 0 && myEmployeeId != null && (
+      {isBucketTab(tab) && items.length > 0 && bulkFromEmployeeId != null && (
         <div className="pims-tasks__bulk">
           <label className="pims-tasks__bulk-select">
             <input
@@ -1453,17 +1462,18 @@ export default function PimsTasksPage() {
         />
       )}
 
-      {bulkReassignIds && myEmployeeId != null && (
+      {bulkReassignIds && bulkFromEmployeeId != null && (
         <TaskReassignModal
           bulk={{
-            fromEmployeeId: myEmployeeId,
+            fromEmployeeId: bulkFromEmployeeId,
             taskIds: bulkReassignIds,
-            upcomingOnly: true,
-            label: `Move ${bulkReassignIds.length} future task${
+            // Only the Future tab is limited to tasks that have not started.
+            upcomingOnly: tab === 'upcoming',
+            label: `Move ${bulkReassignIds.length} ${tab === 'upcoming' ? 'future ' : ''}task${
               bulkReassignIds.length === 1 ? '' : 's'
             } to someone else`,
           }}
-          employees={employees.filter((e) => e.id !== myEmployeeId && e.isActive !== false)}
+          employees={employees.filter((e) => e.id !== bulkFromEmployeeId && e.isActive !== false)}
           requireAssignee
           onClose={() => setBulkReassignIds(null)}
           onSaved={() => {
