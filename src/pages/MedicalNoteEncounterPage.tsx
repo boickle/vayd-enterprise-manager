@@ -42,6 +42,7 @@ import ScribeSuggestedPlanItems from '../components/soap/ScribeSuggestedPlanItem
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import { SignOffNotice, useSignOffBlock } from '../components/soap/SignOffGate';
 import SwitchEncounterModeButton from '../components/soap/SwitchEncounterModeButton';
+import ScribeConsentModal from '../components/soap/ScribeConsentModal';
 import { chartNoteBelongsToEncounter } from '../utils/encounterModeSwitch';
 import {
   appointmentReasonFromSentToClient,
@@ -239,6 +240,8 @@ export default function MedicalNoteEncounterPage() {
     draftKey: encounter?.id ? `scout.medNote.liveTranscript:${encounter.id}` : null,
   });
   const recording = recorder.recording;
+  /** The same consent tick as the SOAP scribe, before any room recording (B2). */
+  const [showConsent, setShowConsent] = useState(false);
   const restoreTranscript = recorder.restoreTranscript;
 
   // The scribe saves takes as it goes. When this device has no copy (new tab, other device),
@@ -776,7 +779,7 @@ export default function MedicalNoteEncounterPage() {
                 disabled={writingUp || !encounter}
                 onClick={() => {
                   if (recording) void stopRecording();
-                  else void recorder.start();
+                  else setShowConsent(true);
                 }}
               >
                 {recording ? <Square size={14} /> : <Mic size={14} />}
@@ -1069,6 +1072,17 @@ export default function MedicalNoteEncounterPage() {
           />
         </aside>
       </div>
+
+      {showConsent ? (
+        <ScribeConsentModal
+          variant="note"
+          onClose={() => setShowConsent(false)}
+          onConfirm={() => {
+            setShowConsent(false);
+            void recorder.start();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

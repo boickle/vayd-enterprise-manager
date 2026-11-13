@@ -65,8 +65,7 @@ import {
   getInvoiceByAppointment,
   type CalendarPaymentState,
 } from '../api/visitWorkflow';
-import { saveBrief } from '../api/briefs';
-import { findOpenPrevisitForAppointment } from '../utils/briefStore';
+import { findOpenPrevisitForAppointment, saveBrief } from '../api/briefs';
 import { BRIEF_KIND_LABEL } from '../utils/briefTypes';
 import {
   fetchAllAppointmentTypes,
@@ -11252,7 +11251,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             const date = start.isValid
               ? start.toFormat('yyyy-LL-dd')
               : DateTime.now().setZone(PRACTICE_TZ).toFormat('yyyy-LL-dd');
-            const existing = findOpenPrevisitForAppointment(apptId, firstPatient.id);
+            const existing = await findOpenPrevisitForAppointment(apptId, firstPatient.id).catch(
+              () => null
+            );
             const session =
               existing ??
               (await saveBrief({

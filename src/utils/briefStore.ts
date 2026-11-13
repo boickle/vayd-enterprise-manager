@@ -7,13 +7,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function newId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `brief-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function isStatus(value: unknown): value is BriefStatus {
   return value === 'draft' || value === 'recorded' || value === 'injected' || value === 'archived';
 }
@@ -89,110 +82,23 @@ export type CreateBriefInput = {
   status?: BriefStatus;
 };
 
-export function listLocalBriefs(): BriefSession[] {
-  return readAll().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+/**
+ * Jots made before Nov 13, 2026 were kept only in this browser. They are now saved on the
+ * server (B8); `api/briefs.ts` uploads these once and then clears them here.
+ */
+export function readLegacyLocalBriefs(): BriefSession[] {
+  return readAll();
 }
 
-export function getLocalBrief(id: string): BriefSession | null {
-  return readAll().find((s) => s.id === id) ?? null;
-}
-
-export function createLocalBrief(input: CreateBriefInput): BriefSession {
-  const createdAt = nowIso();
-  const session: BriefSession = {
-    id: newId(),
-    kind: input.kind,
-    title: input.title.trim() || input.kind,
-    createdAt,
-    updatedAt: createdAt,
-    date: input.date,
-    employeeId: input.employeeId ?? null,
-    patientId: input.patientId ?? null,
-    patientName: input.patientName ?? null,
-    clientId: input.clientId ?? null,
-    clientName: input.clientName ?? null,
-    clientPhone: input.clientPhone ?? null,
-    appointmentId: input.appointmentId ?? null,
-    soapEncounterId: input.soapEncounterId ?? null,
-    transcript: input.transcript ?? '',
-    rawTranscript: null,
-    status: input.status ?? 'draft',
-    injectedAt: null,
-    audioFileName: null,
-  };
-  writeAll([session, ...readAll()]);
-  return session;
-}
-
-export function updateLocalBrief(
-  id: string,
-  patch: Partial<Omit<BriefSession, 'id' | 'createdAt'>>
-): BriefSession | null {
-  const rows = readAll();
-  const idx = rows.findIndex((s) => s.id === id);
-  if (idx < 0) return null;
-  const next: BriefSession = {
-    ...rows[idx]!,
-    ...patch,
-    id,
-    createdAt: rows[idx]!.createdAt,
-    updatedAt: nowIso(),
-  };
-  rows[idx] = next;
-  writeAll(rows);
-  return next;
-}
-
-export function deleteLocalBrief(id: string): void {
-  writeAll(readAll().filter((s) => s.id !== id));
-}
-
-export function listLocalBriefsForPatient(patientId: string | number): BriefSession[] {
-  const id = String(patientId);
-  return listLocalBriefs().filter((s) => s.patientId != null && String(s.patientId) === id);
-}
-
-export function listLocalBriefsForDate(date: string): BriefSession[] {
-  return listLocalBriefs().filter((s) => s.date === date && s.status !== 'archived');
-}
-
-/** Open prep session already linked to this visit, if any. */
-export function findOpenPrevisitForAppointment(
-  appointmentId: number,
-  patientId: string | number
-): BriefSession | null {
-  const id = String(patientId);
-  return (
-    listLocalBriefs().find((s) => {
-      if (s.kind !== 'previsit') return false;
-      if (s.status === 'archived') return false;
-      if (s.appointmentId !== appointmentId) return false;
-      return s.patientId != null && String(s.patientId) === id;
-    }) ?? null
-  );
-}
-
-export function pendingPrevisitBriefs(opts: {
-  patientId: string | number;
-  appointmentId?: number | null;
-}): BriefSession[] {
-  const id = String(opts.patientId);
-  return listLocalBriefs().filter((s) => {
-    if (s.kind !== 'previsit') return false;
-    if (s.status === 'injected' || s.status === 'archived') return false;
-    if (!s.transcript.trim()) return false;
-    if (s.patientId == null || String(s.patientId) !== id) return false;
-    if (opts.appointmentId != null && s.appointmentId != null) {
-      return s.appointmentId === opts.appointmentId;
+/** Clears the uploaded Jots from this browser, keeping any whose upload failed (by id). */
+export function clearLegacyLocalBriefs(keepIds: string[] = []): void {
+  if (!keepIds.length) {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* private mode */
     }
-    return true;
-  });
-}
-
-export function markBriefsInjected(ids: string[]): void {
-  const at = nowIso();
-  const rows = readAll().map((s) =>
-    ids.includes(s.id) ? { ...s, status: 'injected' as const, injectedAt: at, updatedAt: at } : s
-  );
-  writeAll(rows);
+    return;
+  }
+  writeAll(readAll().filter((s) => keepIds.includes(s.id)));
 }

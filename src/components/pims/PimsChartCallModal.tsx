@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Phone, ChevronRight } from 'lucide-react';
-import { listLocalBriefsForPatient } from '../../utils/briefStore';
+import { listBriefs } from '../../api/briefs';
+import type { BriefSession } from '../../utils/briefTypes';
 import { formatBriefDateTime } from '../../utils/briefDisplay';
 import { buildPhoneDialHref } from '../../utils/quoContact';
 import { markClientCallStarted } from '../../hooks/useClientCallActivity';
@@ -37,12 +38,26 @@ export default function PimsChartCallModal({
 }: Props) {
   const fromLine = useOutboundCallFromLine();
   const [tick, setTick] = useState(0);
-  const calls = useMemo(() => {
-    void tick;
-    return listLocalBriefsForPatient(patientId)
-      .filter((s) => s.kind === 'callback' && s.status !== 'archived')
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  }, [patientId, tick]);
+  const [calls, setCalls] = useState<BriefSession[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let canceled = false;
+    void listBriefs({ patientId, kind: 'callback' })
+      .then((rows) => {
+        if (canceled) return;
+        setCalls(
+          rows
+            .filter((s) => s.status !== 'archived')
+            .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        );
+      })
+      .catch(() => {
+        if (!canceled) setCalls([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [open, patientId, tick]);
 
   if (!open || typeof document === 'undefined') return null;
 
