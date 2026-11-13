@@ -157,8 +157,10 @@ import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { RouteButton } from '../components/appointmentRequests/RouteButton';
 import { useAuth } from '../auth/useAuth';
+import { useMayWorkAppointments } from '../permissions/useMayWorkAppointments';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
+import { ReadOnlyConversationNote } from '../components/appointmentRequests/ReadOnlyConversationNote';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { SoapRecordModal, type SoapRecordRef } from '../components/soap/SoapHeaderRecords';
 import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
@@ -171,6 +173,7 @@ import {
 } from '../utils/appointmentRequestLinkedEvet';
 import { searchPatients, extractPatientListFromSearchResponse } from '../api/patients';
 import { MoreActionsMenu } from '../components/appointmentRequests/MoreActionsMenu';
+import { rememberAppointmentTabCounts } from '../components/appointmentRequests/appointmentTabCounts';
 import { ReplyBadges } from '../components/appointmentRequests/ReplyBadges';
 import { notifyAppointmentRepliesChanged, useAppointmentReplyCounts } from '../hooks/useAppointmentReplyCounts';
 import {
@@ -481,6 +484,8 @@ function formatLinkedVisitLine(
 }
 
 export default function AppointmentRequestsPage(_props: AppointmentRequestsPageProps) {
+  /** Techs and doctors see the list read-only (owner, Nov 13, 2026). */
+  const mayWork = useMayWorkAppointments();
   const navigate = useNavigate();
   const location = useLocation();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
@@ -1533,6 +1538,20 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     newTabRowVisibleAtLaunch,
   ]);
 
+  /** Hand the tab counts and reply badges to the Hold tab's strip (it doesn't load requests). */
+  useEffect(() => {
+    if (loading) return;
+    const out: Record<string, { count?: number; mine: number; others: number }> = {};
+    for (const { key } of STATUS_TABS) {
+      out[key] = {
+        count: tabShowsCount(key) ? (key === 'new' ? newTabVisibleCount : tabCounts[key]) : undefined,
+        mine: tabReplyCounts.get(key)?.mine ?? 0,
+        others: tabReplyCounts.get(key)?.others ?? 0,
+      };
+    }
+    rememberAppointmentTabCounts(out);
+  }, [loading, tabCounts, newTabVisibleCount, tabReplyCounts]);
+
 
   useEffect(() => {
     setListPage(1);
@@ -1783,7 +1802,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     [mergeSubmission, beginRowExit],
   );
 
-  /** Opening a request reads its client replies (anyone can); closing lets it settle back. */
+  /** Opening a request reads its client replies (anyone who works the list); closing lets it settle back. */
   const toggleRowAndReadReplies = useCallback(
     (item: AppointmentRequestSubmissionItem) => {
       const opening = !openRowIdsRef.current.has(item.id);
@@ -1798,6 +1817,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         return;
       }
       if ((item.unreadReplies?.count ?? 0) <= 0 || isAbandonedItem(item)) return;
+      // A read-only viewer opening it doesn't clear the badge for the people working it.
+      if (!mayWork) return;
       setReadWhileOpen((prev) => new Set(prev).add(item.id));
       void markAppointmentRequestReplies(item.id, true)
         .then((updated) => {
@@ -1809,7 +1830,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleRowOpen only sets state
-    [mergeSubmission],
+    [mergeSubmission, mayWork],
   );
 
   /** "Mark as unread": the latest reply is unread again, and the request closes. */
@@ -2459,14 +2480,16 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             others={(tabReplyCounts.get('on_hold')?.others ?? 0) + holdReplyCounts.holdOthers}
           />
         </button>
-        <button
-          type="button"
-          className="btn secondary"
-          onClick={() => navigate(`${APPOINTMENT_REQUESTS_LIST_PATH}/cleanup`)}
-          title="Close out open requests older than 10 days"
-        >
-          Clean up old requests
-        </button>
+        {mayWork ? (
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => navigate(`${APPOINTMENT_REQUESTS_LIST_PATH}/cleanup`)}
+            title="Close out open requests older than 10 days"
+          >
+            Clean up old requests
+          </button>
+        ) : null}
         <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load({ awaitHydration: true })} disabled={loading}>
           Refresh
         </button>
@@ -2872,9 +2895,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       saving={Boolean(liaisonSaving[item.id])}
                       onChange={(employeeId) => void changeLiaison(item, employeeId)}
                       ariaLabel={`Liaison for ${name}`}
+                      disabled={!mayWork}
                     />
                   </div>
                   <div className="appt-table-cell">
+                    {mayWork ? (
                     <RouteButton
                       hasVisit={hasVisitForRoute}
                       disabled={isDismissed}
@@ -2884,6 +2909,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         hasLinkedAppointment ? () => onExploreAlternatives(item) : undefined
                       }
                     />
+                    ) : null}
                   </div>
                   <div className="appt-table-cell">
                     <StatusPillMenu
@@ -2905,7 +2931,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           : undefined
                       }
                       saving={Boolean(statusUpdating[item.id]) && pillSaving[item.id] == null}
-                      items={bookingMenuItems({
+                      items={!mayWork ? [] : bookingMenuItems({
                         item,
                         visitSince,
                         isDismissed,
@@ -2922,7 +2948,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                       tone={`comm-${commPill.tone}`}
                       label={commPill.label}
                       saving={pillSaving[item.id] === 'comm'}
-                      items={COMMUNICATION_OPTIONS.map((o) => ({
+                      items={!mayWork ? [] : COMMUNICATION_OPTIONS.map((o) => ({
                         label: o.label,
                         selected: o.value === communication,
                         onClick: () => {
@@ -2943,7 +2969,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         label={recordsPill.label}
                         detail={recordsPill.detail}
                         saving={pillSaving[item.id] === 'records'}
-                        items={recordsMenuItems(
+                        items={!mayWork ? [] : recordsMenuItems(
                           item,
                           name,
                           enrichPetRowSummariesFromLinkedAppointment(
@@ -3012,6 +3038,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         />
                       }
                       notes={item.notes ?? ''}
+                      notesDisabled={!mayWork}
                       onSaveNotes={async (text) => {
                         const updated = await patchAppointmentRequestSubmission(item.id, { notes: text });
                         mergeSubmission({ ...updated, kind: 'submission' });
@@ -3032,6 +3059,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         ) : null
                       }
                     />
+                    {!mayWork ? (
+                      <ReadOnlyConversationNote>
+                        {hasLinkedAppointment ? (
+                          <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
+                            {isOnHoldVisit ? 'Open hold' : 'View appointment'}
+                          </button>
+                        ) : null}
+                      </ReadOnlyConversationNote>
+                    ) : (
                     <RequestConversationPanel
                       item={item}
                       practiceId={PRACTICE_ID}
@@ -3127,6 +3163,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         </>
                       }
                     />
+                    )}
                   </div>
                 ) : null}
               </li>
