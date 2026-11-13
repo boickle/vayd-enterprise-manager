@@ -26,7 +26,7 @@ import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { smsAllowsProductionOverride, SMS_OUTSIDE_PRODUCTION_NOTE } from '../../utils/smsEnvironment';
 import { appAlert } from '../../utils/appDialog';
 import MessageTemplatePicker from '../messageTemplates/MessageTemplatePicker';
-import { mergeValuesFromNames } from '../../utils/messageTemplateFields';
+import { mergeValuesForPets } from '../../utils/messageTemplateFields';
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 
 type Props = {
@@ -347,6 +347,12 @@ export function ClientSmsWorkspaceModal({
     });
   }
 
+  // B9-1: templates fill {{patient_name}} and he/she from the pets ticked under Patient chart, not just the client.
+  const templateValues = useMemo(
+    () => mergeValuesForPets(clientLabel, pets.filter((p) => emrPets.includes(p.id))),
+    [pets, emrPets, clientLabel],
+  );
+
   function toggleEmrPet(id: number) {
     setEmrPets((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   }
@@ -589,7 +595,7 @@ export function ClientSmsWorkspaceModal({
           <div className="client-reach-sms__compose">
             <MessageTemplatePicker
               channel="sms"
-              mergeValues={mergeValuesFromNames({ clientFullName: clientLabel })}
+              mergeValues={templateValues}
               disabled={sending}
               currentBody={draft}
               onApply={({ body }) => setDraft(body)}

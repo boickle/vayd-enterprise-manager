@@ -103,3 +103,13 @@ export function formatPracticeDate(
   const dt = DateTime.fromISO(raw).setZone(practiceTimeZoneOrDefault(practiceTz));
   return dt.isValid ? dt.toFormat('M/d/yyyy') : '';
 }
+
+/**
+ * The practice's calendar date (YYYY-MM-DD) for an instant, or for now. Not the UTC date: an evening call in New York
+ * is still that day, though UTC has already moved on to the next.
+ */
+export function ymdInPracticeZone(iso?: string | null, practiceTz?: string | null): string {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const at = iso ? DateTime.fromISO(iso) : null;
+  return (at?.isValid ? at : DateTime.now()).setZone(tz).toISODate()!;
+}

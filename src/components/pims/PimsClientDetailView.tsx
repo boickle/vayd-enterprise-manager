@@ -2690,7 +2690,10 @@ export default function PimsClientDetailView({
           clientId={Number(clientId)}
           clientLabel={name}
           phones={phoneRows}
-          pets={financialPets.map((p) => ({ id: p.id, name: p.name }))}
+          pets={financialPets.map((p) => {
+            const row = patients.find((x) => Number(x.id) === p.id) as { sex?: unknown } | undefined;
+            return { id: p.id, name: p.name, sex: typeof row?.sex === 'string' ? row.sex : null };
+          })}
           defaultPatientIds={
             patientParam && Number.isFinite(Number(patientParam)) && Number(patientParam) > 0
               ? [Number(patientParam)]

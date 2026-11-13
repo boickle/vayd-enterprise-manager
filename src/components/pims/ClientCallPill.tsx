@@ -7,6 +7,7 @@ import {
   recordScoutChartCommunication,
 } from '../../api/scoutChart';
 import { resolveCall, type ClientCall } from '../../api/calls';
+import { ymdInPracticeZone } from '../../utils/practiceTimezone';
 import './ClientCallPill.css';
 
 export type CallPillPatient = { id: number; name: string };
@@ -25,9 +26,6 @@ type Props = {
   onNoteFiled?: (noteId: string | null, patientId: number | null) => void;
 };
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /**
  * Quo labels turns by OpenPhone user id, which is noise on a chart. Keep the shape of the
@@ -104,7 +102,8 @@ export function CallTranscriptModal({
   const [raw, setRaw] = useState(quoRaw);
   const [text, setText] = useState(quoRaw);
   const [callDate, setCallDate] = useState(
-    () => call?.startedAt?.slice(0, 10) || todayISO(),
+    // The practice's date for the call, not the UTC date (B5-2: an 8 pm call was filed as the next day).
+    () => ymdInPracticeZone(call?.startedAt),
   );
   const [patientIds, setPatientIds] = useState<number[]>(() =>
     defaultPatientId != null ? [defaultPatientId] : [],
@@ -297,7 +296,7 @@ export function CallTranscriptModal({
             <input
               type="date"
               value={callDate}
-              max={todayISO()}
+              max={ymdInPracticeZone()}
               onChange={(e) => setCallDate(e.target.value)}
             />
           </label>
