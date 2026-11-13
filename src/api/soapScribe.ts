@@ -169,12 +169,18 @@ export async function summarizeIntakeHistory(
  */
 export async function polishSpokenNotes(opts: {
   transcript: string;
-  kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review';
+  /** `phone`: a Quo call transcript, turned into a short chart note (not a cleaned transcript). */
+  kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review' | 'phone';
   patientName?: string | null;
   clientName?: string | null;
   /** ISO date the conversation happened — a pasted transcript is often not from today. */
   asOfDate?: string | null;
+  /** Phone calls: names that may have been said (pets, staff on the call), for spelling. */
+  knownNames?: (string | null | undefined)[];
 }): Promise<string> {
+  const knownNames = [
+    ...new Set((opts.knownNames ?? []).map((n) => n?.trim() ?? '').filter(Boolean)),
+  ].slice(0, 40);
   const { data } = await http.post<{ summary: string }>('/scribe/polish-transcript', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
     transcript: opts.transcript,
@@ -182,6 +188,7 @@ export async function polishSpokenNotes(opts: {
     ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
     ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
     ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
+    ...(knownNames.length ? { knownNames: knownNames.map((n) => n.slice(0, 80)) } : {}),
   });
   return typeof data?.summary === 'string' ? data.summary.trim() : '';
 }

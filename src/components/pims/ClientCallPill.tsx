@@ -133,10 +133,11 @@ export function CallTranscriptModal({
     setError(null);
     void polishSpokenNotes({
       transcript: source,
-      kind: 'callback',
+      kind: 'phone',
       patientName,
       clientName,
       asOfDate: callDate,
+      knownNames: patients.map((p) => p.name),
     })
       .then((summary) => summary && setText(summary))
       .catch(() =>
@@ -154,10 +155,11 @@ export function CallTranscriptModal({
     setPolishing(true);
     void polishSpokenNotes({
       transcript: quoRaw,
-      kind: 'callback',
+      kind: 'phone',
       patientName,
       clientName,
       asOfDate: callDate,
+      knownNames: patients.map((p) => p.name),
     })
       .then((summary) => {
         if (cancelled || !summary) return;

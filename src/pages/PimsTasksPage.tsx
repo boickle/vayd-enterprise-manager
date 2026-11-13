@@ -69,6 +69,8 @@ import { isSoapAutomationTask } from '../utils/soapTask';
 import { isOrderListAutomationTask, orderListPath } from '../utils/orderListTask';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
 import TaskRemoveModal from '../components/pims/TaskRemoveModal';
+import TaskRowCallNote from '../components/pims/TaskRowCallNote';
+import { isFileCallTask } from '../utils/taskCallNote';
 import { useSharedTaskClosePrompt } from '../components/pims/SharedTaskClosePrompt';
 import './PimsTasksPage.css';
 
@@ -997,8 +999,16 @@ export default function PimsTasksPage() {
     const links = linksByTaskId[row.id];
     const canAct = canActOnTask(row, myEmployeeIds, isPracticeAdmin);
     const canClaim = canClaimTask(row, myEmployeeIds);
+    // "File call with …": a quick note box on the row; its own Mark done charts the note.
+    const callClientLink =
+      canAct && row.status !== 'done' && isFileCallTask(row)
+        ? links?.find((l) => l.entityType === 'client')
+        : undefined;
     return (
-      <article key={row.id} className="pims-task-card">
+      <article
+        key={row.id}
+        className={`pims-task-card${callClientLink ? ' pims-task-card--with-note' : ''}`}
+      >
         {tab === 'upcoming' && (
           <label className="pims-task-card__pick">
             <input
@@ -1119,6 +1129,7 @@ export default function PimsTasksPage() {
             ) : null}
             {canAct &&
             row.kind !== 'callback' &&
+            !callClientLink &&
             !isMailOrderApprovalTask({ title: row.title, links }) ? (
               <button type="button" className="pims-task-card__btn pims-task-card__btn--done" onClick={() => void handleMarkDone(row.id)}>
                 Mark done
@@ -1147,6 +1158,18 @@ export default function PimsTasksPage() {
             ) : null}
           </div>
         )}
+        {callClientLink ? (
+          <TaskRowCallNote
+            key={`${row.id}:${row.updated}`}
+            task={row}
+            clientId={callClientLink.entityId}
+            clientLabel={taskLinkDisplayLabel(callClientLink, linkLabels)}
+            onChanged={() => {
+              refreshList();
+              notifyTasksChanged();
+            }}
+          />
+        ) : null}
       </article>
     );
   };
