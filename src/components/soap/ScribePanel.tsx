@@ -200,14 +200,15 @@ function writeDismissedKeys(soapEncounterId: string, keys: Set<string>): void {
 
 const OVERWRITE_CONFIRM =
   'You are about to overwrite your current SOAP work.\n\n' +
-  'Re-load rewrites Subjective, Objective notes, Assessment, and Plan from this transcript. ' +
+  'Reprocess rewrites Subjective, Objective notes, Assessment, and Plan from this transcript. ' +
   'Check-in answers are folded back into the new history; checkout orders stay. Vitals and exam findings you already entered are kept.\n\n' +
   'Proceed?';
 
 const DELETE_TRANSCRIPT_CONFIRM =
   'Delete the saved transcript for this visit?\n\n' +
-  'The SOAP notes you already have are kept, but the transcript text is gone and cannot be used to re-load the SOAP. ' +
-  'On a household visit it is removed from every pet\'s chart that got the same transcript, and from the copy kept on this device.\n\n' +
+  'The SOAP notes you already have are kept, but the transcript text is gone and cannot be used to reprocess the SOAP. ' +
+  'On a household visit it is removed from every pet\'s chart that got the same transcript, and from the copy kept on this device. ' +
+  'The copy kept to improve the scribe is deleted too.\n\n' +
   'Proceed?';
 
 /** Turn structured plan-item suggestions into matcher rows (never create $0 orders). */
@@ -400,6 +401,8 @@ export default function ScribePanel({
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [finalTranscript, setFinalTranscript] = useState('');
   const [suggestion, setSuggestion] = useState<ScribeSuggestion | null>(null);
+  /** This visit has a Process result: the button reads Reprocess, not Process (Q1, Nov 13, 2026). */
+  const [hasProcessed, setHasProcessed] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [takes, setTakes] = useState<ScribeTake[]>([]);
@@ -593,7 +596,10 @@ export default function ScribePanel({
           (b.updated || b.created || '').localeCompare(a.updated || a.created || '')
         );
 
+        // A take still recording is not an earlier take: listing it showed the live take twice
+        // ("Take 1 · 7 words" and "Take 1 · recording"), B1.
         const parts = [...sessions]
+          .filter((s) => s.status !== 'active')
           .sort((a, b) => (a.created || '').localeCompare(b.created || ''))
           .map((s) => s.transcript?.trim() ?? '')
           .filter(Boolean);
@@ -623,6 +629,7 @@ export default function ScribePanel({
           | MultiPatientScribeSuggestion
           | null;
         if (!last) return;
+        setHasProcessed(true);
 
         if (isMultiPatientSuggestion(last)) {
           // Multi-pet runs write each chart's narratives directly, so only the review cards
@@ -1106,6 +1113,7 @@ export default function ScribePanel({
         setMultiPlanItemsForCurrent([]);
         setMultiProblemsForCurrent([]);
         setMultiSuggestion(result as MultiPatientScribeSuggestion);
+        setHasProcessed(true);
         setProcessWarnings((result as MultiPatientScribeSuggestion).warnings ?? []);
         setPasteOpen(false);
         setPasteText(text);
@@ -1121,6 +1129,7 @@ export default function ScribePanel({
         setInterimText('');
         prevSuggestionRef.current = null;
         setSuggestion(result as ScribeSuggestion);
+        setHasProcessed(true);
         setProcessWarnings((result as ScribeSuggestion).warnings ?? []);
         setDismissed(new Set());
         writeDismissedKeys(soapEncounterId, new Set());
@@ -1149,7 +1158,7 @@ export default function ScribePanel({
   ]);
 
   /**
-   * Deletes the saved transcript for this visit. Needs its own path because "Re-load SOAP"
+   * Deletes the saved transcript for this visit. Needs its own path because "Reprocess"
    * only ever saves non-empty text — clearing the box alone left the stored copy behind,
    * which then came back on the next visit to this chart.
    */
@@ -1650,7 +1659,7 @@ export default function ScribePanel({
               disabled={pasteBusy || !pasteText.trim()}
               onClick={() => void processPastedTranscript()}
             >
-              {pasteBusy ? 'Processing…' : finalTranscript.trim() ? 'Re-load SOAP' : 'Process'}
+              {pasteBusy ? 'Processing…' : hasProcessed ? 'Reprocess' : 'Process'}
             </button>
             <button
               type="button"
@@ -1680,9 +1689,9 @@ export default function ScribePanel({
       {transcriptOpen && (finalTranscript || interimText || (recording && pasteText.trim())) && (
         <div className="soap-scribe-transcript">
           <p className="soap-scribe-transcript-meta">
-            Saved with this visit for reference — not included on the printed medical record. Use
-            View / Re-load transcript to rewrite the SOAP from this text. Stop and start again to
-            add on — earlier takes stay.
+            Saved with this visit for reference — not included on the printed medical record. Open
+            Combined transcript and click Reprocess to rewrite the SOAP from this text. Stop and start
+            again to add on — earlier takes stay.
           </p>
           {recording && pasteText.trim() ? `${pasteText.trim()}\n\n` : ''}
           {finalTranscript} <span className="soap-scribe-interim">{interimText}</span>
@@ -1693,7 +1702,7 @@ export default function ScribePanel({
         <div className="soap-scribe-autolog">
           <p className="soap-scribe-autolog-hint">
             Written straight into Subjective/Vitals/Exam/Assessment/Objective/Plan from the
-            transcript. Re-load SOAP replaces those narrative fields (check-in is folded in);
+            transcript. Reprocess replaces those narrative fields (check-in is folded in);
             existing vitals/exam entries are never overwritten.
           </p>
           <ul>

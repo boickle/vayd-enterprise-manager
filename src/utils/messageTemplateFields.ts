@@ -27,6 +27,9 @@ export const MERGE_FIELDS: MergeField[] = [
   { id: 'He_She', label: 'He/She', group: 'Pronouns', sample: 'He' },
   { id: 'have_has', label: 'has/have', group: 'Pronouns', sample: 'has' },
   { id: 'doctor_last_name', label: 'Doctor last name', group: 'Clinic', sample: 'Frey' },
+  // Owner, Nov 12, 2026. Filled for the visit's doctor when the screen knows one, else for the person
+  // writing: their license for the practice's state (Maine) from Settings → Staff.
+  { id: 'doctor_license_number', label: 'Doctor license number', group: 'Clinic', sample: 'VET1234' },
   { id: 'clinic_name', label: 'Clinic name', group: 'Clinic', sample: 'Vet At Your Door' },
   { id: 'clinic_phone', label: 'Clinic phone', group: 'Clinic', sample: '(215) 555-0100' },
   { id: 'today', label: "Today's date", group: 'Visit', sample: 'Monday, August 31' },
@@ -128,6 +131,8 @@ export function mergeValuesFromNames(opts: {
   species?: string | null;
   sex?: string | null;
   doctorLastName?: string | null;
+  /** The doctor whose license number fills the template (see MessageTemplatePicker). */
+  doctorEmployeeId?: number | null;
 }): MergeValues {
   const full =
     opts.clientFullName?.trim() ||
@@ -147,6 +152,7 @@ export function mergeValuesFromNames(opts: {
     species: opts.species?.trim() || '',
     have_has: 'has',
     doctor_last_name: opts.doctorLastName?.trim() || '',
+    doctor_employee_id: opts.doctorEmployeeId != null ? String(opts.doctorEmployeeId) : '',
     ...pronounsFromSex(opts.sex),
   });
 }

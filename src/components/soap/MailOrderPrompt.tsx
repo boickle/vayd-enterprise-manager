@@ -34,7 +34,7 @@ const PAYMENT_PLANS: Array<{ id: PaymentPlan; label: string; hint: string }> = [
   {
     id: 'now',
     label: 'Take payment now',
-    hint: 'Collect on this invoice as usual — card on file, reader, or a card read out over the phone.',
+    hint: 'Collect on this invoice as usual — card on file, reader, or Type card manually.',
   },
   {
     id: 'after_approval',

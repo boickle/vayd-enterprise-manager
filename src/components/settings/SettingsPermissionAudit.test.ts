@@ -90,3 +90,27 @@ describe('Permission Audit Log details', () => {
     expect(lines).toEqual(['License: Not licensed → Licensed technician']);
   });
 });
+
+describe('license list changes (Nov 12, 2026)', () => {
+  it('says what was added, changed and removed', () => {
+    const lines = describeDetail(
+      {
+        action: 'licenses',
+        before: [
+          { kind: 'veterinary', state: 'ME', number: 'VET1' },
+          { kind: 'veterinary', state: 'NH', number: 'NH-5' },
+        ],
+        after: [
+          { kind: 'veterinary', state: 'ME', number: 'VET2' },
+          { kind: 'veterinary', state: 'VT', number: 'VT-3' },
+        ],
+      },
+      (k) => k,
+    );
+    expect(lines).toEqual([
+      'License (ME): VET1 → VET2',
+      'License (VT) added: VT-3',
+      'License (NH) removed (was NH-5)',
+    ]);
+  });
+});

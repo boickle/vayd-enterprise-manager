@@ -5,35 +5,9 @@ import {
   type ScribeSocketStatus,
 } from '../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../utils/scribeAudioCapture';
-import { redactPaymentDetails } from '../utils/paymentRedaction';
 import { requestKeepAwake, type KeepAwakeHandle } from '../utils/keepAwake';
 
-export type BriefRecorderStatus = ScribeSocketStatus | 'listening';
-
-type SpeechRecognitionCtor = new () => {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult:
-    | ((ev: {
-        resultIndex: number;
-        results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-      }) => void)
-    | null;
-  onerror: ((ev: { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-function speechRecognitionCtor(): SpeechRecognitionCtor | null {
-  if (typeof window === 'undefined') return null;
-  const w = window as unknown as {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
+export type BriefRecorderStatus = ScribeSocketStatus;
 
 function readDraft(key: string): string {
   try {
@@ -52,16 +26,19 @@ function writeDraft(key: string, text: string): void {
 }
 
 /**
- * Records a transcript. When a SOAP encounter is linked, uses the visit scribe socket.
- * Otherwise uses the browser speech API so huddles and callbacks still capture text.
+ * Records a transcript through the scribe socket (Deepgram). A medical note records onto its
+ * visit (`soapEncounterId`); a Jot records onto the Jot (`opts.jotId`), which wins when both are
+ * given. The browser's own speech service is never used: it sends the audio to Google or Apple
+ * (B7, owner Nov 13, 2026).
  *
  * With `draftKey`, the transcript is also kept on this device as it comes in, so a dropped
  * connection, a server restart, or a reloaded tab does not lose what was already said.
  */
 export function useBriefRecorder(
   soapEncounterId?: string | null,
-  opts?: { draftKey?: string | null }
+  opts?: { draftKey?: string | null; jotId?: string | null }
 ) {
+  const jotId = opts?.jotId?.trim() || null;
   const draftKey = opts?.draftKey?.trim() || null;
   const [status, setStatus] = useState<BriefRecorderStatus>('idle');
   const [transcript, setTranscript] = useState('');
@@ -72,7 +49,6 @@ export function useBriefRecorder(
   const socketRef = useRef<ScribeSocketHandle | null>(null);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
   const keepAwakeRef = useRef<KeepAwakeHandle | null>(null);
-  const speechRef = useRef<{ stop: () => void } | null>(null);
   const timerRef = useRef<number | null>(null);
   const transcriptRef = useRef('');
   /** Text from earlier takes; the server only returns the take that just ended. */
@@ -116,8 +92,6 @@ export function useBriefRecorder(
     clearTimer();
     audioRef.current?.stop();
     audioRef.current = null;
-    speechRef.current?.stop();
-    speechRef.current = null;
     keepAwakeRef.current?.release();
     keepAwakeRef.current = null;
   }, [clearTimer]);
@@ -133,7 +107,8 @@ export function useBriefRecorder(
     keepAwakeRef.current = awake;
 
     const encounterId = soapEncounterId?.trim();
-    if (encounterId) {
+    const target = jotId ? { jotId } : encounterId || null;
+    if (target) {
       let live = false;
       const socket = createScribeSocket({
         onStatusChange: (next) => {
@@ -158,7 +133,7 @@ export function useBriefRecorder(
       });
       socketRef.current = socket;
       try {
-        await socket.start(encounterId);
+        await socket.start(target);
         live = true;
         const audio = await startScribeAudioCapture({
           onChunk: (b64) => socket.sendAudio(b64),
@@ -177,74 +152,11 @@ export function useBriefRecorder(
       return;
     }
 
-    const Ctor = speechRecognitionCtor();
-    if (!Ctor) {
-      setError(
-        'Live transcription needs a visit SOAP (for the scribe) or a browser that supports speech recognition. You can still type or paste notes below.'
-      );
-      setStatus('error');
-      return;
-    }
-
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        stream.getTracks().forEach((t) => t.stop());
-      });
-    } catch {
-      setError('Microphone permission is required to record.');
-      setStatus('error');
-      return;
-    }
-
-    const rec = new Ctor();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-    rec.onresult = (ev) => {
-      let finalChunk = '';
-      let interimChunk = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const piece = ev.results[i];
-        if (!piece) continue;
-        const text = piece[0]?.transcript ?? '';
-        if (piece.isFinal) finalChunk += `${text} `;
-        else interimChunk += text;
-      }
-      if (finalChunk.trim()) {
-        // Card numbers read aloud never reach the transcript, the draft or the server.
-        setTranscript((prev) =>
-          `${prev} ${redactPaymentDetails(finalChunk, prev)}`.trim(),
-        );
-      }
-      setInterim(redactPaymentDetails(interimChunk, transcriptRef.current));
-    };
-    rec.onerror = (ev) => {
-      if (ev.error === 'no-speech' || ev.error === 'aborted') return;
-      setError(ev.error ? `Recording error: ${ev.error}` : 'Recording error.');
-    };
-    rec.onend = () => {
-      if (speechRef.current) {
-        try {
-          rec.start();
-        } catch {
-          /* already stopped */
-        }
-      }
-    };
-    speechRef.current = {
-      stop: () => {
-        rec.onend = null;
-        try {
-          rec.stop();
-        } catch {
-          /* ignore */
-        }
-      },
-    };
-    rec.start();
-    setStatus('listening');
-    timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
-  }, [soapEncounterId, teardown]);
+    keepAwakeRef.current?.release();
+    keepAwakeRef.current = null;
+    setError('Save this note before recording. You can still type or paste notes below.');
+    setStatus('error');
+  }, [jotId, soapEncounterId, teardown]);
 
   const stop = useCallback(async (): Promise<string> => {
     teardown();
@@ -275,7 +187,7 @@ export function useBriefRecorder(
     setTranscript((prev) => (prev.trim() ? prev : value));
   }, []);
 
-  const recording = status === 'recording' || status === 'listening' || status === 'connecting';
+  const recording = status === 'recording' || status === 'connecting';
 
   return {
     status,

@@ -20,9 +20,11 @@ type Props = {
   /** After a call is logged (the hold may now be owned by the caller). */
   onChanged?: () => void;
   actions?: ReactNode;
+  /** Techs and doctors: the conversation without the composer. */
+  readOnly?: boolean;
 };
 
-export function HoldConversationPanel({ hold, canText, practiceTz, onChanged, actions }: Props) {
+export function HoldConversationPanel({ hold, canText, practiceTz, onChanged, actions, readOnly }: Props) {
   const [windowDraft, setWindowDraft] = useState<string | null>(null);
   const [regardingPatientId, setRegardingPatientId] = useState<number | null>(
     hold.patient?.id ?? null
@@ -69,7 +71,7 @@ export function HoldConversationPanel({ hold, canText, practiceTz, onChanged, ac
 
   return (
     <>
-      <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} />
+      <ConversationPanel source={source} practiceTz={practiceTz} actions={actions} readOnly={readOnly} />
       {windowDraft != null && hold.client?.id != null ? (
         <ClientEmailComposeModal
           open

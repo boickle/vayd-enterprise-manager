@@ -17,7 +17,7 @@ import {
   CreditCard,
   Gift,
   Pencil,
-  Phone,
+  Keyboard,
   Receipt,
   RotateCcw,
   Smartphone,
@@ -140,6 +140,7 @@ import {
   accountCreditButtonText,
   cardOnFileButtonText,
   cardText,
+  expiredCardText,
   paidTenderLines,
 } from './checkoutPaymentText';
 import CheckoutPetSignalment from './CheckoutPetSignalment';
@@ -171,6 +172,7 @@ import {
   tomorrowInput,
 } from '../../utils/printRxLabel';
 import { handDiscountRegularAmount, membershipLineDiscount, memberDiscountTag } from '../../utils/membershipLineDiscount';
+import { CARD_ON_FILE_STAFF_ASK } from '../../utils/cardOnFileWording';
 
 /** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
 function toRxDatePayload(value: string | null | undefined): string | undefined {
@@ -2142,7 +2144,9 @@ export default function VisitCheckoutPanel({
   const status = invoice?.status ?? 'open';
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
-  const hasSavedCard = Boolean(cardOnFile || invoice?.savedPaymentMethodId);
+  // PAY-C5: an expired card is shown as expired and never offered for a charge.
+  const cardExpired = Boolean(cardOnFile?.expired);
+  const hasSavedCard = cardOnFile ? !cardExpired : Boolean(invoice?.savedPaymentMethodId);
   // Branch/Location only matter when an in-person charge takes stock off a shelf. A services-only
   // invoice shows neither and doesn't wait on them (owner decision, Nov 9, 2026).
   const needsStockShelf = (invoice?.lines ?? []).some(
@@ -3985,6 +3989,13 @@ export default function VisitCheckoutPanel({
             />
           )}
 
+          {showPayment && !isPaid && !isVoid && cardOnFile && cardExpired && (
+            <p className="soap-checkout-card-expired" data-testid="card-on-file-expired">
+              {cardOnFile.brand ? `${cardOnFile.brand.charAt(0).toUpperCase()}${cardOnFile.brand.slice(1)}: ` : ''}
+              <strong>{expiredCardText(cardOnFile)}</strong>. Ask the owner for a new card.
+            </p>
+          )}
+
           {showPayment && !isPaid && !isVoid && (
             <TerminalReaderPicker
               disabled={disabled || busy != null}
@@ -4003,7 +4014,7 @@ export default function VisitCheckoutPanel({
               <span>
                 {cardDeclinedAt
                   ? `This household said no to keeping a card on file last time${formatDeclineDay(cardDeclinedAt)}. Leave unchecked unless they have changed their mind.`
-                  : 'Owner is happy for us to keep this card on file for future visits, refills, and memberships. Ask before you tap. Tick this box when they say yes.'}
+                  : CARD_ON_FILE_STAFF_ASK}
               </span>
             </label>
           )}
@@ -4102,11 +4113,11 @@ export default function VisitCheckoutPanel({
                       ? paymentBlockedReason
                       : !branchReady
                         ? 'Choose the branch and location inventory is drawn from'
-                        : 'Virtual terminal — key in a card the owner reads out over the phone'
+                        : "Type the card number in. Typed-in cards cost a higher card fee than Tap to Pay, so use it when the reader isn't working, the card won't tap, or the owner isn't with you."
                   }
                   onClick={() => setPhoneCardOpen(true)}
                 >
-                  <Phone size={14} /> Card over phone
+                  <Keyboard size={14} /> Type card manually
                 </button>
                 <button
                   type="button"
@@ -4315,7 +4326,7 @@ export default function VisitCheckoutPanel({
           onPaid={(next) => {
             setPhoneCardOpen(false);
             onInvoiceChange(next);
-            showPaymentSuccess({ setError, setNote }, 'Card charged over the phone — invoice marked paid.');
+            showPaymentSuccess({ setError, setNote }, 'Card charged — invoice marked paid.');
           }}
         />
       ) : null}
