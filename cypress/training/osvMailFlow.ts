@@ -155,8 +155,12 @@ export function visitMailOrder() {
   });
   cy.get('.mail-mode__toggle', { timeout: 20000 }).first().contains('button', /^Mail order/).click();
   cy.contains('h3', 'Send to mail queue', { timeout: 15000 });
+  // The shipping types load after the box opens; pick only once they are there, then check the pick held.
+  cy.contains('label', 'Shipping / pick-up type').find('option[value="ship-499"]', { timeout: 20000 }).should('exist');
+  cy.wait(500);
   cy.contains('label', 'Shipping / pick-up type').find('select').select('ship-499');
-  cy.contains('button', /^Add to mail queue$/).click();
+  cy.contains('will be added to this invoice', { timeout: 10000 });
+  cy.contains('button', /^Add to mail queue$/).should('not.be.disabled').click();
   cy.get('.mail-mode__stage, .mail-mode', { timeout: 30000 });
   return sql(
     `SELECT id || ' ' || coalesce("scoutInvoiceId"::text, substring(notes from 'invoice:([0-9a-f-]{36})'), '') FROM mail_orders WHERE "clientId"=${o.clients.rivera} ORDER BY id DESC LIMIT 1`

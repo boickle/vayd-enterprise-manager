@@ -19,8 +19,8 @@
 | `n07-waiting` | The bill shows it's waiting on the mail team. |
 | `n08-queue` | In the queue, Cancel requests shows it. Check it first thing. |
 | `n09-open` | Open it to see who asked, and why. |
-| `n10-choices` | Choose what fits: cancel and refund, cancel without a refund, already shipped, or keep the order. |
-| `n11-cancel` | It's filled but not shipped, and the bill was paid, so cancel and refund. |
+| `n10-choices` | You'll see two buttons. The first one fits the order: Cancel and refund when it's paid, Cancel order when it isn't, or Already shipped once it's gone out. The other is always Keep the order. |
+| `n11-cancel` | This one is paid and not shipped yet, so cancel and refund. |
 | `n12-done` | Scout opens the return on the bill. Back on the shelf is ticked, so it goes back into stock. |
 | `n12b-shelf` | It was paid in cash, so the refund goes on Maria's account as credit. A card payment would go back to the card. Confirm it. |
 | `n12c-refunded` | Returned. The bill now shows the refund. |

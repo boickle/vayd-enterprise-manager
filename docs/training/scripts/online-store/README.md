@@ -50,6 +50,7 @@ These videos build on the invoicing series (INV-01, INV-03, INV-09, INV-10) and 
 | [OSV-24](OSV-24-ordered-elsewhere.md) | Ordered on another site (e.g. My Royal Canin) | Mail order team | Must |
 | [OSV-25](OSV-25-cancel-requests.md) | Cancel requests | Mail order team, CLs | Must |
 | [OSV-26](OSV-26-chronic-meds.md) | Chronic medications: refills and reordering in the portal | Doctors, techs, CLs, mail team | Must |
+| [OSV-27](OSV-27-new-mail-order.md) | New mail order: ashes and other packages | Mail order team, CLs | Must |
 
 OSV-13 (abandoned carts), OSV-17 (Ecwid move) and OSV-18 (common mistakes) were cut by the owner on Nov 7, 2026.
 

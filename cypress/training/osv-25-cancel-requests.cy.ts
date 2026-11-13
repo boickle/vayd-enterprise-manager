@@ -54,14 +54,21 @@ describe('Training: OSV-25 cancel requests', () => {
       cy.contains('Mail Order Queue', { timeout: 40000 });
       cy.wait(1500);
     });
-    line('n08-queue', () => tap(() => cy.contains('button', /^Cancel requests/)));
+    line('n08-queue', () => {
+      tap(() => cy.contains('button', /^Cancel requests/));
+      // Let the filtered list show the order before the next line, so its click lands on time.
+      cy.then(() => cy.contains(`#${orderId}`, { timeout: 20000 }));
+    });
     line('n09-open', () => {
       openOrder(() => orderId);
       look(() => cy.get('section.mail-queue__cancel-decision', { timeout: 20000 }), 3500);
     });
     line('n10-choices', () => look(() => cy.get('section.mail-queue__cancel-decision').find('button').first().parent(), 5000));
     line('n11-cancel', () => press(() => cy.get('section.mail-queue__cancel-decision').contains('button', /^Cancel and refund$/)));
-    line('n12-done', () => look(() => cy.contains('Back on the shelf', { timeout: 30000 }).parent(), 5000));
+    line('n12-done', () => {
+      look(() => cy.contains('Back on the shelf', { timeout: 30000 }).parent(), 5000);
+      cy.contains('button', /^Keep \$[\d.,]+ as account credit$/, { timeout: 30000 });
+    });
     line('n12b-shelf', () => press(() => cy.contains('button', /^Keep \$[\d.,]+ as account credit$/, { timeout: 30000 })));
     line('n12c-refunded', () => look(() => cy.contains('tr', /Return #/, { timeout: 30000 }).first(), 3500));
     line('n13-mistakes');
