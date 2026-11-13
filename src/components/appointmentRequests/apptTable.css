@@ -314,7 +314,63 @@
 }
 
 /* Narrow screens: let the summary wrap rather than squeeze. */
-@media (max-width: 1100px) {
+/* Anything still too wide scrolls sideways instead of being cut off. */
+.appt-request-list-wrap {
+  overflow-x: auto;
+}
+
+/*
+ * Narrower page (13-inch laptops, or the Quick actions panel open): the table follows the page's
+ * own width, not the window's (owner, Nov 13, 2026: Records was cut off on a 13-inch screen).
+ */
+.settings-page.appt-requests-page {
+  container-type: inline-size;
+  container-name: appt-page;
+}
+
+/* A little tight: narrower columns, everything still on one line. */
+@container appt-page (max-width: 1150px) {
+  .appt-table-head,
+  .appt-table-row {
+    grid-template-columns:
+      100px 46px minmax(116px, 1.4fr) minmax(74px, 1fr) minmax(74px, 0.9fr)
+      minmax(86px, 0.9fr) 90px minmax(96px, 1fr) minmax(96px, 1fr);
+    gap: 6px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .appt-table-head.appt-table--with-records,
+  .appt-table-row.appt-table--with-records {
+    grid-template-columns:
+      100px 46px minmax(116px, 1.4fr) minmax(74px, 1fr) minmax(74px, 0.9fr)
+      minmax(86px, 0.9fr) 90px minmax(94px, 1fr) minmax(94px, 1fr) minmax(90px, 0.95fr);
+  }
+  .appt-table-route-btn {
+    padding: 7px 6px;
+  }
+  .appt-table-liaison {
+    padding: 6px 4px;
+  }
+}
+
+/*
+ * Narrow: each line wraps onto two rows of five, headings included. Top: received, client type,
+ * client and pets, request, location. Bottom: liaison, Route, then the status columns.
+ */
+@container appt-page (max-width: 1000px) {
+  .appt-table-head,
+  .appt-table-row,
+  .appt-table-head.appt-table--with-records,
+  .appt-table-row.appt-table--with-records {
+    grid-template-columns:
+      104px minmax(92px, 0.8fr) minmax(110px, 1.4fr) minmax(100px, 1fr) minmax(96px, 1fr);
+    column-gap: 8px;
+    row-gap: 8px;
+  }
+}
+
+/* Very narrow page (phone, tiny window): two-column cards. */
+@container appt-page (max-width: 620px) {
   .appt-table-head {
     display: none;
   }
