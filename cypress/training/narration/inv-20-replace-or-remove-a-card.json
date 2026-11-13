@@ -1,20 +1,78 @@
 [
-  { "id": "inv20-01", "text": "Each family has one card on file for the whole practice. Visits, refills, memberships and the online store all use it. Here's how to change it or remove it." },
-  { "id": "inv20-02", "text": "The Riveras' card on file is here, on the Financial tab." },
-  { "id": "inv20-03", "text": "Scout keeps when and where Maria said yes." },
-  { "id": "inv20-04", "text": "A card can be saved at a visit, in the online store, or when the family signs up for a membership. If they have no card yet, that card becomes the card on file." },
-  { "id": "inv20-05", "text": "Maria has a new card. Click Replace card." },
-  { "id": "inv20-06", "text": "Type the name and the new card. Nothing is charged." },
-  { "id": "inv20-07", "text": "Ask first. Read Maria what she's agreeing to." },
-  { "id": "inv20-07b", "text": "When she says yes, tick the box." },
-  { "id": "inv20-08", "text": "Click Save card." },
-  { "id": "inv20-09", "text": "Saved. The next visit, refill or store order uses the new card." },
-  { "id": "inv20-10", "text": "A membership keeps the card it's billed on. If Scout says a membership is billed on a different card, open the membership and use Update card." },
-  { "id": "inv20-11", "text": "If the family asks us to remove a card, click Remove card." },
-  { "id": "inv20-12", "text": "Remove takes it away everywhere: visits, the online store and the portal." },
-  { "id": "inv20-13", "text": "Say why, then click Remove card." },
-  { "id": "inv20-14", "text": "Now there's no card on file." },
-  { "id": "inv20-15", "text": "If a membership or auto-ship is still billed on that card, the window names it first. The card is kept for that one only, so it keeps billing." },
-  { "id": "inv20-16", "text": "And if a card has expired, Scout shows it in red here and won't charge it. At checkout, take a new card with Tap to Pay or Type card manually, and ask to save it." },
-  { "id": "inv20-17", "text": "One card on file for the whole practice. Ask before you save one, and Remove takes it away everywhere." }
+  {
+    "id": "inv20-01",
+    "text": "Each family has one card on file for the whole practice. Visits, refills, memberships and the online store all use it. Here's how to change it or remove it."
+  },
+  {
+    "id": "inv20-02",
+    "text": "The Riveras' card on file is here, on the Financial tab."
+  },
+  {
+    "id": "inv20-03",
+    "text": "Scout keeps when and where Maria said yes."
+  },
+  {
+    "id": "inv20-04",
+    "text": "A card can be saved at a visit, in the online store, or when the family signs up for a membership. If they have no card yet, that card becomes the card on file."
+  },
+  {
+    "id": "inv20-05",
+    "text": "Maria has a new card. Click Replace card."
+  },
+  {
+    "id": "inv20-06",
+    "text": "Type the name and the new card. Nothing is charged."
+  },
+  {
+    "id": "inv20-07",
+    "text": "Ask first. Read Maria what she's agreeing to."
+  },
+  {
+    "id": "inv20-07b",
+    "text": "When she says yes, tick the box."
+  },
+  {
+    "id": "inv20-08",
+    "text": "Click Save card."
+  },
+  {
+    "id": "inv20-09",
+    "text": "Saved. The next visit, refill or store order uses the new card."
+  },
+  {
+    "id": "inv20-10",
+    "text": "A membership keeps the card it's billed on. If Scout says a membership is billed on a different card, open the membership and use Update card."
+  },
+  {
+    "id": "inv20-11",
+    "text": "If the family asks us to remove a card, click Remove card."
+  },
+  {
+    "id": "inv20-12",
+    "text": "Remove takes it away everywhere: visits, the online store and the portal."
+  },
+  {
+    "id": "inv20-13",
+    "text": "Type why the card is being removed."
+  },
+  {
+    "id": "inv20-13b",
+    "text": "Then click Remove card."
+  },
+  {
+    "id": "inv20-14",
+    "text": "Now there's no card on file."
+  },
+  {
+    "id": "inv20-15",
+    "text": "If a membership or auto-ship is still billed on that card, the window names it first. The card is kept for that one only, so it keeps billing."
+  },
+  {
+    "id": "inv20-16",
+    "text": "And if a card has expired, Scout shows it in red here and won't charge it. At checkout, take a new card with Tap to Pay or Type card manually, and ask to save it."
+  },
+  {
+    "id": "inv20-17",
+    "text": "One card on file for the whole practice. Ask before you save one, and Remove takes it away everywhere."
+  }
 ]

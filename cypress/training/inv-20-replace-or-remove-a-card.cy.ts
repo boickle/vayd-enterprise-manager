@@ -58,8 +58,8 @@ describe('Training: INV-20 replace or remove a card', () => {
       section().contains('Why is the card being removed?').should('be.visible');
     });
     line('inv20-12', () => pointAt(() => section().contains('.client-card__muted', 'Removes the card everywhere'), 5000));
-    line('inv20-13', () => {
-      typeSlowly(() => section().find('.client-card__field input'), 'Owner asked us to remove it');
+    line('inv20-13', () => typeSlowly(() => section().find('.client-card__field input'), 'Owner asked us to remove it'));
+    line('inv20-13b', () => {
       tap(() => section().find('.client-card__form').contains('button', 'Remove card'));
       section().contains('No card on file', { timeout: 60000 }).should('exist');
     });
