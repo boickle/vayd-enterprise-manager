@@ -7778,3 +7778,26 @@ label.scheduler-household-pet-row {
 .scheduler-tooltip-vh-deposit--needed {
   color: #b91c1c;
 }
+
+/* Deposit window footer: buttons sit inside the window with room to the edge, under a divider,
+   and the secondary buttons have an outline (they borrow the Book window's borderless buttons). */
+.appointment-deposit__actions {
+  margin: 0;
+  padding: 14px 24px 20px 28px;
+  border-top: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.secondary {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.secondary:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.primary {
+  border: 1px solid #0f172a;
+}
