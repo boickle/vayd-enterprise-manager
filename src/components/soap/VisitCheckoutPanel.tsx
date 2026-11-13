@@ -140,6 +140,8 @@ import {
   accountCreditButtonText,
   cardOnFileButtonText,
   cardText,
+  cashTenderNote,
+  cashTenderPlan,
   expiredCardText,
   paidTenderLines,
 } from './checkoutPaymentText';
@@ -2053,15 +2055,25 @@ export default function VisitCheckoutPanel({
       }
       let cashReceived: number | null = null;
       let checkNumber: string | null = null;
+      // Cash can pay part of the bill (owner, Nov 13, 2026): less than the amount due records just
+      // that much and leaves the rest open for a card or another payment.
+      let amount = due;
+      let changeGiven: number | null = null;
       if (method === 'cash') {
         const raw = await appPrompt({
           title: 'Cash received',
-          message: `Amount due is $${due.toFixed(2)}. Enter cash received (or leave blank for exact).`,
+          message: `Amount due is $${due.toFixed(2)}. Enter the cash received (leave as is for exact). Less than the amount due records part of the bill in cash; take the rest by card or another way.`,
           defaultValue: due.toFixed(2),
         });
         if (raw === null) return;
-        const parsed = Number(String(raw).replace(/[^0-9.]/g, ''));
-        if (Number.isFinite(parsed) && parsed > 0) cashReceived = parsed;
+        const plan = cashTenderPlan(due, raw);
+        if (plan.error) {
+          setError(plan.error);
+          return;
+        }
+        amount = plan.amount;
+        cashReceived = plan.cashReceived;
+        changeGiven = plan.changeGiven;
       }
       if (method === 'check') {
         const raw = await appPrompt({
@@ -2075,14 +2087,15 @@ export default function VisitCheckoutPanel({
       onInvoiceChange(
         await addVisitTender(invoice.id, {
           method,
-          amount: due,
+          amount,
           cashReceived,
+          changeGiven,
           checkNumber,
         }),
       );
       setNote(
         method === 'cash'
-          ? `Recorded cash payment of $${due.toFixed(2)}.`
+          ? cashTenderNote(due, amount, changeGiven)
           : `Recorded check payment of $${due.toFixed(2)}.`,
       );
     });
@@ -4322,6 +4335,9 @@ export default function VisitCheckoutPanel({
             (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0),
           )}
           declinedBefore={Boolean(cardDeclinedAt)}
+          // The checkout's consent box already asked (it shows when there's no saved card).
+          consentFromCheckout={!legacyPrepay && !hasSavedCard ? saveCardConsent : undefined}
+          currentCardLabel={cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : hasSavedCard ? 'the card on file' : null}
           onCancel={() => setPhoneCardOpen(false)}
           onPaid={(next) => {
             setPhoneCardOpen(false);

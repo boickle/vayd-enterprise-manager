@@ -138,6 +138,7 @@ import {
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
 import VirtualTerminalModal from '../soap/VirtualTerminalModal';
+import { cardText } from '../soap/checkoutPaymentText';
 import {
   InvoiceRefillsButton,
   RefillCheckButton,
@@ -9108,6 +9109,7 @@ export default function ClientFinancialWorkspace({
           invoiceId={selected.id}
           amountDue={remaining}
           ownerName={clientName}
+          currentCardLabel={cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : null}
           onCancel={() => setPhoneCardOpen(false)}
           onPaid={(next) => {
             setPhoneCardOpen(false);
