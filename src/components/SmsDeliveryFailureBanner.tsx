@@ -25,8 +25,15 @@ function sourceLabel(source: string | null): string {
   }
 }
 
+/** "Sent by Jordan Pike" on a manager's copy of someone else's failed text (B13-1). */
+export function sentByLine(f: Pick<StaffSmsDeliveryFailure, 'sentByMe' | 'senderName'>): string | null {
+  if (f.sentByMe !== false) return null;
+  return f.senderName ? `Sent by ${f.senderName}.` : 'Sent by Scout.';
+}
+
 /**
- * Global alert when Quo reports a staff-sent SMS failed to deliver (e.g. landline).
+ * Alert when Quo reports a text failed to deliver (e.g. landline). The person who sent it sees it;
+ * managers see everyone's. Dismiss clears only your own copy (B13-1, owner Nov 13, 2026).
  * Polls while an employee is signed in.
  */
 export default function SmsDeliveryFailureBanner() {
@@ -84,6 +91,7 @@ export default function SmsDeliveryFailureBanner() {
             <span>
               {sourceLabel(f.source)} to {f.clientName} ({f.phone})
               {f.errorMessage ? ` — ${f.errorMessage}` : ''}. Try calling or emailing instead.
+              {sentByLine(f) ? ` ${sentByLine(f)}` : ''}
             </span>
           </div>
           <button
