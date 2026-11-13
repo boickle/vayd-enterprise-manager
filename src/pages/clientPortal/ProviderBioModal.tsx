@@ -1,7 +1,7 @@
 import React from 'react';
 import type { PortalProvider } from '../../api/clientPortal';
 import { PortalModal } from './PortalPrimitives';
-import { possessive, providerEmailFromName, providerShortName } from './portalShared';
+import { possessive, providerShortName, vetEmail } from './portalShared';
 
 export default function ProviderBioModal({
   provider,
@@ -28,7 +28,7 @@ export default function ProviderBioModal({
     .join('')
     .toUpperCase();
   const credentials = provider?.designation?.trim() || null;
-  const email = provider?.email || providerEmailFromName(baseName);
+  const email = vetEmail(provider);
   const shortName = providerShortName(baseName);
 
   return (

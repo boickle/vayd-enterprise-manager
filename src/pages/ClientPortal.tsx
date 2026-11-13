@@ -74,7 +74,7 @@ import {
   petImg,
   petMatchesId,
   possessive,
-  providerEmailFromName,
+  vetEmail,
   relativeDay,
   type PetWithWellness,
 } from './clientPortal/portalShared';
@@ -480,10 +480,7 @@ export default function ClientPortal() {
       return p.membershipPlanName != null && (status === 'active' || status === 'pending');
     });
 
-  const primaryProviderEmail = useMemo(() => {
-    if (selectedProvider?.email) return selectedProvider.email;
-    return providerEmailFromName(selectedPet?.primaryProviderName);
-  }, [selectedProvider, selectedPet]);
+  const primaryProviderEmail = useMemo(() => vetEmail(selectedProvider), [selectedProvider]);
 
   /* ---------------- actions ---------------- */
   function goRequestVisit() {
