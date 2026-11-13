@@ -21,6 +21,7 @@ import {
   loadPatientDocumentContext,
   newVaccinePlanRow,
   PATIENT_DOC_KINDS,
+  RX_STANDARD_COMPOUNDING_NOTE,
   signerChoices,
   VACCINE_PLAN_WEEKS,
   VET_SIGNED_KINDS,
@@ -574,9 +575,20 @@ export default function ChartPrintDocumentModal({
                 <label className="chart-print-doc__label chart-print-doc__label--full">
                   Compounding note
                   <input
+                    placeholder="Only for a compounded medication"
                     value={draft.rxCompoundingReason}
                     onChange={(e) => setDraft(setField(draft, 'rxCompoundingReason', e.target.value))}
                   />
+                  <span className="chart-print-doc__note-actions">
+                    <button
+                      type="button"
+                      className="brief-btn chart-print-doc__small-btn"
+                      onClick={() => setDraft(setField(draft, 'rxCompoundingReason', RX_STANDARD_COMPOUNDING_NOTE))}
+                    >
+                      Use standard wording
+                    </button>
+                    <span className="chart-print-doc__hint">Leave blank if it isn't compounded.</span>
+                  </span>
                 </label>
                 <label className="chart-print-doc__label chart-print-doc__label--full">
                   Notes to pharmacist
