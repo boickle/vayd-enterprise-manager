@@ -139,7 +139,12 @@ const ALL_MENUS: Record<string, string[]> = {
     'Room Loader',
     'In-House Lab Forms',
   ],
-  Scheduling: ['Appointment Types', 'Practice Booking Goals', 'Client Offers & Auto-Book'],
+  Scheduling: [
+    'Appointment Types',
+    'Manage Closed Days',
+    'Practice Booking Goals',
+    'Client Offers & Auto-Book',
+  ],
   Staff: ['Staff', 'Roles', 'Permission Audit Log', 'CL Seat Assignment'],
   Inventory: ['Online store', 'Refills', 'Mail shipping', 'Waste / disposal', 'Count alerts'],
   Finance: [

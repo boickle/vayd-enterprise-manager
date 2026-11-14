@@ -73,6 +73,7 @@ import SettingsEmployeeDirectory, {
   type EmployeeHubSection,
 } from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+import SettingsClosedDates from '../components/settings/SettingsClosedDates';
 import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
 import SettingsPermissionAudit from '../components/settings/SettingsPermissionAudit';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
@@ -124,6 +125,7 @@ const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
 
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'appointment-types', label: 'Appointment Types' },
+  { id: 'closed-days', label: 'Manage Closed Days' },
   { id: 'practice-booking-goals', label: 'Practice Booking Goals' },
   { id: 'client-offers', label: 'Client Offers & Auto-Book' },
 ];
@@ -1485,6 +1487,32 @@ export default function Settings() {
                   setSuccess(msg);
                   setError(null);
                   window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'closed-days' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Manage Closed Days</h2>
+            <p className="settings-section-description">
+              Days the practice is closed (holidays). Online booking offers no times on these dates;
+              staff can still book and route by hand. Tick &ldquo;Also give all staff the day
+              off&rdquo; to mark every active staff member off that day as well. Removing a closed
+              day takes back only the days off it added.
+            </p>
+            <SettingsClosedDates
+              practiceId={practiceId}
+              canCloseSchedules={isAdmin || can('schedule_override.manage')}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 6000);
                 } else {
                   setError(msg);
                   setSuccess(null);

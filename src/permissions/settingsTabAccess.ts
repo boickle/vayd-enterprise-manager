@@ -14,6 +14,7 @@ export const SETTINGS_TAB_IDS = [
   'euthanasia-consent',
   'outside-hospitals',
   'appointment-types',
+  'closed-days',
   'practice-booking-goals',
   'client-offers',
   'employee-types',
@@ -72,6 +73,9 @@ export const SETTINGS_TAB_PERMISSIONS: Record<SettingsTabId, readonly TabRequire
   'lab-forms': [{ key: 'lab_form_template.manage' }],
   // Scheduling
   'appointment-types': [{ key: 'appointment_type.manage' }],
+  // The closed-day list is the scheduling.closedDates setting. Giving all staff the day off also
+  // needs schedule_override.manage (the checkbox is hidden without it).
+  'closed-days': [{ key: 'appointment_type.manage' }],
   'practice-booking-goals': [{ key: 'booking_goals.manage' }],
   'client-offers': [{ key: 'booking_goals.manage' }],
   // Staff (the old per-section ids open the Staff hub)
