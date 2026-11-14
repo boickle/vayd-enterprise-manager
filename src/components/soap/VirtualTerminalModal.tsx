@@ -13,8 +13,16 @@ type Props = {
   ownerName?: string | null;
   /** Household already said no to a saved card; start unchecked and say so. */
   declinedBefore?: boolean;
+  /**
+   * The owner's answer from the checkout's "keep this card on file" box. When given, this window
+   * doesn't ask again: it says what will happen instead (owner, Nov 13, 2026: ask once).
+   */
+  consentFromCheckout?: boolean;
+  /** The card already on file, e.g. "Visa •••• 4242". Saving this card replaces it. */
+  currentCardLabel?: string | null;
   onCancel: () => void;
-  onPaid: (invoice: VisitInvoice) => void;
+  /** savedCard: the card the owner agreed to keep (its id), or null when used for this payment only. */
+  onPaid: (invoice: VisitInvoice, savedCard: string | null) => void;
 };
 
 export default function VirtualTerminalModal({
@@ -22,6 +30,8 @@ export default function VirtualTerminalModal({
   amountDue,
   ownerName,
   declinedBefore = false,
+  consentFromCheckout,
+  currentCardLabel,
   onCancel,
   onPaid,
 }: Props) {
@@ -29,7 +39,8 @@ export default function VirtualTerminalModal({
   const stripeRef = useRef<Stripe | null>(null);
   const cardRef = useRef<StripeCardElement | null>(null);
   const [cardName, setCardName] = useState(ownerName ?? '');
-  const [saveCard, setSaveCard] = useState(false);
+  const askedAtCheckout = consentFromCheckout !== undefined;
+  const [saveCard, setSaveCard] = useState(consentFromCheckout === true);
   const [ready, setReady] = useState(false);
   const [complete, setComplete] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -91,7 +102,7 @@ export default function VirtualTerminalModal({
         paymentMethodId: result.paymentMethod.id,
         saveCard,
       });
-      onPaid(invoice);
+      onPaid(invoice, saveCard ? result.paymentMethod.id : null);
     } catch (e) {
       if (isNetworkError(e)) {
         setError(NOT_CHARGED_OFFLINE_MESSAGE);
@@ -130,6 +141,13 @@ export default function VirtualTerminalModal({
           <div className="virtual-terminal__card" ref={hostRef} />
         </div>
         {!ready && !error ? <p className="virtual-terminal__hint">Loading card form…</p> : null}
+        {askedAtCheckout ? (
+          <p className="virtual-terminal__hint" data-testid="virtual-terminal-consent-note">
+            {saveCard
+              ? 'This card will be kept on file: the owner agreed at checkout.'
+              : 'For this payment only: the card won’t be kept on file (the checkout box isn’t ticked).'}
+          </p>
+        ) : (
         <label className="virtual-terminal__check">
           <input
             type="checkbox"
@@ -139,12 +157,15 @@ export default function VirtualTerminalModal({
           <span>
             {CARD_ON_FILE_STAFF_WORDING}
             <span className="virtual-terminal__hint">
-              {declinedBefore
+              {currentCardLabel
+                ? `Ticking this replaces ${currentCardLabel} as the card on file. Leave unticked to use this card for this payment only.`
+                : declinedBefore
                 ? 'They said no last time — only tick this if they have changed their mind.'
                 : 'Ask first. Leave unticked to use the card for this payment only.'}
             </span>
           </span>
         </label>
+        )}
         {error ? <p className="virtual-terminal__error">{error}</p> : null}
         <div className="virtual-terminal__actions">
           <button

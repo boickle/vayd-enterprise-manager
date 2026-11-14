@@ -79,6 +79,7 @@ import { searchItems as searchCatalogItems } from '../../api/roomLoader';
 import { createOrderFromSearchItem } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from './TerminalReaderPicker';
 import VirtualTerminalModal from './VirtualTerminalModal';
+import HouseholdCardOfferDialog from '../payments/HouseholdCardOfferDialog';
 import CheckoutReminders from './CheckoutReminders';
 import { usesLegacyEuthanasiaPrepay } from '../../utils/euthanasiaPrepay';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
@@ -140,6 +141,8 @@ import {
   accountCreditButtonText,
   cardOnFileButtonText,
   cardText,
+  cashTenderNote,
+  cashTenderPlan,
   expiredCardText,
   paidTenderLines,
 } from './checkoutPaymentText';
@@ -1324,6 +1327,11 @@ export default function VisitCheckoutPanel({
   // Asked out loud at the door. Starts unchecked if this household said no before.
   // Starts unticked: staff ask the owner first, and only a ticked box saves the card.
   const [saveCardConsent, setSaveCardConsent] = useState(false);
+  // One card, everywhere (owner, Nov 13, 2026): after a card is kept, offer the household's
+  // memberships and auto-ships billed on another card. A reader-saved card lands a moment later.
+  const [cardOffer, setCardOffer] = useState<{ paymentMethodId: string | null; delayMs: number } | null>(null);
+  const saveCardConsentRef = useRef(false);
+  saveCardConsentRef.current = saveCardConsent;
   const [cardDeclinedAt, setCardDeclinedAt] = useState<string | null>(null);
   const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
     Record<string, OrderPrescription>
@@ -1759,6 +1767,7 @@ export default function VisitCheckoutPanel({
         if (payload.invoiceId !== invoiceId) return;
         setActiveCheckoutId(null);
         showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
+        if (saveCardConsentRef.current) setCardOffer({ paymentMethodId: null, delayMs: 2500 });
         onInvoiceChange({
           ...invoice,
           status: 'paid',
@@ -1981,6 +1990,7 @@ export default function VisitCheckoutPanel({
         if (stopped || fresh.status !== 'paid') return;
         setActiveCheckoutId(null);
         showPaymentSuccess({ setError, setNote }, 'Payment received on Scout Terminal — invoice marked paid.');
+        if (saveCardConsentRef.current) setCardOffer({ paymentMethodId: null, delayMs: 2500 });
         onInvoiceChange(fresh);
       } catch {
         /* keep polling; a transient failure should not end the wait */
@@ -2053,15 +2063,25 @@ export default function VisitCheckoutPanel({
       }
       let cashReceived: number | null = null;
       let checkNumber: string | null = null;
+      // Cash can pay part of the bill (owner, Nov 13, 2026): less than the amount due records just
+      // that much and leaves the rest open for a card or another payment.
+      let amount = due;
+      let changeGiven: number | null = null;
       if (method === 'cash') {
         const raw = await appPrompt({
           title: 'Cash received',
-          message: `Amount due is $${due.toFixed(2)}. Enter cash received (or leave blank for exact).`,
+          message: `Amount due is $${due.toFixed(2)}. Enter the cash received (leave as is for exact). Less than the amount due records part of the bill in cash; take the rest by card or another way.`,
           defaultValue: due.toFixed(2),
         });
         if (raw === null) return;
-        const parsed = Number(String(raw).replace(/[^0-9.]/g, ''));
-        if (Number.isFinite(parsed) && parsed > 0) cashReceived = parsed;
+        const plan = cashTenderPlan(due, raw);
+        if (plan.error) {
+          setError(plan.error);
+          return;
+        }
+        amount = plan.amount;
+        cashReceived = plan.cashReceived;
+        changeGiven = plan.changeGiven;
       }
       if (method === 'check') {
         const raw = await appPrompt({
@@ -2075,14 +2095,15 @@ export default function VisitCheckoutPanel({
       onInvoiceChange(
         await addVisitTender(invoice.id, {
           method,
-          amount: due,
+          amount,
           cashReceived,
+          changeGiven,
           checkNumber,
         }),
       );
       setNote(
         method === 'cash'
-          ? `Recorded cash payment of $${due.toFixed(2)}.`
+          ? cashTenderNote(due, amount, changeGiven)
           : `Recorded check payment of $${due.toFixed(2)}.`,
       );
     });
@@ -4322,12 +4343,25 @@ export default function VisitCheckoutPanel({
             (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0),
           )}
           declinedBefore={Boolean(cardDeclinedAt)}
+          // The checkout's consent box already asked (it shows when there's no saved card).
+          consentFromCheckout={!legacyPrepay && !hasSavedCard ? saveCardConsent : undefined}
+          currentCardLabel={cardOnFile ? cardText(cardOnFile.brand, cardOnFile.last4) : hasSavedCard ? 'the card on file' : null}
           onCancel={() => setPhoneCardOpen(false)}
-          onPaid={(next) => {
+          onPaid={(next, savedCard) => {
             setPhoneCardOpen(false);
             onInvoiceChange(next);
             showPaymentSuccess({ setError, setNote }, 'Card charged — invoice marked paid.');
+            if (savedCard) setCardOffer({ paymentMethodId: savedCard, delayMs: 0 });
           }}
+        />
+      ) : null}
+      {cardOffer && invoice?.clientId ? (
+        <HouseholdCardOfferDialog
+          audience="staff"
+          clientId={invoice.clientId}
+          paymentMethodId={cardOffer.paymentMethodId}
+          delayMs={cardOffer.delayMs}
+          onClose={() => setCardOffer(null)}
         />
       ) : null}
     </div>

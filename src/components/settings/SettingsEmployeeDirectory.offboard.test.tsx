@@ -3,7 +3,7 @@
  * deactivated (N)" lists them, labelled "(Deactivated)". The Roles page half of RP-03-11 belongs to
  * SettingsScoutRoles (RP-04, another batch).
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import SettingsEmployeeDirectory from './SettingsEmployeeDirectory';
 
@@ -31,9 +31,22 @@ vi.mock('../../api/branchInventory', () => ({
   listPracticeBranches: async () => [],
   setEmployeeBranches: vi.fn(),
 }));
+const recordLastDay = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('../../api/offboarding', () => ({
   cancelOffboarding: vi.fn(),
+  recordLastDay,
   fetchDeactivatedStaff: async () => [
+    {
+      id: 4,
+      firstName: 'Lena',
+      lastName: 'Left',
+      title: null,
+      designation: 'DVM',
+      isProvider: true,
+      isActive: false,
+      lastDay: null,
+      lastVisit: '2026-10-09',
+    },
     {
       id: 3,
       firstName: 'Tamsin',
@@ -70,7 +83,7 @@ vi.mock('../SignaturePad', () => ({ default: () => null }));
 it('RP-03-11 hides the deactivated technician until "Show deactivated" is ticked, then labels them', async () => {
   render(<SettingsEmployeeDirectory />);
 
-  const toggle = await screen.findByRole('checkbox', { name: 'Show deactivated (1)' });
+  const toggle = await screen.findByRole('checkbox', { name: 'Show deactivated (2)' });
   expect(await screen.findByRole('option', { name: /Pat Manager/ })).toBeInTheDocument();
   expect(screen.queryByRole('option', { name: /Tamsin Tech/ })).toBeNull();
 
@@ -95,3 +108,15 @@ it('RPV-5 the Medical Director (license only) sees just the Access tab', async (
   }
 });
 
+
+it('a doctor deactivated without a last day: Settings suggests their last visit and saves it as the last day', async () => {
+  render(<SettingsEmployeeDirectory selectedEmployeeId={4} section="profile" />);
+
+  const input = (await screen.findByLabelText('Last day')) as HTMLInputElement;
+  expect(input.value).toBe('2026-10-09');
+  expect(screen.getByText(/Not recorded\. Goals end at their last visit/)).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: '2026-10-14' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save last day' }));
+  await waitFor(() => expect(recordLastDay).toHaveBeenCalledWith(4, '2026-10-14'));
+});

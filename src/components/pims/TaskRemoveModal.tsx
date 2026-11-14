@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getTask, removeTask, type TaskDetail } from '../../api/tasks';
 import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
 import './TaskRemoveModal.css';
@@ -63,7 +64,9 @@ export default function TaskRemoveModal({ task, onClose, onRemoved }: Props) {
     }
   };
 
-  return (
+  // Portal to <body>: inside the Tasks page the dialog sat under the sticky top bar,
+  // which hid its title, task name and close button.
+  return createPortal(
     <div
       className="task-remove-modal__backdrop"
       role="presentation"
@@ -137,6 +140,7 @@ export default function TaskRemoveModal({ task, onClose, onRemoved }: Props) {
         </div>
       </div>
       {closePrompt}
-    </div>
+    </div>,
+    document.body,
   );
 }

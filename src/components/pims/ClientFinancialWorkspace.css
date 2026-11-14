@@ -2229,3 +2229,8 @@
 .client-fin__lab-move select {
   max-width: 220px;
 }
+
+.client-fin__where--deposit {
+  background: #fef3c7;
+  color: #92400e;
+}

@@ -11,6 +11,7 @@ import { apiErrorMessage } from '../api/http';
 import PostVisitCardEntry from './soap/PostVisitCardEntry';
 import './soap/PostVisitMembershipSignup.css';
 import './MembershipCardUpdate.css';
+import HouseholdCardOfferDialog from './payments/HouseholdCardOfferDialog';
 
 function cardLabel(card: NonNullable<MembershipBillingCard['card']>): string {
   const brand = card.brand ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : 'Card';
@@ -44,8 +45,11 @@ export default function MembershipCardUpdate({
   buttonClassName,
   onSaved,
   subscriptionId,
+  householdClientId,
 }: {
   membershipId: number;
+  /** Staff: the household, to offer its other places on the new card (one card, everywhere, Nov 13, 2026). */
+  householdClientId?: number | null;
   /** The membership's Stripe subscription id. A change (e.g. after Link) reloads the card (P-25b). */
   subscriptionId?: string | null;
   mine?: boolean;
@@ -57,6 +61,7 @@ export default function MembershipCardUpdate({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [offerPm, setOfferPm] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [squareWarning, setSquareWarning] = useState<string | null>(null);
@@ -95,6 +100,7 @@ export default function MembershipCardUpdate({
         setEditing(false);
         await load();
         onSaved?.(result.membership);
+        setOfferPm(paymentMethodId);
       } else {
         const membership = await updateMembershipCard(membershipId, paymentMethodId, { mine });
         const retry = membership.cardRetry;
@@ -110,6 +116,7 @@ export default function MembershipCardUpdate({
         setEditing(false);
         await load();
         onSaved?.(membership);
+        setOfferPm(paymentMethodId);
       }
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -181,6 +188,14 @@ export default function MembershipCardUpdate({
             </button>
           </div>
         </div>
+      ) : null}
+      {offerPm && (mine || householdClientId) ? (
+        <HouseholdCardOfferDialog
+          audience={mine ? 'client' : 'staff'}
+          clientId={mine ? null : householdClientId ?? null}
+          paymentMethodId={offerPm}
+          onClose={() => setOfferPm(null)}
+        />
       ) : null}
     </div>
   );

@@ -15,11 +15,11 @@ import {
 } from '../utils/taskDateTime';
 import {
   type TaskPriorityChoice,
-  isTaskPriorityUrgent,
   priorityToApi,
 } from '../utils/taskPriority';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { extractActivePatientsFromClientStaffRecord } from '../utils/routingPatientHoverData';
+import { isUrgentTask } from '../utils/taskUrgency';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../utils/taskLinkDisplay';
 import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
 import {
@@ -69,6 +69,8 @@ import { isSoapAutomationTask } from '../utils/soapTask';
 import { isOrderListAutomationTask, orderListPath } from '../utils/orderListTask';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
 import TaskRemoveModal from '../components/pims/TaskRemoveModal';
+import TaskRowCallNote from '../components/pims/TaskRowCallNote';
+import { isFileCallTask } from '../utils/taskCallNote';
 import { useSharedTaskClosePrompt } from '../components/pims/SharedTaskClosePrompt';
 import './PimsTasksPage.css';
 
@@ -138,16 +140,6 @@ function humanDueLine(iso: string | null): string {
   if (d < startToday) return `Overdue · ${when}`;
   if (d < endToday) return `Due today · ${when}`;
   return `Due ${when}`;
-}
-
-function isUrgentTask(t: TaskListItem): boolean {
-  if (t.status === 'done') return false;
-  if (isTaskPriorityUrgent(t.priority)) return true;
-  if (t.status === 'open' && t.assignedToEmployeeId == null) return true;
-  if (!t.dueAt) return false;
-  const due = new Date(t.dueAt).getTime();
-  const day = 24 * 60 * 60 * 1000;
-  return due <= Date.now() + day;
 }
 
 function canActOnTask(t: TaskListItem, myEmployeeIds: number[], isPracticeAdmin: boolean): boolean {
@@ -415,18 +407,36 @@ export default function PimsTasksPage() {
     return filtered.length ? filtered : roles;
   }, [isPracticeAdmin, roles, employees, myEmployeeIds]);
   const [branchFilter, setBranchFilter] = useState<string>('');
-  /** Admin-only: empty means the signed-in person. */
+  /**
+   * T-Q5: who a practice manager may pick in the Person box (from the API: active staff who
+   * share a branch with them). Kept apart from the counts so a failed refresh doesn't hide it.
+   */
+  const [personEmployeeIds, setPersonEmployeeIds] = useState<number[]>([]);
+  /** Admins pick anyone; practice managers pick people at their branch(es); others see only their own. */
+  const personChoices = useMemo(() => {
+    const active = employees.filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id));
+    if (isPracticeAdmin) return active;
+    const allowed = new Set(personEmployeeIds);
+    return active.filter((e) => allowed.has(Number(e.id)));
+  }, [employees, myEmployeeIds, isPracticeAdmin, personEmployeeIds]);
+  const canPickPerson = isPracticeAdmin || personChoices.length > 0;
+  /** Empty means the signed-in person. */
   const [viewEmployeeId, setViewEmployeeId] = useState('');
   const viewedEmployeeId = useMemo(() => {
-    if (!isPracticeAdmin || viewEmployeeId === '') return undefined;
+    if (!canPickPerson || viewEmployeeId === '') return undefined;
     const id = Number(viewEmployeeId);
     if (!Number.isFinite(id) || id <= 0) return undefined;
     if (myEmployeeIds.includes(id)) return undefined;
+    if (!isPracticeAdmin && !personEmployeeIds.includes(id)) return undefined;
     return id;
-  }, [isPracticeAdmin, viewEmployeeId, myEmployeeIds]);
+  }, [canPickPerson, isPracticeAdmin, personEmployeeIds, viewEmployeeId, myEmployeeIds]);
+  /** Whose tasks the bulk Re-assign buttons move: the person picked in the Person box, else me. */
+  const bulkFromEmployeeId = viewedEmployeeId ?? myEmployeeId;
   const [tab, setTab] = useState<TabId>('active');
   const [taskSummary, setTaskSummary] = useState<TaskSummaryResponse>(EMPTY_SUMMARY);
   const [myOpenTasks, setMyOpenTasks] = useState<TaskListItem[]>([]);
+  /** True once the assigned list has loaded, so the Active/Expired/Future counts can come from it (T-B7). */
+  const [myOpenTasksLoaded, setMyOpenTasksLoaded] = useState(false);
   const [watchingTasks, setWatchingTasks] = useState<TaskListItem[]>([]);
 
   const visibleWatchingTasks = useMemo(
@@ -568,6 +578,10 @@ export default function PimsTasksPage() {
         ...(viewedEmployeeId != null ? { forEmployeeId: viewedEmployeeId } : {}),
       });
       setTaskSummary(summary);
+      const people = summary.personEmployeeIds ?? [];
+      setPersonEmployeeIds((prev) =>
+        prev.length === people.length && prev.every((id, i) => id === people[i]) ? prev : people,
+      );
       return summary;
     } catch {
       setTaskSummary(EMPTY_SUMMARY);
@@ -578,6 +592,7 @@ export default function PimsTasksPage() {
   const loadAssignedOpenTasks = useCallback(async () => {
     if (viewedEmployeeId == null && myEmployeeIds.length === 0) {
       setMyOpenTasks([]);
+      setMyOpenTasksLoaded(true);
       return [];
     }
     const res = await listTasks({
@@ -589,6 +604,7 @@ export default function PimsTasksPage() {
       offset: 0,
     });
     setMyOpenTasks(res.items);
+    setMyOpenTasksLoaded(true);
     return res.items;
   }, [branchIdNum, myEmployeeIds, viewedEmployeeId]);
 
@@ -997,9 +1013,17 @@ export default function PimsTasksPage() {
     const links = linksByTaskId[row.id];
     const canAct = canActOnTask(row, myEmployeeIds, isPracticeAdmin);
     const canClaim = canClaimTask(row, myEmployeeIds);
+    // "File call with …": a quick note box on the row; its own Mark done charts the note.
+    const callClientLink =
+      canAct && row.status !== 'done' && isFileCallTask(row)
+        ? links?.find((l) => l.entityType === 'client')
+        : undefined;
     return (
-      <article key={row.id} className="pims-task-card">
-        {tab === 'upcoming' && (
+      <article
+        key={row.id}
+        className={`pims-task-card${callClientLink ? ' pims-task-card--with-note' : ''}`}
+      >
+        {isBucketTab(tab) && bulkFromEmployeeId != null && (
           <label className="pims-task-card__pick">
             <input
               type="checkbox"
@@ -1119,6 +1143,7 @@ export default function PimsTasksPage() {
             ) : null}
             {canAct &&
             row.kind !== 'callback' &&
+            !callClientLink &&
             !isMailOrderApprovalTask({ title: row.title, links }) ? (
               <button type="button" className="pims-task-card__btn pims-task-card__btn--done" onClick={() => void handleMarkDone(row.id)}>
                 Mark done
@@ -1147,9 +1172,35 @@ export default function PimsTasksPage() {
             ) : null}
           </div>
         )}
+        {callClientLink ? (
+          <TaskRowCallNote
+            key={`${row.id}:${row.updated}`}
+            task={row}
+            clientId={callClientLink.entityId}
+            clientLabel={taskLinkDisplayLabel(callClientLink, linkLabels)}
+            onChanged={() => {
+              refreshList();
+              notifyTasksChanged();
+            }}
+          />
+        ) : null}
       </article>
     );
   };
+
+  /**
+   * T-B7: a tab's count matches the list under it. The summary can lag behind the list and doesn't know the
+   * queue picker, so once a list has loaded its tab shows the list's own count. The summary is the fallback
+   * (before the list loads, and when the list is capped).
+   */
+  const bucketTabCount = (bucket: AssignedTasksTab): number =>
+    myOpenTasksLoaded && myOpenTasks.length < CLIENT_FILTER_CAP
+      ? filterMyOpenTasksByAssignedTab(myOpenTasks, bucket).length
+      : taskSummary.assigned[bucket];
+  const unassignedTabCount =
+    tab === 'unassigned' && !loading && !error
+      ? unassignedListTotal
+      : (taskSummary.unassigned?.total ?? unassignedListTotal);
 
   return (
     <div className="pims-tasks">
@@ -1212,7 +1263,7 @@ export default function PimsTasksPage() {
       </div>
 
       <div className="pims-tasks__toolbar">
-        {isPracticeAdmin ? (
+        {canPickPerson ? (
           <label className="pims-tasks__filter">
             <span>Person</span>
             <select
@@ -1222,8 +1273,7 @@ export default function PimsTasksPage() {
               aria-label="View tasks for"
             >
               <option value="">Me</option>
-              {employees
-                .filter((e) => e.isActive !== false && !myEmployeeIds.includes(e.id))
+              {personChoices
                 .slice()
                 .sort((a, b) =>
                   (formatEmployeeDisplayName(a) || a.email).localeCompare(
@@ -1241,13 +1291,10 @@ export default function PimsTasksPage() {
         <div className="pims-tasks__tabs" role="tablist" aria-label="Task views">
           {(
             [
-              ['active', `Active (${taskSummary.assigned.active})`],
-              ['expired', `Expired (${taskSummary.assigned.expired})`],
-              ['upcoming', `Future (${taskSummary.assigned.upcoming})`],
-              [
-                'unassigned',
-                `Unassigned (${taskSummary.unassigned?.total ?? unassignedListTotal})`,
-              ],
+              ['active', `Active (${bucketTabCount('active')})`],
+              ['expired', `Expired (${bucketTabCount('expired')})`],
+              ['upcoming', `Future (${bucketTabCount('upcoming')})`],
+              ['unassigned', `Unassigned (${unassignedTabCount})`],
               ['watching', `Watching (${watchingTabCount})`],
               ['sent', 'Sent'],
               ['completed', 'Completed'],
@@ -1329,7 +1376,7 @@ export default function PimsTasksPage() {
         )}
       </p>
 
-      {tab === 'upcoming' && items.length > 0 && myEmployeeId != null && (
+      {isBucketTab(tab) && items.length > 0 && bulkFromEmployeeId != null && (
         <div className="pims-tasks__bulk">
           <label className="pims-tasks__bulk-select">
             <input
@@ -1430,17 +1477,18 @@ export default function PimsTasksPage() {
         />
       )}
 
-      {bulkReassignIds && myEmployeeId != null && (
+      {bulkReassignIds && bulkFromEmployeeId != null && (
         <TaskReassignModal
           bulk={{
-            fromEmployeeId: myEmployeeId,
+            fromEmployeeId: bulkFromEmployeeId,
             taskIds: bulkReassignIds,
-            upcomingOnly: true,
-            label: `Move ${bulkReassignIds.length} future task${
+            // Only the Future tab is limited to tasks that have not started.
+            upcomingOnly: tab === 'upcoming',
+            label: `Move ${bulkReassignIds.length} ${tab === 'upcoming' ? 'future ' : ''}task${
               bulkReassignIds.length === 1 ? '' : 's'
             } to someone else`,
           }}
-          employees={employees.filter((e) => e.id !== myEmployeeId && e.isActive !== false)}
+          employees={employees.filter((e) => e.id !== bulkFromEmployeeId && e.isActive !== false)}
           requireAssignee
           onClose={() => setBulkReassignIds(null)}
           onSaved={() => {

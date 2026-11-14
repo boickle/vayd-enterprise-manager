@@ -62,6 +62,8 @@ export type DeactivatedStaffRow = {
   /** False once deactivated or past their last day. */
   isActive: boolean;
   lastDay: string | null;
+  /** Their last appointment so far: where their goals end when no last day is recorded. */
+  lastVisit?: string | null;
 };
 
 export type DepartedDoctorRow = {
@@ -94,6 +96,14 @@ export async function offboardEmployee(
 
 export async function cancelOffboarding(employeeId: number): Promise<void> {
   await http.post(`/employee-offboarding/${employeeId}/cancel`, {});
+}
+
+/**
+ * Someone already deactivated: record or correct their last day. Their goals stop counting
+ * after it. No handover runs (that already happened when they were deactivated).
+ */
+export async function recordLastDay(employeeId: number, lastDay: string): Promise<void> {
+  await http.post(`/employee-offboarding/${employeeId}/last-day`, { lastDay });
 }
 
 export async function fetchDeactivatedStaff(): Promise<DeactivatedStaffRow[]> {

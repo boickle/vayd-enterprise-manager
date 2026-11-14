@@ -574,6 +574,8 @@ export type ScoutPatientWrite = {
   species?: string | null;
   breed?: string | null;
   color?: string | null;
+  /** Owner, Nov 13, 2026: chips implanted elsewhere. Spaces and dashes are removed by the API. */
+  microchip?: string | null;
   sex?: string | null;
   neuterStatus?: string | null;
   weight?: number | null;

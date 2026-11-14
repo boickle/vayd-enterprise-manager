@@ -126,7 +126,7 @@ import {
   subjectiveHasVisitSoap,
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
-import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
+import { markBriefsInjected, pendingPrevisitBriefs } from '../api/briefs';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
 import { patientSexNaturalLabelFromRecord } from '../utils/schedulerVisitDisplay';
 import { usePermissions } from '../permissions/PermissionContext';
@@ -955,10 +955,10 @@ export default function SoapEncounterPage() {
           }
         }
 
-        const pendingPrep = pendingPrevisitBriefs({
+        const pendingPrep = await pendingPrevisitBriefs({
           patientId,
           appointmentId,
-        });
+        }).catch(() => []);
         if (pendingPrep.length) {
           let notes = pendingPrep
             .map((b) => b.transcript.trim())
@@ -983,7 +983,7 @@ export default function SoapEncounterPage() {
               enc = await updateEncounter(enc.id, {
                 subjective: buildSubjectivePayload(next, emailFields),
               });
-              markBriefsInjected(pendingPrep.map((b) => b.id));
+              await markBriefsInjected(pendingPrep.map((b) => b.id)).catch(() => undefined);
             } catch (err) {
               console.warn('Failed to inject clinician prep notes from Jot', err);
             }

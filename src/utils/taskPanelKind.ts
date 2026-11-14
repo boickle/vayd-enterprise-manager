@@ -4,6 +4,7 @@ import { isInvoiceAutomationTask } from './invoiceTask';
 import { isOrderListAutomationTask } from './orderListTask';
 import { isLabResultAutomationTask } from './labResultTask';
 import { isSoapAutomationTask } from './soapTask';
+import { isCallFilingTask } from './callTask';
 
 /**
  * Which set of tools the task screen puts in front of whoever opens a task.
@@ -24,6 +25,8 @@ export type TaskPanelKind =
   | 'idexx_result'
   | 'visit_refund'
   | 'callback'
+  /** T-B2: a "Call not filed" task: the call itself, with File to chart / Don't file. */
+  | 'call_filing'
   | 'todo';
 
 type PanelKindInput = {
@@ -69,6 +72,9 @@ export function taskPanelKind(task: PanelKindInput): TaskPanelKind {
   // Older invoice rows may have a blank kind; the trigger / bill UUID still
   // means this is payment work, not a generic callback jot.
   if (isInvoiceAutomationTask(task)) return 'invoice';
+
+  // Declared as a callback, but the work is filing a call that already happened (T-B2).
+  if (isCallFilingTask(task)) return 'call_filing';
 
   const declared = task.kind ? KIND_PANELS[task.kind] : undefined;
   if (declared) return declared;

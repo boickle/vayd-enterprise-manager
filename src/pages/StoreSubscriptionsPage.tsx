@@ -17,6 +17,7 @@ import './MailOrders.css';
 import './StoreOps.css';
 import { currentPracticeId } from '../utils/practiceIdFromToken';
 import { useCanOrAdminLogin } from '../permissions/useCanOrAdminLogin';
+import HouseholdCardOfferDialog from '../components/payments/HouseholdCardOfferDialog';
 
 function practiceIdFromToken(token: string | null): number {
   try {
@@ -116,6 +117,7 @@ export default function StoreSubscriptionsPage() {
   const [pauseUntil, setPauseUntil] = useState(isoAddMonths(1));
   const [editRow, setEditRow] = useState<StoreStaffSubscription | null>(null);
   const [cardRow, setCardRow] = useState<StoreStaffSubscription | null>(null);
+  const [cardOffer, setCardOffer] = useState<{ clientId: number; pm: string } | null>(null);
   const [editItemId, setEditItemId] = useState(0);
   const [editQty, setEditQty] = useState('1');
   // B4 (owner, Nov 7, 2026): only managers change what a client pays (item, quantity); the team sees them locked.
@@ -499,7 +501,11 @@ export default function StoreSubscriptionsPage() {
             <div className="settings-modal-body">
               <AutoshipCardPanel
                 load={() => listStaffAutoshipCards(practiceId, cardRow.id)}
-                save={(pm) => setStaffAutoshipCard(practiceId, cardRow.id, pm)}
+                save={async (pm) => {
+                  const saved = await setStaffAutoshipCard(practiceId, cardRow.id, pm);
+                  if (cardRow.clientId) setCardOffer({ clientId: cardRow.clientId, pm });
+                  return saved;
+                }}
                 name={cardRow.customerName || ''}
                 email={cardRow.customerEmail}
                 buttonClass="btn primary"
@@ -726,6 +732,14 @@ export default function StoreSubscriptionsPage() {
             </div>
           </div>
         </div>
+      ) : null}
+      {cardOffer ? (
+        <HouseholdCardOfferDialog
+          audience="staff"
+          clientId={cardOffer.clientId}
+          paymentMethodId={cardOffer.pm}
+          onClose={() => setCardOffer(null)}
+        />
       ) : null}
     </div>
   );

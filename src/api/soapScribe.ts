@@ -169,12 +169,18 @@ export async function summarizeIntakeHistory(
  */
 export async function polishSpokenNotes(opts: {
   transcript: string;
-  kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review';
+  /** `phone`: a Quo call transcript, turned into a short chart note (not a cleaned transcript). */
+  kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review' | 'phone';
   patientName?: string | null;
   clientName?: string | null;
   /** ISO date the conversation happened — a pasted transcript is often not from today. */
   asOfDate?: string | null;
+  /** Phone calls: names that may have been said (pets, staff on the call), for spelling. */
+  knownNames?: (string | null | undefined)[];
 }): Promise<string> {
+  const knownNames = [
+    ...new Set((opts.knownNames ?? []).map((n) => n?.trim() ?? '').filter(Boolean)),
+  ].slice(0, 40);
   const { data } = await http.post<{ summary: string }>('/scribe/polish-transcript', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
     transcript: opts.transcript,
@@ -182,6 +188,7 @@ export async function polishSpokenNotes(opts: {
     ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
     ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
     ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
+    ...(knownNames.length ? { knownNames: knownNames.map((n) => n.slice(0, 80)) } : {}),
   });
   return typeof data?.summary === 'string' ? data.summary.trim() : '';
 }
@@ -546,9 +553,18 @@ export type ScribeSocketHandlers = {
   onServerStopped?: (reason: ScribeServerStopReason) => void;
 };
 
+export type ScribeRecordingTarget = string | { jotId: string };
+
+function targetBody(target: ScribeRecordingTarget): { soapEncounterId: string } | { jotId: string } {
+  return typeof target === 'string' ? { soapEncounterId: target } : { jotId: target.jotId };
+}
+
 export type ScribeSocketHandle = {
-  /** Starts (or restarts) a recording session; resolves once the server confirms. */
-  start: (soapEncounterId: string) => Promise<string>;
+  /**
+   * Starts (or restarts) a recording session; resolves once the server confirms. A visit's SOAP
+   * id records onto that visit; `{ jotId }` records a Jot, saved on the Jot (B7).
+   */
+  start: (target: ScribeRecordingTarget) => Promise<string>;
   sendAudio: (base64Pcm16: string) => void;
   /** Stops recording; resolves with the full final transcript captured server-side. */
   stop: () => Promise<string>;
@@ -569,7 +585,7 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
   const token = getToken();
   let socket: Socket | null = null;
   let sessionId: string | null = null;
-  let encounterId: string | null = null;
+  let target: ScribeRecordingTarget | null = null;
   let disposed = false;
   let stopping = false;
   /** The connection dropped and is coming back into the same take. */
@@ -613,12 +629,12 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
 
   /** Back online after a drop: continue the same take (the server joins the text). */
   const resume = (s: Socket) => {
-    if (!sessionId || !encounterId) return;
+    if (!sessionId || !target) return;
     s.emit(
       'scribe.start',
       {
         practiceId: VISIT_WORKFLOW_PRACTICE_ID,
-        soapEncounterId: encounterId,
+        ...targetBody(target),
         resumeSessionId: sessionId,
       },
       (ack: { ok: boolean; error?: string; sessionId?: string }) => {
@@ -720,19 +736,19 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
   };
 
   return {
-    start: (soapEncounterId: string) =>
+    start: (nextTarget: ScribeRecordingTarget) =>
       new Promise<string>((resolve, reject) => {
         if (!token?.trim()) {
           reject(new Error('Not signed in.'));
           return;
         }
-        encounterId = soapEncounterId;
+        target = nextTarget;
         setStatus('connecting');
         const s = ensureSocket();
         const doStart = () => {
           s.emit(
             'scribe.start',
-            { practiceId: VISIT_WORKFLOW_PRACTICE_ID, soapEncounterId },
+            { practiceId: VISIT_WORKFLOW_PRACTICE_ID, ...targetBody(nextTarget) },
             (ack: { ok: boolean; error?: string; sessionId?: string }) => {
               if (!ack?.ok || !ack.sessionId) {
                 setStatus('error');

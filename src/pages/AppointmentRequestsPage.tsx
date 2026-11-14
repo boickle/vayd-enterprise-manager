@@ -153,6 +153,7 @@ import {
   type AppointmentRequestListTab,
 } from '../appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
+import { recordsPath } from '../records-nav';
 import { fetchClientLiaisons, type ClientLiaisonOption } from '../api/holds';
 import { LiaisonSelect } from '../components/appointmentRequests/LiaisonSelect';
 import { RouteButton } from '../components/appointmentRequests/RouteButton';
@@ -160,7 +161,6 @@ import { useAuth } from '../auth/useAuth';
 import { useMayWorkAppointments } from '../permissions/useMayWorkAppointments';
 import { requestDataTypeNamesLabel } from '../utils/appointmentRequestDetailDisplay';
 import { RequestConversationPanel } from '../components/appointmentRequests/RequestConversationPanel';
-import { ReadOnlyConversationNote } from '../components/appointmentRequests/ReadOnlyConversationNote';
 import { RequestDetailsPanel } from '../components/appointmentRequests/RequestDetailsPanel';
 import { SoapRecordModal, type SoapRecordRef } from '../components/soap/SoapHeaderRecords';
 import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
@@ -180,7 +180,6 @@ import {
   StatusPillMenu,
   type StatusMenuItem,
 } from '../components/appointmentRequests/StatusPillMenu';
-import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import '../components/appointmentRequests/requestPanels.css';
 import '../components/appointmentRequests/apptTable.css';
 import {
@@ -2345,7 +2344,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         label: 'Open records requests',
         hint: item.records?.toSummarize ? 'Summarize and close out there' : undefined,
         onClick: () =>
-          navigate(`${SCHEDULING_TOOLS_PATH_PREFIX}/records?q=${encodeURIComponent(clientName)}`),
+          navigate(recordsPath(clientName)),
       });
     }
     return items;
@@ -3059,15 +3058,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         ) : null
                       }
                     />
-                    {!mayWork ? (
-                      <ReadOnlyConversationNote>
-                        {hasLinkedAppointment ? (
-                          <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
-                            {isOnHoldVisit ? 'Open hold' : 'View appointment'}
-                          </button>
-                        ) : null}
-                      </ReadOnlyConversationNote>
-                    ) : (
                     <RequestConversationPanel
                       item={item}
                       practiceId={PRACTICE_ID}
@@ -3078,7 +3068,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         gmailThreadId: patch.gmailThreadId,
                         gmailMailbox: patch.gmailMailbox,
                       })}
+                      readOnly={!mayWork}
                       actions={
+                        !mayWork ? (
+                          hasLinkedAppointment ? (
+                            <button type="button" className="req-action" onClick={() => onViewAppointment(item)}>
+                              {isOnHoldVisit ? 'Open hold' : 'View appointment'}
+                            </button>
+                          ) : null
+                        ) : (
                         <>
                           {needsStaffConfirmation ? (
                             <button
@@ -3161,9 +3159,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             <span className="req-action-error">{statusError[item.id]}</span>
                           ) : null}
                         </>
+                        )
                       }
                     />
-                    )}
                   </div>
                 ) : null}
               </li>

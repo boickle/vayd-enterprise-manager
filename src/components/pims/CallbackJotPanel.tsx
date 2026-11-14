@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, FileText, Phone, Trash2, UserPlus, Wand2 } from 'lucide-react';
+import { apiErrorMessage } from '../../api/http';
+import { Check, FileText, Phone, Save, ScrollText, Sparkles, Trash2, UserPlus, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
 import { createAndSignScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
 import { completeTask, patchTask, removeTask, type TaskDetail } from '../../api/tasks';
 import { useSharedTaskClosePrompt } from './SharedTaskClosePrompt';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { resolveCall } from '../../api/calls';
+import { listClientCalls, resolveCall, type ClientCall } from '../../api/calls';
 import type { Employee } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { clientReachPhones } from '../../utils/clientReachContacts';
@@ -13,6 +14,13 @@ import { buildPhoneDialHref, formatDisplayPhone } from '../../utils/quoContact';
 import { markClientCallStarted, useClientCallActivity } from '../../hooks/useClientCallActivity';
 import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
 import { tidyQuoTranscript } from './ClientCallPill';
+import {
+  fileCallTaskCallId,
+  householdPetsFromClient,
+  isFileCallTask,
+  readCallNoteDraft,
+  writeCallNoteDraft,
+} from '../../utils/taskCallNote';
 
 function linkedId(task: TaskDetail, type: 'patient' | 'client'): number | null {
   const hit = (task.links ?? []).find((l) => l.entityType === type);
@@ -69,6 +77,8 @@ type Props = {
   /** Invoice follow-up files to the client unless staff pick a pet. */
   defaultChartToClient?: boolean;
   onDone: () => void | Promise<void>;
+  /** Chart & complete: the panel closes as the task completes, so the parent shows this message. */
+  onFiled?: (message: string) => void;
 };
 
 /**
@@ -84,33 +94,49 @@ export default function CallbackJotPanel({
   clientName: clientNameProp,
   defaultChartToClient = false,
   onDone,
+  onFiled,
 }: Props) {
   const isCallback = task.kind === 'callback';
   const noun = isCallback ? 'callback' : 'task';
-  const chartHeading = defaultChartToClient ? 'Invoice' : isCallback ? 'Callback' : 'Task';
+  const chartHeading = defaultChartToClient
+    ? 'Invoice'
+    : isCallback
+      ? 'Callback'
+      : isFileCallTask(task)
+        ? 'Call'
+        : 'Task';
   const fromLine = useOutboundCallFromLine();
   const patientId = linkedId(task, 'patient');
   const clientId = linkedId(task, 'client');
+  const fileCall = isFileCallTask(task);
+  const taskCallId = fileCallTaskCallId(task);
+  // The household's pets, so a call linked only to the client can still go on a pet's chart.
+  const [householdPets, setHouseholdPets] = useState<JotChartPet[]>([]);
   const pets = useMemo<JotChartPet[]>(() => {
-    if (patientsProp?.length) {
-      const seen = new Set<number>();
-      return patientsProp.filter((p) => {
-        if (!Number.isFinite(p.id) || p.id <= 0 || seen.has(p.id)) return false;
-        seen.add(p.id);
-        return true;
-      });
+    const seen = new Set<number>();
+    const out: JotChartPet[] = [];
+    const add = (p: JotChartPet) => {
+      if (!Number.isFinite(p.id) || p.id <= 0 || seen.has(p.id)) return;
+      seen.add(p.id);
+      out.push(p);
+    };
+    for (const p of patientsProp ?? []) add(p);
+    if (!patientsProp?.length && patientId != null) {
+      add({ id: patientId, name: patientName?.trim() || `Patient #${patientId}` });
     }
-    if (patientId == null) return [];
-    return [{ id: patientId, name: patientName?.trim() || `Patient #${patientId}` }];
-  }, [patientsProp, patientId, patientName]);
+    for (const p of householdPets) add(p);
+    return out;
+  }, [patientsProp, patientId, patientName, householdPets]);
   const petNames = pets.map((p) => p.name).filter(Boolean).join(', ') || patientName;
   const call = useClientCallActivity(clientId);
 
   const [phones, setPhones] = useState<{ label: string; phone: string }[]>([]);
   const [clientName, setClientName] = useState(clientNameProp ?? null);
   const [phone, setPhone] = useState('');
-  const [transcript, setTranscript] = useState('');
-  const [appliedCallId, setAppliedCallId] = useState<string | null>(null);
+  // Starts blank (or with the note someone saved): the transcript is a button away, not the
+  // default, so the chart gets a short note instead of every "hi" and "okay" (owner, Nov 13, 2026).
+  const [transcript, setTranscript] = useState(() => readCallNoteDraft(task.body));
+  const [taskCall, setTaskCall] = useState<ClientCall | null>(null);
   const [staffNote, setStaffNote] = useState('');
   const [reassignTo, setReassignTo] = useState('');
   const [polishing, setPolishing] = useState(false);
@@ -133,6 +159,7 @@ export default function CallbackJotPanel({
         setPhone((cur) => cur || nextPhones[0]?.phone || '');
         const name = clientDisplayName(raw);
         if (name) setClientName(name);
+        setHouseholdPets(householdPetsFromClient(raw));
       })
       .catch(() => undefined);
     return () => {
@@ -161,17 +188,26 @@ export default function CallbackJotPanel({
   const selectedPets = pets.filter((p) => chartKeys.includes(`patient:${p.id}`));
   const chartToClient = chartKeys.includes('client') && clientId != null;
 
-  const quoText = useMemo(
-    () => tidyQuoTranscript(call.call?.transcriptText ?? ''),
-    [call.call?.transcriptText],
-  );
-
+  // A "File call with …" task knows its own call; otherwise use the client's open call.
   useEffect(() => {
-    const id = call.call?.callId ?? null;
-    if (!id || !quoText.trim() || appliedCallId === id) return;
-    setTranscript(quoText);
-    setAppliedCallId(id);
-  }, [call.call?.callId, quoText, appliedCallId]);
+    if (clientId == null || !taskCallId) return;
+    let canceled = false;
+    void listClientCalls(clientId, { sinceMinutes: 60 * 24 * 7 })
+      .then(({ calls }) => {
+        if (canceled) return;
+        setTaskCall(calls.find((c) => c.callId === taskCallId) ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, [clientId, taskCallId]);
+  const sourceCall: ClientCall | null = taskCall ?? call.call ?? null;
+  const quoText = useMemo(
+    () => tidyQuoTranscript(sourceCall?.transcriptText ?? ''),
+    [sourceCall?.transcriptText],
+  );
+  const phoneNote = fileCall || isCallback || Boolean(quoText.trim());
 
   const text = transcript.trim();
   const phase = call.phase;
@@ -185,22 +221,62 @@ export default function CallbackJotPanel({
     window.location.href = buildPhoneDialHref(number, { fromLine });
   };
 
-  const polish = async () => {
-    if (!text) return;
+  /** Names Quo may have misheard: client, every pet, me, and whoever was on the call. */
+  const knownNames = () => {
+    const staffIds = [
+      myEmployeeId,
+      sourceCall?.initiatedByEmployeeId ?? null,
+      sourceCall?.answeredByEmployeeId ?? null,
+    ];
+    const staff = staffIds
+      .filter((id): id is number => id != null)
+      .map((id) => employees.find((e) => employeeId(e) === id))
+      .map((em) => (em ? formatEmployeeDisplayName(em) : ''));
+    return [clientName, ...pets.map((p) => p.name), ...staff];
+  };
+
+  const polish = async (source = text) => {
+    if (!source.trim()) return;
     setPolishing(true);
     setError(null);
     try {
       const summary = await polishSpokenNotes({
-        transcript: text,
-        kind: isCallback ? 'callback' : 'review',
+        transcript: source,
+        kind: phoneNote ? 'phone' : 'review',
         patientName: petNames,
         clientName,
+        asOfDate: sourceCall?.startedAt ? sourceCall.startedAt.slice(0, 10) : null,
+        knownNames: knownNames(),
       });
       if (summary) setTranscript(summary);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not clean up that transcript.');
+      setError(
+        e instanceof Error && !/status code/i.test(e.message)
+          ? e.message
+          : 'The AI could not write that note just now. Type the note, or try again in a minute.',
+      );
     } finally {
       setPolishing(false);
+    }
+  };
+
+  /** The whole Quo transcript, for medical calls a doctor needs word for word. */
+  const pasteTranscript = () => {
+    if (!quoText.trim()) return;
+    setTranscript((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${quoText}` : quoText));
+  };
+
+  /** Keep the note on the task without charting it (one copy, replaced on each Save). */
+  const saveDraft = async () => {
+    setBusy('save');
+    setError(null);
+    try {
+      await patchTask(task.id, { body: writeCallNoteDraft(task.body, transcript) });
+      await onDone();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -231,8 +307,9 @@ export default function CallbackJotPanel({
         includeOnMedicalRecord: false,
       });
     }
-    if (call.call?.callId) {
-      await resolveCall(call.call.callId, {
+    const filedCallId = taskCallId ?? call.call?.callId ?? null;
+    if (filedCallId) {
+      await resolveCall(filedCallId, {
         ...(lastNoteId ? { noteId: lastNoteId } : {}),
         filed: true,
       }).catch(() => undefined);
@@ -275,14 +352,14 @@ export default function CallbackJotPanel({
         });
       }
       if (task.status !== 'done') await completeTask(task.id, choice);
-      setDoneLabel(
-        isCallback
-          ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
-          : `Filed to ${filedToLabel(chartDestinationNames())} and the task is done.`,
-      );
+      const filedMessage = isCallback
+        ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
+        : `Filed to ${filedToLabel(chartDestinationNames())} and the task is done.`;
+      setDoneLabel(filedMessage);
+      onFiled?.(filedMessage);
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not file that to the chart.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -334,7 +411,7 @@ export default function CallbackJotPanel({
       setStaffNote('');
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not chart and re-assign that.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -364,7 +441,7 @@ export default function CallbackJotPanel({
       setStaffNote('');
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not re-assign that.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -394,7 +471,7 @@ export default function CallbackJotPanel({
       setDoneLabel(`${chartHeading} removed. Nothing was filed to the chart.`);
       await onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not remove that callback.');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
       setConfirmRemove(false);
@@ -485,22 +562,58 @@ export default function CallbackJotPanel({
         rows={8}
         value={transcript}
         placeholder={
-          isCallback
-            ? 'The Quo transcript appears here after you hang up. You can also type what was said. This is what gets charted.'
-            : 'What you want on the chart — the conversation, the plan, what you told the owner.'
+          fileCall
+            ? 'A short note in your own words, e.g. "Called about balance, LMOM." Write a short note or Paste transcript fills it from the call.'
+            : isCallback
+              ? 'Type what was said, or use Write a short note after you hang up. This is what gets charted.'
+              : 'What you want on the chart — the conversation, the plan, what you told the owner.'
         }
         onChange={(e) => setTranscript(e.target.value)}
       />
 
       <div className="pims-callback-jot__controls">
+        {quoText.trim() ? (
+          <>
+            <button
+              type="button"
+              className="pims-callback-jot__btn"
+              disabled={polishing || Boolean(busy)}
+              title="A short note in plain words, written from the Quo transcript. Read it before you chart it."
+              onClick={() => void polish(quoText)}
+            >
+              <Sparkles size={14} /> {polishing ? 'Writing…' : 'Write a short note'}
+            </button>
+            <button
+              type="button"
+              className="pims-callback-jot__btn"
+              disabled={polishing || Boolean(busy)}
+              title="Put the whole Quo transcript in the note, word for word."
+              onClick={pasteTranscript}
+            >
+              <ScrollText size={14} /> Paste transcript
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           className="pims-callback-jot__btn"
           disabled={!text || polishing || Boolean(busy)}
+          title="Tidy what is in the box: drop filler, fix spelling of names and products."
           onClick={() => void polish()}
         >
           <Wand2 size={14} /> {polishing ? 'Cleaning up…' : 'Clean up'}
         </button>
+        {fileCall ? (
+          <button
+            type="button"
+            className="pims-callback-jot__btn"
+            disabled={polishing || Boolean(busy) || text === readCallNoteDraft(task.body)}
+            title="Keep this note on the task without charting it. Mark done charts it."
+            onClick={() => void saveDraft()}
+          >
+            <Save size={14} /> {busy === 'save' ? 'Saving…' : 'Save'}
+          </button>
+        ) : null}
       </div>
 
       {showChartPicker ? (

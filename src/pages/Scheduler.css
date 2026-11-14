@@ -7738,3 +7738,66 @@ label.scheduler-household-pet-row {
   font-size: 13px;
   color: #64748b;
 }
+
+/* Deposit badge (PAY-A18) */
+.scheduler-appt-deposit-badge {
+  font-weight: 800;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+}
+
+.scheduler-appt-deposit-badge--paid {
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.scheduler-appt-deposit-badge--requested,
+.scheduler-appt-deposit-badge--part_paid {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.scheduler-appt-deposit-badge--needed {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #b91c1c;
+}
+
+.scheduler-tooltip-vh-deposit {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.scheduler-tooltip-vh-deposit--paid {
+  color: #15803d;
+}
+
+.scheduler-tooltip-vh-deposit--needed {
+  color: #b91c1c;
+}
+
+/* Deposit window footer: buttons sit inside the window with room to the edge, under a divider,
+   and the secondary buttons have an outline (they borrow the Book window's borderless buttons). */
+.appointment-deposit__actions {
+  margin: 0;
+  padding: 14px 24px 20px 28px;
+  border-top: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.secondary {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.secondary:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.appointment-deposit__actions .scheduler-book-btn.primary {
+  border: 1px solid #0f172a;
+}

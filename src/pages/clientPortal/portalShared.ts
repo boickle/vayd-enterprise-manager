@@ -307,13 +307,13 @@ export function groupApptsByDay(appts: ClientAppointment[]) {
 }
 
 /* ---------- misc ---------- */
-export function providerEmailFromName(providerName?: string | null): string {
-  if (!providerName) return 'support@vetatyourdoor.com';
-  const parts = providerName.trim().split(/\s+/);
-  if (parts.length === 0) return 'support@vetatyourdoor.com';
-  if (parts.length === 1) return `${parts[0].toLowerCase()}@vetatyourdoor.com`;
-  const emailName = `${parts[0].charAt(0)}${parts[parts.length - 1]}`.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return `${emailName}@vetatyourdoor.com`;
+/**
+ * "Email your vet": the doctor's own email from their staff record, else the practice inbox.
+ * Never guessed from the name (owner, Nov 13, 2026): "Avery Lane" is not always alane@.
+ */
+export function vetEmail(provider?: { email?: string | null } | null): string {
+  const email = provider?.email?.trim();
+  return email && email.includes('@') ? email : PRACTICE_INFO_EMAIL;
 }
 
 export function providerShortName(name?: string | null): string {

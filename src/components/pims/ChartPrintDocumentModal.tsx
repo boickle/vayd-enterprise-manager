@@ -105,6 +105,27 @@ type PdfPreview = {
 };
 
 /**
+ * The name a printed document gets on the chart. A prescription leads with the medication and strength
+ * ("Tramadol 50 mg tablets — Prescription print") so the timeline shows what was written; the rest, and a
+ * prescription with no medication typed, use "<title> — <pet>".
+ */
+export function chartDocumentName(
+  kind: PatientDocKind,
+  draft: Pick<PatientDocDraft, 'rxName' | 'rxStrength' | 'patientName'>,
+  title: string,
+  patientName?: string
+): string {
+  if (kind === 'rx') {
+    const med = [draft.rxName, draft.rxStrength]
+      .map((v) => (v ?? '').trim())
+      .filter(Boolean)
+      .join(' ');
+    if (med) return `${med} — ${title}`;
+  }
+  return `${title} — ${draft.patientName || patientName || 'Patient'}`;
+}
+
+/**
  * The chart document's date as a full timestamp. A bare "2026-11-12" is read by the API as midnight UTC,
  * which is the evening before in US time zones, so the document landed on the previous day's timeline.
  * Today's date files at the current time; any other date at noon local time.
@@ -363,7 +384,7 @@ export default function ChartPrintDocumentModal({
     if (!draft) return;
     const file = new File([blob], filename, { type: 'application/pdf' });
     await uploadPatientChartDocument(patientId, file, {
-      name: `${title} — ${draft.patientName || patientName || 'Patient'}`,
+      name: kind ? chartDocumentName(kind, draft, title, patientName) : title,
       description: title,
       documentType: 'other',
       serviceDate: chartServiceDate(

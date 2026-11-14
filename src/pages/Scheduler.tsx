@@ -65,8 +65,7 @@ import {
   getInvoiceByAppointment,
   type CalendarPaymentState,
 } from '../api/visitWorkflow';
-import { saveBrief } from '../api/briefs';
-import { findOpenPrevisitForAppointment } from '../utils/briefStore';
+import { findOpenPrevisitForAppointment, saveBrief } from '../api/briefs';
 import { BRIEF_KIND_LABEL } from '../utils/briefTypes';
 import {
   fetchAllAppointmentTypes,
@@ -139,7 +138,12 @@ import { schedulerHouseholdUsesDoctorDayClockForLayout } from '../utils/schedule
 import { arrivalWindowIsZeroWidth, computeDriveTimeWindowWarning } from '../utils/windowWarning';
 import { buildClientFinancialHref } from '../utils/clientFinancial';
 import { AppointmentDepositModal } from '../components/AppointmentDepositModal';
-import { alertsWithDeposit } from '../utils/depositRequired';
+import {
+  alertsWithDeposit,
+  depositBadgeState,
+  depositBadgeTitle,
+} from '../utils/depositRequired';
+import { getAppointmentDepositStatuses, type AppointmentDepositStatus } from '../api/appointmentDeposits';
 import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
 import {
   loadRoutingPreviewClientContact,
@@ -1239,6 +1243,45 @@ const SchedulerPaymentStateContext = createContext<ReadonlyMap<number, CalendarP
   new Map()
 );
 
+type SchedulerDepositRow = { status: AppointmentDepositStatus; requested: number; paid: number };
+
+/** Appointment deposits by appointment id (PAY-A18); visits with no deposit are absent. */
+const SchedulerDepositStateContext = createContext<ReadonlyMap<number, SchedulerDepositRow>>(new Map());
+
+/**
+ * Deposit badge (PAY-A18): green when paid, amber when asked for or partly paid, red when the
+ * client is marked "Deposit required" and no deposit has been asked for yet.
+ */
+function SchedulerApptDepositBadge({
+  appt,
+  variant = 'card',
+}: {
+  appt: Appointment;
+  variant?: 'card' | 'hover';
+}) {
+  const row = useContext(SchedulerDepositStateContext).get(Number(appt.id));
+  const state = depositBadgeState(appt.client, row?.status);
+  if (!state) return null;
+  const title = depositBadgeTitle(state, row);
+  return (
+    <span
+      className={[
+        'scheduler-appt-soap-locked-badge',
+        'scheduler-appt-deposit-badge',
+        `scheduler-appt-deposit-badge--${state}`,
+        variant === 'hover' ? 'scheduler-appt-soap-locked-badge--hover' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
+      aria-label={title}
+      data-testid="scheduler-deposit-badge"
+    >
+      Dep
+    </span>
+  );
+}
+
 const PAYMENT_BADGE_TITLE: Record<CalendarPaymentState, string> = {
   paid: 'Paid',
   held: 'Card hold in place',
@@ -1383,6 +1426,7 @@ function SchedulerEventTitleBlock({
       {visitTimesBadge}
       {soapLockedBadge}
       {paymentBadge}
+      <SchedulerApptDepositBadge appt={appt} />
     </>
   );
   const c = appt.client;
@@ -2341,7 +2385,9 @@ export function SchedulerHoverContent({
     null;
   const desc = appt.description?.trim() || null;
   const instr = appt.instructions?.trim() || null;
-  const clientAlerts = alertsWithDeposit(c, c?.alerts);
+  const depositRow = useContext(SchedulerDepositStateContext).get(Number(appt.id));
+  const depositState = depositBadgeState(c, depositRow?.status);
+  const clientAlerts = alertsWithDeposit(c, c?.alerts, { depositPaid: depositRow?.status === 'paid' });
   const hasAlternateLocation = appointmentHasAlternateLocation(appt);
   const alternateAddress = appointmentAlternateAddressText(appt);
   const addrLine = clientAddressOneLine(c ?? undefined);
@@ -2374,7 +2420,8 @@ export function SchedulerHoverContent({
           appointmentTypeIsArchived(appt) ||
           showVisitTimesClock ||
           soapLocked ||
-          paymentState ? (
+          paymentState ||
+          depositState ? (
             <div className="scheduler-tooltip-vh-type-row">
               {typeRaw ? <div className="scheduler-tooltip-vh-type">{typeRaw}</div> : null}
               {appointmentTypeIsArchived(appt) ? <SchedulerTypeArchivedPill /> : null}
@@ -2393,6 +2440,7 @@ export function SchedulerHoverContent({
                 />
               ) : null}
               <SchedulerApptPaymentBadge appt={appt} variant="hover" />
+              <SchedulerApptDepositBadge appt={appt} variant="hover" />
             </div>
           ) : null}
           {soapLocked ? (
@@ -2403,6 +2451,14 @@ export function SchedulerHoverContent({
               className={`scheduler-tooltip-vh-payment scheduler-tooltip-vh-payment--${paymentState}`}
             >
               {PAYMENT_BADGE_TITLE[paymentState]}
+            </div>
+          ) : null}
+          {depositState ? (
+            <div
+              className={`scheduler-tooltip-vh-deposit scheduler-tooltip-vh-deposit--${depositState}`}
+              data-testid="scheduler-hover-deposit"
+            >
+              {depositBadgeTitle(depositState, depositRow)}
             </div>
           ) : null}
           {desc ? <div className="scheduler-tooltip-vh-desc">{desc}</div> : null}
@@ -5447,6 +5503,36 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, []);
 
   /** Every patient visit can chase records, so this batches over the whole range. */
+  const [depositByAppointmentId, setDepositByAppointmentId] = useState<
+    ReadonlyMap<number, SchedulerDepositRow>
+  >(() => new Map());
+
+  /** Deposit badges (PAY-A18) for the visits on screen. */
+  const loadDepositStatuses = useCallback(async (appts?: Appointment[]) => {
+    const source = appts ?? rawAppointmentsRef.current;
+    const ids = source.map((row) => Number(row.id)).filter((id) => Number.isFinite(id) && id > 0);
+    if (!ids.length) {
+      setDepositByAppointmentId(new Map());
+      return;
+    }
+    try {
+      const rows = await getAppointmentDepositStatuses(ids);
+      setDepositByAppointmentId(
+        new Map(rows.map((r) => [Number(r.appointmentId), { status: r.status, requested: r.requested, paid: r.paid }])),
+      );
+    } catch {
+      /* keep prior map */
+    }
+  }, []);
+
+  useEffect(() => {
+    // A client can pay the deposit link at any time.
+    const timer = window.setInterval(() => {
+      void loadDepositStatuses();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [loadDepositStatuses]);
+
   const loadRecordsRequestStatuses = useCallback(async (appts?: Appointment[]) => {
     const source = appts ?? rawAppointmentsRef.current;
     const ids = source.map((row) => Number(row.id)).filter((id) => Number.isFinite(id));
@@ -5511,6 +5597,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         void loadRoomLoaderStatusesForRange();
         void loadEuthanasiaConsentStatuses(rows);
         void loadRecordsRequestStatuses(rows);
+        void loadDepositStatuses(rows);
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
@@ -11252,7 +11339,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             const date = start.isValid
               ? start.toFormat('yyyy-LL-dd')
               : DateTime.now().setZone(PRACTICE_TZ).toFormat('yyyy-LL-dd');
-            const existing = findOpenPrevisitForAppointment(apptId, firstPatient.id);
+            const existing = await findOpenPrevisitForAppointment(apptId, firstPatient.id).catch(
+              () => null
+            );
             const session =
               existing ??
               (await saveBrief({
@@ -13212,6 +13301,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   return (
     <SchedulerPaymentStateContext.Provider value={paymentStateByAppointmentId}>
+    <SchedulerDepositStateContext.Provider value={depositByAppointmentId}>
     <div
       className={[
         'scheduler-page',
@@ -14626,7 +14716,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           clientName={depositTarget.clientName}
           doNotSms={depositTarget.doNotSms}
           depositRequiredNote={depositTarget.depositRequiredNote}
-          onClose={() => setDepositTarget(null)}
+          onClose={() => {
+            setDepositTarget(null);
+            void loadDepositStatuses();
+          }}
           onTakePayment={(invoiceId) => {
             const target = depositTarget;
             setDepositTarget(null);
@@ -14890,6 +14983,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
     </div>
+    </SchedulerDepositStateContext.Provider>
     </SchedulerPaymentStateContext.Provider>
   );
 }

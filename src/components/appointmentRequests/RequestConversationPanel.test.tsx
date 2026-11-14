@@ -103,6 +103,24 @@ describe('RequestConversationPanel', () => {
     expect(screen.getByText('Old text from last spring')).toBeTruthy();
   });
 
+  it('read-only (techs, doctors): shows the texts but no way to send (Nov 13, 2026)', async () => {
+    render(
+      <RequestConversationPanel
+        item={item}
+        practiceId={1}
+        practiceTz="America/New_York"
+        onContacted={() => {}}
+        onSubmissionUpdated={() => {}}
+        readOnly
+      />
+    );
+    expect(await screen.findByText('Tomorrow morning works!')).toBeTruthy();
+    expect(screen.getByText(/View only/)).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Send/ })).toBeNull();
+    expect(screen.queryByText(/Log it/)).toBeNull();
+  });
+
   it('sends a text and marks the request contacted', async () => {
     const onContacted = vi.fn();
     api.sendAppointmentRequestSubmissionSms.mockResolvedValue({ success: true });

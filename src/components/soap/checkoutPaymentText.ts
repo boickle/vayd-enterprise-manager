@@ -75,3 +75,39 @@ export function paidTenderLines(
 export function expiredCardText(card: { last4: string | null }): string {
   return card.last4 ? `Expired, ending ${card.last4}` : 'Expired';
 }
+
+export type CashTenderPlan = {
+  amount: number;
+  cashReceived: number | null;
+  changeGiven: number | null;
+  error?: string;
+};
+
+/**
+ * What a cash payment records, from the "Cash received" box (owner, Nov 13, 2026).
+ * Blank or the full amount: pays the bill. More: pays the bill and gives change.
+ * Less: records just that much, so the rest can go on a card.
+ */
+export function cashTenderPlan(due: number, raw: string | null | undefined): CashTenderPlan {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const text = String(raw ?? '').trim();
+  if (!text) return { amount: round(due), cashReceived: null, changeGiven: null };
+  const received = round(Number(text.replace(/[^0-9.]/g, '')));
+  if (!Number.isFinite(received) || received <= 0) {
+    return { amount: 0, cashReceived: null, changeGiven: null, error: 'Enter the cash received, for example 50.00.' };
+  }
+  if (received < due - 0.009) return { amount: received, cashReceived: received, changeGiven: null };
+  const change = round(received - due);
+  return { amount: round(due), cashReceived: received, changeGiven: change > 0.009 ? change : null };
+}
+
+/** The note after a cash payment: paid in full (with any change), or what is still due. */
+export function cashTenderNote(due: number, amount: number, changeGiven: number | null): string {
+  const left = Math.round((due - amount) * 100) / 100;
+  if (left > 0.009) {
+    return `Recorded ${checkoutMoney(amount)} in cash. ${checkoutMoney(left)} is still due: take the rest by card or another way.`;
+  }
+  return changeGiven
+    ? `Recorded cash payment of ${checkoutMoney(amount)}. Give ${checkoutMoney(changeGiven)} change.`
+    : `Recorded cash payment of ${checkoutMoney(amount)}.`;
+}

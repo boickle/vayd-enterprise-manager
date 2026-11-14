@@ -874,6 +874,9 @@ export default function Settings() {
       if (goalsForm.minVariableVsdPerPoint !== undefined) {
         payload.minVariableVsdPerPoint = goalsForm.minVariableVsdPerPoint;
       }
+      if (goalsForm.goalsStartDate !== undefined) {
+        payload.goalsStartDate = goalsForm.goalsStartDate || null;
+      }
       if (goalsForm.dailyGoals !== undefined) {
         payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
           dayOfWeek: d.dayOfWeek,
@@ -2270,6 +2273,29 @@ export default function Settings() {
                         />
                         <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
                           Caps calendar VSD/pt. Blank = no cap.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="settings-label" htmlFor="goals-start-date">Goals start</label>
+                        <input
+                          id="goals-start-date"
+                          type="date"
+                          className="settings-input"
+                          value={goalsForm.goalsStartDate ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({ ...f, goalsStartDate: e.target.value || null }))
+                          }
+                          title="First day their goals count on the VSD report, Projected Revenue and the Scheduler. Blank = their first appointment."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          {goalsForm.goalsStartDate
+                            ? 'Goals count from this day.'
+                            : goalsForm.goalWindowStart
+                              ? `Blank = first appointment (${dayjs(goalsForm.goalWindowStart).format('MMM D, YYYY')}).`
+                              : 'Blank = first appointment (none yet, so no goal days).'}
+                          {goalsForm.goalWindowEnd
+                            ? ` Ends ${dayjs(goalsForm.goalWindowEnd).format('MMM D, YYYY')} (last day).`
+                            : ''}
                         </p>
                       </div>
                     </div>

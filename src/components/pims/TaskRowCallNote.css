@@ -1,0 +1,103 @@
+/* Quick call note on a "File call with …" task row. The card becomes two columns:
+   the task on the left, the note on the right (one column on narrow screens). */
+.pims-task-card--with-note {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(300px, 1.5fr);
+  column-gap: 20px;
+  align-items: start;
+}
+
+.pims-task-card--with-note > * {
+  grid-column: 1;
+}
+
+.pims-task-card--with-note > .task-row-call-note {
+  grid-column: 2;
+  grid-row: 1 / span 20;
+}
+
+@media (max-width: 860px) {
+  .pims-task-card--with-note {
+    display: block;
+  }
+  .pims-task-card--with-note > .task-row-call-note {
+    margin-top: 12px;
+  }
+}
+
+.task-row-call-note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 1px solid #e2e8f0;
+  padding-left: 18px;
+}
+
+@media (max-width: 860px) {
+  .task-row-call-note {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
+.task-row-call-note__box {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 64px;
+}
+
+.task-row-call-note__to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.task-row-call-note__to label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.task-row-call-note__to-label {
+  font-weight: 600;
+  color: #64748b;
+}
+
+.task-row-call-note__more {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #0f766e;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.task-row-call-note__error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.task-row-call-note__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.task-row-call-note__actions a.pims-task-card__btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}

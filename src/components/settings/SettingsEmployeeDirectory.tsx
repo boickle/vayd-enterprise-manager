@@ -28,6 +28,7 @@ import {
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import {
   cancelOffboarding,
+  recordLastDay,
   fetchDeactivatedStaff,
   type DeactivatedStaffRow,
 } from '../../api/offboarding';
@@ -46,6 +47,7 @@ import {
 import { formatDisplayPhone, phonesMatchForQuo } from '../../utils/quoContact';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { formatYmd } from '../../utils/formatYmd';
+import dayjs from 'dayjs';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
@@ -286,6 +288,9 @@ export default function SettingsEmployeeDirectory({
   const [offboardEmp, setOffboardEmp] = useState<Employee | null>(null);
   /** Deactivated people and people with a last day set (GET /employee-offboarding/deactivated). */
   const [departed, setDeparted] = useState<DeactivatedStaffRow[]>([]);
+  /** Deactivated person: the last day being typed (keyed by employee id). */
+  const [lastDayDraft, setLastDayDraft] = useState<{ id: number; value: string } | null>(null);
+  const [lastDaySaving, setLastDaySaving] = useState(false);
   const [showDeactivated, setShowDeactivated] = useState(false);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
@@ -895,6 +900,21 @@ export default function SettingsEmployeeDirectory({
       await load();
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
+    }
+  };
+
+  const saveLastDay = async (employeeId: number, lastDay: string) => {
+    if (!lastDay) return;
+    setLastDaySaving(true);
+    try {
+      await recordLastDay(employeeId, lastDay);
+      onMessage?.(`Last day saved: ${formatYmd(lastDay)}. Their goals stop counting after it.`, 'success');
+      setLastDayDraft(null);
+      await load();
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setLastDaySaving(false);
     }
   };
 
@@ -1673,13 +1693,57 @@ export default function SettingsEmployeeDirectory({
                             Offboard
                           </button>
                         ) : editingRow ? (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            onClick={() => void reactivate(editingRow)}
-                          >
-                            Reactivate
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              onClick={() => void reactivate(editingRow)}
+                            >
+                              Reactivate
+                            </button>
+                            {(() => {
+                              const gone = departed.find((d) => d.id === editingRow.id);
+                              const saved = gone?.lastDay ?? '';
+                              const value =
+                                lastDayDraft?.id === editingRow.id
+                                  ? lastDayDraft.value
+                                  : saved || gone?.lastVisit || '';
+                              return (
+                                <span
+                                  className="settings-employee-hub__last-day"
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+                                >
+                                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                    Last day
+                                    <input
+                                      type="date"
+                                      aria-label="Last day"
+                                      value={value}
+                                      max={dayjs().format('YYYY-MM-DD')}
+                                      onChange={(e) => setLastDayDraft({ id: editingRow.id, value: e.target.value })}
+                                      disabled={!canManageStaff}
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="btn secondary"
+                                    disabled={!canManageStaff || lastDaySaving || !value || value === saved}
+                                    onClick={() => void saveLastDay(editingRow.id, value)}
+                                    title="Their goals on the VSD report stop counting after this day. Nothing else changes."
+                                  >
+                                    {lastDaySaving ? 'Saving…' : 'Save last day'}
+                                  </button>
+                                  <span className="muted" style={{ fontSize: 12 }}>
+                                    {saved
+                                      ? `Saved: ${formatYmd(saved)}.`
+                                      : gone?.lastVisit
+                                        ? `Not recorded. Goals end at their last visit, ${formatYmd(gone.lastVisit)}.`
+                                        : 'Not recorded.'}
+                                  </span>
+                                </span>
+                              );
+                            })()}
+                          </>
                         ) : null}
                         {rows.find((r) => r.id === editingId) ? (
                           <ViewAsButton

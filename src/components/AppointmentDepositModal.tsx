@@ -216,7 +216,7 @@ export function AppointmentDepositModal({
           {note ? <p role="status">{note}</p> : null}
         </div>
 
-        <div className="scheduler-book-actions">
+        <div className="scheduler-book-actions appointment-deposit__actions">
           {!paidInFull && deposit && deposit.status !== 'none' && changed ? (
             <button type="button" className="scheduler-book-btn secondary" disabled={busy || !amountOk} onClick={() => void saveAmount()}>
               Save amount

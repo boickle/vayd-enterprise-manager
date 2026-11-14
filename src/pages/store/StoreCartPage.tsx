@@ -1510,7 +1510,10 @@ export default function StoreCartPage() {
                   attemptRef.current = null;
                   writeStoreCart([]);
                   writeStoreGiftCart([]);
-                  nav(`/store/thanks/${order.id}`, { state: { order } });
+                  // One card, everywhere (Nov 13, 2026): a new card kept here; the thanks page offers the
+                  // household's memberships and older auto-ships still billed on another card.
+                  const offerCardPm = loggedIn && usingNewCard && saveCard ? paymentMethodId : null;
+                  nav(`/store/thanks/${order.id}`, { state: { order, offerCardPm } });
                 })()
                   .catch((e) => {
                     // A definite answer (declined, refused) ends the attempt; no answer keeps it for a safe retry.

@@ -12,6 +12,12 @@ export type DailyGoalBreakdownItem = {
   date: string; // YYYY-MM-DD
   dayOfWeek: number; // 0=Sunday … 6=Saturday
   isWorkday: boolean;
+  /**
+   * Scheduled workday (weekly row or override) inside the goal window: from the goals start
+   * date (else first appointment) to the last day (else, deactivated, last appointment).
+   * Goals are 0 when false. Missing from older APIs.
+   */
+  countsForGoals?: boolean;
   dailyPointGoal: number;
   dailyRevenueGoal: number;
 };
@@ -33,6 +39,12 @@ export type EmployeeGoalsResponseDto = {
   /** Floor on calendar variable VSD/pt for busy days. Null/omit = no baseline. */
   minVariableVsdPerPoint?: number | null;
   dailyGoals?: DailyGoalOverride[];
+  /** First day goals count, as set (YYYY-MM-DD). Null = their first appointment. */
+  goalsStartDate?: string | null;
+  /** First day goals actually count (set date, else first appointment). Null = no goal days yet. */
+  goalWindowStart?: string | null;
+  /** Last day goals count (last day, else for someone deactivated their last appointment). */
+  goalWindowEnd?: string | null;
   goalPeriodStart?: string;
   goalPeriodEnd?: string;
   effectiveWeeklyPointGoal?: number;
@@ -56,6 +68,8 @@ export type UpdateEmployeeGoalsDto = {
   /** Baseline floor on calendar variable VSD/pt. Pass null to clear. */
   minVariableVsdPerPoint?: number | null;
   dailyGoals?: { dayOfWeek: number; dailyPointGoal?: number; dailyRevenueGoal?: number }[];
+  /** First day goals count (YYYY-MM-DD); null = their first appointment. */
+  goalsStartDate?: string | null;
 };
 
 export type FetchEmployeeGoalsParams = {
@@ -120,13 +134,14 @@ export function getGoalForDate(
   goals: EmployeeGoalsResponseDto,
   dateStr: string,
   dayOfWeek?: number
-): { pointGoal: number; revenueGoal: number; isWorkday?: boolean } {
+): { pointGoal: number; revenueGoal: number; isWorkday?: boolean; countsForGoals?: boolean } {
   const breakdown = getGoalBreakdownForDate(goals, dateStr);
   if (breakdown) {
     return {
       pointGoal: breakdown.dailyPointGoal ?? 0,
       revenueGoal: breakdown.dailyRevenueGoal ?? 0,
       isWorkday: breakdown.isWorkday,
+      countsForGoals: breakdown.countsForGoals,
     };
   }
   const dow =

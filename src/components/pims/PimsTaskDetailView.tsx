@@ -51,6 +51,7 @@ import { soapPathFromTaskLinks } from '../../utils/soapTask';
 import OrderListTaskPanel from './OrderListTaskPanel';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
 import CallbackJotPanel from './CallbackJotPanel';
+import CallFilingTaskPanel from './CallFilingTaskPanel';
 import VisitRefundTaskPanel from './VisitRefundTaskPanel';
 import { taskPanelKind } from '../../utils/taskPanelKind';
 import TaskReassignModal from './TaskReassignModal';
@@ -192,6 +193,8 @@ export default function PimsTaskDetailView({
   const [reassignOpen, setReassignOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
+  /** "Call filed to …" from Chart & complete. The panel closes when the task completes, so this stays here. */
+  const [filedNotice, setFiledNotice] = useState<string | null>(null);
   const { askAlsoClose, closePrompt } = useSharedTaskClosePrompt();
 
   const employeeMap = useMemo(() => {
@@ -238,6 +241,7 @@ export default function PimsTaskDetailView({
   useEffect(() => {
     setEditing(false);
     setReassignOpen(false);
+    setFiledNotice(null);
   }, [taskId]);
 
   useEffect(() => {
@@ -325,7 +329,9 @@ export default function PimsTaskDetailView({
     panelKind !== 'order_list' &&
     panelKind !== 'mail_order' &&
     panelKind !== 'soap' &&
-    panelKind !== 'lab_result';
+    panelKind !== 'lab_result' &&
+    // T-B2: the call panel files or dismisses; the callback form ("Open Quo call") never fits.
+    panelKind !== 'call_filing';
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -615,7 +621,9 @@ export default function PimsTaskDetailView({
             panelKind === 'lab_result' ||
             panelKind === 'idexx_result') && (
             <span className="pims-task-detail__kind">
-              {panelKind === 'invoice'
+              {panelKind === 'call_filing'
+                ? 'Unfiled call'
+                : panelKind === 'invoice'
                 ? taskKindLabel('invoice')
                 : panelKind === 'soap'
                   ? taskKindLabel('soap')
@@ -626,7 +634,7 @@ export default function PimsTaskDetailView({
           )}
           {task.source !== 'manual' && mailOrderId == null && (
             <span className="pims-task-detail__pill">
-              {panelKind === 'order_list' ? 'Order list' : task.source}
+              {panelKind === 'order_list' ? 'Order list' : 'Automatic'}
             </span>
           )}
         </div>
@@ -700,6 +708,12 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
+      {filedNotice ? (
+        <p className="pims-callback-jot is-done pims-task-detail__filed" role="status">
+          <CheckCircle2 size={14} aria-hidden /> {filedNotice}
+        </p>
+      ) : null}
+
       {panelKind === 'forward_booking' && forwardBookingJustAdded ? (
         <div
           className={`pims-fb-added${task.status === 'done' ? ' pims-fb-added--done' : ''}`}
@@ -771,6 +785,19 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
+      {panelKind === 'call_filing' && task.status !== 'done' ? (
+        <CallFilingTaskPanel
+          task={task}
+          canAct={showPanels}
+          defaultPatientId={patientLinks[0]?.entityId ?? null}
+          onDone={(message) => {
+            setFiledNotice(message);
+            void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
+        />
+      ) : null}
+
       {panelKind === 'visit_refund' && task.status !== 'done' ? (
         <VisitRefundTaskPanel
           task={task}
@@ -812,6 +839,7 @@ export default function PimsTaskDetailView({
               patients={chartPets}
               clientName={clientName}
               defaultChartToClient={panelKind === 'invoice'}
+              onFiled={setFiledNotice}
               onDone={() => {
                 void getTask(task.id).then(setTask).catch(() => undefined);
                 onUpdated();
@@ -826,6 +854,7 @@ export default function PimsTaskDetailView({
             patientName={patientName}
             patients={chartPets}
             clientName={clientName}
+            onFiled={setFiledNotice}
             onDone={() => {
               void getTask(task.id).then(setTask).catch(() => undefined);
               onUpdated();

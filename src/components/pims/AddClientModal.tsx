@@ -16,6 +16,7 @@ import { clientSearchRowHomeAddress } from '../../utils/visitAddressMatch';
 import AddPatientModal from './AddPatientModal';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 import { useMayShow } from '../../permissions/PermissionContext';
+import { REFERRAL_OPTIONS } from '../../utils/referralSources';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
 
@@ -25,14 +26,6 @@ const PHONE_TYPES = [
   { value: 'primary', label: 'Default / Primary' },
 ] as const;
 
-const REFERRAL_OPTIONS = [
-  'Referred by a friend or family',
-  'Google / online search',
-  'Social media',
-  'Saw our van',
-  'Veterinarian referral',
-  'Other',
-] as const;
 
 function nestMessage(data: unknown): string | null {
   if (!data || typeof data !== 'object') return null;

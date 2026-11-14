@@ -2259,7 +2259,8 @@
   height: auto;
 }
 
-.gmail-compose-panel {
+/* Replies fill the message column; the floating New message box keeps its own 560px width. */
+.gmail-compose-panel:not(.gmail-compose-panel--float) {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
