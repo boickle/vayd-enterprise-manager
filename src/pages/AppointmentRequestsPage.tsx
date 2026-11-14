@@ -2427,7 +2427,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
         {isToConfirmView
             ? 'Clients who self-scheduled online land here until a Client Liaison verifies the visit on the calendar. Click Confirm to open the visit on the calendar and review it, then confirm to move to Booked, or Not booked if the visit should be cancelled.'
-          : 'Triage incoming appointment requests from the client portal. Auto-booked online requests appear in Auto-Booked until reviewed. Use Book for requests that still need scheduling, then link the appointment. Text clients directly from the request phone number — including new clients who are not in the system yet.'}
+          : 'Requests from the client portal and replies from families. Route books a request; online bookings wait in Auto-Booked until someone confirms them.'}
       </p>
 
       {conversionsBanner ? (
