@@ -21,7 +21,7 @@
 | 3c | **Type card manually** | Point at "Typed-in cards cost us a higher card fee than Tap to Pay. Use this when the reader isn't working, the card won't tap, or the owner isn't with you." | "Typed-in cards cost us a higher fee, so use this only when the reader isn't working, the card won't tap, or the owner isn't with you." | — |
 | 4 | **Type card manually** | Type the name in **Name on card** | "Type the name on the card." | — |
 | 5 | **Type card manually** | Type 4242 4242 4242 4242, 12/34, 123 and the ZIP | "Then the card number, expiry, security code and ZIP." | Stripe test card |
-| 6 | **Type card manually** | Tick **Owner agrees we may keep this card on file and charge it for visits, refills, memberships and online store orders.** ("Ask first. Leave unticked to use the card for this payment only.") | "Maria says yes to keeping it on file, so tick this. If they say no, leave it unticked." | — |
+| 6 | **Type card manually** | Point at the note "This card will be kept on file: the owner agreed at checkout." (the dialog has no tick box of its own when the checkout box was ticked) | "Maria already said yes at checkout, so Scout keeps this card on file. There's no second box to tick." | — |
 | 7 | **Type card manually** | Click **Charge $184.50** | "Charge it once. The button shows the exact amount." | — |
 | 8 | Checkout | Point at "Card charged — invoice marked paid." and **Paid** | "Paid, and the card is saved." | — |
 | 9 | Maple's Checkout page, later | Point at **Card on file**, now clickable | "Later, Card on file is ready to click." | A second Rivera bill: Nail trim $22.50 |

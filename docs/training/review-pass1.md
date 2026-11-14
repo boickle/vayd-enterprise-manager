@@ -4,17 +4,46 @@ Branch `training/invoicing-nov13` (training/invoicing-videos + training/invoicin
 Stack: test database `vayd_api_test_invn13`, API at local build-doctor-flow 5b1c0345, Stripe test mode, free Mac voice
 (Samantha). Dry runs: `~/.vayd-training-invn13/dry/INV-xx.mp4`. No final takes. The Nov 7 review is further down.
 
-## Blocking question: local build-doctor-flow is behind origin
+## Origin question (resolved Nov 13)
 
-Origin has 27 API and 19 web commits that the local branch lacks, including the saved-cards wave (PAY-C0 to PAY-C9:
-the new card agreement version 2026-11-12, expired cards, Update card filling an empty slot). The local branch has 15
-API and 18 web commits origin lacks. These dry runs used the local API, so the card videos (INV-03, 04, 05, 17, 20)
-were checked against a server without that wave. Merging origin into the training API copy conflicts in
-`src/visitWorkflow/visit-invoice.controller.ts` (app code), so I stopped. **Options:** (a) you or your developer
-merge origin into local build-doctor-flow (or push local), then I re-run the card videos; (b) I resolve the
-conflict in the training copy only (not committed anywhere), to dry-run against both.
+Origin and local build-doctor-flow were merged and pushed (API e39a88d5, web cf903229). Pass 2 ran on that code.
 
-## Status
+# Pass 2: final takes (Nova), Nov 13 to 14, 2026
+
+Stack: API 11dd5bdb, web with a2be2212 (training branch merged with origin build-doctor-flow), test database
+`vayd_api_test_invn13`, Stripe test mode. Files: `~/Movies/VAYD Training/<ID> - <roles> - <title>.mp4` (no "FINAL";
+the owner adds it). Today's takes of INV-03, 17 and 20 from the other sessions were replaced; the Nov 8 FINAL files
+are kept. INV-18 and INV-19 were not re-recorded.
+
+| ID | Length (1.25x) | Clicks | Notes |
+|---|---|---|---|
+| INV-01 | 102 s | 5, in sync | — |
+| INV-02 | 65 s | 0 (points only) | — |
+| INV-03 | 106 s | 5, in sync | Second take. The first failed: since 0feedc58 the typed-card dialog has no tick box when the checkout box was ticked; it says "This card will be kept on file: the owner agreed at checkout." Step 6 now points at that note with a new line. |
+| INV-04 | 104 s | inv04-19 late by 2.1 s | — |
+| INV-05 | 113 s | in sync | — |
+| INV-06 | 68 s | in sync | — |
+| INV-07 | 75 s | in sync | — |
+| INV-08 | 51 s | inv08-07 late by 2.2 s | — |
+| INV-09 | 52 s | in sync | — |
+| INV-10 | 71 s | in sync | — |
+| INV-11 | 42 s | in sync | — |
+| INV-12 | 73 s | inv12-07 late by 2.1 s | — |
+| INV-13 | 80 s | 6, in sync | — |
+| INV-14 | 58 s | 2, in sync | — |
+| INV-15 | 60 s | 4, in sync | — |
+| INV-16 | 68 s | 8, in sync | — |
+| INV-17 | 74 s | 2, in sync | — |
+| INV-20 | 96 s | 6, in sync | Includes the expired card (Q20-1 option b) and the "Use Mastercard •4444 for these too?" dialog. |
+
+**Q20 decisions (owner, Nov 13):** Q20-1 expired card shown through a training-only stand-in; Q20-2 fixed by the
+origin merge; Q20-3 wording and Q20-4 Name on card prefill shipped (web ff1a318f). Charge card on file is also greyed
+out for an expired card on the Financial tab (web a2be2212). The NOT PRODUCTION banner is hidden in training videos.
+
+**INV-18** was recorded before Card on file started showing on the Financial tab with a bill open (75cee1f9).
+Re-recording it is the owner's call.
+
+## Pass 1 status
 
 | ID | Dry run | Length (1.25x) | Clicks | Notes |
 |---|---|---|---|---|

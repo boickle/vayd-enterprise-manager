@@ -73,7 +73,7 @@ describe('Training: INV-03 card on file', () => {
     line('inv03-08', () => stripeField('.virtual-terminal__card', 'exp-date', '1234'));
     line('inv03-09', () => stripeField('.virtual-terminal__card', 'cvc', '123'));
     line('inv03-10', () => stripeField('.virtual-terminal__card', 'postal', '27606'));
-    line('inv03-11', () => tap(() => cy.get('.virtual-terminal__check')));
+    line('inv03-11', () => pointAt(() => cy.get('[data-testid="virtual-terminal-consent-note"]'), 4000));
     line('inv03-12', () => tap(() => cy.get('.virtual-terminal__actions .btn.primary')));
     offCamera(() => cy.contains('Card charged — invoice marked paid', { timeout: 90000 }).should('exist'));
     line('inv03-13', () => pointAt(() => cy.contains('Card charged — invoice marked paid'), 4500));
