@@ -5438,7 +5438,8 @@ export default function ClientFinancialWorkspace({
       {error && !hasDetail ? <p className="client-fin__err">{error}</p> : null}
       {note && !hasDetail ? <p className="client-fin__note">{note}</p> : null}
 
-      {!hasDetail ? <ClientCardOnFileSection clientId={clientId} clientName={clientName} /> : null}
+      {/* Shown even with a bill open, so a client with an unpaid (e.g. eVet) bill still shows their card (owner, Nov 13, 2026). */}
+      <ClientCardOnFileSection clientId={clientId} clientName={clientName} />
 
       <div
         ref={splitRef}
