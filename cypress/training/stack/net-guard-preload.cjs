@@ -52,3 +52,28 @@ globalThis.fetch = async function (url, init) {
   }
   return realFetch.call(this, url, init);
 };
+// The API also calls out through undici (import { fetch } from 'undici': Stripe, Google and others), which
+// bypasses globalThis.fetch. Guard undici's fetch, request and stream the same way.
+try {
+  const undici = require(require.resolve('undici', { paths: [process.cwd()] }));
+  const urlOf = (a) => {
+    if (typeof a === 'string' || a instanceof URL) return new URL(String(a));
+    if (a && a.url) return new URL(String(a.url));
+    if (a && a.origin) return new URL(String(a.origin));
+    return null;
+  };
+  for (const fn of ['fetch', 'request', 'stream']) {
+    const real = undici[fn];
+    if (typeof real !== 'function') continue;
+    undici[fn] = function (target, ...rest) {
+      const u = urlOf(target);
+      if (u && isBlocked(u.hostname)) {
+        note(u.hostname, u.pathname);
+        return Promise.reject(Object.assign(new Error(`net-guard: ${u.hostname} is blocked on the training stack`), { code: 'ENETGUARD' }));
+      }
+      return real.call(this, target, ...rest);
+    };
+  }
+} catch {
+  // No undici next to the API: the guards above cover it.
+}

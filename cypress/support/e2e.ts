@@ -75,3 +75,15 @@ declare global {
   }
 }
 
+
+// Training videos: hide the non-production frame and striped banner (owner, Nov 13, 2026).
+if (Cypress.spec.relative.startsWith('cypress/training/')) {
+  Cypress.on('window:load', (win) => {
+    const style = win.document.createElement('style');
+    style.textContent =
+      '.app-nonprod-frame,.app-nonprod-banner{display:none!important}' +
+      // The striped banner (Nov 2026) also pushes the page down; take that space back.
+      '.app-root--nonprod{--app-nonprod-banner-height:0px!important;padding-top:0!important}';
+    win.document.head.appendChild(style);
+  });
+}
