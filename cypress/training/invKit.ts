@@ -31,6 +31,17 @@ export function resetInvoicingWorld() {
   sql(`UPDATE scout_chart_notes SET "isDeleted"=true WHERE "clientId" IN (${clients}) AND "isDeleted"=false AND body ILIKE '%Your estimate from%'`);
   // INV-01 leaves a charted decline on Maple; other videos start without it.
   sql(`DELETE FROM treatment_items WHERE "pimsType"='inv-train-decline'`);
+  // INV-20 gives Tom a card the stack reports as expired; take it off and empty the list so later videos don't show it.
+  const expiredList = `${String(Cypress.env('EMAIL_CAPTURE_PATH')).replace(/\/[^/]+$/, '')}/expired-pms.txt`;
+  cy.exec(`cat "${expiredList}" 2>/dev/null || true`).then((r) => {
+    const ids = r.stdout.split(/\s+/).filter((id) => /^pm_[A-Za-z0-9]+$/.test(id));
+    if (ids.length) {
+      sql(
+        `UPDATE clients SET "savedPaymentMethodId"=NULL, "cardOnFileConsentAt"=NULL, "cardOnFileConsentAgreementVersion"=NULL, "cardOnFileConsentSource"=NULL WHERE id=${w.households.B.clientId} AND "savedPaymentMethodId" IN (${ids.map((id) => `'${id}'`).join(',')})`
+      );
+    }
+    cy.writeFile(expiredList, '');
+  });
 }
 
 /** Sets the demo branch and its car shelf on the client's open bills, so the Branch and Location boxes are filled in. */

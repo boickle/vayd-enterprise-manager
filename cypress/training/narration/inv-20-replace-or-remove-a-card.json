@@ -6,6 +6,8 @@
  {"id":"inv20-05","text":"Her name is already filled in. Type the new card. Nothing is charged."},
  {"id":"inv20-06","text":"Ask first. When Maria says yes, tick the box."},
  {"id":"inv20-07","text":"Click Save card."},
+ {"id":"inv20-07b","text":"Scout then asks about anything billed on a different card. Here it's Maple's membership. Ask Maria before you tick it."},
+ {"id":"inv20-07c","text":"She wants to keep the membership on her old card, so click Not now."},
  {"id":"inv20-08","text":"Saved. The next visit, refill or store order uses the new card."},
  {"id":"inv20-09","text":"A membership keeps the card it's billed on. To move it, open the membership and use Update card."},
  {"id":"inv20-10","text":"If the family asks us to remove their card, click Remove card."},

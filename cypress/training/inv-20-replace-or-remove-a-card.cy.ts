@@ -63,12 +63,21 @@ describe('Training: INV-20 replace or remove a card', () => {
       stripeField('section[aria-label="Card on file"] .client-card__box', 'postal', '27606');
     });
     line('inv20-06', () => {
-      pointAt(() => section().find('.client-card__consent'), 1200);
       tap(() => section().find('.client-card__consent input'));
       section().find('.client-card__consent input').should('be.checked');
     });
     line('inv20-07', () => tap(() => section().contains('button', 'Save card')));
-    offCamera(() => section().contains('New card saved. Nothing was charged.', { timeout: 90000 }).should('exist'));
+    // Since Nov 13 Scout offers to move other places billed on a different card (Maple's membership) to the new card.
+    const offer = () => cy.contains('[role="dialog"]', 'for these too?', { timeout: 90000 });
+    offCamera(() => offer().should('be.visible'));
+    line('inv20-07b', () => pointAt(() => offer(), 5000));
+    line('inv20-07c', () => tap(() => offer().contains('button', 'Not now')));
+    offCamera(() => {
+      cy.contains('[role="dialog"]', 'for these too?').should('not.exist');
+      section().contains('New card saved. Nothing was charged.', { timeout: 90000 }).should('exist');
+      section().scrollIntoView({ offset: { top: -160, left: 0 } });
+      cy.wait(800);
+    });
     line('inv20-08', () => pointAt(() => section().contains('.client-card__card', 'Mastercard ending 4444'), 4500));
     offCamera(() => section().contains('.client-card__note', 'billed on a different card', { timeout: 60000 }).should('exist'));
     line('inv20-09', () => pointAt(() => section().contains('.client-card__note', 'billed on a different card'), 5000));
