@@ -139,7 +139,7 @@ import {
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
 import VirtualTerminalModal from '../soap/VirtualTerminalModal';
 import HouseholdCardOfferDialog from '../payments/HouseholdCardOfferDialog';
-import { cardText } from '../soap/checkoutPaymentText';
+import { cardText, expiredCardText } from '../soap/checkoutPaymentText';
 import {
   InvoiceRefillsButton,
   RefillCheckButton,
@@ -2413,7 +2413,8 @@ export default function ClientFinancialWorkspace({
 
   const resetTenderMethod = () => {
     setPayByPhone(false);
-    if (cardOnFile) {
+    // An expired card is shown but never charged (PAY-C5), so it is not the default method.
+    if (cardOnFile && !cardOnFile.expired) {
       setUseSavedCard(true);
       setTenderPaymentType('');
       setTenderMethod('card');
@@ -2436,7 +2437,7 @@ export default function ClientFinancialWorkspace({
 
   useEffect(() => {
     resetTenderMethod();
-  }, [cardOnFile?.paymentMethodId, tenderPaymentTypes, selected?.id]);
+  }, [cardOnFile?.paymentMethodId, cardOnFile?.expired, tenderPaymentTypes, selected?.id]);
 
   useEffect(() => {
     const ids = new Set<number>();
@@ -4868,6 +4869,10 @@ export default function ClientFinancialWorkspace({
 
   async function takeSavedCard() {
     if (!selected) return;
+    if (cardOnFile?.expired) {
+      setError(`${expiredCardText(cardOnFile)}. Ask the owner for a new card.`);
+      return;
+    }
     if (rxBlocksPay) {
       setError('Approve each prescription before taking payment.');
       return;
@@ -8515,7 +8520,9 @@ export default function ClientFinancialWorkspace({
                         }}
                       >
                         {cardOnFile ? (
-                          <option value="saved">Card on file · {formatCardOnFile(cardOnFile)}</option>
+                          <option value="saved" disabled={!!cardOnFile.expired}>
+                            Card on file · {cardOnFile.expired ? expiredCardText(cardOnFile) : formatCardOnFile(cardOnFile)}
+                          </option>
                         ) : null}
                         <option value="phone">Type card manually</option>
                         {tenderPaymentTypes.map((r) => (
@@ -8614,7 +8621,11 @@ export default function ClientFinancialWorkspace({
                         />
                       </label>
                     ) : null}
-                    {useSavedCard && cardOnFile ? (
+                    {cardOnFile?.expired ? (
+                      <p className="client-fin__muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                        Card on file: <strong>{expiredCardText(cardOnFile)}</strong>. Ask the owner for a new card.
+                      </p>
+                    ) : useSavedCard && cardOnFile ? (
                       <p className="client-fin__muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
                         Charges {formatCardOnFile(cardOnFile)} for {money(remaining)}.
                       </p>
@@ -8648,7 +8659,7 @@ export default function ClientFinancialWorkspace({
                       <button
                         type="button"
                         className="client-fin__btn"
-                        disabled={busy || !cardOnFile}
+                        disabled={busy || !cardOnFile || !!cardOnFile.expired}
                         onClick={() => void takeSavedCard()}
                       >
                         Charge card on file
